@@ -1,0 +1,43 @@
+# Skill System Manifest
+# Single source of truth for what exists and how it's wired.
+# Update whenever skills, capabilities, or roles change.
+
+skills:
+  # Standalone skill example (default — no capabilities)
+  <simple-skill>:
+    canonical: skills/<simple-skill>/SKILL.md
+    type: standalone
+
+  # Router skill example (capabilities are optional, add only when justified)
+  <domain-name>:
+    canonical: skills/<domain-name>/SKILL.md
+    type: router
+    capabilities:                      # optional — list only if capabilities exist
+      - <capability-a>
+      - <capability-b>
+      - <capability-c>
+
+  # Coordination-only orchestration skill (path 1)
+  # <orchestration-skill>:
+  #   canonical: skills/<orchestration-skill>/SKILL.md
+  #   type: standalone
+  #   roles:                            # roles this skill sequences
+  #     - <role-name>
+
+  # Self-contained skill with role-driven orchestration (path 2)
+  # <domain-name>:
+  #   canonical: skills/<domain-name>/SKILL.md
+  #   type: router
+  #   capabilities:
+  #     - <capability-a>
+  #   roles:                            # roles this skill loads for workflow logic
+  #     - <role-name>
+
+roles:
+  <role-group>:
+    - name: <role-name>
+      path: roles/<role-group>/<role-name>.md
+      skills:
+        - <domain-name>
+        - <simple-skill>
+

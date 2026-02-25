@@ -1,0 +1,46 @@
+# Validation rules and domain policy for skill-system-foundry.
+# Loaded by constants.py — edit this file to tune validation behavior.
+#
+# Patterns with (?i) are compiled case-insensitive.
+# Backslash sequences (e.g. \b) are preserved as-is by the
+# yaml_parser — no escape processing occurs.
+
+# ============================================================
+# Skill Validation
+# ============================================================
+skill:
+  name:
+    max_length: 64
+    min_length: 2
+    format_pattern: ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$
+    reserved_words:
+      - anthropic
+      - claude
+  description:
+    max_length: 1024
+    xml_tag_pattern: <[^>]+>
+    voice_patterns:
+      first_person: (?i)\b(I can|I will|I help|I am)\b
+      first_person_plural: (?i)\b(we can|we will|we help|our tool|our skill)\b
+      second_person: (?i)\b(you can|you will|your|you should)\b
+      imperative_start: (?i)^(Create|Design|Build|Run|Execute|Deploy|Generate|Manage|Configure|Set up|Install|Analyze|Process|Handle|Implement|Define|Write|Read|Update|Delete|Check|Validate|Test|Review|Fix|Debug|Monitor|Track|Scan|Parse|Fetch|Send|Transform|Convert|Extract|Load|Save|Export|Import|Migrate|Provision|Orchestrate|Wire|Scaffold|Audit)\b
+  body:
+    max_lines: 500
+    reference_patterns:
+      markdown_link: \[.*?\]\(((?:references|scripts|assets)/[^)]+)\)
+      backtick: "`((?:references|scripts|assets)/[^`]+)`"
+  compatibility:
+    max_length: 500
+  recognized_subdirectories:
+    - scripts
+    - references
+    - assets
+    - shared
+    - capabilities
+
+# ============================================================
+# Dependency Direction
+# ============================================================
+dependency_direction:
+  roles_ref_pattern: roles/
+  sibling_capability_ref_pattern: \.\./[a-z].*?/SKILL\.md
