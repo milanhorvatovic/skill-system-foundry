@@ -23,7 +23,7 @@ Review changes as a **Python tooling maintainer**, ensuring validation and scaff
 ## Code Quality
 
 - **Type hints on all function signatures** — use `typing` module for complex types (`List`, `Tuple`, `Dict`, `Optional`). Type hints make code self-documenting and catch errors early
-- **Docstrings on all public functions and modules** — follow PEP 257. Entry point module docstrings must serve as usage messages (shown when script is run without arguments)
+- **Docstrings on all public functions and modules** — follow PEP 257. Entry point module docstrings must double as the usage message printed when the script is run without arguments (via `print(__doc__)`)
 - **`encoding="utf-8"` on all `open()` calls** — omitting encoding causes platform-dependent behavior
 - **`if __name__ == "__main__"` guard** — required for all entry points so modules remain importable
 
@@ -38,14 +38,14 @@ Review changes as a **Python tooling maintainer**, ensuring validation and scaff
 
 - **Validation functions return `(errors, passes)` tuples** — do not raise exceptions for validation failures. Collect all issues and return them so callers can report everything at once
 - **Exit codes** — exit 0 on success (including warnings), exit 1 only on failures (`LEVEL_FAIL`). Scripts must be composable in CI pipelines
-- **Library functions return data, don't print** — keep `print()` and `sys.exit()` at the entry point level. Library code in `scripts/lib/` should return results, not produce side effects
+- **Library functions return data, don't print** — except for dedicated output/formatting helpers whose purpose is producing structured output. Keep `print()` and `sys.exit()` out of validation and domain logic
 - **Consistent path handling** — use `os.path` throughout. Do not mix `os.path` and `pathlib` within the same codebase
 - **Keep scripts focused** — one task per entry point. Do not combine unrelated operations in a single script
 - Document magic numbers with inline comments explaining why the value was chosen
 
 ## Review Scope
 
-The validation scripts (`validate_skill.py`, `audit_skill_system.py`) test the output of these Python scripts — not the scripts themselves. Review Python changes for code quality, maintainability, and adherence to the principles above. Only flag issues with high confidence.
+These scripts (`validate_skill.py`, `audit_skill_system.py`) validate repository content — SKILL.md files, manifests, and directory structure — not their own correctness. Regressions in the tooling itself are not caught automatically. Review Python changes for code quality, maintainability, and adherence to the principles above. Only flag issues with high confidence.
 
 ## Common Issues to Flag
 
@@ -58,7 +58,7 @@ The validation scripts (`validate_skill.py`, `audit_skill_system.py`) test the o
 - Hardcoded error level string (`"FAIL"`) instead of `LEVEL_FAIL` constant
 - Validation rule hardcoded in Python instead of `scripts/lib/configuration.yaml`
 - Use of Python 3.9+ features (`match`/`case`, `dict | dict` merge, `str.removeprefix`)
-- `print()` or `sys.exit()` in library code (`scripts/lib/`)
+- `print()` or `sys.exit()` in library code outside dedicated output helpers
 - Missing `if __name__ == "__main__"` guard in entry point
 - Unexplained magic numbers or hardcoded values
 - Mixing `os.path` and `pathlib` in the same file

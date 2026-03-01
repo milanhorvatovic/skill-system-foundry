@@ -59,7 +59,7 @@ The following checks are enforced by `validate_skill.py` and `audit_skill_system
 
 **`audit_skill_system.py`** (full system):
 - Spec compliance across all registered skills
-- Capability isolation (no registration frontmatter on capabilities)
+- Capability isolation (flags capabilities that look discovery-registered)
 - Dependency direction (no upward references from capabilities or skills to roles)
 - Nesting depth (no sub-capabilities)
 - Shared resource usage (shared files used by 2+ capabilities)

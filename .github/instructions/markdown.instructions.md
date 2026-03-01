@@ -33,7 +33,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 ## Naming Convention
 
 - **`SKILL.md` (uppercase)** is the registered entry point for a skill directory — agents discover and load it
-- **Capability files use lowercase** — capability entry points are not discovery-registered and follow a different casing convention
+- **Capabilities also use `SKILL.md` (uppercase)** — capability entry points are discovered the same way as skills; do not rename them to lowercase
 
 ## Structure Rules
 
