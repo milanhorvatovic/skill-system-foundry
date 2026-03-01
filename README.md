@@ -42,7 +42,7 @@ If you are writing a single skill for a single tool, the vendor's skill creator 
 **Further reading — open standards and conventions:**
 
 - [Agent Skills specification](https://agentskills.io) — open standard governing skill structure (frontmatter, naming, layout)
-- [AGENTS.md convention](https://agentmd.sh) — project-level context convention, governed by the Agentic AI Foundation under the Linux Foundation
+- [AGENTS.md convention](https://agents.md/) — project-level context convention, governed by the Agentic AI Foundation under the Linux Foundation
 - [ROLES.md convention](https://www.roles.md) — AI agent behavioral contracts (responsibilities, allowed/forbidden actions, handoff rules)
 
 ## Architecture
