@@ -119,7 +119,10 @@ This convention is a preventive naming guardrail, not a tool-level fix.
   - It does not auto-migrate existing capability files; repositories still need a one-time rename/update
   - It does not replace architecture rules (router dispatch, no sibling-capability references, role boundaries)
 
-For full context and tool-specific details, see `skill-system-foundry/references/codex-extensions.md`.
+Tool-specific details:
+- [`codex-extensions.md`](skill-system-foundry/references/codex-extensions.md) — Codex discovery, scanning, and `agents/openai.yaml`
+- [`claude-code-extensions.md`](skill-system-foundry/references/claude-code-extensions.md) — Claude Code surfaces, zip packaging, and extended frontmatter
+- [`cursor-extensions.md`](skill-system-foundry/references/cursor-extensions.md) — Cursor cross-vendor discovery and rules migration
 
 ### Roles
 
