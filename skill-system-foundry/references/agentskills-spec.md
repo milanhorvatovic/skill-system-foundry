@@ -77,7 +77,7 @@ Available from: https://github.com/agentskills/agentskills/tree/main/skills-ref
 
 ## Skill-System-Specific Notes
 
-**Capabilities:** System-internal sub-skills under `capabilities/`, not registered in discovery. In this skill system, frontmatter is optional and mainly for portability/documentation. If promoting a capability to a registered standalone skill, add required `name` and `description` frontmatter.
+**Capabilities:** System-internal sub-skills under `capabilities/`, not registered in discovery. Entry point filename is `capability.md`. Frontmatter is optional and mainly for portability/documentation. If promoting a capability to a registered standalone skill, rename to `SKILL.md` and add required `name` and `description` frontmatter.
 
 **Router skills:** Skill system convention, not in the spec. The SKILL.md body contains a dispatch table; capabilities are Level 3 resources.
 

@@ -11,11 +11,12 @@ metadata:
   version: <optional, e.g., "1.0">
 ---
 # <Capability Name>
-<!-- TEMPLATE GUIDE: Replace <Capability Name> and all <placeholder> values.
-     Capabilities are loaded on demand — this is where depth lives. Be
-     comprehensive in Instructions. Frontmatter is not used for discovery
-     but keeps capabilities portable and promotion-ready. Must not reference
-     sibling capabilities. -->
+<!-- TEMPLATE GUIDE: Save this file as `capability.md` inside the capability
+     directory: capabilities/<name>/capability.md
+     Replace <Capability Name> and all <placeholder> values. Capabilities are
+     loaded on demand — this is where depth lives. Be comprehensive in
+     Instructions. Frontmatter is not used for discovery but keeps capabilities
+     portable and promotion-ready. Must not reference sibling capabilities. -->
 
 ## Purpose
 

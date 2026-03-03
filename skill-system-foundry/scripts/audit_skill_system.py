@@ -3,7 +3,8 @@
 Validate the entire skill system structure for consistency.
 
 Checks: spec compliance, dependency direction, manifest consistency,
-nesting depth, shared resource usage, and structural rules.
+nesting depth, shared resource usage, capability entry naming,
+and structural rules.
 
 Manual-review scope: role composition (2+ skills/capabilities) is not
 currently enforced by this script.
@@ -56,7 +57,7 @@ from lib.discovery import (
 )
 from lib.constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_SHARED,
-    FILE_SKILL_MD, FILE_MANIFEST, EXT_MARKDOWN,
+    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
     RE_ROLES_REF, RE_SIBLING_CAP_REF,
     SEPARATOR_WIDTH,
@@ -158,7 +159,7 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
         print("\n== Capability Isolation ==")
 
     for cap in capabilities:
-        cap_md = os.path.join(cap["path"], FILE_SKILL_MD)
+        cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
         fm, _ = load_frontmatter(cap_md)
         if fm and "name" in fm and "description" in fm:
             errors.append(
@@ -173,7 +174,7 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
         print("\n== Dependency Direction ==")
 
     for cap in capabilities:
-        content = read_file(os.path.join(cap["path"], FILE_SKILL_MD))
+        content = read_file(os.path.join(cap["path"], FILE_CAPABILITY_MD))
         issues = check_upward_references(content, "capability")
         for level, issue in issues:
             errors.append(
@@ -227,7 +228,7 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
 
         cap_contents = {}
         for cap in os.listdir(cap_dir):
-            cap_skill = os.path.join(cap_dir, cap, FILE_SKILL_MD)
+            cap_skill = os.path.join(cap_dir, cap, FILE_CAPABILITY_MD)
             if os.path.exists(cap_skill):
                 cap_contents[cap] = read_file(cap_skill)
 
@@ -243,6 +244,38 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
                         f"{LEVEL_WARN}: {skill['name']}/{shared_file} used by "
                         f"{len(users)} capabilities (shared should be 2+)"
                     )
+
+    # --- Capability Entry Naming ---
+    if verbose:
+        print("\n== Capability Entry Naming ==")
+
+    for skill in registered_skills:
+        cap_dir = os.path.join(skill["path"], DIR_CAPABILITIES)
+        if not os.path.isdir(cap_dir):
+            continue
+
+        for cap in os.listdir(cap_dir):
+            cap_path = os.path.join(cap_dir, cap)
+            if not os.path.isdir(cap_path):
+                continue
+
+            capability_md = os.path.join(cap_path, FILE_CAPABILITY_MD)
+            legacy_skill_md = os.path.join(cap_path, FILE_SKILL_MD)
+
+            if os.path.exists(legacy_skill_md):
+                errors.append(
+                    f"{LEVEL_FAIL}: {skill['name']}/capabilities/{cap}/{FILE_SKILL_MD} "
+                    f"found (capabilities must use {FILE_CAPABILITY_MD})"
+                )
+            elif not os.path.exists(capability_md):
+                errors.append(
+                    f"{LEVEL_WARN}: {skill['name']}/capabilities/{cap}/ has no "
+                    f"{FILE_CAPABILITY_MD} entry file"
+                )
+            elif verbose:
+                print(
+                    f"  ✓ {skill['name']}/capabilities/{cap}/{FILE_CAPABILITY_MD}"
+                )
 
     # --- Manifest ---
     if verbose:

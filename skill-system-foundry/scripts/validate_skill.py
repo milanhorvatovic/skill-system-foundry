@@ -27,7 +27,7 @@ from lib.constants import (
     RE_SECOND_PERSON, RE_IMPERATIVE_START,
     RE_MARKDOWN_LINK_REF, RE_BACKTICK_REF,
     RECOGNIZED_DIRS,
-    FILE_SKILL_MD, SEPARATOR_WIDTH,
+    FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 
@@ -158,10 +158,11 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
     skill_path = os.path.abspath(skill_path)
     dir_name = os.path.basename(skill_path)
 
-    # Check SKILL.md exists
-    skill_md = os.path.join(skill_path, FILE_SKILL_MD)
+    # Capabilities use capability.md; registered skills use SKILL.md
+    entry_filename = FILE_CAPABILITY_MD if is_capability else FILE_SKILL_MD
+    skill_md = os.path.join(skill_path, entry_filename)
     if not os.path.exists(skill_md):
-        errors.append(f"{LEVEL_FAIL}: No {FILE_SKILL_MD} found in {skill_path}")
+        errors.append(f"{LEVEL_FAIL}: No {entry_filename} found in {skill_path}")
         return errors, passes
 
     # Parse frontmatter

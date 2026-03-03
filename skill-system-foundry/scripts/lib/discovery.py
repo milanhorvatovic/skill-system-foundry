@@ -4,12 +4,15 @@ import os
 
 from .constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
-    FILE_SKILL_MD, FILE_README, EXT_MARKDOWN,
+    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_README, EXT_MARKDOWN,
 )
 
 
 def find_skill_dirs(system_root):
-    """Find all skill directories (those containing SKILL.md)."""
+    """Find all skill and capability directories.
+
+    Registered skills contain SKILL.md; capabilities contain capability.md.
+    """
     skills = []
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     if not os.path.isdir(skills_dir):
@@ -31,7 +34,7 @@ def find_skill_dirs(system_root):
         if os.path.isdir(cap_dir):
             for cap in os.listdir(cap_dir):
                 cap_path = os.path.join(cap_dir, cap)
-                cap_skill = os.path.join(cap_path, FILE_SKILL_MD)
+                cap_skill = os.path.join(cap_path, FILE_CAPABILITY_MD)
                 if os.path.isdir(cap_path) and os.path.exists(cap_skill):
                     skills.append(
                         {

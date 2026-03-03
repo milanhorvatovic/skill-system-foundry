@@ -23,10 +23,10 @@ system/
 │   │   │   └── assets/
 │   │   └── capabilities/             ← (optional) add only when justified
 │   │       ├── <capability-a>/
-│   │       │   ├── SKILL.md          ← NOT registered, loaded on demand
+│   │       │   ├── capability.md     ← NOT registered, loaded on demand
 │   │       │   └── references/
 │   │       └── <capability-b>/
-│   │           ├── SKILL.md
+│   │           ├── capability.md
 │   │           └── references/
 │   └── <simple-skill>/               ← standalone skill
 │       ├── SKILL.md                  ← registered
@@ -62,9 +62,9 @@ project/
 │   │   ├── project-mgmt/             ← router skill
 │   │   │   ├── SKILL.md              ← registered in discovery
 │   │   │   ├── capabilities/
-│   │   │   │   ├── triage/SKILL.md   ← loaded on demand
-│   │   │   │   ├── refine/SKILL.md
-│   │   │   │   └── gate-check/SKILL.md
+│   │   │   │   ├── triage/capability.md      ← loaded on demand
+│   │   │   │   ├── refine/capability.md
+│   │   │   │   └── gate-check/capability.md
 │   │   │   ├── references/
 │   │   │   ├── scripts/
 │   │   │   └── assets/
@@ -128,7 +128,7 @@ The key invariant across all layouts: **domain knowledge is authored once, in on
 
 **Registered skills** have full frontmatter (name + description) for discovery.
 
-**Capabilities** under `capabilities/` are optional granular sub-skills. NOT registered in discovery. Loaded on demand. Only add when the integrator requests them or the domain warrants decomposition.
+**Capabilities** under `capabilities/` are optional granular sub-skills. NOT registered in discovery. Loaded on demand. Only add when the integrator requests them or the domain warrants decomposition. Entry point is named `capability.md`.
 
 **Shared resources** in `shared/` must be used by 2+ capabilities.
 

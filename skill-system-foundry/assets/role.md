@@ -42,7 +42,7 @@ Task Progress:
 | Skill / Capability | Purpose in Workflow |
 |---|---|
 | skills/<domain>/SKILL.md | <How this skill is used> |
-| skills/<domain>/capabilities/<cap>/SKILL.md | <How this capability is used> |
+| skills/<domain>/capabilities/<cap>/capability.md | <How this capability is used> |
 
 <!-- Paths in this table are relative to the system root (the directory
      containing skills/ and roles/), not relative to this role

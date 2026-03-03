@@ -98,7 +98,7 @@ A domain skill (standalone or router with capabilities) loads one or more roles 
 **Constraints:**
 - The skill owns **domain capabilities**; the role owns **workflow logic** — keep these separated.
 - The role should define explicit responsibility, authority, and constraints, including handoff rules.
-- The role references the skill's capabilities by system-root-relative path (e.g., `skills/<domain>/capabilities/<cap>/SKILL.md`).
+- The role references the skill's capabilities by system-root-relative path (e.g., `skills/<domain>/capabilities/<cap>/capability.md`).
 - A self-contained skill may load different roles for different workflow phases, though adding multiple roles increases complexity — weigh the coordination overhead against the benefit before introducing additional roles.
 
 **Not circular.** The skill provides the entry point and loads the role for workflow logic. The role references the skill's capabilities for execution. The capabilities themselves remain unaware of the role. This is a complementary relationship, not a circular dependency.

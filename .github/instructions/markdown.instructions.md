@@ -33,7 +33,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 ## Naming Convention
 
 - **`SKILL.md` (uppercase)** is the registered entry point for a skill directory — agents discover and load it
-- **Capabilities also use `SKILL.md` (uppercase)** — capability entry points are discovered the same way as skills; do not rename them to lowercase
+- **Capabilities use `capability.md`** — capability entry points are named differently from registered skills to avoid Codex CLI startup warnings and Claude zip packaging conflicts; do not use `SKILL.md` for capabilities
 
 ## Structure Rules
 

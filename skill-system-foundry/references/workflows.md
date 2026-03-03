@@ -123,7 +123,7 @@ A skill can serve as the orchestration entry point. Two forms exist — choose b
 
 3. **Write the router** with mutually exclusive trigger descriptions.
 
-4. **Move skills to capabilities** under `capabilities/<name>/`. Frontmatter is optional for capabilities — remove it or keep it for documentation, but it will not be used for discovery.
+4. **Move skills to capabilities** under `capabilities/<name>/`. Rename the entry point from `SKILL.md` to `capability.md`. Frontmatter is optional for capabilities — remove it or keep it for documentation, but it will not be used for discovery.
 
 5. **Extract shared resources** to `shared/`. Each must be used by 2+.
 
@@ -140,7 +140,7 @@ A skill can serve as the orchestration entry point. Two forms exist — choose b
 
 Only add a capability when the integrator explicitly requests it or when the domain clearly warrants a new distinct operation. Do not create capabilities speculatively.
 
-1. Create `skills/<domain>/capabilities/<new-cap>/SKILL.md`.
+1. Create `skills/<domain>/capabilities/<new-cap>/capability.md`.
 2. Add row to router's Capabilities table.
 3. Update router's `description` if new triggers needed (max 1024 chars).
 4. Update manifest.yaml.
@@ -151,7 +151,7 @@ Only add a capability when the integrator explicitly requests it or when the dom
 
 Skills placed in `.agents/skills/` are natively discovered by most tools (Codex, Gemini CLI, Warp, OpenCode, Windsurf). For tools that do not scan this path, create a thin deployment pointer in the tool's discovery path. See [tool-integration.md](tool-integration.md) for per-tool details.
 
-**Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source. Or use the plugin marketplace.
+**Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source (registered skills only — not capability files). Or use the plugin marketplace.
 
 **Claude.ai:** Zip skill directory, upload via Settings > Features. Per-user.
 
