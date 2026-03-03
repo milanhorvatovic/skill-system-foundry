@@ -85,7 +85,7 @@ Each layer has a clear responsibility:
 
 All skills must conform to the Agent Skills specification (agentskills.io). Every registered skill directory contains a `SKILL.md` with valid YAML frontmatter. The `name` field matches the parent directory name, lowercase + hyphens only, max 64 chars. The `description` field is max 1024 chars, third-person, and describes both what the skill does and when to trigger it.
 
-Note: capabilities are discovery-internal sub-skills. Capability frontmatter is optional in this skill system (use it when portability/promotion to standalone is likely).
+Note: capabilities are discovery-internal sub-skills. Their entry point is `capability.md`. Capability frontmatter is optional (use it when portability/promotion to standalone is likely).
 
 Progressive disclosure is respected at all levels:
 - **Level 1: Metadata** (~100 tokens) — name + description, always in context

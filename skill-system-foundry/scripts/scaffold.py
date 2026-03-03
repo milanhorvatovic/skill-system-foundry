@@ -31,7 +31,7 @@ from lib.validation import validate_name as _validate_name_detailed
 from lib.constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
     DIR_REFERENCES, DIR_SCRIPTS, DIR_ASSETS,
-    FILE_SKILL_MD, FILE_README, FILE_GITKEEP, FILE_MANIFEST, EXT_MARKDOWN,
+    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_README, FILE_GITKEEP, FILE_MANIFEST, EXT_MARKDOWN,
     TEMPLATE_SKILL_ROUTER, TEMPLATE_SKILL_STANDALONE,
     TEMPLATE_CAPABILITY, TEMPLATE_ROLE,
     PH_DOMAIN_NAME, PH_DOMAIN_TITLE, PH_SKILL_NAME, PH_SKILL_TITLE,
@@ -153,12 +153,12 @@ def scaffold_capability(domain, name, root=""):
     content = template.replace(PH_CAPABILITY_NAME, name).replace(
         PH_CAPABILITY_TITLE, title
     )
-    write_file(os.path.join(cap_path, FILE_SKILL_MD), content)
+    write_file(os.path.join(cap_path, FILE_CAPABILITY_MD), content)
     create_dir_with_gitkeep(os.path.join(cap_path, DIR_REFERENCES))
     print(f"  Created: {cap_path}/{DIR_REFERENCES}/")
 
     print(f"\n\u2713 Capability '{name}' scaffolded at {cap_path}")
-    print(f"  Next: edit {cap_path}/{FILE_SKILL_MD}")
+    print(f"  Next: edit {cap_path}/{FILE_CAPABILITY_MD}")
     print(f"  Next: add capability to {router_skill} routing table")
     print(f"  Next: update {FILE_MANIFEST}")
 

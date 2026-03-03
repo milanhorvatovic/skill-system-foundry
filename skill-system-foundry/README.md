@@ -27,7 +27,7 @@ Create standalone or router skills that conform to the Agent Skills specificatio
 
 ### 2. Create Capabilities (Optional)
 
-Add optional capabilities under existing router skills. Each capability is a self-contained granular sub-skill with its own `SKILL.md` and optional resources. Capabilities are never registered in the discovery layer.
+Add optional capabilities under existing router skills. Each capability is a self-contained granular sub-skill with its own `capability.md` and optional resources. Capabilities are never registered in the discovery layer.
 
 **When to use:** Only when the integrator explicitly requests it or when a router skill genuinely needs a new distinct operation (e.g., "add a `<capability>` capability to the `<domain>` skill"). Do not proactively create capabilities unless the domain clearly demands decomposition.
 
@@ -35,6 +35,18 @@ Add optional capabilities under existing router skills. Each capability is a sel
 - No sibling references — capabilities must not call other capabilities
 - No discovery registration — only the parent router is visible
 - Self-contained — each capability has its own resources
+
+**Why `capability.md` instead of `SKILL.md`?** This convention is a preventive naming guardrail, not a fix to tool behavior.
+
+- **Prevents:**
+  - Codex startup warnings from scanning capability `SKILL.md` files without discovery frontmatter
+  - Accidental capability promotion to standalone discovery entries when frontmatter is added only to silence warnings
+  - Claude zip packaging conflicts caused by case-insensitive `SKILL.md` matching (`skill.md` still collides)
+
+- **Does not solve:**
+  - Tool behavior itself (Codex/Claude rules remain unchanged)
+  - Migration automatically (existing files still need one-time renaming)
+  - Core architecture constraints (router boundaries, no sibling-capability references)
 
 **Key resources:**
 - `assets/capability.md` — Template for capabilities
@@ -228,7 +240,7 @@ For complete procedures (creation, migration, auditing) and all command options,
 
 ## How This Skill Practices What It Preaches
 
-This skill is itself organized as a **logical router** within the skill system it describes. It routes to nine conceptual capabilities through reference files rather than literal `capabilities/` subdirectories. This is a valid pattern when capabilities are documentation-driven (reference files and templates) rather than independent execution units requiring their own `SKILL.md` and resources:
+This skill is itself organized as a **logical router** within the skill system it describes. It routes to nine conceptual capabilities through reference files rather than literal `capabilities/` subdirectories. This is a valid pattern when capabilities are documentation-driven (reference files and templates) rather than independent execution units requiring their own `capability.md` and resources:
 
 - **SKILL.md** is a lean router (~140 lines total, ~115 body lines) with YAML frontmatter, an architecture overview, resource pointers, core principles summary, and a quick reference table. It does not contain detailed instructions — those live in references.
 - **Progressive disclosure** is respected: the discovery layer sees only the name and description (~100 tokens). The full SKILL.md loads when triggered. References, assets, and scripts load only when the specific task requires them.

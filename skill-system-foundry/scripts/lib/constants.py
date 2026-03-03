@@ -28,6 +28,7 @@ DIR_ASSETS = "assets"
 
 # File Names and Extensions
 FILE_SKILL_MD = "SKILL.md"
+FILE_CAPABILITY_MD = "capability.md"
 FILE_README = "README.md"
 FILE_MANIFEST = "manifest.yaml"
 FILE_GITKEEP = ".gitkeep"

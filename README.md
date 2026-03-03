@@ -94,7 +94,7 @@ For registered skills (discovery-visible skills), the specification requires:
 - A markdown body (recommended max 500 lines)
 - The `name` field must match the parent directory name
 
-Note: capability `SKILL.md` files are not discovery-registered. Frontmatter is optional for capabilities in this skill system; include it when promotion to a standalone skill is likely.
+Note: capability entry points use `capability.md` (not `SKILL.md`). Frontmatter in `capability.md` is optional; include it when promotion to a standalone skill is likely.
 
 ### Capabilities
 
@@ -103,7 +103,26 @@ A capability is a skill that lives under a router and is not registered in the d
 Key constraints:
 - Capabilities must not reference sibling capabilities — if a task spans multiple capabilities, that's a role's job
 - Capabilities are invisible to the discovery layer; only the parent router appears in discovery
-- Each capability is self-contained with its own `SKILL.md` and optional resources
+- Each capability is self-contained with its own `capability.md` and optional resources
+
+#### Why `capability.md`
+
+This convention is a preventive naming guardrail, not a tool-level fix.
+
+- **What it prevents:**
+  - Codex CLI startup warnings caused by recursively scanning capability `SKILL.md` files that intentionally omit discovery frontmatter
+  - The opposite failure mode where adding frontmatter to silence warnings accidentally makes capabilities look like standalone registered skills
+  - Claude zip packaging collisions from case-insensitive `SKILL.md` handling (`skill.md` vs `SKILL.md`)
+
+- **What it does not solve:**
+  - It does not change Codex or Claude behavior; it avoids known conflict paths
+  - It does not auto-migrate existing capability files; repositories still need a one-time rename/update
+  - It does not replace architecture rules (router dispatch, no sibling-capability references, role boundaries)
+
+Tool-specific details:
+- [`codex-extensions.md`](skill-system-foundry/references/codex-extensions.md) — Codex discovery, scanning, and `agents/openai.yaml`
+- [`claude-code-extensions.md`](skill-system-foundry/references/claude-code-extensions.md) — Claude Code surfaces, zip packaging, and extended frontmatter
+- [`cursor-extensions.md`](skill-system-foundry/references/cursor-extensions.md) — Cursor cross-vendor discovery and rules migration
 
 ### Roles
 

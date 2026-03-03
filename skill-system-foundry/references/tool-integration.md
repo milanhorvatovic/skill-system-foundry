@@ -64,6 +64,8 @@ Cursor does not scan **project-level** `.agents/skills/` directly. Placing canon
 
 > Under the recommended layout (canonical in `.agents/skills/`), Claude Code, Cursor, and Kiro require deployment pointers. If canonical content is in `.claude/skills/` instead, only tools that don't scan that path need pointers. See [directory-structure.md](directory-structure.md#alternative-layouts).
 
+Capability entry naming (cross-tool): use `capability.md` for capability files.
+
 ---
 
 ## Claude Code

@@ -35,9 +35,9 @@ Route to the appropriate capability based on the task:
 
 | Capability | Trigger | Path |
 |---|---|---|
-| <name-a> | When <specific, action-oriented trigger> | capabilities/<name-a>/SKILL.md |
-| <name-b> | When <specific, action-oriented trigger> | capabilities/<name-b>/SKILL.md |
-| <name-c> | When <specific, action-oriented trigger> | capabilities/<name-c>/SKILL.md |
+| <name-a> | When <specific, action-oriented trigger> | capabilities/<name-a>/capability.md |
+| <name-b> | When <specific, action-oriented trigger> | capabilities/<name-b>/capability.md |
+| <name-c> | When <specific, action-oriented trigger> | capabilities/<name-c>/capability.md |
 
 Read only the relevant capability file. Do not load multiple capabilities unless the task explicitly spans them.
 
