@@ -84,14 +84,15 @@ def validate_description(description):
 
 
 def validate_body(body, skill_md_path, allow_nested_refs=False):
-    """Validate SKILL.md body."""
+    """Validate skill or capability entry point body."""
     errors = []
     passes = []
+    entry_filename = os.path.basename(skill_md_path)
 
     line_count = count_body_lines(body)
     if line_count > MAX_BODY_LINES:
         errors.append(
-            f"{LEVEL_WARN}: {FILE_SKILL_MD} body is {line_count} lines (recommended max: {MAX_BODY_LINES})"
+            f"{LEVEL_WARN}: {entry_filename} body is {line_count} lines (recommended max: {MAX_BODY_LINES})"
         )
     else:
         passes.append(f"body: {line_count} lines (max {MAX_BODY_LINES})")
@@ -120,7 +121,7 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
                     nested_found = True
                     errors.append(
                         f"{LEVEL_WARN}: '{ref}' contains nested references: {nested_refs}. "
-                        f"Keep references one level deep from {FILE_SKILL_MD}."
+                        f"Keep references one level deep from {entry_filename}."
                     )
 
         if refs and not nested_found:
