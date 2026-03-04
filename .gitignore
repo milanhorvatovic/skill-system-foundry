@@ -1,6 +1,13 @@
 # macOS
 .DS_Store
 
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
 # Python
 __pycache__/
 *.py[cod]

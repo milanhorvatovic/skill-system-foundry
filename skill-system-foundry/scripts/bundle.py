@@ -74,7 +74,7 @@ def prevalidate(skill_path, system_root):
             f"Fix these before bundling:"
         )
         for err in spec_errors:
-            errors.append(f"    {err}")
+            errors.append(err)
         return errors, warnings, None
 
     # 2. Description length check (Claude.ai 200-char limit)
@@ -179,7 +179,9 @@ def _rewrite_markdown_paths(bundle_dir, skill_path, system_root, file_mapping):
             # correct relative path from the current file's location.
             for abs_source, bundle_rel in file_mapping.items():
                 abs_target = os.path.join(bundle_dir, bundle_rel)
-                new_rel = os.path.relpath(abs_target, os.path.dirname(filepath))
+                new_rel = os.path.relpath(
+                    abs_target, os.path.dirname(filepath)
+                ).replace(os.sep, "/")
 
                 # Try to find references to this external file.
                 # We need to match various forms the reference might take:
@@ -422,7 +424,7 @@ def create_zip(bundle_dir, output_path):
         for root, _dirs, files in os.walk(bundle_dir):
             for filename in files:
                 filepath = os.path.join(root, filename)
-                arcname = os.path.relpath(filepath, bundle_base)
+                arcname = os.path.relpath(filepath, bundle_base).replace(os.sep, "/")
                 zf.write(filepath, arcname)
 
     return output_path
@@ -519,6 +521,11 @@ def main():
     else:
         output_path = os.path.join(os.getcwd(), f"{skill_name}.zip")
 
+    # Ensure the output parent directory exists
+    output_parent = os.path.dirname(output_path)
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+
     print(f"Bundling: {skill_path}")
     print(f"Output:   {output_path}")
     print("=" * SEPARATOR_WIDTH)
@@ -561,32 +568,31 @@ def main():
         skill_path, system_root, scan_result, BUNDLE_EXCLUDE_PATTERNS
     )
 
-    # ---- Phase 3: Post-validation ----
-    print(f"\nPhase 3: Post-validation")
-    print("-" * SEPARATOR_WIDTH)
-    post_errors = postvalidate(bundle_dir)
-
-    if post_errors:
-        print(f"\n{'=' * SEPARATOR_WIDTH}")
-        print("Bundling FAILED — post-validation errors:\n")
-        for err in post_errors:
-            print_error_line(err)
-        fails, warns, infos = categorize_errors(post_errors)
+    try:
+        # ---- Phase 3: Post-validation ----
+        print(f"\nPhase 3: Post-validation")
         print("-" * SEPARATOR_WIDTH)
-        print_summary(fails, warns, infos)
+        post_errors = postvalidate(bundle_dir)
 
-        # Clean up temp directory
+        if post_errors:
+            print(f"\n{'=' * SEPARATOR_WIDTH}")
+            print("Bundling FAILED — post-validation errors:\n")
+            for err in post_errors:
+                print_error_line(err)
+            fails, warns, infos = categorize_errors(post_errors)
+            print("-" * SEPARATOR_WIDTH)
+            print_summary(fails, warns, infos)
+            sys.exit(1)
+
+        print("  Post-validation passed.")
+
+        # ---- Create archive ----
+        print(f"\nCreating archive...")
+        create_zip(bundle_dir, output_path)
+
+    finally:
+        # Clean up temp directory — always, even on unexpected errors
         shutil.rmtree(stats["bundle_base"], ignore_errors=True)
-        sys.exit(1)
-
-    print("  Post-validation passed.")
-
-    # ---- Create archive ----
-    print(f"\nCreating archive...")
-    create_zip(bundle_dir, output_path)
-
-    # Clean up temp directory
-    shutil.rmtree(stats["bundle_base"], ignore_errors=True)
 
     # ---- Summary ----
     zip_size = os.path.getsize(output_path)

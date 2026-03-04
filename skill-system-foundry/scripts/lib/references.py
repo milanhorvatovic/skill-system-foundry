@@ -154,22 +154,52 @@ def resolve_reference(ref_path, source_file, system_root=None):
       1. Relative to the source file's directory
       2. Relative to the system root (if provided)
 
+    Rejects absolute references and any resolved path that escapes
+    the system root (when provided) to prevent accidentally bundling
+    arbitrary files from outside the project.
+
     Returns the absolute path if found, ``None`` otherwise.
     """
+    resolved, _ = resolve_reference_with_reason(ref_path, source_file, system_root)
+    return resolved
+
+
+def resolve_reference_with_reason(ref_path, source_file, system_root=None):
+    """Resolve a reference and return both path and failure reason.
+
+    Returns a tuple:
+        (resolved_path_or_none, reason_or_none)
+
+    *reason_or_none* is one of:
+      - ``"absolute_path"``
+      - ``"escapes_system_root"``
+      - ``"not_found"``
+    """
+    # Reject absolute paths — references must be relative.
+    if os.path.isabs(ref_path):
+        return None, "absolute_path"
+
     source_dir = os.path.dirname(os.path.abspath(source_file))
+    source_candidate = os.path.normpath(os.path.join(source_dir, ref_path))
+
+    if system_root and not is_within_directory(source_candidate, system_root):
+        return None, "escapes_system_root"
 
     # Try relative to the source file
-    candidate = os.path.normpath(os.path.join(source_dir, ref_path))
+    candidate = source_candidate
     if os.path.exists(candidate):
-        return candidate
+        return candidate, None
 
     # Try relative to the system root
     if system_root:
         candidate = os.path.normpath(os.path.join(system_root, ref_path))
-        if os.path.exists(candidate):
-            return candidate
+        if not is_within_directory(candidate, system_root):
+            return None, "escapes_system_root"
 
-    return None
+        if os.path.exists(candidate):
+            return candidate, None
+
+    return None, "not_found"
 
 
 def find_containing_skill(filepath, system_root):
@@ -255,17 +285,34 @@ def scan_references(skill_path, system_root=None, max_depth=None):
         resolved_refs = []
 
         for ref_path, line_num, ref_type in refs:
-            resolved = resolve_reference(ref_path, filepath, system_root)
+            resolved, fail_reason = resolve_reference_with_reason(
+                ref_path, filepath, system_root
+            )
             resolved_refs.append((ref_path, line_num, ref_type, resolved))
 
             # ---- Broken reference ----
             if resolved is None:
-                errors.append(
-                    f"{LEVEL_FAIL}: Broken reference in "
-                    f"'{_rel(filepath)}' line {line_num}: "
-                    f"'{ref_path}' does not resolve to any existing file. "
-                    f"Fix the reference path before bundling."
-                )
+                if fail_reason == "absolute_path":
+                    errors.append(
+                        f"{LEVEL_FAIL}: Invalid absolute reference in "
+                        f"'{_rel(filepath)}' line {line_num}: '{ref_path}'. "
+                        f"Bundle references must use relative paths within "
+                        f"the skill system root."
+                    )
+                elif fail_reason == "escapes_system_root":
+                    errors.append(
+                        f"{LEVEL_FAIL}: Reference escapes system root in "
+                        f"'{_rel(filepath)}' line {line_num}: '{ref_path}'. "
+                        f"Bundling files outside the skill system root is "
+                        f"not allowed."
+                    )
+                else:
+                    errors.append(
+                        f"{LEVEL_FAIL}: Broken reference in "
+                        f"'{_rel(filepath)}' line {line_num}: "
+                        f"'{ref_path}' does not resolve to any existing file. "
+                        f"Fix the reference path before bundling."
+                    )
                 continue
 
             # ---- Internal (within the skill) ----
@@ -425,7 +472,7 @@ def compute_bundle_path(external_file, system_root):
     if system_root and category == DIR_ROLES:
         roles_dir = os.path.join(os.path.abspath(system_root), DIR_ROLES)
         rel = os.path.relpath(external_file, roles_dir)
-        return os.path.join(DIR_ROLES, rel)
+        return os.path.join(DIR_ROLES, rel).replace(os.sep, "/")
 
     # For non-role files, place in the category directory with the
     # original filename.  If the source path has meaningful sub-structure
@@ -435,7 +482,7 @@ def compute_bundle_path(external_file, system_root):
         category_dir = os.path.join(system_root, category)
         if is_within_directory(external_file, category_dir):
             rel = os.path.relpath(external_file, category_dir)
-            return os.path.join(category, rel)
+            return os.path.join(category, rel).replace(os.sep, "/")
 
     filename = os.path.basename(external_file)
-    return os.path.join(category, filename)
+    return os.path.join(category, filename).replace(os.sep, "/")
