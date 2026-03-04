@@ -346,6 +346,6 @@ The `skill-system-foundry/` directory contains the meta-skill that implements th
 
 6. **Bundle for distribution** (optional) — Package a skill as a self-contained zip archive for Claude.ai upload, Gemini CLI, or offline sharing:
    ```bash
-   python scripts/bundle.py skills/my-skill --system-root .agents --output my-skill.zip
+   python scripts/bundle.py .agents/skills/my-skill --system-root .agents --output my-skill.zip
    ```
    The bundler validates, resolves external references (roles, shared docs), rewrites paths, and creates the archive. See [`workflows.md`](skill-system-foundry/references/workflows.md#packaging-a-skill-as-a-zip-bundle) for the full procedure.

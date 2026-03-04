@@ -226,7 +226,7 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 python scripts/bundle.py .agents/skills/project-mgmt --output dist/
 
 # Bundle with an explicit system root
-python scripts/bundle.py skills/project-mgmt --system-root .agents --output project-mgmt.zip
+python scripts/bundle.py .agents/skills/project-mgmt --system-root .agents --output project-mgmt.zip
 ```
 
 ### Common Errors

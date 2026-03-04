@@ -235,7 +235,7 @@ python scripts/scaffold.py skill my-skill --root /path/to/project/.agents
 To bundle a skill as a self-contained zip for distribution:
 
 ```bash
-python scripts/bundle.py skills/my-skill --system-root .agents --output my-skill.zip
+python scripts/bundle.py .agents/skills/my-skill --system-root .agents --output my-skill.zip
 ```
 
 For complete procedures (creation, migration, auditing, bundling) and all command options, see [`references/workflows.md`](references/workflows.md).
