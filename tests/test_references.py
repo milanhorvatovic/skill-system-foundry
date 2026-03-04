@@ -3,6 +3,8 @@ import sys
 import tempfile
 import unittest
 
+from helpers import write_text
+
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -11,12 +13,6 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from lib.references import find_containing_skill, should_skip_reference, strip_fragment
-
-
-def _write(path: str, content: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
 
 
 class StripFragmentTests(unittest.TestCase):
@@ -56,9 +52,9 @@ class FindContainingSkillTests(unittest.TestCase):
             system_root = os.path.join(tmpdir, "project-root")
             sibling_root = os.path.join(tmpdir, "project-root-sibling")
 
-            _write(os.path.join(system_root, "skills", "alpha", "SKILL.md"), "---\n---\n")
+            write_text(os.path.join(system_root, "skills", "alpha", "SKILL.md"), "---\n---\n")
             outside_file = os.path.join(sibling_root, "skills", "beta", "doc.md")
-            _write(outside_file, "outside")
+            write_text(outside_file, "outside")
 
             self.assertIsNone(find_containing_skill(outside_file, system_root))
 
@@ -72,8 +68,8 @@ class FindContainingSkillTests(unittest.TestCase):
             link_parent = os.path.join(system_root, "skills")
             link_path = os.path.join(link_parent, "linked-skill")
 
-            _write(os.path.join(outside_skill, "SKILL.md"), "---\n---\n")
-            _write(os.path.join(outside_skill, "doc.md"), "content")
+            write_text(os.path.join(outside_skill, "SKILL.md"), "---\n---\n")
+            write_text(os.path.join(outside_skill, "doc.md"), "content")
             os.makedirs(link_parent, exist_ok=True)
 
             try:

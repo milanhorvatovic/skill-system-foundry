@@ -19,6 +19,7 @@ import re
 import shutil
 import sys
 import tempfile
+import traceback
 import zipfile
 from collections.abc import Mapping
 from typing import Dict, List, Optional, Set, Tuple, TypedDict
@@ -643,6 +644,11 @@ def main() -> None:
             "path. Defaults to <skill-name>.zip in the current directory."
         ),
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print traceback details when unexpected errors occur.",
+    )
 
     args = parser.parse_args()
     skill_path = os.path.abspath(args.skill_path)
@@ -765,6 +771,8 @@ def main() -> None:
             f"Check file permissions, symlinks, and output path settings."
         )
         _print_failure_block("unexpected error", [failure])
+        if args.verbose:
+            traceback.print_exc()
         sys.exit(1)
 
     finally:
