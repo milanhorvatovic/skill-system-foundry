@@ -612,6 +612,12 @@ def _print_failure_block(
 
 
 def main() -> None:
+    # On Windows the default console encoding (cp1252) cannot represent
+    # Unicode symbols like ✓, ✗, ⚠.  Reconfigure stdout to replace
+    # unencodable characters rather than crashing.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(
         description="Bundle a skill into a self-contained zip archive.",
         epilog=(
