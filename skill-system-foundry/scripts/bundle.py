@@ -60,8 +60,6 @@ class BundleStats(TypedDict):
     total_size: int
     external_count: int
     skill_name: str
-    bundle_dir: str
-    bundle_base: str
 
 
 # ===================================================================
@@ -115,6 +113,18 @@ def prevalidate(
     scan_result = scan_references(skill_path, system_root)
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
+
+    # 8. Safety: if system root is unknown, external references have
+    #    no boundary enforcement.  Fail early rather than silently
+    #    bundling arbitrary files from the filesystem.
+    if not system_root and scan_result["external_files"]:
+        count = len(scan_result["external_files"])
+        errors.append(
+            f"{LEVEL_FAIL}: Found {count} external reference(s) but no "
+            f"system root could be determined. Without a system root, "
+            f"references cannot be validated against a safe boundary. "
+            f"Use --system-root to specify the skill system root."
+        )
 
     return errors, warnings, scan_result
 
@@ -212,6 +222,11 @@ def _rewrite_reference_target(
 
     base_path, suffix = _split_query_and_fragment(target)
     new_base = rewrite_map.get(base_path)
+    # Fallback: normalise the path to handle semantically equivalent
+    # forms like "../../roles/../roles/foo.md" -> "../../roles/foo.md".
+    if new_base is None:
+        normalised = os.path.normpath(base_path).replace(os.sep, "/")
+        new_base = rewrite_map.get(normalised)
     if new_base is None:
         return raw_target
 
@@ -370,13 +385,17 @@ def create_bundle(
     system_root: Optional[str],
     scan_result: ScanResult,
     exclude_patterns: List[str],
+    *,
+    bundle_base: str,
 ) -> Tuple[str, Dict[str, str], BundleStats]:
     """Create the bundle directory.
+
+    *bundle_base* is a caller-owned temporary directory.  The caller
+    is responsible for cleaning it up (e.g. via ``try/finally``).
 
     Returns (bundle_dir: str, file_mapping: dict, stats: dict).
     """
     skill_name = os.path.basename(os.path.abspath(skill_path))
-    bundle_base = tempfile.mkdtemp(prefix="skill_bundle_")
     bundle_dir = os.path.join(bundle_base, skill_name)
     os.makedirs(bundle_dir)
 
@@ -415,8 +434,6 @@ def create_bundle(
         "total_size": total_size,
         "external_count": len(external_files),
         "skill_name": skill_name,
-        "bundle_dir": bundle_dir,
-        "bundle_base": bundle_base,
     }
     return bundle_dir, file_mapping, stats
 
@@ -673,12 +690,16 @@ def main() -> None:
     # ---- Phase 2: Bundle creation ----
     print(f"\nPhase 2: Bundle creation")
     print("-" * SEPARATOR_WIDTH)
-    bundle_dir, file_mapping, stats = create_bundle(
-        skill_path, system_root, scan_result, BUNDLE_EXCLUDE_PATTERNS
-    )
-
+    bundle_base = tempfile.mkdtemp(prefix="skill_bundle_")
+    phase_name = "bundle creation"
     try:
+        bundle_dir, file_mapping, stats = create_bundle(
+            skill_path, system_root, scan_result, BUNDLE_EXCLUDE_PATTERNS,
+            bundle_base=bundle_base,
+        )
+
         # ---- Phase 3: Post-validation ----
+        phase_name = "post-validation"
         print(f"\nPhase 3: Post-validation")
         print("-" * SEPARATOR_WIDTH)
         post_errors = postvalidate(bundle_dir)
@@ -696,12 +717,27 @@ def main() -> None:
         print("  Post-validation passed.")
 
         # ---- Create archive ----
+        phase_name = "archive creation"
         print(f"\nCreating archive...")
         create_zip(bundle_dir, output_path)
 
+    except Exception as exc:
+        failure = (
+            f"{LEVEL_FAIL}: Unexpected error during {phase_name}: "
+            f"{exc.__class__.__name__}: {exc}. "
+            f"Check file permissions, symlinks, and output path settings."
+        )
+        print(f"\n{'=' * SEPARATOR_WIDTH}")
+        print("Bundling FAILED — unexpected error:\n")
+        print_error_line(failure)
+        fails, warns, infos = categorize_errors([failure])
+        print("-" * SEPARATOR_WIDTH)
+        print_summary(fails, warns, infos)
+        sys.exit(1)
+
     finally:
-        # Clean up temp directory — always, even on unexpected errors
-        shutil.rmtree(stats["bundle_base"], ignore_errors=True)
+        # Clean up temp directory — always, even on unexpected errors.
+        shutil.rmtree(bundle_base, ignore_errors=True)
 
     # ---- Summary ----
     zip_size = os.path.getsize(output_path)
