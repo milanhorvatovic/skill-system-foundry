@@ -14,6 +14,7 @@ from .constants import (
     DIR_SKILLS, DIR_ROLES, DIR_REFERENCES, DIR_ASSETS, DIR_SCRIPTS,
     FILE_SKILL_MD, FILE_MANIFEST,
     BUNDLE_MAX_REFERENCE_DEPTH,
+    BUNDLE_INFER_MAX_WALK_DEPTH,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
 )
@@ -501,8 +502,7 @@ def infer_system_root(skill_path: str) -> str | None:
     skill_path = os.path.abspath(skill_path)
     current = os.path.dirname(skill_path)
 
-    # Walk up at most 5 levels (avoid scanning to filesystem root).
-    for _ in range(5):
+    for _ in range(BUNDLE_INFER_MAX_WALK_DEPTH):
         if not current or current == os.path.dirname(current):
             break
 

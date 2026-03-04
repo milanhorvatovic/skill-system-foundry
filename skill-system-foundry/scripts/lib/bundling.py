@@ -298,8 +298,15 @@ def _build_rewrite_map(
     system_root: str | None,
     file_mapping: dict[str, str],
     reverse_mapping: dict[str, str],
+    skill_files: dict[str, str],
 ) -> dict[str, str]:
-    """Build the old-path -> new-path map used for rewriting one file."""
+    """Build the old-path -> new-path map used for rewriting one file.
+
+    *skill_files* maps ``{abs_original_skill_file: bundle_relative_path}``
+    for files that originated from the skill directory.  This allows
+    system-root-relative references to skill-internal files (e.g.
+    ``skills/<name>/SKILL.md`` in inlined roles) to be rewritten.
+    """
     bundle_file_dir = os.path.dirname(bundle_file)
     rewrite_map: dict[str, str] = {}
 
@@ -321,6 +328,20 @@ def _build_rewrite_map(
             rewrite_map.setdefault(orig_path, new_rel)
             rewrite_map.setdefault(orig_path.replace(os.sep, "/"), new_rel)
 
+    # Add system-root-relative paths for skill-internal files so that
+    # inlined external docs referencing e.g. "skills/<name>/SKILL.md"
+    # get rewritten to the correct bundle-relative path.
+    if system_root:
+        for abs_skill_file, skill_bundle_rel in sorted(skill_files.items()):
+            abs_target = os.path.join(bundle_dir, skill_bundle_rel)
+            new_rel = os.path.relpath(abs_target, bundle_file_dir).replace(os.sep, "/")
+            try:
+                system_rel = os.path.relpath(abs_skill_file, system_root)
+                rewrite_map.setdefault(system_rel, new_rel)
+                rewrite_map.setdefault(system_rel.replace(os.sep, "/"), new_rel)
+            except ValueError:
+                pass
+
     return rewrite_map
 
 
@@ -336,6 +357,18 @@ def _rewrite_markdown_paths(
         bundle_rel: abs_source for abs_source, bundle_rel in file_mapping.items()
     }
 
+    # Map skill-internal files: {abs_original_path: bundle_relative_path}.
+    # These are files copied from the skill directory (not external), used
+    # to rewrite system-root-relative references in inlined external docs.
+    skill_files: dict[str, str] = {}
+    for root, _dirs, files in os.walk(bundle_dir):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            bundle_rel = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
+            if bundle_rel not in reverse_mapping:
+                abs_original = os.path.join(skill_path, bundle_rel)
+                skill_files[abs_original] = bundle_rel
+
     for root, _dirs, files in os.walk(bundle_dir):
         for filename in files:
             if not is_markdown_file(filename):
@@ -349,6 +382,7 @@ def _rewrite_markdown_paths(
                 system_root,
                 file_mapping,
                 reverse_mapping,
+                skill_files,
             )
             if not rewrite_map:
                 continue

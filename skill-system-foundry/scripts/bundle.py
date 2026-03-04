@@ -89,6 +89,11 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
 
+    if len(sys.argv) == 1:
+        if __doc__:
+            print(__doc__.strip())
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="Bundle a skill into a self-contained zip archive.",
         epilog=(
@@ -259,6 +264,13 @@ def main() -> None:
         phase_name = "archive creation"
         print(f"\nCreating archive...")
         create_zip(bundle_dir, output_path)
+
+    except ValueError as exc:
+        _print_failure_block(
+            f"{phase_name} error",
+            [f"{LEVEL_FAIL}: {exc}"],
+        )
+        sys.exit(1)
 
     except Exception as exc:
         failure = (

@@ -57,6 +57,9 @@ bundle:
   # (stricter than the 1024-char Agent Skills spec limit).
   # bundle.py fails if description exceeds this when targeting zip distribution.
   description_max_length: 200
+  # Max directory levels to walk up when inferring the system root
+  # from the skill path.  Prevents scanning to the filesystem root.
+  infer_max_walk_depth: 5
   # Filesystem patterns excluded from the bundle archive.
   exclude_patterns:
     - .git

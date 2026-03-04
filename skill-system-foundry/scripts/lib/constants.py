@@ -114,6 +114,7 @@ RE_SIBLING_CAP_REF = re.compile(_dep["sibling_capability_ref_pattern"])
 _bundle = _config["bundle"]
 BUNDLE_MAX_REFERENCE_DEPTH = int(_bundle["max_reference_depth"])
 BUNDLE_DESCRIPTION_MAX_LENGTH = int(_bundle["description_max_length"])
+BUNDLE_INFER_MAX_WALK_DEPTH = int(_bundle["infer_max_walk_depth"])
 BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
 
 # Clean up private names
