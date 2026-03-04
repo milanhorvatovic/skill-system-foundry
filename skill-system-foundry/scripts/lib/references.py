@@ -78,15 +78,17 @@ def is_within_directory(filepath: str, directory: str) -> bool:
     Resolves symlinks so that a symlink inside *directory* whose real
     target is outside will correctly return ``False``.  Normalises
     case so differing drive-letter casing on Windows doesn't cause
-    false negatives.
+    false negatives.  Handles filesystem roots correctly (``/`` on
+    POSIX, ``C:\\`` on Windows).
     """
     filepath_norm = os.path.normcase(os.path.realpath(filepath))
     directory_norm = os.path.normcase(os.path.realpath(directory))
-    # Trailing sep avoids false matches like /foo/bar vs /foo/barbaz
-    return (
-        filepath_norm == directory_norm
-        or filepath_norm.startswith(directory_norm + os.sep)
-    )
+    try:
+        common = os.path.commonpath([filepath_norm, directory_norm])
+    except ValueError:
+        # Different drives on Windows or otherwise incomparable paths
+        return False
+    return common == directory_norm
 
 
 # ===================================================================

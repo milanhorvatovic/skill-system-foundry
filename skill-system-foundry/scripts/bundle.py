@@ -235,12 +235,10 @@ def main() -> None:
         for warn in warnings:
             print(f"    {warn}")
 
-    if scan_result is None:
-        print(
-            "Error: pre-validation did not produce a scan result. "
-            "Re-run with --system-root and inspect validation output."
-        )
-        sys.exit(1)
+    assert scan_result is not None, (
+        "Internal error: pre-validation completed without producing a scan "
+        "result. Check prevalidate() implementation and call site."
+    )
 
     ext_count = len(scan_result["external_files"])
     print(f"  Pre-validation passed. {ext_count} external file(s) to include.")
