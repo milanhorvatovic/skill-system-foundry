@@ -411,6 +411,17 @@ def scan_references(
             if is_within_directory(resolved, skill_path):
                 continue
 
+            # ---- No system root — refuse to traverse outside the skill ----
+            if not system_root:
+                errors.append(
+                    f"{LEVEL_FAIL}: External reference in "
+                    f"'{_rel(filepath)}' line {line_num}: '{raw_ref}' "
+                    f"resolves outside the skill directory but no system "
+                    f"root is available to enforce safety boundaries. "
+                    f"Use --system-root to specify the skill system root."
+                )
+                continue
+
             # ---- Non-markdown detected reference (warn only) ----
             if ref_type == "text_detected":
                 warnings.append(

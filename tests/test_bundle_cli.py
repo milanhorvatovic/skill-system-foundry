@@ -102,7 +102,8 @@ class CLISmokeTests(unittest.TestCase):
 
             self.assertEqual(proc.returncode, 1)
             self.assertIn(
-                "Found 1 external reference(s) but no system root could be determined",
+                "resolves outside the skill directory but no system root "
+                "is available to enforce safety boundaries",
                 proc.stdout,
             )
 

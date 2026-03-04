@@ -13,7 +13,13 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.bundling import _rewrite_markdown_content, postvalidate
+from lib.bundling import (
+    _copy_external_files,
+    _copy_skill,
+    _rewrite_markdown_content,
+    postvalidate,
+)
+from lib.references import compute_bundle_path
 
 
 class MarkdownRewriteTests(unittest.TestCase):
@@ -78,6 +84,116 @@ class PostValidateTests(unittest.TestCase):
             self.assertEqual(len(unresolved), 1)
             self.assertIn("'references/guide.md' line 1", unresolved[0])
             self.assertNotIn("\\", unresolved[0])
+
+
+class CopyExternalFilesCollisionTests(unittest.TestCase):
+    def test_external_vs_external_collision_is_rejected(self) -> None:
+        """Two different external files mapping to the same bundle path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            # Create two files that will both classify to references/<same name>
+            ext_a = os.path.join(system_root, "shared", "guide.md")
+            ext_b = os.path.join(system_root, "docs", "guide.md")
+            write_text(ext_a, "Guide A")
+            write_text(ext_b, "Guide B")
+
+            # Both should map to references/guide.md (non-standard dirs
+            # fall back to references/<basename>).
+            path_a = compute_bundle_path(ext_a, system_root)
+            path_b = compute_bundle_path(ext_b, system_root)
+            self.assertEqual(path_a, path_b)
+
+            with self.assertRaises(ValueError) as cm:
+                _copy_external_files({ext_a, ext_b}, system_root, bundle_dir)
+
+            self.assertIn("Bundle path collision", str(cm.exception))
+
+    def test_external_overwrites_internal_file_is_rejected(self) -> None:
+        """An external file would overwrite a skill-internal file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            # Create a skill with references/guide.md
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(os.path.join(skill_dir, "references", "guide.md"), "Internal")
+
+            # Simulate _copy_skill: put the skill file in the bundle
+            internal_target = os.path.join(bundle_dir, "references", "guide.md")
+            write_text(internal_target, "Internal")
+
+            # Create an external file that maps to references/guide.md
+            ext_file = os.path.join(system_root, "references", "guide.md")
+            write_text(ext_file, "External")
+            self.assertEqual(
+                compute_bundle_path(ext_file, system_root), "references/guide.md"
+            )
+
+            with self.assertRaises(ValueError) as cm:
+                _copy_external_files({ext_file}, system_root, bundle_dir)
+
+            self.assertIn("overwrite skill-internal file", str(cm.exception))
+
+
+class CopySkillSymlinkBoundaryTests(unittest.TestCase):
+    def test_symlink_escaping_boundary_is_rejected(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            outside_file = os.path.join(tmpdir, "outside", "secret.txt")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(outside_file, "secret content")
+            os.makedirs(bundle_dir, exist_ok=True)
+
+            # Create a symlink inside the skill pointing outside the root
+            link_path = os.path.join(skill_dir, "secret.txt")
+            try:
+                os.symlink(outside_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            with self.assertRaises(ValueError) as cm:
+                _copy_skill(skill_dir, bundle_dir, [], system_root)
+
+            self.assertIn("Symlink escapes system boundary", str(cm.exception))
+
+    def test_symlink_within_boundary_is_allowed(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            internal_file = os.path.join(system_root, "shared", "allowed.txt")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(internal_file, "allowed content")
+            os.makedirs(bundle_dir, exist_ok=True)
+
+            # Create a symlink inside the skill pointing within the root
+            link_path = os.path.join(skill_dir, "allowed.txt")
+            try:
+                os.symlink(internal_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Should not raise
+            _copy_skill(skill_dir, bundle_dir, [], system_root)
+
+            copied = os.path.join(bundle_dir, "allowed.txt")
+            self.assertTrue(os.path.exists(copied))
+            with open(copied, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "allowed content")
 
 
 if __name__ == "__main__":

@@ -131,21 +131,7 @@ When a skill is packaged as a zip bundle for distribution (Claude.ai upload, Gem
 
 ### Bundle Structure
 
-```
-<skill-name>/
-├── SKILL.md                    ← registered entry point
-├── assets/
-├── capabilities/
-│   ├── <capability-a>/
-│   │   ├── capability.md       ← not SKILL.md (avoids zip constraint)
-│   │   └── references/
-│   └── <capability-b>/
-│       ├── capability.md
-│       └── references/
-├── references/
-├── scripts/
-└── roles/                      ← inlined from system level
-```
+The archive structure is defined in [`tool-integration.md` — Required Archive Structure](tool-integration.md#required-archive-structure). The key differences from the project layout are summarised below.
 
 ### Distinctions from Project Layout
 
