@@ -213,7 +213,7 @@ def _copy_external_files(
     # Reverse lookup: bundle_rel -> source path (for collision detection)
     dest_to_source: dict[str, str] = {}
 
-    for ext_file in external_files:
+    for ext_file in sorted(external_files):
         if not os.path.isfile(ext_file):
             raise ValueError(
                 f"External reference is not a regular file: '{ext_file}'. "
@@ -658,8 +658,9 @@ def create_zip(bundle_dir: str, output_path: str) -> str:
     bundle_base = os.path.dirname(bundle_dir)
 
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, _dirs, files in os.walk(bundle_dir):
-            for filename in files:
+        for root, dirs, files in os.walk(bundle_dir):
+            dirs.sort()
+            for filename in sorted(files):
                 filepath = os.path.join(root, filename)
                 arcname = os.path.relpath(filepath, bundle_base).replace(os.sep, "/")
                 zf.write(filepath, arcname)

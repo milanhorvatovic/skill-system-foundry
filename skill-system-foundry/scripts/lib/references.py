@@ -131,12 +131,18 @@ def should_skip_reference(ref_path: str) -> bool:
     if not path:
         return True
 
+    # Check URL schemes on the raw path first.
     if path.startswith(("http://", "https://", "#", "mailto:", "ftp://")):
         return True
 
     if "<" in path or ">" in path:
         # Allow markdown-wrapped local paths: <path/to/file.md> "Title"
         if RE_WRAPPED_LOCAL_REF.match(path):
+            # Unwrap and re-check for URL schemes inside the brackets
+            # so that autolinks like <https://example.com> are skipped.
+            inner = path.split("<", 1)[1].split(">", 1)[0].strip()
+            if inner.startswith(("http://", "https://", "mailto:", "ftp://")):
+                return True
             return False
         return True
 
@@ -446,6 +452,14 @@ def scan_references(
                     f"in the bundle. You may need to update it manually."
                 )
                 external_files.add(resolved)
+                # Still recurse so transitive dependencies of the
+                # referenced file are discovered (the warning above
+                # only concerns the originating non-markdown reference).
+                if resolved not in scanned_external:
+                    scanned_external.add(resolved)
+                    new_set = ancestor_set | frozenset({resolved})
+                    new_path = ancestor_path + (resolved,)
+                    _scan_file(resolved, depth + 1, new_set, new_path)
                 continue
 
             # ---- Cross-skill reference ----
