@@ -37,6 +37,10 @@ class MarkdownRewriteTests(unittest.TestCase):
             "Use `references/foo.md` and `roles/reviewer.md`.": "Use `references/inlined/foo.md` and `roles/core/reviewer.md`.",
             "Use `references/foo.md#overview`.": "Use `references/inlined/foo.md#overview`.",
             "Leave [doc](references/missing.md) unchanged.": "Leave [doc](references/missing.md) unchanged.",
+            # Non-canonical paths: normpath fallback rewrites equivalent forms
+            "See [doc](references/../references/foo.md).": "See [doc](references/inlined/foo.md).",
+            "See [doc](./references/foo.md).": "See [doc](references/inlined/foo.md).",
+            "Use `roles/../roles/reviewer.md`.": "Use `roles/core/reviewer.md`.",
         }
 
         for source, expected in cases.items():

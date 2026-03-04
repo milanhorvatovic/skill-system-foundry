@@ -9,11 +9,9 @@ Consumers import the public functions:
     from lib.references import scan_references, compute_bundle_path
 """
 
-from __future__ import annotations
-
 import os
 import re
-from typing import Dict, FrozenSet, List, Literal, Optional, Set, Tuple, TypedDict
+from typing import Literal, TypedDict
 
 from .constants import (
     DIR_SKILLS, DIR_ROLES, DIR_REFERENCES, DIR_ASSETS, DIR_SCRIPTS,
@@ -141,21 +139,21 @@ def should_skip_reference(ref_path: str) -> bool:
 # Type aliases for reference tuples
 ReferenceType = Literal["markdown_link", "backtick", "text_detected"]
 ResolveFailReason = Literal["absolute_path", "escapes_system_root", "not_found"]
-RawRef = Tuple[str, int, ReferenceType]  # (ref_path, line_num, ref_type)
-FilteredRef = Tuple[str, str, int, ReferenceType]  # (raw_ref, clean_path, line_num, ref_type)
-ResolvedRef = Tuple[str, int, ReferenceType, Optional[str]]  # (raw_ref, line_num, ref_type, resolved)
+RawRef = tuple[str, int, ReferenceType]  # (ref_path, line_num, ref_type)
+FilteredRef = tuple[str, str, int, ReferenceType]  # (raw_ref, clean_path, line_num, ref_type)
+ResolvedRef = tuple[str, int, ReferenceType, str | None]  # (raw_ref, line_num, ref_type, resolved)
 
 
 class ScanResult(TypedDict):
     """Structured output of ``scan_references()``."""
 
-    external_files: Set[str]
-    errors: List[str]
-    warnings: List[str]
-    reference_map: Dict[str, List[ResolvedRef]]
+    external_files: set[str]
+    errors: list[str]
+    warnings: list[str]
+    reference_map: dict[str, list[ResolvedRef]]
 
 
-def extract_references(filepath: str) -> List[FilteredRef]:
+def extract_references(filepath: str) -> list[FilteredRef]:
     """Extract file references from a single file.
 
     For markdown files, extracts markdown-link and backtick references.
@@ -205,7 +203,7 @@ def extract_references(filepath: str) -> List[FilteredRef]:
     return _filter_refs(refs)
 
 
-def _filter_refs(refs: List[RawRef]) -> List[FilteredRef]:
+def _filter_refs(refs: list[RawRef]) -> list[FilteredRef]:
     """Remove URLs, anchors, template placeholders, and obvious non-paths.
 
     Returns 4-tuples: ``(raw_ref, clean_path, line_num, ref_type)``.
@@ -226,7 +224,7 @@ def _filter_refs(refs: List[RawRef]) -> List[FilteredRef]:
 # Path Resolution
 # ===================================================================
 
-def resolve_reference(ref_path: str, source_file: str, system_root: Optional[str] = None) -> Optional[str]:
+def resolve_reference(ref_path: str, source_file: str, system_root: str | None = None) -> str | None:
     """Resolve a reference path to an absolute filesystem path.
 
     Tries in order:
@@ -246,8 +244,8 @@ def resolve_reference(ref_path: str, source_file: str, system_root: Optional[str
 def resolve_reference_with_reason(
     ref_path: str,
     source_file: str,
-    system_root: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[ResolveFailReason]]:
+    system_root: str | None = None,
+) -> tuple[str | None, ResolveFailReason | None]:
     """Resolve a reference and return both path and failure reason.
 
     Returns a tuple:
@@ -285,7 +283,7 @@ def resolve_reference_with_reason(
     return None, "not_found"
 
 
-def find_containing_skill(filepath: str, system_root: str) -> Optional[str]:
+def find_containing_skill(filepath: str, system_root: str) -> str | None:
     """Find which skill directory contains *filepath*.
 
     Walks up from the file looking for a ``SKILL.md``.  Returns the
@@ -310,8 +308,8 @@ def find_containing_skill(filepath: str, system_root: str) -> Optional[str]:
 
 def scan_references(
     skill_path: str,
-    system_root: Optional[str] = None,
-    max_depth: Optional[int] = None,
+    system_root: str | None = None,
+    max_depth: int | None = None,
 ) -> ScanResult:
     """Scan a skill's full reference graph for external dependencies.
 
@@ -344,19 +342,19 @@ def scan_references(
     else:
         system_root = infer_system_root(skill_path)
 
-    external_files: Set[str] = set()
-    errors: List[str] = []
-    warnings: List[str] = []
-    reference_map: Dict[str, List[ResolvedRef]] = {}
+    external_files: set[str] = set()
+    errors: list[str] = []
+    warnings: list[str] = []
+    reference_map: dict[str, list[ResolvedRef]] = {}
 
     # External files whose subtrees have been fully traversed.
-    scanned_external: Set[str] = set()
+    scanned_external: set[str] = set()
 
     def _scan_file(
         filepath: str,
         depth: int,
-        ancestor_set: FrozenSet[str],
-        ancestor_path: Tuple[str, ...],
+        ancestor_set: frozenset[str],
+        ancestor_path: tuple[str, ...],
     ) -> None:
         """Recursively scan *filepath* and classify its references.
 
@@ -378,7 +376,7 @@ def scan_references(
         if not refs:
             return
 
-        resolved_refs: List[ResolvedRef] = []
+        resolved_refs: list[ResolvedRef] = []
 
         for raw_ref, clean_path, line_num, ref_type in refs:
             resolved, fail_reason = resolve_reference_with_reason(
@@ -497,7 +495,7 @@ def scan_references(
 # System Root Inference
 # ===================================================================
 
-def infer_system_root(skill_path: str) -> Optional[str]:
+def infer_system_root(skill_path: str) -> str | None:
     """Attempt to locate the skill system root from *skill_path*.
 
     Walks up looking for ``manifest.yaml`` or a ``skills/`` parent
@@ -530,7 +528,7 @@ def infer_system_root(skill_path: str) -> Optional[str]:
 # Bundle Path Computation
 # ===================================================================
 
-def classify_external_file(filepath: str, system_root: Optional[str]) -> str:
+def classify_external_file(filepath: str, system_root: str | None) -> str:
     """Determine the bundle subdirectory for an external file.
 
     Returns one of the standard directory names: ``'roles'``,
@@ -554,7 +552,7 @@ def classify_external_file(filepath: str, system_root: Optional[str]) -> str:
     return DIR_REFERENCES
 
 
-def compute_bundle_path(external_file: str, system_root: Optional[str]) -> str:
+def compute_bundle_path(external_file: str, system_root: str | None) -> str:
     """Compute the target path for an external file within the bundle.
 
     Roles preserve their full group structure under ``roles/``.

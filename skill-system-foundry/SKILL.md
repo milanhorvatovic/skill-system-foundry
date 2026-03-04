@@ -11,7 +11,7 @@ description: >
   AI-agnostic automation across multiple tools like Claude Code, Cursor, or
   Codex.
 allowed-tools: Bash Read Write Edit Glob Grep
-compatibility: Requires Python 3.8+ (stdlib only) for validation and scaffolding scripts.
+compatibility: Requires Python 3.12+ (stdlib only) for validation and scaffolding scripts.
 license: MIT
 metadata:
   author: Milan Horvatovič

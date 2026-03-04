@@ -20,7 +20,7 @@ Thank you for your interest in contributing. This document explains how to get i
 
 ## Development Setup
 
-**Requirements:** Python 3.8+ (standard library only — no external dependencies).
+**Requirements:** Python 3.12+ (standard library only — no external dependencies).
 
 ```bash
 git clone https://github.com/milanhorvatovic/skill-system-foundry.git
