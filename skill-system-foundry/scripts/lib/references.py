@@ -9,12 +9,15 @@ Consumers import the public functions:
     from lib.references import scan_references, compute_bundle_path
 """
 
+from __future__ import annotations
+
 import os
 import re
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from .constants import (
     DIR_SKILLS, DIR_ROLES, DIR_REFERENCES, DIR_ASSETS, DIR_SCRIPTS,
-    FILE_SKILL_MD,
+    FILE_SKILL_MD, FILE_MANIFEST,
     BUNDLE_MAX_REFERENCE_DEPTH,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
@@ -55,18 +58,18 @@ BINARY_EXTENSIONS = frozenset({
 # Utility Functions
 # ===================================================================
 
-def is_binary_file(filepath):
+def is_binary_file(filepath: str) -> bool:
     """Check if a file is likely binary based on its extension."""
     _, ext = os.path.splitext(filepath)
     return ext.lower() in BINARY_EXTENSIONS
 
 
-def is_markdown_file(filepath):
+def is_markdown_file(filepath: str) -> bool:
     """Check if a file is a markdown file."""
     return filepath.lower().endswith(EXT_MARKDOWN)
 
 
-def is_within_directory(filepath, directory):
+def is_within_directory(filepath: str, directory: str) -> bool:
     """Check whether *filepath* is inside (or equal to) *directory*.
 
     Resolves symlinks so that a symlink inside *directory* whose real
@@ -82,7 +85,7 @@ def is_within_directory(filepath, directory):
 # Reference Extraction
 # ===================================================================
 
-def strip_fragment(ref_path):
+def strip_fragment(ref_path: str) -> str:
     """Strip query/anchor/title wrappers from a reference path.
 
     Returns the filesystem-resolvable path portion, removing:
@@ -109,7 +112,7 @@ def strip_fragment(ref_path):
     return path.strip()
 
 
-def should_skip_reference(ref_path):
+def should_skip_reference(ref_path: str) -> bool:
     """Return True when a reference should not be treated as a local file."""
     if not ref_path:
         return True
@@ -130,7 +133,18 @@ def should_skip_reference(ref_path):
     return False
 
 
-def extract_references(filepath):
+# Type aliases for reference tuples
+RawRef = Tuple[str, int, str]  # (ref_path, line_num, ref_type)
+FilteredRef = Tuple[str, str, int, str]  # (raw_ref, clean_path, line_num, ref_type)
+ResolvedRef = Tuple[str, int, str, Optional[str]]  # (raw_ref, line_num, ref_type, resolved)
+
+# Type alias for scan_references() return value.
+# Keys: 'external_files' (Set[str]), 'errors' (List[str]),
+#        'warnings' (List[str]), 'reference_map' (Dict[str, List[ResolvedRef]])
+ScanResult = Dict[str, Any]
+
+
+def extract_references(filepath: str) -> List[FilteredRef]:
     """Extract file references from a single file.
 
     For markdown files, extracts markdown-link and backtick references.
@@ -160,11 +174,12 @@ def extract_references(filepath):
 
     if is_markdown_file(filepath):
         for line_num, line in enumerate(lines, 1):
+            seen_in_line = set()
             for match in RE_BUNDLE_MD_LINK.finditer(line):
                 ref_path = match.group(2)
                 refs.append((ref_path, line_num, "markdown_link"))
+                seen_in_line.add(ref_path)
             # Backtick refs — avoid duplicating paths already captured
-            seen_in_line = {r[0] for r in refs if r[1] == line_num}
             for match in RE_BUNDLE_BACKTICK.finditer(line):
                 ref_path = match.group(1)
                 if ref_path not in seen_in_line:
@@ -179,7 +194,7 @@ def extract_references(filepath):
     return _filter_refs(refs)
 
 
-def _filter_refs(refs):
+def _filter_refs(refs: List[RawRef]) -> List[FilteredRef]:
     """Remove URLs, anchors, template placeholders, and obvious non-paths.
 
     Returns 4-tuples: ``(raw_ref, clean_path, line_num, ref_type)``.
@@ -200,7 +215,7 @@ def _filter_refs(refs):
 # Path Resolution
 # ===================================================================
 
-def resolve_reference(ref_path, source_file, system_root=None):
+def resolve_reference(ref_path: str, source_file: str, system_root: Optional[str] = None) -> Optional[str]:
     """Resolve a reference path to an absolute filesystem path.
 
     Tries in order:
@@ -217,7 +232,7 @@ def resolve_reference(ref_path, source_file, system_root=None):
     return resolved
 
 
-def resolve_reference_with_reason(ref_path, source_file, system_root=None):
+def resolve_reference_with_reason(ref_path: str, source_file: str, system_root: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Resolve a reference and return both path and failure reason.
 
     Returns a tuple:
@@ -255,7 +270,7 @@ def resolve_reference_with_reason(ref_path, source_file, system_root=None):
     return None, "not_found"
 
 
-def find_containing_skill(filepath, system_root):
+def find_containing_skill(filepath: str, system_root: str) -> Optional[str]:
     """Find which skill directory contains *filepath*.
 
     Walks up from the file looking for a ``SKILL.md``.  Returns the
@@ -278,7 +293,7 @@ def find_containing_skill(filepath, system_root):
 # Reference Graph Traversal
 # ===================================================================
 
-def scan_references(skill_path, system_root=None, max_depth=None):
+def scan_references(skill_path: str, system_root: Optional[str] = None, max_depth: Optional[int] = None) -> ScanResult:
     """Scan a skill's full reference graph for external dependencies.
 
     Traverses all files in *skill_path*, finds external references,
@@ -458,7 +473,7 @@ def scan_references(skill_path, system_root=None, max_depth=None):
 # System Root Inference
 # ===================================================================
 
-def infer_system_root(skill_path):
+def infer_system_root(skill_path: str) -> Optional[str]:
     """Attempt to locate the skill system root from *skill_path*.
 
     Walks up looking for ``manifest.yaml`` or a ``skills/`` parent
@@ -472,8 +487,8 @@ def infer_system_root(skill_path):
         if not current or current == os.path.dirname(current):
             break
 
-        # Check for manifest.yaml at this level
-        if os.path.exists(os.path.join(current, "manifest.yaml")):
+        # Check for manifest file at this level
+        if os.path.exists(os.path.join(current, FILE_MANIFEST)):
             return current
 
         # Check if this directory contains a skills/ subdirectory
@@ -491,7 +506,7 @@ def infer_system_root(skill_path):
 # Bundle Path Computation
 # ===================================================================
 
-def classify_external_file(filepath, system_root):
+def classify_external_file(filepath: str, system_root: Optional[str]) -> str:
     """Determine the bundle subdirectory for an external file.
 
     Returns one of the standard directory names: ``'roles'``,
@@ -515,7 +530,7 @@ def classify_external_file(filepath, system_root):
     return DIR_REFERENCES
 
 
-def compute_bundle_path(external_file, system_root):
+def compute_bundle_path(external_file: str, system_root: Optional[str]) -> str:
     """Compute the target path for an external file within the bundle.
 
     Roles preserve their full group structure under ``roles/``.

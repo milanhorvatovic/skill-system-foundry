@@ -12,6 +12,8 @@ Usage:
     python scripts/bundle.py <skill-path> --system-root .agents --output dist/
 """
 
+from __future__ import annotations
+
 import argparse
 import fnmatch
 import os
@@ -20,6 +22,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
@@ -53,7 +56,7 @@ from validate_skill import validate_skill
 # Phase 1: Pre-validation
 # ===================================================================
 
-def prevalidate(skill_path, system_root):
+def prevalidate(skill_path: str, system_root: Optional[str]) -> Tuple[List[str], List[str], Optional[Dict[str, Any]]]:
     """Run all pre-validation checks.
 
     Returns (errors: list, warnings: list, scan_result: dict).
@@ -105,7 +108,7 @@ def prevalidate(skill_path, system_root):
 # Phase 2: Bundle Creation
 # ===================================================================
 
-def _should_exclude(path, exclude_patterns):
+def _should_exclude(path: str, exclude_patterns: List[str]) -> bool:
     """Check if a path component matches any exclude pattern."""
     basename = os.path.basename(path)
     for pattern in exclude_patterns:
@@ -114,7 +117,7 @@ def _should_exclude(path, exclude_patterns):
     return False
 
 
-def _copy_skill(skill_path, bundle_dir, exclude_patterns):
+def _copy_skill(skill_path: str, bundle_dir: str, exclude_patterns: List[str]) -> None:
     """Copy the skill directory into the bundle, excluding unwanted files."""
     for root, dirs, files in os.walk(skill_path):
         # Filter excluded directories in-place so os.walk skips them
@@ -135,7 +138,7 @@ def _copy_skill(skill_path, bundle_dir, exclude_patterns):
             shutil.copy2(src, dst)
 
 
-def _copy_external_files(external_files, system_root, bundle_dir):
+def _copy_external_files(external_files: Set[str], system_root: Optional[str], bundle_dir: str) -> Dict[str, str]:
     """Copy external files into the bundle at their classified locations.
 
     Returns a mapping {absolute_source_path: relative_bundle_path}.
@@ -152,7 +155,7 @@ def _copy_external_files(external_files, system_root, bundle_dir):
     return file_mapping
 
 
-def _rewrite_markdown_paths(bundle_dir, skill_path, system_root, file_mapping):
+def _rewrite_markdown_paths(bundle_dir: str, skill_path: str, system_root: Optional[str], file_mapping: Dict[str, str]) -> int:
     """Rewrite file references in all markdown files within the bundle.
 
     Updates markdown links and backtick references so they point to the
@@ -236,13 +239,13 @@ def _rewrite_markdown_paths(bundle_dir, skill_path, system_root, file_mapping):
 
 
 def _compute_original_paths(
-    abs_source,
-    bundle_file,
-    skill_path,
-    bundle_dir,
-    system_root,
-    reverse_mapping,
-):
+    abs_source: str,
+    bundle_file: str,
+    skill_path: str,
+    bundle_dir: str,
+    system_root: Optional[str],
+    reverse_mapping: Dict[str, str],
+) -> Set[str]:
     """Compute all path forms a markdown file might use to reference a source.
 
     Given that *bundle_file* is the file in the bundle (copied from somewhere
@@ -252,7 +255,9 @@ def _compute_original_paths(
     paths = set()
 
     # Resolve the original source file path for this bundled markdown file.
-    bundle_rel = os.path.relpath(bundle_file, bundle_dir)
+    # Normalize to forward slashes so the lookup matches keys from
+    # compute_bundle_path(), which always uses forward slashes.
+    bundle_rel = os.path.relpath(bundle_file, bundle_dir).replace(os.sep, "/")
     original_file = reverse_mapping.get(bundle_rel)
     if not original_file:
         original_file = os.path.join(skill_path, bundle_rel)
@@ -278,7 +283,7 @@ def _compute_original_paths(
     return paths
 
 
-def create_bundle(skill_path, system_root, scan_result, exclude_patterns):
+def create_bundle(skill_path: str, system_root: Optional[str], scan_result: Dict[str, Any], exclude_patterns: List[str]) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
     """Create the bundle directory.
 
     Returns (bundle_dir: str, file_mapping: dict, stats: dict).
@@ -333,7 +338,7 @@ def create_bundle(skill_path, system_root, scan_result, exclude_patterns):
 # Phase 3: Post-validation
 # ===================================================================
 
-def postvalidate(bundle_dir):
+def postvalidate(bundle_dir: str) -> List[str]:
     """Verify the bundle is self-contained and well-formed.
 
     Returns a list of error strings (empty if all checks pass).
@@ -418,7 +423,7 @@ def postvalidate(bundle_dir):
 # Archive Creation
 # ===================================================================
 
-def create_zip(bundle_dir, output_path):
+def create_zip(bundle_dir: str, output_path: str) -> str:
     """Create a zip archive from the bundle directory.
 
     The archive contains the skill folder at its root, per Claude.ai
@@ -443,7 +448,7 @@ def create_zip(bundle_dir, output_path):
 # CLI
 # ===================================================================
 
-def _format_size(nbytes):
+def _format_size(nbytes: int) -> str:
     """Format byte count as human-readable string."""
     if nbytes < 1024:
         return f"{nbytes} B"
@@ -452,7 +457,7 @@ def _format_size(nbytes):
     return f"{nbytes / 1048576:.1f} MB"
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Bundle a skill into a self-contained zip archive.",
         epilog=(
@@ -567,7 +572,8 @@ def main():
         for warn in warnings:
             print(f"    {warn}")
 
-    ext_count = len(scan_result["external_files"]) if scan_result else 0
+    assert scan_result is not None  # guaranteed: errors would have caused early exit
+    ext_count = len(scan_result["external_files"])
     print(f"  Pre-validation passed. {ext_count} external file(s) to include.")
 
     # ---- Phase 2: Bundle creation ----
