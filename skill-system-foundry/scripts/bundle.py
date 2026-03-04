@@ -22,7 +22,7 @@ import shutil
 import sys
 import tempfile
 import zipfile
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Set, Tuple, TypedDict
 
 _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
@@ -38,6 +38,7 @@ from lib.constants import (
 from lib.frontmatter import load_frontmatter
 from lib.references import (
     scan_references,
+    ScanResult,
     compute_bundle_path,
     infer_system_root,
     is_markdown_file,
@@ -52,11 +53,25 @@ from lib.reporting import categorize_errors, print_error_line, print_summary
 from validate_skill import validate_skill
 
 
+class BundleStats(TypedDict):
+    """Bundle creation statistics used in summary output."""
+
+    file_count: int
+    total_size: int
+    external_count: int
+    skill_name: str
+    bundle_dir: str
+    bundle_base: str
+
+
 # ===================================================================
 # Phase 1: Pre-validation
 # ===================================================================
 
-def prevalidate(skill_path: str, system_root: Optional[str]) -> Tuple[List[str], List[str], Optional[Dict[str, Any]]]:
+def prevalidate(
+    skill_path: str,
+    system_root: Optional[str],
+) -> Tuple[List[str], List[str], Optional[ScanResult]]:
     """Run all pre-validation checks.
 
     Returns (errors: list, warnings: list, scan_result: dict).
@@ -155,15 +170,124 @@ def _copy_external_files(external_files: Set[str], system_root: Optional[str], b
     return file_mapping
 
 
-def _rewrite_markdown_paths(bundle_dir: str, skill_path: str, system_root: Optional[str], file_mapping: Dict[str, str]) -> int:
-    """Rewrite file references in all markdown files within the bundle.
+def _split_query_and_fragment(path: str) -> Tuple[str, str]:
+    """Split *path* into base path and optional query/fragment suffix."""
+    query_index = path.find("?")
+    fragment_index = path.find("#")
+    indexes = [idx for idx in (query_index, fragment_index) if idx >= 0]
+    if not indexes:
+        return path, ""
 
-    Updates markdown links and backtick references so they point to the
-    correct locations within the self-contained bundle.
-    """
+    split_index = min(indexes)
+    return path[:split_index], path[split_index:]
+
+
+def _rewrite_reference_target(
+    raw_target: str,
+    rewrite_map: Mapping[str, str],
+    *,
+    allow_title: bool,
+) -> str:
+    """Rewrite a markdown target while preserving wrappers and suffixes."""
+    if not raw_target:
+        return raw_target
+
+    leading_len = len(raw_target) - len(raw_target.lstrip())
+    trailing_len = len(raw_target) - len(raw_target.rstrip())
+    leading = raw_target[:leading_len]
+    trailing = raw_target[len(raw_target) - trailing_len:] if trailing_len else ""
+
+    target = raw_target.strip()
+    title_suffix = ""
+    if allow_title:
+        title_match = re.search(r'''\s+["'][^"']*["']\s*$''', target)
+        if title_match:
+            title_suffix = target[title_match.start():]
+            target = target[:title_match.start()].strip()
+
+    wrapped = False
+    if target.startswith("<") and target.endswith(">"):
+        wrapped = True
+        target = target[1:-1].strip()
+
+    base_path, suffix = _split_query_and_fragment(target)
+    new_base = rewrite_map.get(base_path)
+    if new_base is None:
+        return raw_target
+
+    rewritten_target = new_base + suffix
+    if wrapped:
+        rewritten_target = f"<{rewritten_target}>"
+
+    return f"{leading}{rewritten_target}{title_suffix}{trailing}"
+
+
+def _rewrite_markdown_content(content: str, rewrite_map: Mapping[str, str]) -> str:
+    """Rewrite markdown links and backticks using a path rewrite map."""
+
+    def _replace_markdown_link(match: re.Match[str]) -> str:
+        label = match.group(1)
+        target = match.group(2)
+        new_target = _rewrite_reference_target(target, rewrite_map, allow_title=True)
+        if new_target == target:
+            return match.group(0)
+        return f"[{label}]({new_target})"
+
+    def _replace_backtick(match: re.Match[str]) -> str:
+        target = match.group(1)
+        new_target = _rewrite_reference_target(target, rewrite_map, allow_title=False)
+        if new_target == target:
+            return match.group(0)
+        return f"`{new_target}`"
+
+    updated = RE_BUNDLE_MD_LINK.sub(_replace_markdown_link, content)
+    return RE_BUNDLE_BACKTICK.sub(_replace_backtick, updated)
+
+
+def _build_rewrite_map(
+    bundle_file: str,
+    bundle_dir: str,
+    skill_path: str,
+    system_root: Optional[str],
+    file_mapping: Dict[str, str],
+    reverse_mapping: Dict[str, str],
+) -> Dict[str, str]:
+    """Build the old-path -> new-path map used for rewriting one file."""
+    bundle_file_dir = os.path.dirname(bundle_file)
+    rewrite_map: Dict[str, str] = {}
+
+    for abs_source, bundle_rel in sorted(file_mapping.items(), key=lambda item: item[1]):
+        abs_target = os.path.join(bundle_dir, bundle_rel)
+        new_rel = os.path.relpath(abs_target, bundle_file_dir).replace(os.sep, "/")
+        original_paths = _compute_original_paths(
+            abs_source,
+            bundle_file,
+            skill_path,
+            bundle_dir,
+            system_root,
+            reverse_mapping,
+        )
+
+        for orig_path in sorted(original_paths):
+            if not orig_path:
+                continue
+            rewrite_map.setdefault(orig_path, new_rel)
+            rewrite_map.setdefault(orig_path.replace(os.sep, "/"), new_rel)
+
+    return rewrite_map
+
+
+def _rewrite_markdown_paths(
+    bundle_dir: str,
+    skill_path: str,
+    system_root: Optional[str],
+    file_mapping: Dict[str, str],
+) -> int:
+    """Rewrite file references in all markdown files within the bundle."""
     rewrite_count = 0
-
-    reverse_mapping = {bundle_rel: abs_source for abs_source, bundle_rel in file_mapping.items()}
+    reverse_mapping = {
+        bundle_rel: abs_source for abs_source, bundle_rel in file_mapping.items()
+    }
 
     for root, _dirs, files in os.walk(bundle_dir):
         for filename in files:
@@ -171,69 +295,27 @@ def _rewrite_markdown_paths(bundle_dir: str, skill_path: str, system_root: Optio
                 continue
 
             filepath = os.path.join(root, filename)
+            rewrite_map = _build_rewrite_map(
+                filepath,
+                bundle_dir,
+                skill_path,
+                system_root,
+                file_mapping,
+                reverse_mapping,
+            )
+            if not rewrite_map:
+                continue
+
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            original_content = content
+            updated = _rewrite_markdown_content(content, rewrite_map)
+            if updated == content:
+                continue
 
-            # Build a path rewrite table for this specific file.
-            # For each external file that was copied in, compute the
-            # correct relative path from the current file's location.
-            for abs_source, bundle_rel in file_mapping.items():
-                abs_target = os.path.join(bundle_dir, bundle_rel)
-                new_rel = os.path.relpath(
-                    abs_target, os.path.dirname(filepath)
-                ).replace(os.sep, "/")
-
-                # Try to find references to this external file.
-                # We need to match various forms the reference might take:
-                # - the original relative path from the source
-                # - the original system-root-relative path
-                original_paths = _compute_original_paths(
-                    abs_source, filepath, skill_path, bundle_dir, system_root, reverse_mapping
-                )
-
-                for orig_path in original_paths:
-                    if not orig_path:
-                        continue
-                    escaped = re.escape(orig_path)
-                    # Rewrite markdown links, preserving wrappers/query/anchor/title:
-                    #   [text](old_path) -> [text](new_path)
-                    #   [text](<old_path>) -> [text](<new_path>)
-                    #   [text](old_path?x=1#anchor) -> [text](new_path?x=1#anchor)
-                    #   [text](old_path#anchor) -> [text](new_path#anchor)
-                    #   [text](old_path "title") -> [text](new_path "title")
-                    #   [text](old_path#anchor "title") -> [text](new_path#anchor "title")
-                    content = re.sub(
-                        r"(\[[^\]]*\]\()\s*<"
-                        + escaped
-                        + r"((?:\?[^)\s>#]*)?(?:#[^)\s>]*)?)>"
-                        + r"((?:\s+[\"'][^\"']*[\"'])?\))",
-                        r"\g<1><" + new_rel + r"\g<2>>\g<3>",
-                        content,
-                    )
-
-                    content = re.sub(
-                        r"(\[[^\]]*\]\()"
-                        + escaped
-                        + r"((?:\?[^)\s>#]*)?"      # optional ?query
-                        + r"(?:#[^)\s>]*)?"         # optional #anchor
-                        + r'''(?:\s+["'][^"']*["'])?'''  # optional "title"
-                        + r"\))",
-                        r"\g<1>" + new_rel + r"\g<2>",
-                        content,
-                    )
-                    # Rewrite backtick refs: `old_path` -> `new_path`
-                    content = re.sub(
-                        r"`" + escaped + r"`",
-                        "`" + new_rel + "`",
-                        content,
-                    )
-
-            if content != original_content:
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(content)
-                rewrite_count += 1
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(updated)
+            rewrite_count += 1
 
     return rewrite_count
 
@@ -283,7 +365,12 @@ def _compute_original_paths(
     return paths
 
 
-def create_bundle(skill_path: str, system_root: Optional[str], scan_result: Dict[str, Any], exclude_patterns: List[str]) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+def create_bundle(
+    skill_path: str,
+    system_root: Optional[str],
+    scan_result: ScanResult,
+    exclude_patterns: List[str],
+) -> Tuple[str, Dict[str, str], BundleStats]:
     """Create the bundle directory.
 
     Returns (bundle_dir: str, file_mapping: dict, stats: dict).
@@ -299,7 +386,7 @@ def create_bundle(skill_path: str, system_root: Optional[str], scan_result: Dict
 
     # Step 2: Copy external files
     external_files = scan_result["external_files"]
-    file_mapping = {}
+    file_mapping: Dict[str, str] = {}
     if external_files:
         print(f"  Copying {len(external_files)} external file(s)...")
         file_mapping = _copy_external_files(
@@ -323,7 +410,7 @@ def create_bundle(skill_path: str, system_root: Optional[str], scan_result: Dict
             file_count += 1
             total_size += os.path.getsize(filepath)
 
-    stats = {
+    stats: BundleStats = {
         "file_count": file_count,
         "total_size": total_size,
         "external_count": len(external_files),
@@ -572,7 +659,13 @@ def main() -> None:
         for warn in warnings:
             print(f"    {warn}")
 
-    assert scan_result is not None  # guaranteed: errors would have caused early exit
+    if scan_result is None:
+        print(
+            "Error: pre-validation did not produce a scan result. "
+            "Re-run with --system-root and inspect validation output."
+        )
+        sys.exit(1)
+
     ext_count = len(scan_result["external_files"])
     print(f"  Pre-validation passed. {ext_count} external file(s) to include.")
 

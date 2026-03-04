@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Literal, Optional, Set, Tuple, TypedDict
 
 from .constants import (
     DIR_SKILLS, DIR_ROLES, DIR_REFERENCES, DIR_ASSETS, DIR_SCRIPTS,
@@ -34,6 +34,11 @@ RE_BUNDLE_MD_LINK = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 # Backtick file paths: `path/to/file` — requires at least one /
 # to distinguish file paths from inline code snippets.
 RE_BUNDLE_BACKTICK = re.compile(r"`([^`\s]*?/[^`\s]+)`")
+
+# Markdown-wrapped local path, optionally followed by a title:
+#   <path/to/file.md>
+#   <path/to/file.md> "Title"
+RE_WRAPPED_LOCAL_REF = re.compile(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''')
 
 # Best-effort path detection in non-markdown text files.
 # Looks for paths starting with known directory prefixes.
@@ -126,7 +131,7 @@ def should_skip_reference(ref_path: str) -> bool:
 
     if "<" in path or ">" in path:
         # Allow markdown-wrapped local paths: <path/to/file.md> "Title"
-        if re.match(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''', path):
+        if RE_WRAPPED_LOCAL_REF.match(path):
             return False
         return True
 
@@ -134,14 +139,20 @@ def should_skip_reference(ref_path: str) -> bool:
 
 
 # Type aliases for reference tuples
-RawRef = Tuple[str, int, str]  # (ref_path, line_num, ref_type)
-FilteredRef = Tuple[str, str, int, str]  # (raw_ref, clean_path, line_num, ref_type)
-ResolvedRef = Tuple[str, int, str, Optional[str]]  # (raw_ref, line_num, ref_type, resolved)
+ReferenceType = Literal["markdown_link", "backtick", "text_detected"]
+ResolveFailReason = Literal["absolute_path", "escapes_system_root", "not_found"]
+RawRef = Tuple[str, int, ReferenceType]  # (ref_path, line_num, ref_type)
+FilteredRef = Tuple[str, str, int, ReferenceType]  # (raw_ref, clean_path, line_num, ref_type)
+ResolvedRef = Tuple[str, int, ReferenceType, Optional[str]]  # (raw_ref, line_num, ref_type, resolved)
 
-# Type alias for scan_references() return value.
-# Keys: 'external_files' (Set[str]), 'errors' (List[str]),
-#        'warnings' (List[str]), 'reference_map' (Dict[str, List[ResolvedRef]])
-ScanResult = Dict[str, Any]
+
+class ScanResult(TypedDict):
+    """Structured output of ``scan_references()``."""
+
+    external_files: Set[str]
+    errors: List[str]
+    warnings: List[str]
+    reference_map: Dict[str, List[ResolvedRef]]
 
 
 def extract_references(filepath: str) -> List[FilteredRef]:
@@ -232,7 +243,11 @@ def resolve_reference(ref_path: str, source_file: str, system_root: Optional[str
     return resolved
 
 
-def resolve_reference_with_reason(ref_path: str, source_file: str, system_root: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+def resolve_reference_with_reason(
+    ref_path: str,
+    source_file: str,
+    system_root: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[ResolveFailReason]]:
     """Resolve a reference and return both path and failure reason.
 
     Returns a tuple:
@@ -293,7 +308,11 @@ def find_containing_skill(filepath: str, system_root: str) -> Optional[str]:
 # Reference Graph Traversal
 # ===================================================================
 
-def scan_references(skill_path: str, system_root: Optional[str] = None, max_depth: Optional[int] = None) -> ScanResult:
+def scan_references(
+    skill_path: str,
+    system_root: Optional[str] = None,
+    max_depth: Optional[int] = None,
+) -> ScanResult:
     """Scan a skill's full reference graph for external dependencies.
 
     Traverses all files in *skill_path*, finds external references,
@@ -325,15 +344,20 @@ def scan_references(skill_path: str, system_root: Optional[str] = None, max_dept
     else:
         system_root = infer_system_root(skill_path)
 
-    external_files = set()
-    errors = []
-    warnings = []
-    reference_map = {}
+    external_files: Set[str] = set()
+    errors: List[str] = []
+    warnings: List[str] = []
+    reference_map: Dict[str, List[ResolvedRef]] = {}
 
     # External files whose subtrees have been fully traversed.
-    scanned_external = set()
+    scanned_external: Set[str] = set()
 
-    def _scan_file(filepath, depth, ancestor_set, ancestor_path):
+    def _scan_file(
+        filepath: str,
+        depth: int,
+        ancestor_set: FrozenSet[str],
+        ancestor_path: Tuple[str, ...],
+    ) -> None:
         """Recursively scan *filepath* and classify its references.
 
         *ancestor_set* is a frozenset for O(1) cycle membership checks.
@@ -354,7 +378,7 @@ def scan_references(skill_path: str, system_root: Optional[str] = None, max_dept
         if not refs:
             return
 
-        resolved_refs = []
+        resolved_refs: List[ResolvedRef] = []
 
         for raw_ref, clean_path, line_num, ref_type in refs:
             resolved, fail_reason = resolve_reference_with_reason(
@@ -446,7 +470,7 @@ def scan_references(skill_path: str, system_root: Optional[str] = None, max_dept
         if resolved_refs:
             reference_map[filepath] = resolved_refs
 
-    def _rel(filepath):
+    def _rel(filepath: str) -> str:
         """Best-effort short display path."""
         filepath = os.path.abspath(filepath)
         if is_within_directory(filepath, skill_path):
