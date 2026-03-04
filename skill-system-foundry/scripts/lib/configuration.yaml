@@ -62,4 +62,7 @@ bundle:
     - .git
     - __pycache__
     - .DS_Store
+    - Thumbs.db
+    - Desktop.ini
+    - $RECYCLE.BIN
     - "*.pyc"

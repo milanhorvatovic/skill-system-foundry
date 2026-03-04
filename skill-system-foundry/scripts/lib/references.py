@@ -565,9 +565,9 @@ def compute_bundle_path(external_file: str, system_root: str | None) -> str:
         rel = os.path.relpath(external_file, roles_dir)
         return os.path.join(DIR_ROLES, rel).replace(os.sep, "/")
 
-    # For non-role files, place in the category directory with the
-    # original filename.  If the source path has meaningful sub-structure
-    # (e.g. assets/templates/foo.md), preserve one level.
+    # For non-role files, place in the category directory.  If the source
+    # path has meaningful sub-structure (e.g. assets/templates/foo.md),
+    # preserve the full relative path under the category directory.
     if system_root:
         system_root = os.path.abspath(system_root)
         category_dir = os.path.join(system_root, category)

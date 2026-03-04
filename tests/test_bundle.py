@@ -13,7 +13,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-import bundle
+from lib.bundling import _rewrite_markdown_content, postvalidate
 
 
 class MarkdownRewriteTests(unittest.TestCase):
@@ -41,13 +41,13 @@ class MarkdownRewriteTests(unittest.TestCase):
 
         for source, expected in cases.items():
             with self.subTest(source=source):
-                self.assertEqual(bundle._rewrite_markdown_content(source, rewrite_map), expected)
+                self.assertEqual(_rewrite_markdown_content(source, rewrite_map), expected)
 
     def test_image_link_prefix_preserved(self) -> None:
         rewrite_map = {"references/foo.md": "references/inlined/foo.md"}
         source = "![image](references/foo.md)"
         expected = "![image](references/inlined/foo.md)"
-        self.assertEqual(bundle._rewrite_markdown_content(source, rewrite_map), expected)
+        self.assertEqual(_rewrite_markdown_content(source, rewrite_map), expected)
 
 
 class PostValidateTests(unittest.TestCase):
@@ -60,14 +60,16 @@ class PostValidateTests(unittest.TestCase):
                 "[Missing](missing.md)\n",
             )
 
+            import lib.bundling as bundling_mod
+
             original_relpath = os.path.relpath
 
             def fake_relpath(path: str, start: str = "") -> str:
                 rel = original_relpath(path, start) if start else original_relpath(path)
                 return rel.replace("/", "\\")
 
-            with mock.patch("bundle.os.path.relpath", side_effect=fake_relpath), mock.patch.object(bundle.os, "sep", "\\"):
-                errors = bundle.postvalidate(bundle_dir)
+            with mock.patch("lib.bundling.os.path.relpath", side_effect=fake_relpath), mock.patch.object(bundling_mod.os, "sep", "\\"):
+                errors = postvalidate(bundle_dir)
 
             unresolved = [
                 err for err in errors
