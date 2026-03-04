@@ -4,9 +4,6 @@ Extracts file references from skill content, resolves them to absolute
 paths, and traverses the reference graph to identify all external
 dependencies.  Detects cross-skill references, cycles between external
 documents, and broken links.
-
-Consumers import the public functions:
-    from lib.references import scan_references, compute_bundle_path
 """
 
 import os
@@ -328,7 +325,7 @@ def scan_references(
 
         {
             'external_files': set of absolute paths,
-            'errors':         list of FAIL/WARN strings,
+            'errors':         list of FAIL strings,
             'warnings':       list of WARN strings,
             'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
         }

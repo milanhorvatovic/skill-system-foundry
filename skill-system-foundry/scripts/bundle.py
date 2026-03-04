@@ -22,7 +22,7 @@ import tempfile
 import traceback
 import zipfile
 from collections.abc import Mapping
-from typing import Dict, List, Optional, Set, Tuple, TypedDict
+from typing import TypedDict
 
 _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
@@ -192,11 +192,26 @@ def _copy_external_files(external_files: set[str], system_root: str | None, bund
     """Copy external files into the bundle at their classified locations.
 
     Returns a mapping {absolute_source_path: relative_bundle_path}.
+    Raises ``ValueError`` if two source files would map to the same
+    bundle path (basename collision).
     """
-    file_mapping = {}
+    file_mapping: dict[str, str] = {}
+    # Reverse lookup: bundle_rel -> source path (for collision detection)
+    dest_to_source: dict[str, str] = {}
 
     for ext_file in external_files:
         bundle_rel = compute_bundle_path(ext_file, system_root)
+
+        existing = dest_to_source.get(bundle_rel)
+        if existing and existing != ext_file:
+            raise ValueError(
+                f"Bundle path collision: '{bundle_rel}' is the target "
+                f"for both '{existing}' and '{ext_file}'. "
+                f"Rename or relocate one of the source files to avoid "
+                f"the conflict."
+            )
+
+        dest_to_source[bundle_rel] = ext_file
         target = os.path.join(bundle_dir, bundle_rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copy2(ext_file, target)
@@ -519,12 +534,18 @@ def postvalidate(bundle_dir: str) -> list[str]:
                     target = os.path.normpath(
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
+                    rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
                     if not os.path.exists(target):
-                        rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
                         errors.append(
                             f"{LEVEL_FAIL}: Unresolved markdown reference in bundle: "
                             f"'{rel_source}' line {line_num}: "
                             f"'{ref_path}' does not exist in the bundle."
+                        )
+                    elif not is_within_directory(target, bundle_dir):
+                        errors.append(
+                            f"{LEVEL_FAIL}: Markdown reference escapes bundle: "
+                            f"'{rel_source}' line {line_num}: "
+                            f"'{ref_path}' resolves outside the bundle directory."
                         )
 
                 # Backtick path references
@@ -540,12 +561,18 @@ def postvalidate(bundle_dir: str) -> list[str]:
                     target = os.path.normpath(
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
+                    rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
                     if not os.path.exists(target):
-                        rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
                         errors.append(
                             f"{LEVEL_FAIL}: Unresolved backtick reference in bundle: "
                             f"'{rel_source}' line {line_num}: "
                             f"'{ref_path}' does not exist in the bundle."
+                        )
+                    elif not is_within_directory(target, bundle_dir):
+                        errors.append(
+                            f"{LEVEL_FAIL}: Backtick reference escapes bundle: "
+                            f"'{rel_source}' line {line_num}: "
+                            f"'{ref_path}' resolves outside the bundle directory."
                         )
 
     return errors
@@ -589,10 +616,10 @@ def _format_size(nbytes: int) -> str:
 
 def _print_failure_block(
     title: str,
-    errors: List[str],
+    errors: list[str],
     *,
-    warnings: Optional[List[str]] = None,
-    guidance: Optional[str] = None,
+    warnings: list[str] | None = None,
+    guidance: str | None = None,
 ) -> None:
     """Print a standardized bundling failure section."""
     print(f"\n{'=' * SEPARATOR_WIDTH}")
