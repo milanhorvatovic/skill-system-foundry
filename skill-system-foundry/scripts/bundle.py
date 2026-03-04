@@ -24,12 +24,10 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from lib.bundling import (
-    BundleStats,
     prevalidate,
     create_bundle,
     postvalidate,
     create_zip,
-    _rewrite_markdown_content,
 )
 from lib.constants import (
     FILE_SKILL_MD,
@@ -194,6 +192,7 @@ def main() -> None:
     # ---- Phase 1: Pre-validation ----
     print("\nPhase 1: Pre-validation")
     print("-" * SEPARATOR_WIDTH)
+    print("  Running pre-validation checks...")
     errors, warnings, scan_result = prevalidate(skill_path, system_root)
 
     if errors:
@@ -226,6 +225,7 @@ def main() -> None:
     # ---- Phase 2: Bundle creation ----
     print(f"\nPhase 2: Bundle creation")
     print("-" * SEPARATOR_WIDTH)
+    print("  Assembling bundle...")
     bundle_base = tempfile.mkdtemp(prefix="skill_bundle_")
     phase_name = "bundle creation"
     try:
@@ -233,6 +233,15 @@ def main() -> None:
             skill_path, system_root, scan_result, BUNDLE_EXCLUDE_PATTERNS,
             bundle_base=bundle_base,
         )
+        print(
+            f"  Assembled {stats['file_count']} files"
+            f" ({stats['external_count']} external)."
+        )
+        if stats["rewrite_count"] > 0:
+            print(
+                f"  Rewrote references in"
+                f" {stats['rewrite_count']} file(s)."
+            )
 
         # ---- Phase 3: Post-validation ----
         phase_name = "post-validation"

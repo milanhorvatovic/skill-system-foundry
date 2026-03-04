@@ -31,17 +31,13 @@ from .references import (
     RE_BUNDLE_BACKTICK,
 )
 
-# Import validate_skill — lives as a sibling script, not inside lib/.
-# The caller (bundle.py) ensures the scripts directory is on sys.path.
-from validate_skill import validate_skill
-
-
 class BundleStats(TypedDict):
     """Bundle creation statistics used in summary output."""
 
     file_count: int
     total_size: int
     external_count: int
+    rewrite_count: int
     skill_name: str
 
 
@@ -63,7 +59,11 @@ def prevalidate(
     warnings: list[str] = []
 
     # 1. Spec validation via validate_skill()
-    print("  Validating skill against Agent Skills specification...")
+    # Lazy import: validate_skill lives as a sibling script, not inside
+    # lib/.  Importing at call time avoids a module-level dependency on
+    # the scripts/ directory being on sys.path (the CLI ensures this).
+    from validate_skill import validate_skill
+
     spec_errors, _passes = validate_skill(skill_path)
     fails_in_spec = [e for e in spec_errors if e.startswith(LEVEL_FAIL)]
     if fails_in_spec:
@@ -76,7 +76,6 @@ def prevalidate(
         return errors, warnings, None
 
     # 2. Description length check (Claude.ai 200-char limit)
-    print("  Checking description length for Claude.ai compatibility...")
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     frontmatter, _body = load_frontmatter(skill_md)
     if frontmatter and "description" in frontmatter:
@@ -92,7 +91,6 @@ def prevalidate(
             return errors, warnings, None
 
     # 3–7. Reference scanning
-    print("  Scanning references...")
     scan_result = scan_references(skill_path, system_root)
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
@@ -434,25 +432,22 @@ def create_bundle(
     os.makedirs(bundle_dir)
 
     # Step 1: Copy skill as-is
-    print("  Copying skill directory...")
     _copy_skill(skill_path, bundle_dir, exclude_patterns, system_root)
 
     # Step 2: Copy external files
     external_files = scan_result["external_files"]
     file_mapping: dict[str, str] = {}
     if external_files:
-        print(f"  Copying {len(external_files)} external file(s)...")
         file_mapping = _copy_external_files(
             external_files, system_root, bundle_dir
         )
 
     # Step 3: Rewrite markdown paths
+    rewrite_count = 0
     if file_mapping:
-        print("  Rewriting markdown references...")
         rewrite_count = _rewrite_markdown_paths(
             bundle_dir, skill_path, system_root, file_mapping
         )
-        print(f"  Rewrote references in {rewrite_count} file(s).")
 
     # Compute stats
     file_count = 0
@@ -467,6 +462,7 @@ def create_bundle(
         "file_count": file_count,
         "total_size": total_size,
         "external_count": len(external_files),
+        "rewrite_count": rewrite_count,
         "skill_name": skill_name,
     }
     return bundle_dir, file_mapping, stats
