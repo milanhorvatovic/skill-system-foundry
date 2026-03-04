@@ -296,7 +296,7 @@ def find_containing_skill(filepath: str, system_root: str) -> Optional[str]:
     system_root = os.path.abspath(system_root)
 
     current = os.path.dirname(filepath)
-    while current.startswith(system_root) and len(current) > len(system_root):
+    while is_within_directory(current, system_root) and current != system_root:
         if os.path.exists(os.path.join(current, FILE_SKILL_MD)):
             return current
         current = os.path.dirname(current)

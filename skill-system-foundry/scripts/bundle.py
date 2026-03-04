@@ -437,7 +437,9 @@ def postvalidate(bundle_dir: str) -> List[str]:
     for root, _dirs, files in os.walk(bundle_dir):
         for filename in files:
             if filename.lower() == FILE_SKILL_MD.lower():
-                rel = os.path.relpath(os.path.join(root, filename), bundle_dir)
+                rel = os.path.relpath(
+                    os.path.join(root, filename), bundle_dir
+                ).replace(os.sep, "/")
                 skill_md_files.append(rel)
 
     if len(skill_md_files) == 0:
@@ -476,7 +478,7 @@ def postvalidate(bundle_dir: str) -> List[str]:
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
                     if not os.path.exists(target):
-                        rel_source = os.path.relpath(filepath, bundle_dir)
+                        rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
                         errors.append(
                             f"{LEVEL_FAIL}: Unresolved markdown reference in bundle: "
                             f"'{rel_source}' line {line_num}: "
@@ -497,7 +499,7 @@ def postvalidate(bundle_dir: str) -> List[str]:
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
                     if not os.path.exists(target):
-                        rel_source = os.path.relpath(filepath, bundle_dir)
+                        rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
                         errors.append(
                             f"{LEVEL_FAIL}: Unresolved backtick reference in bundle: "
                             f"'{rel_source}' line {line_num}: "
@@ -519,7 +521,6 @@ def create_zip(bundle_dir: str, output_path: str) -> str:
     # bundle_dir is like /tmp/.../my-skill/
     # We want the zip to contain my-skill/ at the root.
     bundle_base = os.path.dirname(bundle_dir)
-    skill_name = os.path.basename(bundle_dir)
 
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _dirs, files in os.walk(bundle_dir):
