@@ -127,6 +127,28 @@ def _should_exclude(path: str, exclude_patterns: list[str]) -> bool:
     return False
 
 
+def _check_symlink_boundary(
+    path: str,
+    boundary: str,
+    skill_path: str,
+    kind: str,
+) -> None:
+    """Raise ``ValueError`` if *path* is a symlink whose target escapes *boundary*.
+
+    *kind* is ``"file"`` or ``"directory"`` and is used in the error message.
+    """
+    if not os.path.islink(path):
+        return
+    real_target = os.path.realpath(path)
+    if not is_within_directory(real_target, boundary):
+        rel = os.path.relpath(path, skill_path).replace(os.sep, "/")
+        raise ValueError(
+            f"Symlinked {kind} escapes system boundary: "
+            f"'{rel}' -> '{real_target}'. "
+            f"Remove or replace the symlink before bundling."
+        )
+
+
 def _copy_skill(
     skill_path: str,
     bundle_dir: str,
@@ -135,18 +157,37 @@ def _copy_skill(
 ) -> None:
     """Copy the skill directory into the bundle, excluding unwanted files.
 
-    Symlinked files whose real target falls outside the allowed
-    boundary (system root, or skill path when no root is set) are
-    rejected to prevent accidentally bundling arbitrary files.
+    Symlinked files and directories whose real target falls outside
+    the allowed boundary (system root, or skill path when no root is
+    set) are rejected to prevent accidentally bundling arbitrary files.
+    Symlinked directories that stay within the boundary are traversed
+    so their contents are included.
     """
     boundary = system_root or skill_path
+    # Track visited real directory paths to prevent infinite loops
+    # when followlinks=True encounters circular symlinks.
+    visited_dirs: set[str] = set()
 
-    for root, dirs, files in os.walk(skill_path):
+    for root, dirs, files in os.walk(skill_path, followlinks=True):
+        real_root = os.path.realpath(root)
+        if real_root in visited_dirs:
+            dirs[:] = []
+            continue
+        visited_dirs.add(real_root)
+
         # Filter excluded directories in-place so os.walk skips them
         dirs[:] = [
             d for d in dirs
             if not _should_exclude(d, exclude_patterns)
         ]
+
+        # Reject symlinked subdirectories that escape the allowed
+        # boundary.  Safe symlinks are traversed (followlinks=True)
+        # so their contents are included in the bundle.
+        for d in dirs:
+            _check_symlink_boundary(
+                os.path.join(root, d), boundary, skill_path, "directory"
+            )
 
         rel_root = os.path.relpath(root, skill_path)
         target_root = os.path.join(bundle_dir, rel_root)
@@ -158,15 +199,7 @@ def _copy_skill(
             src = os.path.join(root, filename)
 
             # Reject symlinks that escape the allowed boundary.
-            if os.path.islink(src):
-                real_target = os.path.realpath(src)
-                if not is_within_directory(real_target, boundary):
-                    rel_src = os.path.relpath(src, skill_path).replace(os.sep, "/")
-                    raise ValueError(
-                        f"Symlink escapes system boundary: "
-                        f"'{rel_src}' -> '{real_target}'. "
-                        f"Remove or replace the symlink before bundling."
-                    )
+            _check_symlink_boundary(src, boundary, skill_path, "file")
 
             dst = os.path.join(target_root, filename)
             shutil.copy2(src, dst)

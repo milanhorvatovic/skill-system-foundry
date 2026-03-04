@@ -6,6 +6,7 @@ dependencies.  Detects cross-skill references, cycles between external
 documents, and broken links.
 """
 
+import fnmatch
 import os
 import re
 from typing import Literal, TypedDict
@@ -14,6 +15,7 @@ from .constants import (
     DIR_SKILLS, DIR_ROLES, DIR_REFERENCES, DIR_ASSETS, DIR_SCRIPTS,
     FILE_SKILL_MD, FILE_MANIFEST,
     BUNDLE_MAX_REFERENCE_DEPTH,
+    BUNDLE_EXCLUDE_PATTERNS,
     BUNDLE_INFER_MAX_WALK_DEPTH,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
@@ -74,12 +76,17 @@ def is_within_directory(filepath: str, directory: str) -> bool:
     """Check whether *filepath* is inside (or equal to) *directory*.
 
     Resolves symlinks so that a symlink inside *directory* whose real
-    target is outside will correctly return ``False``.
+    target is outside will correctly return ``False``.  Normalises
+    case so differing drive-letter casing on Windows doesn't cause
+    false negatives.
     """
-    filepath = os.path.realpath(filepath)
-    directory = os.path.realpath(directory)
+    filepath_norm = os.path.normcase(os.path.realpath(filepath))
+    directory_norm = os.path.normcase(os.path.realpath(directory))
     # Trailing sep avoids false matches like /foo/bar vs /foo/barbaz
-    return filepath == directory or filepath.startswith(directory + os.sep)
+    return (
+        filepath_norm == directory_norm
+        or filepath_norm.startswith(directory_norm + os.sep)
+    )
 
 
 # ===================================================================
@@ -308,6 +315,7 @@ def scan_references(
     skill_path: str,
     system_root: str | None = None,
     max_depth: int | None = None,
+    exclude_patterns: list[str] | None = None,
 ) -> ScanResult:
     """Scan a skill's full reference graph for external dependencies.
 
@@ -315,12 +323,15 @@ def scan_references(
     and recursively scans those files for further references.
 
     Args:
-        skill_path:   Absolute path to the skill directory.
-        system_root:  Optional system root (contains ``skills/``,
-                      ``roles/``).  When omitted, inferred by walking
-                      up from *skill_path*.
-        max_depth:    Maximum transitive reference depth.  Defaults to
-                      ``BUNDLE_MAX_REFERENCE_DEPTH`` from config.
+        skill_path:       Absolute path to the skill directory.
+        system_root:      Optional system root (contains ``skills/``,
+                          ``roles/``).  When omitted, inferred by walking
+                          up from *skill_path*.
+        max_depth:        Maximum transitive reference depth.  Defaults to
+                          ``BUNDLE_MAX_REFERENCE_DEPTH`` from config.
+        exclude_patterns: Glob patterns for files/directories to skip
+                          during the skill walk.  Defaults to
+                          ``BUNDLE_EXCLUDE_PATTERNS`` from config.
 
     Returns a dict::
 
@@ -333,6 +344,8 @@ def scan_references(
     """
     if max_depth is None:
         max_depth = BUNDLE_MAX_REFERENCE_DEPTH
+    if exclude_patterns is None:
+        exclude_patterns = BUNDLE_EXCLUDE_PATTERNS
 
     skill_path = os.path.abspath(skill_path)
     if system_root:
@@ -486,9 +499,17 @@ def scan_references(
             return os.path.relpath(filepath, system_root)
         return filepath
 
-    # Scan every file in the skill directory tree.
-    for root, _dirs, files in os.walk(skill_path):
+    # Scan every file in the skill directory tree, applying the same
+    # exclude patterns used during bundle copying so that references
+    # in excluded files (e.g. inside .git/) do not cause false errors.
+    for root, dirs, files in os.walk(skill_path):
+        dirs[:] = [
+            d for d in dirs
+            if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)
+        ]
         for filename in files:
+            if any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):
+                continue
             filepath = os.path.join(root, filename)
             _scan_file(filepath, 0, frozenset(), ())
 

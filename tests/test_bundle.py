@@ -164,7 +164,7 @@ class CopySkillSymlinkBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 _copy_skill(skill_dir, bundle_dir, [], system_root)
 
-            self.assertIn("Symlink escapes system boundary", str(cm.exception))
+            self.assertIn("Symlinked file escapes system boundary", str(cm.exception))
 
     def test_symlink_within_boundary_is_allowed(self) -> None:
         if not hasattr(os, "symlink"):
@@ -194,6 +194,61 @@ class CopySkillSymlinkBoundaryTests(unittest.TestCase):
             self.assertTrue(os.path.exists(copied))
             with open(copied, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "allowed content")
+
+    def test_symlinked_dir_escaping_boundary_is_rejected(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            outside_dir = os.path.join(tmpdir, "outside", "data")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(os.path.join(outside_dir, "secret.txt"), "secret")
+            os.makedirs(bundle_dir, exist_ok=True)
+
+            # Create a symlinked directory inside the skill pointing outside
+            link_path = os.path.join(skill_dir, "data")
+            try:
+                os.symlink(outside_dir, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            with self.assertRaises(ValueError) as cm:
+                _copy_skill(skill_dir, bundle_dir, [], system_root)
+
+            self.assertIn("Symlinked directory escapes system boundary", str(cm.exception))
+
+    def test_symlinked_dir_within_boundary_is_traversed(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            internal_dir = os.path.join(system_root, "shared", "docs")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(os.path.join(internal_dir, "guide.txt"), "guide content")
+            os.makedirs(bundle_dir, exist_ok=True)
+
+            # Create a symlinked directory inside the skill pointing within root
+            link_path = os.path.join(skill_dir, "docs")
+            try:
+                os.symlink(internal_dir, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Should not raise and should traverse the symlinked directory
+            _copy_skill(skill_dir, bundle_dir, [], system_root)
+
+            copied = os.path.join(bundle_dir, "docs", "guide.txt")
+            self.assertTrue(os.path.exists(copied))
+            with open(copied, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "guide content")
 
 
 if __name__ == "__main__":

@@ -207,7 +207,7 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 
 **Phase 2: Bundle creation**
 
-1. Copies the skill directory as-is (excluding `.git`, `__pycache__`, `.DS_Store`, `*.pyc`)
+1. Copies the skill directory as-is (excluding patterns defined in `scripts/lib/configuration.yaml` under `bundle.exclude_patterns`)
 2. Copies all resolved external files into the bundle (deduplicated):
    - Role files → `roles/` (preserving group structure)
    - Other files → `references/`, `assets/`, or `scripts/` per conventions
