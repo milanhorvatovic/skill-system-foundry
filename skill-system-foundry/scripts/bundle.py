@@ -21,7 +21,7 @@ import sys
 import tempfile
 import zipfile
 from collections.abc import Mapping
-from typing import TypedDict
+from typing import Dict, List, Optional, Set, Tuple, TypedDict
 
 _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
@@ -586,6 +586,30 @@ def _format_size(nbytes: int) -> str:
     return f"{nbytes / 1048576:.1f} MB"
 
 
+def _print_failure_block(
+    title: str,
+    errors: List[str],
+    *,
+    warnings: Optional[List[str]] = None,
+    guidance: Optional[str] = None,
+) -> None:
+    """Print a standardized bundling failure section."""
+    print(f"\n{'=' * SEPARATOR_WIDTH}")
+    print(f"Bundling FAILED — {title}:\n")
+    for err in errors:
+        print_error_line(err)
+    if warnings:
+        print()
+        for warn in warnings:
+            print_error_line(warn)
+
+    fails, warns, infos = categorize_errors(errors)
+    print("-" * SEPARATOR_WIDTH)
+    print_summary(fails, warns, infos)
+    if guidance:
+        print(f"\n{guidance}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Bundle a skill into a self-contained zip archive.",
@@ -651,9 +675,10 @@ def main() -> None:
             print(f"Inferred system root: {system_root}")
         else:
             print(
-                "Warning: Could not infer system root. External references "
-                "outside the skill directory may not resolve. Use "
-                "--system-root to specify it explicitly."
+                "Warning: Could not infer system root. Bundling will fail "
+                "if external references are detected, because safety "
+                "boundaries cannot be enforced. Use --system-root to "
+                "specify it explicitly."
             )
 
     # Resolve output path
@@ -679,20 +704,14 @@ def main() -> None:
     errors, warnings, scan_result = prevalidate(skill_path, system_root)
 
     if errors:
-        print(f"\n{'=' * SEPARATOR_WIDTH}")
-        print("Bundling FAILED — pre-validation errors:\n")
-        for err in errors:
-            print_error_line(err)
-        if warnings:
-            print()
-            for warn in warnings:
-                print_error_line(warn)
-        fails, warns, infos = categorize_errors(errors)
-        print("-" * SEPARATOR_WIDTH)
-        print_summary(fails, warns, infos)
-        print(
-            "\nFix the issues above and re-run. This skill system can help "
-            "you resolve structural and reference problems."
+        _print_failure_block(
+            "pre-validation errors",
+            errors,
+            warnings=warnings,
+            guidance=(
+                "Fix the issues above and re-run. This skill system can "
+                "help you resolve structural and reference problems."
+            ),
         )
         sys.exit(1)
 
@@ -729,13 +748,7 @@ def main() -> None:
         post_errors = postvalidate(bundle_dir)
 
         if post_errors:
-            print(f"\n{'=' * SEPARATOR_WIDTH}")
-            print("Bundling FAILED — post-validation errors:\n")
-            for err in post_errors:
-                print_error_line(err)
-            fails, warns, infos = categorize_errors(post_errors)
-            print("-" * SEPARATOR_WIDTH)
-            print_summary(fails, warns, infos)
+            _print_failure_block("post-validation errors", post_errors)
             sys.exit(1)
 
         print("  Post-validation passed.")
@@ -751,12 +764,7 @@ def main() -> None:
             f"{exc.__class__.__name__}: {exc}. "
             f"Check file permissions, symlinks, and output path settings."
         )
-        print(f"\n{'=' * SEPARATOR_WIDTH}")
-        print("Bundling FAILED — unexpected error:\n")
-        print_error_line(failure)
-        fails, warns, infos = categorize_errors([failure])
-        print("-" * SEPARATOR_WIDTH)
-        print_summary(fails, warns, infos)
+        _print_failure_block("unexpected error", [failure])
         sys.exit(1)
 
     finally:
