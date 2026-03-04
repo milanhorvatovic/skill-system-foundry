@@ -92,24 +92,12 @@ def prevalidate(
             return errors, warnings, None
 
     # 3–7. Reference scanning
-    # Resolve the effective root once so the safety check below uses
-    # the same value that scan_references() would infer internally.
+    # Resolve the effective root once so that prevalidate() and
+    # scan_references() agree on the same value.
     effective_root = system_root or infer_system_root(skill_path)
     scan_result = scan_references(skill_path, effective_root)
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
-
-    # 8. Safety: if system root is unknown, external references have
-    #    no boundary enforcement.  Fail early rather than silently
-    #    bundling arbitrary files from the filesystem.
-    if not effective_root and scan_result["external_files"]:
-        count = len(scan_result["external_files"])
-        errors.append(
-            f"{LEVEL_FAIL}: Found {count} external reference(s) but no "
-            f"system root could be determined. Without a system root, "
-            f"references cannot be validated against a safe boundary. "
-            f"Use --system-root to specify the skill system root."
-        )
 
     return errors, warnings, scan_result
 
@@ -171,23 +159,26 @@ def _copy_skill(
     for root, dirs, files in os.walk(skill_path, followlinks=True):
         real_root = os.path.realpath(root)
         if real_root in visited_dirs:
+            # Already visited this real directory via another path.
+            # Prevent further descent but still copy files under this
+            # alias so that references to the alias path resolve.
             dirs[:] = []
-            continue
-        visited_dirs.add(real_root)
+        else:
+            visited_dirs.add(real_root)
 
-        # Filter excluded directories in-place so os.walk skips them
-        dirs[:] = [
-            d for d in dirs
-            if not _should_exclude(d, exclude_patterns)
-        ]
+            # Filter excluded directories in-place so os.walk skips them
+            dirs[:] = [
+                d for d in dirs
+                if not _should_exclude(d, exclude_patterns)
+            ]
 
-        # Reject symlinked subdirectories that escape the allowed
-        # boundary.  Safe symlinks are traversed (followlinks=True)
-        # so their contents are included in the bundle.
-        for d in dirs:
-            _check_symlink_boundary(
-                os.path.join(root, d), boundary, skill_path, "directory"
-            )
+            # Reject symlinked subdirectories that escape the allowed
+            # boundary.  Safe symlinks are traversed (followlinks=True)
+            # so their contents are included in the bundle.
+            for d in dirs:
+                _check_symlink_boundary(
+                    os.path.join(root, d), boundary, skill_path, "directory"
+                )
 
         rel_root = os.path.relpath(root, skill_path)
         target_root = os.path.join(bundle_dir, rel_root)

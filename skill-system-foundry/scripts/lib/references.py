@@ -500,13 +500,38 @@ def scan_references(
         return filepath
 
     # Scan every file in the skill directory tree, applying the same
-    # exclude patterns used during bundle copying so that references
-    # in excluded files (e.g. inside .git/) do not cause false errors.
-    for root, dirs, files in os.walk(skill_path):
-        dirs[:] = [
-            d for d in dirs
-            if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)
-        ]
+    # exclude patterns and symlink traversal used during bundle copying
+    # so that the set of scanned files matches what ends up in the bundle.
+    boundary = system_root or skill_path
+    visited_dirs: set[str] = set()
+
+    for root, dirs, files in os.walk(skill_path, followlinks=True):
+        real_root = os.path.realpath(root)
+        if real_root in visited_dirs:
+            # Already visited via another path; prevent descent but
+            # still scan files under this alias.
+            dirs[:] = []
+        else:
+            visited_dirs.add(real_root)
+
+            dirs[:] = [
+                d for d in dirs
+                if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)
+            ]
+
+            # Skip symlinked directories that escape the allowed
+            # boundary — _copy_skill() will reject them, so scanning
+            # their contents would only produce misleading errors.
+            dirs[:] = [
+                d for d in dirs
+                if not (
+                    os.path.islink(os.path.join(root, d))
+                    and not is_within_directory(
+                        os.path.realpath(os.path.join(root, d)), boundary
+                    )
+                )
+            ]
+
         for filename in files:
             if any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):
                 continue

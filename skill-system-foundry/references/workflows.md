@@ -172,7 +172,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 Create a self-contained zip archive from a project-layout skill. The bundle resolves external references (roles, shared docs), copies them in, rewrites markdown paths, and validates the result.
 
-Note: `bundle.py` currently enforces Claude.ai packaging constraints (including the 200-character description limit). This is target-specific and stricter than the Agent Skills specification limit of 1024 characters.
+Note: `bundle.py` enforces Claude.ai packaging constraints (including the 200-character description limit). This is target-specific and stricter than the Agent Skills specification limit of 1024 characters.
 
 See [tool-integration.md](tool-integration.md#zip-bundle-packaging) for platform-specific constraints and [directory-structure.md](directory-structure.md#packaging-for-distribution) for the bundle structure.
 
