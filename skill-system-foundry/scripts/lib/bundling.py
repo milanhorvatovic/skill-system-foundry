@@ -23,6 +23,7 @@ from .references import (
     scan_references,
     ScanResult,
     compute_bundle_path,
+    infer_system_root,
     is_markdown_file,
     is_within_directory,
     strip_fragment,
@@ -91,14 +92,17 @@ def prevalidate(
             return errors, warnings, None
 
     # 3–7. Reference scanning
-    scan_result = scan_references(skill_path, system_root)
+    # Resolve the effective root once so the safety check below uses
+    # the same value that scan_references() would infer internally.
+    effective_root = system_root or infer_system_root(skill_path)
+    scan_result = scan_references(skill_path, effective_root)
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
 
     # 8. Safety: if system root is unknown, external references have
     #    no boundary enforcement.  Fail early rather than silently
     #    bundling arbitrary files from the filesystem.
-    if not system_root and scan_result["external_files"]:
+    if not effective_root and scan_result["external_files"]:
         count = len(scan_result["external_files"])
         errors.append(
             f"{LEVEL_FAIL}: Found {count} external reference(s) but no "
@@ -176,9 +180,10 @@ def _copy_external_files(
     """Copy external files into the bundle at their classified locations.
 
     Returns a mapping {absolute_source_path: relative_bundle_path}.
-    Raises ``ValueError`` if two source files would map to the same
-    bundle path (basename collision), or if a reference points to a
-    directory instead of a regular file.
+    Raises ``ValueError`` if two external source files would map to the
+    same bundle path, if an external file would overwrite a
+    skill-internal file already in the bundle, or if a reference points
+    to a directory instead of a regular file.
     """
     file_mapping: dict[str, str] = {}
     # Reverse lookup: bundle_rel -> source path (for collision detection)
@@ -205,6 +210,18 @@ def _copy_external_files(
 
         dest_to_source[bundle_rel] = ext_file
         target = os.path.join(bundle_dir, bundle_rel)
+
+        # Detect collisions with files already in the bundle (copied
+        # from the skill directory).  Without this check an external
+        # file could silently overwrite a skill-internal file.
+        if os.path.exists(target):
+            raise ValueError(
+                f"External file would overwrite skill-internal file at "
+                f"'{bundle_rel}' (source: '{ext_file}'). "
+                f"Rename or relocate the external file to avoid the "
+                f"conflict."
+            )
+
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copy2(ext_file, target)
         file_mapping[ext_file] = bundle_rel

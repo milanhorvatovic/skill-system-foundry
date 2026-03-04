@@ -179,9 +179,27 @@ def main() -> None:
 
     # Resolve output path
     if args.output:
-        output_path = os.path.abspath(args.output)
-        if os.path.isdir(output_path):
-            output_path = os.path.join(output_path, f"{skill_name}.zip")
+        raw_output = args.output
+        output_root = os.path.abspath(raw_output)
+
+        # Treat --output as a directory when:
+        #   - it already exists as a directory, or
+        #   - the raw argument ends with a path separator, or
+        #   - the resolved path does not have a .zip suffix.
+        has_trailing_sep = raw_output.endswith(os.sep) or (
+            os.altsep is not None and raw_output.endswith(os.altsep)
+        )
+        is_directory_intent = (
+            os.path.isdir(output_root)
+            or has_trailing_sep
+            or not output_root.lower().endswith(".zip")
+        )
+
+        if is_directory_intent:
+            os.makedirs(output_root, exist_ok=True)
+            output_path = os.path.join(output_root, f"{skill_name}.zip")
+        else:
+            output_path = output_root
     else:
         output_path = os.path.join(os.getcwd(), f"{skill_name}.zip")
 
