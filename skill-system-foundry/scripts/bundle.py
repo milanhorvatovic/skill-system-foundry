@@ -631,7 +631,10 @@ def _print_failure_block(
         for warn in warnings:
             print_error_line(warn)
 
-    fails, warns, infos = categorize_errors(errors)
+    all_issues = list(errors)
+    if warnings:
+        all_issues.extend(warnings)
+    fails, warns, infos = categorize_errors(all_issues)
     print("-" * SEPARATOR_WIDTH)
     print_summary(fails, warns, infos)
     if guidance:
@@ -707,6 +710,14 @@ def main() -> None:
         system_root = os.path.abspath(args.system_root)
         if not os.path.isdir(system_root):
             print(f"Error: System root '{args.system_root}' is not a directory.")
+            sys.exit(1)
+        if not is_within_directory(skill_path, system_root):
+            print(
+                f"Error: Skill directory '{skill_path}' is not within "
+                f"the system root '{system_root}'. Provide a "
+                f"--system-root that is an ancestor of the skill "
+                f"directory, or omit it to infer automatically."
+            )
             sys.exit(1)
     else:
         system_root = infer_system_root(skill_path)
