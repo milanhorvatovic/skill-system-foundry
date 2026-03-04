@@ -309,10 +309,10 @@ See [directory-structure.md](skill-system-foundry/references/directory-structure
     ├── SKILL.md                 ← router entry point (Agent Skills specification)
     ├── references/              ← guidance loaded into context
     ├── assets/                  ← templates for scaffolding components
-    └── scripts/                 ← validation and scaffolding tools
+    └── scripts/                 ← validation, scaffolding, and bundling tools
 ```
 
-Note: The scaffold tool ([`scaffold.py`](skill-system-foundry/scripts/scaffold.py)) creates components under `skills/` and `roles/` relative to CWD. This matches the skill system's logical structure (see [`directory-structure.md`](skill-system-foundry/references/directory-structure.md)), not the distribution repository layout shown above. For project deployments, use `--root` to target the desired base directory (e.g., `--root .agents`).
+Note: The scaffold tool ([`scaffold.py`](skill-system-foundry/scripts/scaffold.py)) creates components under `skills/` and `roles/` relative to CWD. This matches the skill system's logical structure (see [`directory-structure.md`](skill-system-foundry/references/directory-structure.md)), not the distribution repository layout shown above. For project deployments, use `--root` to target the desired base directory (e.g., `--root .agents`). The bundle tool ([`bundle.py`](skill-system-foundry/scripts/bundle.py)) packages a skill into a self-contained zip archive for distribution to surfaces like Claude.ai or Gemini CLI.
 
 The `skill-system-foundry/` directory contains the meta-skill that implements this architecture. It follows a router-style pattern with conceptual capabilities documented in references (rather than a literal `capabilities/` tree), so it still demonstrates the skill system's conventions. See [skill-system-foundry/README.md](skill-system-foundry/README.md) for details on the skill's structure, requirements, and usage.
 
@@ -343,3 +343,9 @@ The `skill-system-foundry/` directory contains the meta-skill that implements th
    > **Note:** Running `validate_skill.py` on the `skill-system-foundry` meta-skill produces nested-reference warnings. These are expected — use `--allow-nested-references` to suppress them. See [skill-system-foundry/README.md](skill-system-foundry/README.md) for the documented exception.
 
 5. **Deploy to tools** — For tools that do not natively scan your canonical content location, create thin deployment pointers (see [Deployment Strategy](#deployment-strategy) for which tools need pointers). See [`tool-integration.md`](skill-system-foundry/references/tool-integration.md) for tool-specific details.
+
+6. **Bundle for distribution** (optional) — Package a skill as a self-contained zip archive for Claude.ai upload, Gemini CLI, or offline sharing:
+   ```bash
+   python scripts/bundle.py skills/my-skill --system-root .agents --output my-skill.zip
+   ```
+   The bundler validates, resolves external references (roles, shared docs), rewrites paths, and creates the archive. See [`workflows.md`](skill-system-foundry/references/workflows.md#packaging-a-skill-as-a-zip-bundle) for the full procedure.

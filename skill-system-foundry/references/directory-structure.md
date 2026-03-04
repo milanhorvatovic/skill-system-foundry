@@ -7,6 +7,7 @@
 - [Recommended Project Layout](#recommended-project-layout)
   - [Why `.agents/skills/`](#why-agentsskills)
   - [Alternative Layouts](#alternative-layouts)
+- [Packaging for Distribution](#packaging-for-distribution)
 - [Conventions](#conventions)
 - [Naming](#naming)
 - [Path Convention](#path-convention)
@@ -123,6 +124,57 @@ project/
 Use when: one tool dominates and others are secondary. Cursor discovers `.claude/skills/` natively, so no Cursor pointer is needed. Trade-off: couples canonical content to a vendor namespace.
 
 The key invariant across all layouts: **domain knowledge is authored once, in one location, and deployment pointers only contain tool-specific adaptation.**
+
+## Packaging for Distribution
+
+When a skill is packaged as a zip bundle for distribution (Claude.ai upload, Gemini CLI `.skill`, offline sharing), it uses a self-contained structure that differs from the project layout.
+
+### Bundle Structure
+
+```
+<skill-name>/
+├── SKILL.md                    ← registered entry point
+├── assets/
+├── capabilities/
+│   ├── <capability-a>/
+│   │   ├── capability.md       ← not SKILL.md (avoids zip constraint)
+│   │   └── references/
+│   └── <capability-b>/
+│       ├── capability.md
+│       └── references/
+├── references/
+├── scripts/
+└── roles/                      ← inlined from system level
+```
+
+### Distinctions from Project Layout
+
+| Aspect | Project layout | Zip bundle |
+|---|---|---|
+| Wrapper | `.agents/` or vendor path | Skill directory is the root |
+| Roles | System-level `roles/` directory | Inlined under the skill |
+| Deployment pointers | May exist per tool | Not applicable — the zip IS the skill |
+| External references | Can reference roles, shared docs | All references resolved internally |
+| Path style | System-root-relative for roles | Relative within the bundle |
+
+The `roles/` directory in a bundle is a **distribution-only exception**. In the project layout, roles live at the system level and are shared across skills. In a bundle, roles referenced by the skill are copied in to make the archive self-contained. This is not a new architectural pattern — it is a packaging transformation.
+
+### When to Use
+
+- **Zip bundle**: End-user installation, Claude.ai upload, offline sharing, marketplace distribution
+- **Repository**: Team collaboration, version control, CI/CD integration, multi-tool deployment
+
+### Tooling
+
+Run `bundle.py` to create a bundle from an existing project-layout skill:
+
+```bash
+python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
+```
+
+The bundler resolves external references, copies them into the bundle, rewrites markdown paths, and validates the result. See [workflows.md](workflows.md) for the full procedure and [tool-integration.md](tool-integration.md#zip-bundle-packaging) for platform-specific constraints.
+
+---
 
 ## Conventions
 

@@ -44,3 +44,22 @@ skill:
 dependency_direction:
   roles_ref_pattern: roles/
   sibling_capability_ref_pattern: \.\./[a-z].*?/SKILL\.md
+
+# ============================================================
+# Bundle Packaging
+# ============================================================
+bundle:
+  # Max transitive reference depth when scanning external files.
+  # Prevents runaway traversal. Increase if deeply nested reference
+  # chains are legitimate in your skill system.
+  max_reference_depth: 25
+  # Claude.ai consumer platform enforces 200-char description limit
+  # (stricter than the 1024-char Agent Skills spec limit).
+  # bundle.py fails if description exceeds this when targeting zip distribution.
+  description_max_length: 200
+  # Filesystem patterns excluded from the bundle archive.
+  exclude_patterns:
+    - .git
+    - __pycache__
+    - .DS_Store
+    - "*.pyc"

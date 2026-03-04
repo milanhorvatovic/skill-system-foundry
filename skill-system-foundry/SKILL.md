@@ -76,7 +76,9 @@ Each layer has a clear responsibility:
 - `scripts/audit_skill_system.py` — Audit skill system structure and consistency
 - `scripts/validate_skill.py` — Validate a single skill against the spec
 - `scripts/scaffold.py` — Scaffold new skills or roles from templates
+- `scripts/bundle.py` — Bundle a skill into a self-contained zip archive for distribution
 - `scripts/lib/validation.py` — Shared name validation logic
+- `scripts/lib/references.py` — Reference scanning, resolution, and graph traversal
 - `scripts/lib/constants.py` — Centralized constants and configuration
 
 ## Core Principles
@@ -132,4 +134,5 @@ Domain knowledge is authored exactly once in the canonical layer (skills and rol
 | Use Claude Code extensions | [`references/claude-code-extensions.md`](references/claude-code-extensions.md) |
 | Use Codex extensions | [`references/codex-extensions.md`](references/codex-extensions.md) |
 | Use Cursor features | [`references/cursor-extensions.md`](references/cursor-extensions.md) |
+| Package a skill as a zip bundle | `scripts/bundle.py` + [`references/workflows.md`](references/workflows.md#packaging-a-skill-as-a-zip-bundle) |
 | Review common mistakes | [`references/anti-patterns.md`](references/anti-patterns.md) |

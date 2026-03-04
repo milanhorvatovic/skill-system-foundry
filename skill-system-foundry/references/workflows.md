@@ -10,6 +10,7 @@ Step-by-step procedures for common skill system operations.
 - [Migrating Flat Skills to Router Pattern](#migrating-flat-skills-to-router-pattern)
 - [Adding a Capability to an Existing Router](#adding-a-capability-to-an-existing-router-optional)
 - [Deploying Skills to Tools](#deploying-skills-to-tools)
+- [Packaging a Skill as a Zip Bundle](#packaging-a-skill-as-a-zip-bundle)
 - [Auditing System Consistency](#auditing-system-consistency)
 
 ---
@@ -153,7 +154,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 **Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source (registered skills only — not capability files). Or use the plugin marketplace.
 
-**Claude.ai:** Zip skill directory, upload via Settings > Features. Per-user.
+**Claude.ai:** Bundle the skill as a zip using `bundle.py` (see [Packaging a Skill as a Zip Bundle](#packaging-a-skill-as-a-zip-bundle)), then upload via Settings > Features. Per-user. Description must be max 200 characters.
 
 **Claude API:** Upload via `/v1/skills` endpoints. Workspace-wide.
 
@@ -164,6 +165,84 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 **Windsurf:** Usually no deployment pointer needed when canonical skills live in `.agents/skills/`. Optionally add `.windsurf/rules/<domain>.md` for rules-based activation.
 
 **Kiro:** Create a pointer at `.kiro/skills/<domain>/SKILL.md` that references the canonical source.
+
+---
+
+## Packaging a Skill as a Zip Bundle
+
+Create a self-contained zip archive from a project-layout skill. The bundle resolves external references (roles, shared docs), copies them in, rewrites markdown paths, and validates the result.
+
+Note: `bundle.py` currently enforces Claude.ai packaging constraints (including the 200-character description limit). This is target-specific and stricter than the Agent Skills specification limit of 1024 characters.
+
+See [tool-integration.md](tool-integration.md#zip-bundle-packaging) for platform-specific constraints and [directory-structure.md](directory-structure.md#packaging-for-distribution) for the bundle structure.
+
+### Prerequisites
+
+- The skill must pass `validate_skill.py` (spec compliance)
+- The skill's description must not exceed 200 characters (Claude.ai limit)
+- All file references in the skill must resolve to existing files
+- No external reference may point to another skill (cross-skill boundary violation)
+
+### Usage
+
+```bash
+python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
+```
+
+- `--system-root`: Path to the skill system root (contains `skills/`, `roles/`). If omitted, inferred by walking up from the skill path.
+- `--output`: Output path for the zip. Defaults to `<skill-name>.zip` in the current directory.
+
+### Three-Phase Process
+
+**Phase 1: Pre-validation**
+
+1. Validates the skill against the Agent Skills specification
+2. Checks description length against the 200-character Claude.ai limit
+3. Scans all `.md` files for external references
+4. Verifies all references resolve to existing files
+5. Checks external files for cross-skill references (fails if found)
+6. Traverses references transitively (depth limit: 25, configurable in `configuration.yaml`)
+7. Detects cycles between external documents
+8. Reports non-markdown file references as warnings (not rewritten automatically)
+
+**Phase 2: Bundle creation**
+
+1. Copies the skill directory as-is (excluding `.git`, `__pycache__`, `.DS_Store`, `*.pyc`)
+2. Copies all resolved external files into the bundle (deduplicated):
+   - Role files → `roles/` (preserving group structure)
+   - Other files → `references/`, `assets/`, or `scripts/` per conventions
+3. Rewrites all markdown link and backtick references to use bundle-relative paths
+
+**Phase 3: Post-validation**
+
+1. Verifies all markdown references resolve within the bundle
+2. Verifies exactly one SKILL.md exists (case-insensitive — Claude.ai constraint)
+3. Creates the zip archive with the skill folder as the archive root
+
+### Example
+
+```bash
+# Bundle a skill with an inferred system root
+python scripts/bundle.py .agents/skills/project-mgmt --output dist/
+
+# Bundle with an explicit system root
+python scripts/bundle.py skills/project-mgmt --system-root .agents --output project-mgmt.zip
+```
+
+### Common Errors
+
+| Error | Cause | Fix |
+|---|---|---|
+| Description exceeds 200 characters | Claude.ai limit is stricter than the 1024-char spec limit | Shorten the description |
+| Broken reference | A markdown link points to a non-existent file | Fix the file path or remove the reference |
+| Cross-skill reference | An external file references another skill | Remove the cross-skill reference or inline the content |
+| Circular reference between external files | External docs reference each other in a cycle | Break the cycle — this is likely a structural bug |
+| Multiple SKILL.md files | Case-insensitive scan found duplicates | Rename capability files to `capability.md` |
+
+### Limitations
+
+- Path rewriting is performed only in `.md` files. References in scripts (Python, shell, etc.) are detected and reported as warnings but not rewritten — update them manually.
+- The bundler does not modify the original skill files. All changes are made in the bundle copy.
 
 ---
 

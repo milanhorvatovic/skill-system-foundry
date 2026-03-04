@@ -92,7 +92,7 @@ Plugin marketplace:
 | Surface | Network | Packages | Notes |
 |---|---|---|---|
 | Claude Code (CLI) | Full | Yes (prefer local) | Primary surface |
-| Claude.ai (Consumer) | Varies | Yes (npm, PyPI, GitHub) | Upload zip via Settings > Features, per-user |
+| Claude.ai (Consumer) | Varies | Yes (npm, PyPI, GitHub) | Upload zip via Settings > Features, per-user. See [tool-integration.md](tool-integration.md#zip-bundle-packaging) for bundle structure and constraints (200-char description limit, single SKILL.md). |
 | Claude API | None | No (pre-installed only) | `/v1/skills` endpoints, `skill_id`, beta headers |
 
 ## Loading Mechanism

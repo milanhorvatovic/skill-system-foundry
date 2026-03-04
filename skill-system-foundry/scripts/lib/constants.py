@@ -110,6 +110,13 @@ _dep = _config["dependency_direction"]
 RE_ROLES_REF = re.compile(_dep["roles_ref_pattern"])
 RE_SIBLING_CAP_REF = re.compile(_dep["sibling_capability_ref_pattern"])
 
+# --- Bundle Packaging ---
+_bundle = _config["bundle"]
+BUNDLE_MAX_REFERENCE_DEPTH = int(_bundle["max_reference_depth"])
+BUNDLE_DESCRIPTION_MAX_LENGTH = int(_bundle["description_max_length"])
+BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
+
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs, _dep
+del _bundle

@@ -4,7 +4,7 @@ applyTo: "skill-system-foundry/scripts/**/*.py"
 
 # Python Scripts Instructions
 
-Review changes as a **Python tooling maintainer**, ensuring validation and scaffolding scripts remain reliable, minimal, and consistent.
+Review changes as a **Python tooling maintainer**, ensuring validation, scaffolding, and bundling scripts remain reliable, minimal, and consistent.
 
 ## Design Principles
 
@@ -45,7 +45,7 @@ Review changes as a **Python tooling maintainer**, ensuring validation and scaff
 
 ## Review Scope
 
-These scripts (`validate_skill.py`, `audit_skill_system.py`) validate repository content — SKILL.md files, manifests, and directory structure — not their own correctness. Regressions in the tooling itself are not caught automatically. Review Python changes for code quality, maintainability, and adherence to the principles above. Only flag issues with high confidence.
+These scripts (`validate_skill.py`, `audit_skill_system.py`, `scaffold.py`, `bundle.py`) handle validation, scaffolding, and bundling of repository content — SKILL.md files, manifests, directory structure, and self-contained zip archives — not their own correctness. Regressions in the tooling itself are not caught automatically. Review Python changes for code quality, maintainability, and adherence to the principles above. Only flag issues with high confidence.
 
 ## Common Issues to Flag
 
