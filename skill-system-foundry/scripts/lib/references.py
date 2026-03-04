@@ -67,9 +67,13 @@ def is_markdown_file(filepath):
 
 
 def is_within_directory(filepath, directory):
-    """Check whether *filepath* is inside (or equal to) *directory*."""
-    filepath = os.path.abspath(filepath)
-    directory = os.path.abspath(directory)
+    """Check whether *filepath* is inside (or equal to) *directory*.
+
+    Resolves symlinks so that a symlink inside *directory* whose real
+    target is outside will correctly return ``False``.
+    """
+    filepath = os.path.realpath(filepath)
+    directory = os.path.realpath(directory)
     # Trailing sep avoids false matches like /foo/bar vs /foo/barbaz
     return filepath == directory or filepath.startswith(directory + os.sep)
 
@@ -78,6 +82,54 @@ def is_within_directory(filepath, directory):
 # Reference Extraction
 # ===================================================================
 
+def strip_fragment(ref_path):
+    """Strip query/anchor/title wrappers from a reference path.
+
+    Returns the filesystem-resolvable path portion, removing:
+      - ``<...>`` markdown path wrappers
+      - ``?query`` suffixes
+      - ``#fragment`` anchors (e.g. ``foo.md#section`` -> ``foo.md``)
+      - ``"title"`` suffixes (e.g. ``foo.md "My Title"`` -> ``foo.md``)
+
+    The caller keeps the original string for error messages and
+    markdown rewriting.
+    """
+    # Strip title suffix: path "title" or path 'title'
+    path = re.sub(r'''\s+["'][^"']*["']\s*$''', "", ref_path)
+    path = path.strip()
+
+    # Unwrap markdown angle-bracket path form: <path/to/file.md>
+    if path.startswith("<") and path.endswith(">"):
+        path = path[1:-1].strip()
+
+    # Strip query first, then anchor fragment
+    path = path.split("?", 1)[0]
+    # Strip anchor fragment
+    path = path.split("#", 1)[0]
+    return path.strip()
+
+
+def should_skip_reference(ref_path):
+    """Return True when a reference should not be treated as a local file."""
+    if not ref_path:
+        return True
+
+    path = ref_path.strip()
+    if not path:
+        return True
+
+    if path.startswith(("http://", "https://", "#", "mailto:", "ftp://")):
+        return True
+
+    if "<" in path or ">" in path:
+        # Allow markdown-wrapped local paths: <path/to/file.md> "Title"
+        if re.match(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''', path):
+            return False
+        return True
+
+    return False
+
+
 def extract_references(filepath):
     """Extract file references from a single file.
 
@@ -85,7 +137,11 @@ def extract_references(filepath):
     For other text files, performs best-effort detection of paths.
 
     Returns a list of tuples:
-        (reference_path: str, line_number: int, ref_type: str)
+        (raw_ref: str, clean_path: str, line_number: int, ref_type: str)
+
+    *raw_ref* is the original reference string (including any anchor
+    or title).  *clean_path* is the filesystem-resolvable portion
+    with fragments and titles stripped.
 
     *ref_type* is one of ``'markdown_link'``, ``'backtick'``, or
     ``'text_detected'``.
@@ -124,22 +180,19 @@ def extract_references(filepath):
 
 
 def _filter_refs(refs):
-    """Remove URLs, anchors, template placeholders, and obvious non-paths."""
+    """Remove URLs, anchors, template placeholders, and obvious non-paths.
+
+    Returns 4-tuples: ``(raw_ref, clean_path, line_num, ref_type)``.
+    *clean_path* has anchor fragments and title suffixes stripped.
+    """
     filtered = []
     for ref_path, line_num, ref_type in refs:
-        # Skip URLs
-        if ref_path.startswith(("http://", "https://", "mailto:", "ftp://")):
+        if should_skip_reference(ref_path):
             continue
-        # Skip anchors
-        if ref_path.startswith("#"):
+        clean_path = strip_fragment(ref_path)
+        if not clean_path:
             continue
-        # Skip template placeholders like <file>
-        if "<" in ref_path or ">" in ref_path:
-            continue
-        # Skip empty
-        if not ref_path.strip():
-            continue
-        filtered.append((ref_path, line_num, ref_type))
+        filtered.append((ref_path, clean_path, line_num, ref_type))
     return filtered
 
 
@@ -245,7 +298,7 @@ def scan_references(skill_path, system_root=None, max_depth=None):
             'external_files': set of absolute paths,
             'errors':         list of FAIL/WARN strings,
             'warnings':       list of WARN strings,
-            'reference_map':  {source_path: [(ref, line, type, resolved), ...]},
+            'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
         }
     """
     if max_depth is None:
@@ -265,8 +318,12 @@ def scan_references(skill_path, system_root=None, max_depth=None):
     # External files whose subtrees have been fully traversed.
     scanned_external = set()
 
-    def _scan_file(filepath, depth, ancestor_externals):
-        """Recursively scan *filepath* and classify its references."""
+    def _scan_file(filepath, depth, ancestor_set, ancestor_path):
+        """Recursively scan *filepath* and classify its references.
+
+        *ancestor_set* is a frozenset for O(1) cycle membership checks.
+        *ancestor_path* is an ordered tuple for deterministic cycle display.
+        """
         filepath = os.path.abspath(filepath)
 
         if depth > max_depth:
@@ -284,25 +341,25 @@ def scan_references(skill_path, system_root=None, max_depth=None):
 
         resolved_refs = []
 
-        for ref_path, line_num, ref_type in refs:
+        for raw_ref, clean_path, line_num, ref_type in refs:
             resolved, fail_reason = resolve_reference_with_reason(
-                ref_path, filepath, system_root
+                clean_path, filepath, system_root
             )
-            resolved_refs.append((ref_path, line_num, ref_type, resolved))
+            resolved_refs.append((raw_ref, line_num, ref_type, resolved))
 
             # ---- Broken reference ----
             if resolved is None:
                 if fail_reason == "absolute_path":
                     errors.append(
                         f"{LEVEL_FAIL}: Invalid absolute reference in "
-                        f"'{_rel(filepath)}' line {line_num}: '{ref_path}'. "
+                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
                         f"Bundle references must use relative paths within "
                         f"the skill system root."
                     )
                 elif fail_reason == "escapes_system_root":
                     errors.append(
                         f"{LEVEL_FAIL}: Reference escapes system root in "
-                        f"'{_rel(filepath)}' line {line_num}: '{ref_path}'. "
+                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
                         f"Bundling files outside the skill system root is "
                         f"not allowed."
                     )
@@ -310,7 +367,7 @@ def scan_references(skill_path, system_root=None, max_depth=None):
                     errors.append(
                         f"{LEVEL_FAIL}: Broken reference in "
                         f"'{_rel(filepath)}' line {line_num}: "
-                        f"'{ref_path}' does not resolve to any existing file. "
+                        f"'{raw_ref}' does not resolve to any existing file. "
                         f"Fix the reference path before bundling."
                     )
                 continue
@@ -323,7 +380,7 @@ def scan_references(skill_path, system_root=None, max_depth=None):
             if ref_type == "text_detected":
                 warnings.append(
                     f"{LEVEL_WARN}: Non-markdown file reference detected in "
-                    f"'{_rel(filepath)}' line {line_num}: '{ref_path}'. "
+                    f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
                     f"This reference will not be automatically rewritten "
                     f"in the bundle. You may need to update it manually."
                 )
@@ -341,7 +398,7 @@ def scan_references(skill_path, system_root=None, max_depth=None):
                     errors.append(
                         f"{LEVEL_FAIL}: Cross-skill reference in "
                         f"'{_rel(filepath)}' line {line_num}: "
-                        f"'{ref_path}' points to skill '{skill_name}'. "
+                        f"'{raw_ref}' points to skill '{skill_name}'. "
                         f"A bundle must be self-contained — it cannot "
                         f"reference other skills. Remove this reference "
                         f"or inline the needed content."
@@ -349,10 +406,9 @@ def scan_references(skill_path, system_root=None, max_depth=None):
                     continue
 
             # ---- Cycle between external documents ----
-            if resolved in ancestor_externals:
+            if resolved in ancestor_set:
                 cycle_display = " -> ".join(
-                    _rel(f)
-                    for f in list(ancestor_externals) + [resolved]
+                    _rel(f) for f in ancestor_path + (resolved,)
                     if not is_within_directory(f, skill_path)
                 )
                 errors.append(
@@ -368,8 +424,9 @@ def scan_references(skill_path, system_root=None, max_depth=None):
 
             if resolved not in scanned_external:
                 scanned_external.add(resolved)
-                new_ancestors = ancestor_externals | frozenset({resolved})
-                _scan_file(resolved, depth + 1, new_ancestors)
+                new_set = ancestor_set | frozenset({resolved})
+                new_path = ancestor_path + (resolved,)
+                _scan_file(resolved, depth + 1, new_set, new_path)
 
         if resolved_refs:
             reference_map[filepath] = resolved_refs
@@ -387,7 +444,7 @@ def scan_references(skill_path, system_root=None, max_depth=None):
     for root, _dirs, files in os.walk(skill_path):
         for filename in files:
             filepath = os.path.join(root, filename)
-            _scan_file(filepath, 0, frozenset())
+            _scan_file(filepath, 0, frozenset(), ())
 
     return {
         "external_files": external_files,

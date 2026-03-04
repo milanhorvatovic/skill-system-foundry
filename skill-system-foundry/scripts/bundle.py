@@ -31,22 +31,21 @@ from lib.constants import (
     BUNDLE_EXCLUDE_PATTERNS,
     SEPARATOR_WIDTH,
     LEVEL_FAIL, LEVEL_WARN,
-    EXT_MARKDOWN,
 )
 from lib.frontmatter import load_frontmatter
 from lib.references import (
     scan_references,
     compute_bundle_path,
     infer_system_root,
-    is_within_directory,
     is_markdown_file,
+    strip_fragment,
+    should_skip_reference,
     RE_BUNDLE_MD_LINK,
     RE_BUNDLE_BACKTICK,
 )
 from lib.reporting import categorize_errors, print_error_line, print_summary
 
 # Import validate_skill from sibling script
-sys.path.insert(0, _scripts_dir)
 from validate_skill import validate_skill
 
 
@@ -194,10 +193,30 @@ def _rewrite_markdown_paths(bundle_dir, skill_path, system_root, file_mapping):
                 for orig_path in original_paths:
                     if not orig_path:
                         continue
-                    # Rewrite markdown links: [text](old_path) -> [text](new_path)
                     escaped = re.escape(orig_path)
+                    # Rewrite markdown links, preserving wrappers/query/anchor/title:
+                    #   [text](old_path) -> [text](new_path)
+                    #   [text](<old_path>) -> [text](<new_path>)
+                    #   [text](old_path?x=1#anchor) -> [text](new_path?x=1#anchor)
+                    #   [text](old_path#anchor) -> [text](new_path#anchor)
+                    #   [text](old_path "title") -> [text](new_path "title")
+                    #   [text](old_path#anchor "title") -> [text](new_path#anchor "title")
                     content = re.sub(
-                        r"(\[[^\]]*\]\()" + escaped + r"(\))",
+                        r"(\[[^\]]*\]\()\s*<"
+                        + escaped
+                        + r"((?:\?[^)\s>#]*)?(?:#[^)\s>]*)?)>"
+                        + r"((?:\s+[\"'][^\"']*[\"'])?\))",
+                        r"\g<1><" + new_rel + r"\g<2>>\g<3>",
+                        content,
+                    )
+
+                    content = re.sub(
+                        r"(\[[^\]]*\]\()"
+                        + escaped
+                        + r"((?:\?[^)\s>#]*)?"      # optional ?query
+                        + r"(?:#[^)\s>]*)?"         # optional #anchor
+                        + r'''(?:\s+["'][^"']*["'])?'''  # optional "title"
+                        + r"\))",
                         r"\g<1>" + new_rel + r"\g<2>",
                         content,
                     )
@@ -354,10 +373,10 @@ def postvalidate(bundle_dir):
                 # Markdown links
                 for match in RE_BUNDLE_MD_LINK.finditer(line):
                     ref_path = match.group(2)
-                    if _should_skip_bundle_ref(ref_path):
+                    if should_skip_reference(ref_path):
                         continue
 
-                    ref_clean = ref_path.split("#")[0]
+                    ref_clean = strip_fragment(ref_path)
                     if not ref_clean:
                         continue
 
@@ -375,10 +394,10 @@ def postvalidate(bundle_dir):
                 # Backtick path references
                 for match in RE_BUNDLE_BACKTICK.finditer(line):
                     ref_path = match.group(1)
-                    if _should_skip_bundle_ref(ref_path):
+                    if should_skip_reference(ref_path):
                         continue
 
-                    ref_clean = ref_path.split("#")[0]
+                    ref_clean = strip_fragment(ref_path)
                     if not ref_clean:
                         continue
 
@@ -394,16 +413,6 @@ def postvalidate(bundle_dir):
                         )
 
     return errors
-
-
-def _should_skip_bundle_ref(ref_path):
-    """Return True for refs that should not be validated as local files."""
-    if ref_path.startswith(("http://", "https://", "#", "mailto:")):
-        return True
-    if "<" in ref_path or ">" in ref_path:
-        return True
-    return False
-
 
 # ===================================================================
 # Archive Creation
