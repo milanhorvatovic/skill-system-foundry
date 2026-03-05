@@ -36,6 +36,7 @@ from lib.constants import (
     BUNDLE_EXCLUDE_PATTERNS,
     SEPARATOR_WIDTH,
     LEVEL_FAIL,
+    LEVEL_WARN,
 )
 from lib.references import (
     infer_system_root,
@@ -142,13 +143,13 @@ def main() -> None:
 
     # Validate input
     if not os.path.isdir(skill_path):
-        print(f"Error: '{args.skill_path}' is not a directory.")
+        print_error_line(f"{LEVEL_FAIL}: '{args.skill_path}' is not a directory.")
         sys.exit(1)
 
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     if not os.path.exists(skill_md):
-        print(
-            f"Error: No {FILE_SKILL_MD} found in '{args.skill_path}'. "
+        print_error_line(
+            f"{LEVEL_FAIL}: No {FILE_SKILL_MD} found in '{args.skill_path}'. "
             f"Only registered skills (not capabilities) can be bundled."
         )
         sys.exit(1)
@@ -160,11 +161,13 @@ def main() -> None:
     if args.system_root:
         system_root = os.path.abspath(args.system_root)
         if not os.path.isdir(system_root):
-            print(f"Error: System root '{args.system_root}' is not a directory.")
+            print_error_line(
+                f"{LEVEL_FAIL}: System root '{args.system_root}' is not a directory."
+            )
             sys.exit(1)
         if not is_within_directory(skill_path, system_root):
-            print(
-                f"Error: Skill directory '{skill_path}' is not within "
+            print_error_line(
+                f"{LEVEL_FAIL}: Skill directory '{skill_path}' is not within "
                 f"the system root '{system_root}'. Provide a "
                 f"--system-root that is an ancestor of the skill "
                 f"directory, or omit it to infer automatically."
@@ -195,8 +198,8 @@ def main() -> None:
             os.path.join(system_root, DIR_SKILLS)
         )
         if not has_manifest and not has_skills_dir:
-            print(
-                f"Warning: '{system_root}' does not look like a skill "
+            print_error_line(
+                f"{LEVEL_WARN}: '{system_root}' does not look like a skill "
                 f"system root (no '{FILE_MANIFEST}' and no "
                 f"'{DIR_SKILLS}/' directory). Expected layout:\n"
                 f"  {system_root}/\n"
@@ -210,11 +213,11 @@ def main() -> None:
         if system_root:
             print(f"Inferred system root: {system_root}")
         else:
-            print(
-                "Warning: Could not infer system root. Bundling will fail "
-                "if external references are detected, because safety "
-                "boundaries cannot be enforced. Use --system-root to "
-                "specify it explicitly."
+            print_error_line(
+                f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
+                f"if external references are detected, because safety "
+                f"boundaries cannot be enforced. Use --system-root to "
+                f"specify it explicitly."
             )
 
     # Resolve output path

@@ -18,6 +18,7 @@ from .constants import (
     BUNDLE_DESCRIPTION_MAX_LENGTH,
     BUNDLE_EXCLUDE_PATTERNS,
     LEVEL_FAIL,
+    LEVEL_WARN,
 )
 from .frontmatter import load_frontmatter
 from .references import (
@@ -82,20 +83,32 @@ def prevalidate(
         for msg in spec_errors:
             warnings.append(msg)
 
-    # 2. Description length check (Claude.ai 200-char limit)
+    # 2. Description length check
+    # Default target is Claude.ai to preserve existing behavior; callers
+    # can override via SKILL_BUNDLE_TARGET environment variable for other
+    # consumers (e.g., Gemini CLI, offline sharing).
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     frontmatter, _body = load_frontmatter(skill_md)
     if frontmatter and "description" in frontmatter:
         desc = str(frontmatter["description"])
+        target = os.environ.get("SKILL_BUNDLE_TARGET", "claude").lower()
         if len(desc) > BUNDLE_DESCRIPTION_MAX_LENGTH:
-            errors.append(
-                f"{LEVEL_FAIL}: Description is {len(desc)} characters "
-                f"(max {BUNDLE_DESCRIPTION_MAX_LENGTH} for Claude.ai). "
-                f"Shorten the description to fit the Claude.ai consumer "
-                f"platform limit. The Agent Skills spec allows 1024, but "
-                f"Claude.ai zip uploads enforce {BUNDLE_DESCRIPTION_MAX_LENGTH}."
-            )
-            return errors, warnings, None
+            if target == "claude":
+                errors.append(
+                    f"{LEVEL_FAIL}: Description is {len(desc)} characters "
+                    f"(max {BUNDLE_DESCRIPTION_MAX_LENGTH} for Claude.ai). "
+                    f"Shorten the description to fit the Claude.ai consumer "
+                    f"platform limit. The Agent Skills spec allows 1024, but "
+                    f"Claude.ai zip uploads enforce {BUNDLE_DESCRIPTION_MAX_LENGTH}."
+                )
+                return errors, warnings, None
+            else:
+                warnings.append(
+                    f"{LEVEL_WARN}: Description is {len(desc)} characters, which "
+                    f"exceeds the bundler default of {BUNDLE_DESCRIPTION_MAX_LENGTH}. "
+                    f"This limit mirrors Claude.ai zip uploads; for generic targets, "
+                    f"ensure the consumer supports longer descriptions."
+                )
 
     # 3–7. Reference scanning
     # Resolve the effective root once so that prevalidate() and
