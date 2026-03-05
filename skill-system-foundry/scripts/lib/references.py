@@ -13,6 +13,7 @@ from typing import Literal, TypedDict
 
 from .constants import (
     DIR_SKILLS, DIR_ROLES, DIR_REFERENCES, DIR_ASSETS, DIR_SCRIPTS,
+    DIR_CAPABILITIES,
     FILE_SKILL_MD, FILE_MANIFEST,
     BUNDLE_MAX_REFERENCE_DEPTH,
     BUNDLE_EXCLUDE_PATTERNS,
@@ -40,8 +41,13 @@ RE_WRAPPED_LOCAL_REF = re.compile(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''')
 
 # Best-effort path detection in non-markdown text files.
 # Looks for paths starting with known directory prefixes.
+# Built from DIR_* constants so new prefixes are picked up automatically.
+_TEXT_REF_PREFIXES = "|".join([
+    DIR_REFERENCES, DIR_SCRIPTS, DIR_ASSETS, DIR_ROLES,
+    DIR_CAPABILITIES, DIR_SKILLS,
+])
 RE_TEXT_FILE_REF = re.compile(
-    r"(?:references|scripts|assets|roles|capabilities)"
+    r"(?:" + _TEXT_REF_PREFIXES + r")"
     r"/[^\s'\"`,;:)}\]>]+"
 )
 

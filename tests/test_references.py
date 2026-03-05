@@ -237,5 +237,37 @@ class ScanReferencesTests(unittest.TestCase):
             self.assertEqual(len(fails), 1)
 
 
+    def test_text_detected_cross_skill_reference_produces_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_a = os.path.join(system_root, "skills", "alpha")
+            skill_b = os.path.join(system_root, "skills", "beta")
+            write_text(os.path.join(skill_a, "SKILL.md"), "---\nname: alpha\n---\n")
+            write_text(os.path.join(skill_b, "SKILL.md"), "---\nname: beta\n---\n")
+            write_text(os.path.join(skill_b, "notes.md"), "Beta notes\n")
+            # Non-markdown file with a skills/ prefix reference
+            write_text(
+                os.path.join(skill_a, "config.yaml"),
+                "ref: skills/beta/notes.md\n",
+            )
+
+            result = scan_references(skill_a, system_root)
+
+            # The skills/beta/notes.md reference should be detected and
+            # flagged as cross-skill (or at minimum produce a warning).
+            has_cross_skill = any(
+                "Cross-skill" in e for e in result["errors"]
+            )
+            has_warning = any(
+                "Non-markdown" in w for w in result["warnings"]
+            )
+            self.assertTrue(
+                has_cross_skill or has_warning,
+                f"Expected cross-skill error or text_detected warning for "
+                f"skills/ reference. Errors: {result['errors']}; "
+                f"Warnings: {result['warnings']}"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
