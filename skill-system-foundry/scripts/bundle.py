@@ -244,9 +244,10 @@ def main() -> None:
     print(f"\nPhase 2: Bundle creation")
     print("-" * SEPARATOR_WIDTH)
     print("  Assembling bundle...")
-    bundle_base = tempfile.mkdtemp(prefix="skill_bundle_")
+    bundle_base: str | None = None
     phase_name = "bundle creation"
     try:
+        bundle_base = tempfile.mkdtemp(prefix="skill_bundle_")
         bundle_dir, file_mapping, stats = create_bundle(
             skill_path, system_root, scan_result, BUNDLE_EXCLUDE_PATTERNS,
             bundle_base=bundle_base,
@@ -298,7 +299,8 @@ def main() -> None:
 
     finally:
         # Clean up temp directory — always, even on unexpected errors.
-        shutil.rmtree(bundle_base, ignore_errors=True)
+        if bundle_base:
+            shutil.rmtree(bundle_base, ignore_errors=True)
 
     # ---- Summary ----
     zip_size = os.path.getsize(output_path)

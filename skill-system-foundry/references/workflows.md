@@ -198,12 +198,12 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 
 1. Validates the skill against the Agent Skills specification
 2. Checks description length against the 200-character Claude.ai limit
-3. Scans all `.md` files for external references
+3. Scans skill files for external references (full rewrite support for `.md` files; best-effort detection in other text files)
 4. Verifies all references resolve to existing files
 5. Checks external files for cross-skill references (fails if found)
-6. Traverses references transitively (depth limit: 25, configurable in `configuration.yaml`)
+6. Traverses references transitively, including from non-markdown detected references (depth limit: 25, configurable in `configuration.yaml`)
 7. Detects cycles between external documents
-8. Reports non-markdown file references as warnings (not rewritten automatically)
+8. Emits warnings for non-markdown file references (detected but not rewritten automatically)
 
 **Phase 2: Bundle creation**
 
