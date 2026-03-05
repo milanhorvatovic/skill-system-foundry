@@ -226,10 +226,10 @@ After post-validation passes, `bundle.py` creates the zip archive with the skill
 
 ```bash
 # Bundle a skill with an inferred system root
-python scripts/bundle.py .agents/skills/project-mgmt --output dist/
+python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --output /path/to/project/dist/
 
 # Bundle with an explicit system root
-python scripts/bundle.py .agents/skills/project-mgmt --system-root .agents --output project-mgmt.zip
+python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --system-root /path/to/project/.agents --output /path/to/project/project-mgmt.zip
 ```
 
 ### Common Errors
