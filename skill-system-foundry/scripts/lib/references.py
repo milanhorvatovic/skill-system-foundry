@@ -151,7 +151,7 @@ def should_skip_reference(ref_path: str) -> bool:
 
 # Type aliases for reference tuples
 ReferenceType = Literal["markdown_link", "backtick", "text_detected"]
-ResolveFailReason = Literal["absolute_path", "escapes_system_root", "not_found"]
+ResolveFailReason = Literal["absolute_path", "escapes_system_root", "is_directory", "not_found"]
 RawRef = tuple[str, int, ReferenceType]  # (ref_path, line_num, ref_type)
 FilteredRef = tuple[str, str, int, ReferenceType]  # (raw_ref, clean_path, line_num, ref_type)
 ResolvedRef = tuple[str, int, ReferenceType, str | None]  # (raw_ref, line_num, ref_type, resolved)
@@ -267,6 +267,7 @@ def resolve_reference_with_reason(
     *reason_or_none* is one of:
       - ``"absolute_path"``
       - ``"escapes_system_root"``
+      - ``"is_directory"``
       - ``"not_found"``
     """
     # Reject absolute paths — references must be relative.
@@ -281,8 +282,10 @@ def resolve_reference_with_reason(
 
     # Try relative to the source file
     candidate = source_candidate
-    if os.path.exists(candidate):
+    if os.path.isfile(candidate):
         return candidate, None
+    if os.path.isdir(candidate):
+        return None, "is_directory"
 
     # Try relative to the system root
     if system_root:
@@ -290,8 +293,10 @@ def resolve_reference_with_reason(
         if not is_within_directory(candidate, system_root):
             return None, "escapes_system_root"
 
-        if os.path.exists(candidate):
+        if os.path.isfile(candidate):
             return candidate, None
+        if os.path.isdir(candidate):
+            return None, "is_directory"
 
     return None, "not_found"
 
@@ -418,6 +423,13 @@ def scan_references(
                         f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
                         f"Bundling files outside the skill system root is "
                         f"not allowed."
+                    )
+                elif fail_reason == "is_directory":
+                    errors.append(
+                        f"{LEVEL_FAIL}: Reference points to a directory in "
+                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
+                        f"Only file references can be bundled — point to a "
+                        f"specific file instead."
                     )
                 else:
                     errors.append(

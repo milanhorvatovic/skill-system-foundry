@@ -272,10 +272,13 @@ def main() -> None:
         for warn in warnings:
             print(f"    {warn}")
 
-    assert scan_result is not None, (
-        "Internal error: pre-validation completed without producing a scan "
-        "result. Check prevalidate() implementation and call site."
-    )
+    if scan_result is None:
+        print(
+            f"{LEVEL_FAIL} Internal error: pre-validation completed without "
+            "producing a scan result. Check prevalidate() implementation "
+            "and call site."
+        )
+        sys.exit(1)
 
     ext_count = len(scan_result["external_files"])
     print(f"  Pre-validation passed. {ext_count} external file(s) to include.")
