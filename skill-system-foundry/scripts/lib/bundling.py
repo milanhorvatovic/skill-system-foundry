@@ -245,7 +245,9 @@ def _copy_external_files(
     to a directory instead of a regular file.
     """
     file_mapping: dict[str, str] = {}
-    # Reverse lookup: bundle_rel -> source path (for collision detection)
+    # Reverse lookup: normcase(bundle_rel) -> source path (for collision
+    # detection).  Using normcase ensures case-insensitive filesystems
+    # (Windows, macOS default) catch collisions that differ only by casing.
     dest_to_source: dict[str, str] = {}
 
     for ext_file in sorted(external_files):
@@ -257,8 +259,9 @@ def _copy_external_files(
             )
 
         bundle_rel = compute_bundle_path(ext_file, system_root)
+        collision_key = os.path.normcase(bundle_rel)
 
-        existing = dest_to_source.get(bundle_rel)
+        existing = dest_to_source.get(collision_key)
         if existing and existing != ext_file:
             raise ValueError(
                 f"Bundle path collision: '{bundle_rel}' is the target "
@@ -267,7 +270,7 @@ def _copy_external_files(
                 f"the conflict."
             )
 
-        dest_to_source[bundle_rel] = ext_file
+        dest_to_source[collision_key] = ext_file
         target = os.path.join(bundle_dir, bundle_rel)
 
         # Detect collisions with files already in the bundle (copied
