@@ -55,7 +55,12 @@ def validate_name(name):
     errors, _ = _validate_name_detailed(name, name)
     for e in errors:
         level = "Error" if e.startswith(LEVEL_FAIL) else "Warning"
-        print(f"{level}: {e.split(': ', 1)[1]}")
+        # Remove the LEVEL_FAIL/LEVEL_WARN prefix if present, otherwise print full message
+        if ": " in e:
+            message = e.split(": ", 1)[1]
+        else:
+            message = e
+        print(f"{level}: {message}")
     return not any(e.startswith(LEVEL_FAIL) for e in errors)
 
 

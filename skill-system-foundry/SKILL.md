@@ -23,7 +23,7 @@ metadata:
 
 A meta-skill for constructing and evolving AI-agnostic skill systems.
 
-This skill governs the creation and maintenance of a two-layer architecture: **skills** (with optional capabilities) and **roles**. All skills produced by this skill system follow the Agent Skills open specification (see [`references/agentskills-spec.md`](references/agentskills-spec.md)), incorporate best practices consolidated from official vendor skill authoring guides (see [`references/authoring-principles.md`](references/authoring-principles.md)), and align role contracts with the local convention guidance in [`references/tool-integration.md`](references/tool-integration.md#convention-coexistence).
+This skill governs the creation and maintenance of a two-layer architecture: **skills** (with optional capabilities) and **roles**. All skills produced by this system follow the [Agent Skills specification](references/agentskills-spec.md). They incorporate [authoring best practices](references/authoring-principles.md) from official vendor guides. Role contracts align with [tool integration guidance](references/tool-integration.md#convention-coexistence) for seamless deployment across platforms.
 
 **Important:** Capabilities are optional, granular sub-skills within a parent skill. Do not create capabilities by default. Only introduce them when the integrator explicitly asks for them or when the domain clearly demands decomposition (3+ distinct operations with different trigger contexts). Start with a standalone skill; evolve to router+capabilities only when justified.
 
