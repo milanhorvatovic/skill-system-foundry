@@ -218,6 +218,8 @@ class ScanReferencesTests(unittest.TestCase):
 
     def test_no_system_root_with_external_ref_produces_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Place skill in a flat directory with no system root markers
+            # so that infer_system_root() returns None.
             skill_dir = os.path.join(tmpdir, "skill")
             ext_file = os.path.join(tmpdir, "outside.md")
             write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
@@ -227,8 +229,9 @@ class ScanReferencesTests(unittest.TestCase):
             )
             write_text(ext_file, "Outside\n")
 
-            # Pass system_root="" to prevent inference
-            result = scan_references(skill_dir, system_root="")
+            # system_root=None triggers inference; with no system root
+            # markers the inferred root is None, so external refs fail.
+            result = scan_references(skill_dir, system_root=None)
 
             fails = [e for e in result["errors"] if "no system root" in e]
             self.assertEqual(len(fails), 1)

@@ -356,7 +356,7 @@ def scan_references(
         exclude_patterns = BUNDLE_EXCLUDE_PATTERNS
 
     skill_path = os.path.abspath(skill_path)
-    if system_root:
+    if system_root is not None:
         system_root = os.path.abspath(system_root)
     else:
         system_root = infer_system_root(skill_path)
@@ -507,18 +507,21 @@ def scan_references(
             reference_map[filepath] = resolved_refs
 
     def _rel(filepath: str) -> str:
-        """Best-effort short display path."""
+        """Best-effort short display path with forward-slash separators."""
         filepath = os.path.abspath(filepath)
         if is_within_directory(filepath, skill_path):
-            return os.path.relpath(filepath, skill_path)
-        if system_root:
-            return os.path.relpath(filepath, system_root)
-        return filepath
+            display = os.path.relpath(filepath, skill_path)
+        elif system_root:
+            display = os.path.relpath(filepath, system_root)
+        else:
+            display = filepath
+        # Normalize separators for stable cross-platform diagnostics.
+        return display.replace(os.sep, "/")
 
     # Scan every file in the skill directory tree, applying the same
     # exclude patterns and symlink traversal used during bundle copying
     # so that the set of scanned files matches what ends up in the bundle.
-    boundary = system_root or skill_path
+    boundary = skill_path if system_root is None else system_root
     visited_dirs: set[str] = set()
 
     for root, dirs, files in os.walk(skill_path, followlinks=True):

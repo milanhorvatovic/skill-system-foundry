@@ -94,7 +94,10 @@ def prevalidate(
     # 3–7. Reference scanning
     # Resolve the effective root once so that prevalidate() and
     # scan_references() agree on the same value.
-    effective_root = system_root or infer_system_root(skill_path)
+    if system_root is None:
+        effective_root = infer_system_root(skill_path)
+    else:
+        effective_root = system_root
     scan_result = scan_references(skill_path, effective_root)
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
@@ -151,7 +154,7 @@ def _copy_skill(
     Symlinked directories that stay within the boundary are traversed
     so their contents are included.
     """
-    boundary = system_root or skill_path
+    boundary = skill_path if system_root is None else system_root
     # Track visited real directory paths to prevent infinite loops
     # when followlinks=True encounters circular symlinks.
     visited_dirs: set[str] = set()
