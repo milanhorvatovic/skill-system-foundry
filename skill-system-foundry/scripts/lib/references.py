@@ -402,7 +402,8 @@ def walk_skill_files(
                     else:
                         rel = os.path.relpath(dir_path, skill_path).replace(os.sep, "/")
                         raise ValueError(
-                            f"Symlinked directory escapes system boundary: "
+                            f"Symlinked directory escapes allowed boundary "
+                            f"rooted at '{boundary}': "
                             f"'{rel}' -> '{real_target}'. "
                             f"Remove or replace the symlink before bundling."
                         )
@@ -429,7 +430,8 @@ def walk_skill_files(
                     else:
                         rel = os.path.relpath(filepath, skill_path).replace(os.sep, "/")
                         raise ValueError(
-                            f"Symlinked file escapes system boundary: "
+                            f"Symlinked file escapes allowed boundary "
+                            f"rooted at '{boundary}': "
                             f"'{rel}' -> '{real_target}'. "
                             f"Remove or replace the symlink before bundling."
                         )
@@ -716,13 +718,14 @@ def scan_references(
     ):
         _scan_file(os.path.join(root, filename), 0, frozenset(), ())
 
+    boundary_display = _rel(boundary)
     for v in violations:
         rel = _rel(v.link_path)
         errors.append(
-            f"{LEVEL_FAIL}: Symlinked {v.kind} escapes allowed "
-            f"boundary: '{rel}' -> "
-            f"'{v.real_target}'. Symlinks inside the skill "
-            f"must point to targets within the system root."
+            f"{LEVEL_FAIL}: Symlinked {v.kind} escapes allowed boundary "
+            f"rooted at '{boundary_display}': '{rel}' -> "
+            f"'{v.real_target}'. Symlink targets must stay within "
+            f"this boundary."
         )
 
     return {

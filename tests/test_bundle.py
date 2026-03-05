@@ -183,7 +183,7 @@ class CopySkillSymlinkBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 _copy_skill(skill_dir, bundle_dir, [], system_root)
 
-            self.assertIn("Symlinked file escapes system boundary", str(cm.exception))
+            self.assertIn("Symlinked file escapes allowed boundary", str(cm.exception))
 
     def test_symlink_within_boundary_is_allowed(self) -> None:
         if not hasattr(os, "symlink"):
@@ -238,7 +238,7 @@ class CopySkillSymlinkBoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 _copy_skill(skill_dir, bundle_dir, [], system_root)
 
-            self.assertIn("Symlinked directory escapes system boundary", str(cm.exception))
+            self.assertIn("Symlinked directory escapes allowed boundary", str(cm.exception))
 
     def test_symlinked_dir_within_boundary_is_traversed(self) -> None:
         if not hasattr(os, "symlink"):
