@@ -461,6 +461,26 @@ def scan_references(
                 )
                 continue
 
+            # ---- Cross-skill reference (checked before text_detected
+            #      so that cross-skill violations are always a hard
+            #      FAIL regardless of reference type) ----
+            if system_root:
+                containing_skill = find_containing_skill(resolved, system_root)
+                if (
+                    containing_skill
+                    and os.path.abspath(containing_skill) != skill_path
+                ):
+                    skill_name = os.path.basename(containing_skill)
+                    errors.append(
+                        f"{LEVEL_FAIL}: Cross-skill reference in "
+                        f"'{_rel(filepath)}' line {line_num}: "
+                        f"'{raw_ref}' points to skill '{skill_name}'. "
+                        f"A bundle must be self-contained — it cannot "
+                        f"reference other skills. Remove this reference "
+                        f"or inline the needed content."
+                    )
+                    continue
+
             # ---- Non-markdown detected reference (warn only) ----
             if ref_type == "text_detected":
                 warnings.append(
@@ -479,24 +499,6 @@ def scan_references(
                     new_path = ancestor_path + (resolved,)
                     _scan_file(resolved, depth + 1, new_set, new_path)
                 continue
-
-            # ---- Cross-skill reference ----
-            if system_root:
-                containing_skill = find_containing_skill(resolved, system_root)
-                if (
-                    containing_skill
-                    and os.path.abspath(containing_skill) != skill_path
-                ):
-                    skill_name = os.path.basename(containing_skill)
-                    errors.append(
-                        f"{LEVEL_FAIL}: Cross-skill reference in "
-                        f"'{_rel(filepath)}' line {line_num}: "
-                        f"'{raw_ref}' points to skill '{skill_name}'. "
-                        f"A bundle must be self-contained — it cannot "
-                        f"reference other skills. Remove this reference "
-                        f"or inline the needed content."
-                    )
-                    continue
 
             # ---- Cycle between external documents ----
             if resolved in ancestor_set:

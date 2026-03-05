@@ -253,20 +253,14 @@ class ScanReferencesTests(unittest.TestCase):
 
             result = scan_references(skill_a, system_root)
 
-            # The skills/beta/notes.md reference should be detected and
-            # flagged as cross-skill (or at minimum produce a warning).
-            has_cross_skill = any(
-                "Cross-skill" in e for e in result["errors"]
-            )
-            has_warning = any(
-                "Non-markdown" in w for w in result["warnings"]
-            )
-            self.assertTrue(
-                has_cross_skill or has_warning,
-                f"Expected cross-skill error or text_detected warning for "
-                f"skills/ reference. Errors: {result['errors']}; "
-                f"Warnings: {result['warnings']}"
-            )
+            # Cross-skill references must be a hard FAIL even when the
+            # originating file is non-markdown (text_detected).
+            fails = [e for e in result["errors"] if "Cross-skill" in e]
+            self.assertEqual(len(fails), 1, (
+                f"Expected exactly one Cross-skill FAIL. "
+                f"Errors: {result['errors']}"
+            ))
+            self.assertIn("beta", fails[0])
 
 
 if __name__ == "__main__":
