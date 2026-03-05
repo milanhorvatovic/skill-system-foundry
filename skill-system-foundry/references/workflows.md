@@ -192,7 +192,7 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 - `--system-root`: Path to the skill system root (contains `skills/`, `roles/`). If omitted, inferred by walking up from the skill path.
 - `--output`: Output path for the zip. Defaults to `<skill-name>.zip` in the current directory.
 
-### Three-Phase Process
+### Four-Phase Process
 
 **Phase 1: Pre-validation**
 

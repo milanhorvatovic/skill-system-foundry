@@ -222,7 +222,13 @@ def _copy_skill(
                     continue
 
             dst = os.path.join(target_root, filename)
-            shutil.copy2(src, dst)
+            try:
+                shutil.copy2(src, dst)
+            except OSError as e:
+                rel_src = os.path.relpath(src, skill_path)
+                raise ValueError(
+                    f"Failed to copy bundled file '{rel_src}'"
+                ) from e
 
 
 def _copy_external_files(
