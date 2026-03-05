@@ -242,6 +242,9 @@ class ScanReferencesTests(unittest.TestCase):
         classified as internal (apparent path is within the skill), so that
         _copy_skill() handles it and _copy_external_files() does not
         duplicate it."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")
             skill_dir = os.path.join(system_root, "skills", "demo")
@@ -253,7 +256,10 @@ class ScanReferencesTests(unittest.TestCase):
             # Symlink inside the skill pointing to the shared file.
             link_path = os.path.join(skill_dir, "refs", "common.md")
             os.makedirs(os.path.dirname(link_path), exist_ok=True)
-            os.symlink(shared_file, link_path)
+            try:
+                os.symlink(shared_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
             # Skill doc references the symlink via its apparent path.
             write_text(
                 os.path.join(skill_dir, "doc.md"),
