@@ -152,13 +152,7 @@ The `roles/` directory in a bundle is a **distribution-only exception**. In the 
 
 ### Tooling
 
-Run `bundle.py` to create a bundle from an existing project-layout skill:
-
-```bash
-python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
-```
-
-The bundler resolves external references, copies them into the bundle, rewrites markdown paths, and validates the result. See [workflows.md](workflows.md) for the full procedure and [tool-integration.md](tool-integration.md#zip-bundle-packaging) for platform-specific constraints.
+See [workflows.md — Packaging a Skill as a Zip Bundle](workflows.md#packaging-a-skill-as-a-zip-bundle) for the end-to-end procedure, command usage, and examples. See [tool-integration.md — Zip Bundle Packaging](tool-integration.md#zip-bundle-packaging) for platform-specific constraints.
 
 ---
 

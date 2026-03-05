@@ -265,21 +265,11 @@ Source: [How to create custom Skills (Claude Help Center)](https://support.claud
 
 ### Key Distinctions from Project Layout
 
-- This is a **distribution artifact**, not a project layout
-- Self-contained: all references resolve within the bundle
-- `roles/` is inlined under the skill (normally at system level) — distribution-only exception
-- No `.agents/` wrapper, no deployment pointers
-- Deployment pointers are a project-level concern — the zip IS the skill
+See [directory-structure.md — Packaging for Distribution](directory-structure.md#packaging-for-distribution) for the full project-vs-bundle comparison. In short: the bundle is a self-contained distribution artifact with roles inlined, no `.agents/` wrapper, and no deployment pointers.
 
 ### Tooling
 
-Use `bundle.py` to create a zip bundle from a skill:
-
-```bash
-python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
-```
-
-The bundler validates, resolves external references, copies them into the bundle, rewrites markdown paths, and creates the archive. See [workflows.md](workflows.md) for the step-by-step process.
+See [workflows.md — Packaging a Skill as a Zip Bundle](workflows.md#packaging-a-skill-as-a-zip-bundle) for the end-to-end procedure, command usage, and examples.
 
 ---
 
