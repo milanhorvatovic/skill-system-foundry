@@ -13,6 +13,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from lib.references import (
+    RE_TEXT_FILE_REF,
     find_containing_skill,
     scan_references,
     should_skip_reference,
@@ -52,6 +53,28 @@ class ShouldSkipReferenceTests(unittest.TestCase):
         for raw_ref, expected in cases.items():
             with self.subTest(raw_ref=raw_ref):
                 self.assertEqual(should_skip_reference(raw_ref), expected)
+
+
+class TextFileRefRegexTests(unittest.TestCase):
+    def test_boundary_prevents_mid_token_match(self) -> None:
+        """Prefixes embedded in longer words must not match."""
+        cases = {
+            # Should match — standalone prefix at start or after non-word char
+            "references/guide.md": ["references/guide.md"],
+            " references/guide.md": ["references/guide.md"],
+            "path: references/guide.md": ["references/guide.md"],
+            "skills/beta/notes.md": ["skills/beta/notes.md"],
+            # Should NOT match — prefix is part of a longer word
+            "myreferences/guide.md": [],
+            "allskills/beta/notes.md": [],
+            "extra_scripts/run.py": [],
+            # Should NOT match — preceded by / (part of a longer path)
+            "foo/references/guide.md": [],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                matches = RE_TEXT_FILE_REF.findall(text)
+                self.assertEqual(matches, expected)
 
 
 class FindContainingSkillTests(unittest.TestCase):

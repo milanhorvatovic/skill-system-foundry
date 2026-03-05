@@ -42,13 +42,19 @@ RE_WRAPPED_LOCAL_REF = re.compile(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''')
 # Best-effort path detection in non-markdown text files.
 # Looks for paths starting with known directory prefixes.
 # Built from DIR_* constants so new prefixes are picked up automatically.
+# Uses re.escape so prefix values are never interpreted as metacharacters,
+# and a lookbehind so that "myreferences/foo.md" does not falsely match
+# as "references/foo.md".
 _TEXT_REF_PREFIXES = "|".join([
-    DIR_REFERENCES, DIR_SCRIPTS, DIR_ASSETS, DIR_ROLES,
-    DIR_CAPABILITIES, DIR_SKILLS,
+    re.escape(DIR_REFERENCES), re.escape(DIR_SCRIPTS),
+    re.escape(DIR_ASSETS), re.escape(DIR_ROLES),
+    re.escape(DIR_CAPABILITIES), re.escape(DIR_SKILLS),
 ])
 RE_TEXT_FILE_REF = re.compile(
+    r"(?:(?<=^)|(?<=[^\w/]))"    # start-of-line or preceded by non-word, non-path char
     r"(?:" + _TEXT_REF_PREFIXES + r")"
-    r"/[^\s'\"`,;:)}\]>]+"
+    r"/[^\s'\"`,;:)}\]>]+",
+    re.MULTILINE,
 )
 
 # Binary file extensions — not scanned for references.
