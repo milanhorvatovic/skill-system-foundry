@@ -144,7 +144,7 @@ def should_skip_reference(ref_path: str) -> bool:
         return True
 
     # Check URL schemes on the raw path first.
-    if path.startswith(("http://", "https://", "#", "mailto:", "ftp://")):
+    if path.startswith(("http://", "https://", "#", "mailto:", "ftp://", "file://")):
         return True
 
     if "<" in path or ">" in path:
@@ -153,7 +153,7 @@ def should_skip_reference(ref_path: str) -> bool:
             # Unwrap and re-check for URL schemes inside the brackets
             # so that autolinks like <https://example.com> are skipped.
             inner = path.split("<", 1)[1].split(">", 1)[0].strip()
-            if inner.startswith(("http://", "https://", "mailto:", "ftp://")):
+            if inner.startswith(("http://", "https://", "mailto:", "ftp://", "file://")):
                 return True
             return False
         return True
@@ -516,20 +516,24 @@ def scan_references(
             #      FAIL regardless of reference type) ----
             if system_root:
                 containing_skill = find_containing_skill(resolved, system_root)
-                if (
-                    containing_skill
-                    and os.path.abspath(containing_skill) != skill_path
-                ):
-                    skill_name = os.path.basename(containing_skill)
-                    errors.append(
-                        f"{LEVEL_FAIL}: Cross-skill reference in "
-                        f"'{_rel(filepath)}' line {line_num}: "
-                        f"'{raw_ref}' points to skill '{skill_name}'. "
-                        f"A bundle must be self-contained — it cannot "
-                        f"reference other skills. Remove this reference "
-                        f"or inline the needed content."
+                if containing_skill:
+                    containing_norm = os.path.normcase(
+                        os.path.realpath(os.path.abspath(containing_skill))
                     )
-                    continue
+                    skill_path_norm = os.path.normcase(
+                        os.path.realpath(skill_path)
+                    )
+                    if containing_norm != skill_path_norm:
+                        skill_name = os.path.basename(containing_skill)
+                        errors.append(
+                            f"{LEVEL_FAIL}: Cross-skill reference in "
+                            f"'{_rel(filepath)}' line {line_num}: "
+                            f"'{raw_ref}' points to skill '{skill_name}'. "
+                            f"A bundle must be self-contained — it cannot "
+                            f"reference other skills. Remove this reference "
+                            f"or inline the needed content."
+                        )
+                        continue
 
             # ---- Non-markdown detected reference (warn only) ----
             if ref_type == "text_detected":

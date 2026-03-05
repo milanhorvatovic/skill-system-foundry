@@ -45,6 +45,8 @@ class ShouldSkipReferenceTests(unittest.TestCase):
             "<https://example.com>": True,
             "<mailto:test@example.com>": True,
             "<ftp://files.example.com/data>": True,
+            "file:///C:/docs/foo.md": True,
+            "<file:///home/user/docs/foo.md>": True,
             "references/foo.md": False,
             "<references/foo.md>": False,
             "<references/foo.md> \"Title\"": False,
