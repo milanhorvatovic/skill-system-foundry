@@ -30,6 +30,8 @@ from lib.bundling import (
     create_zip,
 )
 from lib.constants import (
+    DIR_SKILLS,
+    FILE_MANIFEST,
     FILE_SKILL_MD,
     BUNDLE_EXCLUDE_PATTERNS,
     SEPARATOR_WIDTH,
@@ -165,6 +167,41 @@ def main() -> None:
                 f"directory, or omit it to infer automatically."
             )
             sys.exit(1)
+
+        # Auto-correct if the user passed the skills/ directory itself
+        # rather than the system root that contains it.
+        skills_dir = os.path.join(system_root, DIR_SKILLS)
+        if (
+            os.path.basename(system_root) == DIR_SKILLS
+            and is_within_directory(skill_path, system_root)
+            and not os.path.isdir(skills_dir)
+        ):
+            corrected = os.path.dirname(system_root)
+            print(
+                f"Note: '{args.system_root}' appears to be a "
+                f"'{DIR_SKILLS}/' directory, not the system root. "
+                f"Using parent '{corrected}' as system root."
+            )
+            system_root = corrected
+
+        # Validate the root has expected structure markers.
+        has_manifest = os.path.exists(
+            os.path.join(system_root, FILE_MANIFEST)
+        )
+        has_skills_dir = os.path.isdir(
+            os.path.join(system_root, DIR_SKILLS)
+        )
+        if not has_manifest and not has_skills_dir:
+            print(
+                f"Warning: '{system_root}' does not look like a skill "
+                f"system root (no '{FILE_MANIFEST}' and no "
+                f"'{DIR_SKILLS}/' directory). Expected layout:\n"
+                f"  {system_root}/\n"
+                f"    {FILE_MANIFEST}\n"
+                f"    {DIR_SKILLS}/\n"
+                f"      <your-skill>/\n"
+                f"If this is intentional, you can ignore this warning."
+            )
     else:
         system_root = infer_system_root(skill_path)
         if system_root:
