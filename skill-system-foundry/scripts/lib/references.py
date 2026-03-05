@@ -522,42 +522,47 @@ def scan_references(
     # exclude patterns and symlink traversal used during bundle copying
     # so that the set of scanned files matches what ends up in the bundle.
     boundary = skill_path if system_root is None else system_root
-    visited_dirs: set[str] = set()
+
+    # Track real-directory ancestry per walk path to break only true
+    # symlink cycles (where a target is already on the current
+    # ancestry chain) while still scanning distinct alias paths.
+    root_ancestors: dict[str, frozenset[str]] = {
+        skill_path: frozenset({os.path.realpath(skill_path)})
+    }
 
     for root, dirs, files in os.walk(skill_path, followlinks=True):
-        real_root = os.path.realpath(root)
-        if real_root in visited_dirs:
-            # Already visited via another path; prevent descent but
-            # still scan files under this alias.
-            dirs[:] = []
-        else:
-            visited_dirs.add(real_root)
+        ancestors = root_ancestors.get(
+            root, frozenset({os.path.realpath(root)})
+        )
 
-            dirs[:] = [
-                d for d in dirs
-                if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)
-            ]
+        dirs[:] = [
+            d for d in dirs
+            if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)
+        ]
 
-            # Skip symlinked directories that escape the allowed
-            # boundary or whose resolved target has any path component
-            # matching an exclude pattern (e.g. "docs -> .git").  This
-            # mirrors _copy_skill() so the scanned file set matches
-            # what ends up in the bundle.
-            kept_dirs: list[str] = []
-            for d in dirs:
-                dir_path = os.path.join(root, d)
-                if os.path.islink(dir_path):
-                    real_target = os.path.realpath(dir_path)
-                    if not is_within_directory(real_target, boundary):
-                        continue
-                    parts = os.path.normpath(real_target).split(os.sep)
-                    if any(
-                        any(fnmatch.fnmatch(part, p) for p in exclude_patterns)
-                        for part in parts
-                    ):
-                        continue
-                kept_dirs.append(d)
-            dirs[:] = kept_dirs
+        # Skip symlinked directories that escape the allowed boundary,
+        # whose resolved target has any path component matching an
+        # exclude pattern, or that form a true symlink cycle.  This
+        # mirrors _copy_skill() so the scanned file set matches what
+        # ends up in the bundle.
+        kept_dirs: list[str] = []
+        for d in dirs:
+            dir_path = os.path.join(root, d)
+            real_target = os.path.realpath(dir_path)
+            if os.path.islink(dir_path):
+                if real_target in ancestors:
+                    continue
+                if not is_within_directory(real_target, boundary):
+                    continue
+                parts = os.path.normpath(real_target).split(os.sep)
+                if any(
+                    any(fnmatch.fnmatch(part, p) for p in exclude_patterns)
+                    for part in parts
+                ):
+                    continue
+            root_ancestors[dir_path] = ancestors | frozenset({real_target})
+            kept_dirs.append(d)
+        dirs[:] = kept_dirs
 
         for filename in files:
             if any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):
