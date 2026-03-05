@@ -237,6 +237,36 @@ class ScanReferencesTests(unittest.TestCase):
             self.assertEqual(len(fails), 1)
 
 
+    def test_symlink_inside_skill_to_outside_target_is_internal(self) -> None:
+        """A symlink living inside the skill but pointing outside should be
+        classified as internal (apparent path is within the skill), so that
+        _copy_skill() handles it and _copy_external_files() does not
+        duplicate it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            shared_dir = os.path.join(system_root, "shared")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            # Shared file outside the skill but within the system root.
+            shared_file = os.path.join(shared_dir, "common.md")
+            write_text(shared_file, "Shared content\n")
+            # Symlink inside the skill pointing to the shared file.
+            link_path = os.path.join(skill_dir, "refs", "common.md")
+            os.makedirs(os.path.dirname(link_path), exist_ok=True)
+            os.symlink(shared_file, link_path)
+            # Skill doc references the symlink via its apparent path.
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "See [common](refs/common.md)\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["warnings"], [])
+            # The symlink target must NOT appear as an external file.
+            self.assertEqual(result["external_files"], set())
+
     def test_text_detected_cross_skill_reference_produces_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")

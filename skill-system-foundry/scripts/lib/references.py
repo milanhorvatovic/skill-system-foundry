@@ -447,7 +447,26 @@ def scan_references(
                 continue
 
             # ---- Internal (within the skill) ----
-            if is_within_directory(resolved, skill_path):
+            # A reference is treated as internal if either:
+            #   - its resolved (real) path is within the skill directory, or
+            #   - its lexical path (without resolving symlinks) lies under
+            #     the skill directory.  The second check handles symlinks
+            #     that live inside the skill but point to shared targets
+            #     elsewhere — _copy_skill() already copies them into the
+            #     bundle, so they must not be re-classified as external.
+            resolved_norm = os.path.normcase(os.path.abspath(resolved))
+            skill_norm = os.path.normcase(skill_path)
+            lexical_within_skill = False
+            try:
+                lexical_within_skill = (
+                    os.path.commonpath([resolved_norm, skill_norm])
+                    == skill_norm
+                )
+            except ValueError:
+                # Different drives on Windows — cannot be within the skill.
+                pass
+
+            if is_within_directory(resolved, skill_path) or lexical_within_skill:
                 continue
 
             # ---- No system root — refuse to traverse outside the skill ----
