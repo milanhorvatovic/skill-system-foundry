@@ -536,17 +536,25 @@ def scan_references(
             ]
 
             # Skip symlinked directories that escape the allowed
-            # boundary — _copy_skill() will reject them, so scanning
-            # their contents would only produce misleading errors.
-            dirs[:] = [
-                d for d in dirs
-                if not (
-                    os.path.islink(os.path.join(root, d))
-                    and not is_within_directory(
-                        os.path.realpath(os.path.join(root, d)), boundary
-                    )
-                )
-            ]
+            # boundary or whose resolved target has any path component
+            # matching an exclude pattern (e.g. "docs -> .git").  This
+            # mirrors _copy_skill() so the scanned file set matches
+            # what ends up in the bundle.
+            kept_dirs: list[str] = []
+            for d in dirs:
+                dir_path = os.path.join(root, d)
+                if os.path.islink(dir_path):
+                    real_target = os.path.realpath(dir_path)
+                    if not is_within_directory(real_target, boundary):
+                        continue
+                    parts = os.path.normpath(real_target).split(os.sep)
+                    if any(
+                        any(fnmatch.fnmatch(part, p) for p in exclude_patterns)
+                        for part in parts
+                    ):
+                        continue
+                kept_dirs.append(d)
+            dirs[:] = kept_dirs
 
         for filename in files:
             if any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):

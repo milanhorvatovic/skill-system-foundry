@@ -250,6 +250,40 @@ class CopySkillSymlinkBoundaryTests(unittest.TestCase):
             with open(copied, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "guide content")
 
+    def test_symlinked_dir_to_excluded_target_is_skipped(self) -> None:
+        """A symlink like docs -> .git should be excluded even though
+        the symlink name itself does not match any exclude pattern."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            git_dir = os.path.join(system_root, ".git")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(os.path.join(git_dir, "config"), "secret")
+            os.makedirs(bundle_dir, exist_ok=True)
+
+            # Create symlink "docs" pointing to ".git" inside the root
+            link_path = os.path.join(skill_dir, "docs")
+            try:
+                os.symlink(git_dir, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            _copy_skill(skill_dir, bundle_dir, [".git"], system_root)
+
+            # The symlink target matches .git, so it must be excluded
+            self.assertFalse(
+                os.path.exists(os.path.join(bundle_dir, "docs", "config"))
+            )
+            # SKILL.md should still be copied
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "SKILL.md"))
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

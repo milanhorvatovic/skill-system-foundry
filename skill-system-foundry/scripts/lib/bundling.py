@@ -175,10 +175,22 @@ def _copy_skill(
             # Reject symlinked subdirectories that escape the allowed
             # boundary.  Safe symlinks are traversed (followlinks=True)
             # so their contents are included in the bundle.
+            # Also filter out symlinks whose resolved target has any
+            # path component matching an exclude pattern (e.g. a
+            # symlink "docs -> .git" would bypass name-based exclusion).
+            kept_dirs: list[str] = []
             for d in dirs:
-                _check_symlink_boundary(
-                    os.path.join(root, d), boundary, skill_path, "directory"
-                )
+                dir_path = os.path.join(root, d)
+                if os.path.islink(dir_path):
+                    _check_symlink_boundary(
+                        dir_path, boundary, skill_path, "directory"
+                    )
+                    real_target = os.path.realpath(dir_path)
+                    parts = os.path.normpath(real_target).split(os.sep)
+                    if any(_should_exclude(p, exclude_patterns) for p in parts):
+                        continue
+                kept_dirs.append(d)
+            dirs[:] = kept_dirs
 
         rel_root = os.path.relpath(root, skill_path)
         target_root = os.path.join(bundle_dir, rel_root)
