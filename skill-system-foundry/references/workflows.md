@@ -192,7 +192,7 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 - `--system-root`: Path to the skill system root (contains `skills/`, `roles/`). If omitted, inferred by walking up from the skill path.
 - `--output`: Output path for the zip. Defaults to `<skill-name>.zip` in the current directory.
 
-### Four-Phase Process
+### Three-Phase Process
 
 **Phase 1: Pre-validation**
 
@@ -218,9 +218,9 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 1. Verifies all markdown references resolve within the bundle
 2. Verifies exactly one SKILL.md exists (case-insensitive — Claude.ai constraint)
 
-**Phase 4: Archive creation**
+**Archive creation (final step)**
 
-1. Creates the zip archive with the skill folder as the archive root
+After post-validation passes, `bundle.py` creates the zip archive with the skill folder as the archive root.
 
 ### Example
 

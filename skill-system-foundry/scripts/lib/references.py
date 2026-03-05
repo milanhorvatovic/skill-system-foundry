@@ -191,11 +191,8 @@ def extract_references(filepath: str) -> list[FilteredRef]:
     if is_binary_file(filepath):
         return []
 
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-    except (UnicodeDecodeError, OSError):
-        return []
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
 
     refs = []
     lines = content.split("\n")
@@ -402,7 +399,35 @@ def scan_references(
             )
             return
 
-        refs = extract_references(filepath)
+        try:
+            refs = extract_references(filepath)
+        except UnicodeDecodeError:
+            rel = _rel(filepath)
+            if is_markdown_file(filepath):
+                errors.append(
+                    f"{LEVEL_FAIL}: Cannot read '{rel}' as UTF-8. "
+                    f"Markdown files must be valid UTF-8 for reference "
+                    f"scanning and path rewriting."
+                )
+            else:
+                warnings.append(
+                    f"{LEVEL_WARN}: Cannot read '{rel}' as UTF-8. "
+                    f"Skipping reference detection for this file."
+                )
+            return
+        except OSError as exc:
+            rel = _rel(filepath)
+            if is_markdown_file(filepath):
+                errors.append(
+                    f"{LEVEL_FAIL}: Cannot read '{rel}': {exc}. "
+                    f"Ensure the file is accessible before bundling."
+                )
+            else:
+                warnings.append(
+                    f"{LEVEL_WARN}: Cannot read '{rel}': {exc}. "
+                    f"Skipping reference detection for this file."
+                )
+            return
         if not refs:
             return
 
