@@ -124,8 +124,11 @@ def main() -> None:
         "--output",
         default=None,
         help=(
-            "Output path for the zip file. Can be a directory or a file "
-            "path. Defaults to <skill-name>.zip in the current directory."
+            "Output file path for the zip archive, or an existing "
+            "directory (or path ending with a separator) in which to "
+            "place <skill-name>.zip. A non-existent path without a "
+            "trailing separator is treated as a file path. "
+            "Defaults to <skill-name>.zip in the current directory."
         ),
     )
     parser.add_argument(

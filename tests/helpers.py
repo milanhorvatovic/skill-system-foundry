@@ -5,7 +5,9 @@ DEFAULT_DESCRIPTION = "Packages a minimal demo skill for bundling smoke tests."
 
 
 def write_text(path: str, content: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    dir_name = os.path.dirname(path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 

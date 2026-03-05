@@ -75,6 +75,11 @@ def prevalidate(
         for err in spec_errors:
             errors.append(err)
         return errors, warnings, None
+    else:
+        # Surface non-failing validate_skill() messages (e.g., WARN/INFO)
+        # so callers can display them during the bundling phase.
+        for msg in spec_errors:
+            warnings.append(msg)
 
     # 2. Description length check (Claude.ai 200-char limit)
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
