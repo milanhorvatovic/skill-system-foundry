@@ -11,7 +11,7 @@ Skill System Foundry is a meta-skill that teaches AI agents how to create, valid
 - `skill-system-foundry/references/` — guidance documents
 - `skill-system-foundry/assets/` — templates for scaffolding
 - `skill-system-foundry/scripts/` — validation, scaffolding, and bundling tools (entry points)
-- `skill-system-foundry/scripts/lib/` — shared script logic (constants, validation, discovery, references)
+- `skill-system-foundry/scripts/lib/` — shared script logic (constants, validation, discovery, references, bundling)
 
 ## Agent Skills Format Compliance
 
