@@ -682,17 +682,17 @@ def postvalidate(bundle_dir: str) -> list[str]:
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
                     rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
-                    if not os.path.exists(target):
-                        errors.append(
-                            f"{LEVEL_FAIL}: Unresolved backtick reference in bundle: "
-                            f"'{rel_source}' line {line_num}: "
-                            f"'{ref_path}' does not exist in the bundle."
-                        )
-                    elif not is_within_directory(target, bundle_dir):
+                    if not is_within_directory(target, bundle_dir):
                         errors.append(
                             f"{LEVEL_FAIL}: Backtick reference escapes bundle: "
                             f"'{rel_source}' line {line_num}: "
                             f"'{ref_path}' resolves outside the bundle directory."
+                        )
+                    elif not os.path.exists(target):
+                        errors.append(
+                            f"{LEVEL_FAIL}: Unresolved backtick reference in bundle: "
+                            f"'{rel_source}' line {line_num}: "
+                            f"'{ref_path}' does not exist in the bundle."
                         )
 
     return errors
