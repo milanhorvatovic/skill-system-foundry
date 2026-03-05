@@ -274,7 +274,7 @@ def main() -> None:
 
     if scan_result is None:
         print(
-            f"{LEVEL_FAIL} Internal error: pre-validation completed without "
+            f"{LEVEL_FAIL}: Internal error: pre-validation completed without "
             "producing a scan result. Check prevalidate() implementation "
             "and call site."
         )

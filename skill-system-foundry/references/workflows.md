@@ -217,7 +217,10 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 
 1. Verifies all markdown references resolve within the bundle
 2. Verifies exactly one SKILL.md exists (case-insensitive — Claude.ai constraint)
-3. Creates the zip archive with the skill folder as the archive root
+
+**Phase 4: Archive creation**
+
+1. Creates the zip archive with the skill folder as the archive root
 
 ### Example
 
