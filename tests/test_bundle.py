@@ -87,6 +87,25 @@ class PostValidateTests(unittest.TestCase):
 
 
 class CopyExternalFilesCollisionTests(unittest.TestCase):
+    def test_excluded_external_file_is_rejected(self) -> None:
+        """An external file whose real path contains an excluded component."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            # Create a file inside a .git directory
+            ext_file = os.path.join(system_root, ".git", "config")
+            write_text(ext_file, "sensitive data")
+
+            with self.assertRaises(ValueError) as cm:
+                _copy_external_files(
+                    {ext_file}, system_root, bundle_dir,
+                    exclude_patterns=[".git"],
+                )
+
+            self.assertIn("excluded path", str(cm.exception))
+
     def test_external_vs_external_collision_is_rejected(self) -> None:
         """Two different external files mapping to the same bundle path."""
         with tempfile.TemporaryDirectory() as tmpdir:

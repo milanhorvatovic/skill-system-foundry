@@ -16,6 +16,7 @@ from typing import TypedDict
 from .constants import (
     FILE_SKILL_MD,
     BUNDLE_DESCRIPTION_MAX_LENGTH,
+    BUNDLE_EXCLUDE_PATTERNS,
     LEVEL_FAIL,
 )
 from .frontmatter import load_frontmatter
@@ -235,15 +236,19 @@ def _copy_external_files(
     external_files: set[str],
     system_root: str | None,
     bundle_dir: str,
+    exclude_patterns: list[str] | None = None,
 ) -> dict[str, str]:
     """Copy external files into the bundle at their classified locations.
 
     Returns a mapping {absolute_source_path: relative_bundle_path}.
     Raises ``ValueError`` if two external source files would map to the
     same bundle path, if an external file would overwrite a
-    skill-internal file already in the bundle, or if a reference points
-    to a directory instead of a regular file.
+    skill-internal file already in the bundle, if a reference points
+    to a directory instead of a regular file, or if a file's real path
+    contains an excluded component.
     """
+    if exclude_patterns is None:
+        exclude_patterns = BUNDLE_EXCLUDE_PATTERNS
     file_mapping: dict[str, str] = {}
     # Reverse lookup: normcase(bundle_rel) -> source path (for collision
     # detection).  Using normcase ensures case-insensitive filesystems
@@ -256,6 +261,18 @@ def _copy_external_files(
                 f"External reference is not a regular file: '{ext_file}'. "
                 f"Only files can be bundled — remove or replace the "
                 f"directory reference."
+            )
+
+        # Enforce exclude patterns on the real (symlink-resolved) path
+        # so that references to excluded paths (e.g. .git/config) cannot
+        # leak sensitive files into the bundle.
+        real_path = os.path.realpath(ext_file)
+        parts = os.path.normpath(real_path).split(os.sep)
+        if any(_should_exclude(p, exclude_patterns) for p in parts):
+            raise ValueError(
+                f"External reference '{ext_file}' resolves to an "
+                f"excluded path. Files matching bundle.exclude_patterns "
+                f"cannot be included in the bundle."
             )
 
         bundle_rel = compute_bundle_path(ext_file, system_root)
@@ -552,7 +569,7 @@ def create_bundle(
     file_mapping: dict[str, str] = {}
     if external_files:
         file_mapping = _copy_external_files(
-            external_files, system_root, bundle_dir
+            external_files, system_root, bundle_dir, exclude_patterns
         )
 
     # Step 3: Rewrite markdown paths
