@@ -592,14 +592,14 @@ def scan_references(
                 continue
 
             # ---- Internal (within the skill) ----
-            # A reference is treated as internal if either:
-            #   - its resolved (real) path is within the skill directory
-            #     (checked by is_within_directory which uses realpath), or
-            #   - its lexical path (without resolving symlinks) lies under
-            #     the skill directory.  The second check handles symlinks
-            #     that live inside the skill but point to shared targets
-            #     elsewhere — _copy_skill() already copies them into the
-            #     bundle, so they must not be re-classified as external.
+            # Treat files whose real path is within the skill as internal.
+            if is_within_directory(resolved, skill_path):
+                continue
+
+            # For entries that are only lexically within the skill (i.e.
+            # a symlink living inside the skill pointing elsewhere),
+            # allow them as internal unless they actually target another
+            # skill under system_root/skills/ (cross-skill symlink bypass).
             lexical_path_norm = os.path.normcase(os.path.abspath(resolved))
             skill_norm = os.path.normcase(skill_path)
             lexical_within_skill = False
@@ -612,7 +612,54 @@ def scan_references(
                 # Different drives on Windows — cannot be within the skill.
                 pass
 
-            if is_within_directory(resolved, skill_path) or lexical_within_skill:
+            if lexical_within_skill:
+                if system_root:
+                    # Use realpath consistently so /tmp vs /private/tmp
+                    # (macOS) and similar platform symlinks don't cause
+                    # false negatives.
+                    skills_root_real = os.path.normcase(os.path.realpath(
+                        os.path.join(system_root, DIR_SKILLS)
+                    ))
+                    resolved_real = os.path.normcase(
+                        os.path.realpath(resolved)
+                    )
+                    skill_real = os.path.normcase(
+                        os.path.realpath(skill_path)
+                    )
+                    try:
+                        under_skills_root = (
+                            os.path.commonpath(
+                                [resolved_real, skills_root_real]
+                            )
+                            == skills_root_real
+                        )
+                    except ValueError:
+                        # Different drives on Windows — cannot be under skills.
+                        under_skills_root = False
+
+                    if under_skills_root:
+                        rel_to_skills = os.path.relpath(
+                            resolved_real, skills_root_real
+                        )
+                        parts = rel_to_skills.split(os.sep)
+                        owning_skill_dir = None
+                        if parts and parts[0] not in (".", os.pardir):
+                            owning_skill_dir = os.path.join(
+                                skills_root_real, parts[0]
+                            )
+
+                        if owning_skill_dir and owning_skill_dir != skill_real:
+                            errors.append(
+                                f"{LEVEL_FAIL}: Symlinked reference in "
+                                f"'{_rel(filepath)}' line {line_num}: "
+                                f"'{raw_ref}' targets another skill under "
+                                f"'{DIR_SKILLS}'. Cross-skill references via "
+                                f"symlinks are not allowed."
+                            )
+                            continue
+
+                # Either no system_root (cannot classify) or the target is not
+                # under a different skill; treat as internal/shared.
                 continue
 
             # ---- No system root — refuse to traverse outside the skill ----

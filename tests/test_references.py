@@ -325,6 +325,44 @@ class ScanReferencesTests(unittest.TestCase):
             fails = [e for e in result["errors"] if "escapes allowed boundary" in e]
             self.assertEqual(len(fails), 1)
 
+    def test_symlink_to_another_skill_produces_fail(self) -> None:
+        """A symlink inside the skill whose real target is inside another
+        skill under system_root/skills/ should produce a cross-skill FAIL
+        when referenced from a markdown file."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_a = os.path.join(system_root, "skills", "alpha")
+            skill_b = os.path.join(system_root, "skills", "beta")
+            write_text(os.path.join(skill_b, "SKILL.md"), "---\nname: beta\n---\n")
+            target_file = os.path.join(skill_b, "references", "shared.md")
+            write_text(target_file, "Shared content from beta\n")
+
+            # Symlink inside alpha pointing to a file in beta.
+            link_path = os.path.join(skill_a, "references", "borrowed.md")
+            os.makedirs(os.path.dirname(link_path), exist_ok=True)
+            try:
+                os.symlink(target_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # SKILL.md references the symlinked file — the lexical path
+            # is inside the skill but the real target is in another skill.
+            write_text(
+                os.path.join(skill_a, "SKILL.md"),
+                "---\nname: alpha\n---\nSee [shared](references/borrowed.md)\n",
+            )
+
+            result = scan_references(skill_a, system_root)
+
+            fails = [e for e in result["errors"] if "Cross-skill" in e and "symlink" in e.lower()]
+            self.assertEqual(len(fails), 1, (
+                f"Expected exactly one cross-skill symlink FAIL. "
+                f"Errors: {result['errors']}"
+            ))
+
     def test_text_detected_cross_skill_reference_produces_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")
