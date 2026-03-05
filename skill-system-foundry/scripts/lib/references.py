@@ -718,7 +718,7 @@ def scan_references(
     ):
         _scan_file(os.path.join(root, filename), 0, frozenset(), ())
 
-    boundary_display = _rel(boundary)
+    boundary_display = boundary
     for v in violations:
         rel = _rel(v.link_path)
         errors.append(
