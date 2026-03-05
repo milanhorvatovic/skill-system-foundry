@@ -49,7 +49,7 @@ Both commands should complete successfully. In this distribution repository, `au
     ├── README.md                    ← Skill documentation
     ├── references/                  ← Guidance documents
     ├── assets/                      ← Templates for scaffolding
-    └── scripts/                 ← Validation, scaffolding, and bundling tools
+    └── scripts/                     ← Validation, scaffolding, and bundling tools
 ```
 
 Changes typically fall into one of these areas:

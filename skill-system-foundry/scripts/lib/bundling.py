@@ -212,6 +212,15 @@ def _copy_skill(
             # Reject symlinks that escape the allowed boundary.
             _check_symlink_boundary(src, boundary, skill_path, "file")
 
+            # For symlinked files that stay within the boundary, also
+            # reject any whose resolved target path contains an excluded
+            # component, mirroring the directory symlink logic.
+            if os.path.islink(src):
+                real_target = os.path.realpath(src)
+                parts = os.path.normpath(real_target).split(os.sep)
+                if any(_should_exclude(p, exclude_patterns) for p in parts):
+                    continue
+
             dst = os.path.join(target_root, filename)
             shutil.copy2(src, dst)
 
