@@ -184,16 +184,13 @@ def main() -> None:
 
         # Treat --output as a directory when:
         #   - it already exists as a directory, or
-        #   - the raw argument ends with a path separator, or
-        #   - the resolved path does not have a .zip suffix.
+        #   - the raw argument ends with a path separator.
+        # Otherwise treat it as a file path (any extension is valid,
+        # e.g. .zip, .skill).
         has_trailing_sep = raw_output.endswith(os.sep) or (
             os.altsep is not None and raw_output.endswith(os.altsep)
         )
-        is_directory_intent = (
-            os.path.isdir(output_root)
-            or has_trailing_sep
-            or not output_root.lower().endswith(".zip")
-        )
+        is_directory_intent = os.path.isdir(output_root) or has_trailing_sep
 
         if is_directory_intent:
             os.makedirs(output_root, exist_ok=True)
