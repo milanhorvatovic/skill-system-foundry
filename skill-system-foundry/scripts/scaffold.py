@@ -82,7 +82,7 @@ def create_dir_with_gitkeep(path):
     os.makedirs(path, exist_ok=True)
     gitkeep = os.path.join(path, FILE_GITKEEP)
     if not os.path.exists(gitkeep):
-        with open(gitkeep, "w") as f:
+        with open(gitkeep, "w", encoding="utf-8") as f:
             pass
 
 
