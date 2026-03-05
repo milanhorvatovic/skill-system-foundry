@@ -298,6 +298,33 @@ class ScanReferencesTests(unittest.TestCase):
             # The symlink target must NOT appear as an external file.
             self.assertEqual(result["external_files"], set())
 
+    def test_symlinked_file_escaping_boundary_produces_fail(self) -> None:
+        """A symlinked file in the skill tree whose real target escapes the
+        allowed boundary should produce a FAIL and not be traversed."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            # File outside the system root entirely.
+            outside_file = os.path.join(tmpdir, "outside", "secret.md")
+            write_text(outside_file, "Secret content\n")
+
+            # Symlink inside the skill pointing to the outside file.
+            link_path = os.path.join(skill_dir, "secret.md")
+            try:
+                os.symlink(outside_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            result = scan_references(skill_dir, system_root)
+
+            fails = [e for e in result["errors"] if "escapes allowed boundary" in e]
+            self.assertEqual(len(fails), 1)
+
     def test_text_detected_cross_skill_reference_produces_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")

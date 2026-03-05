@@ -642,6 +642,29 @@ def scan_references(
             if any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):
                 continue
             filepath = os.path.join(root, filename)
+
+            # Skip symlinked files that escape the allowed boundary,
+            # mirroring _copy_skill() so prevalidation does not read
+            # content outside the trust boundary.
+            if os.path.islink(filepath):
+                real_target = os.path.realpath(filepath)
+                if not is_within_directory(real_target, boundary):
+                    errors.append(
+                        f"{LEVEL_FAIL}: Symlinked file escapes allowed "
+                        f"boundary: '{_rel(filepath)}' -> "
+                        f"'{real_target}'. Symlinks inside the skill "
+                        f"must point to targets within the system root."
+                    )
+                    continue
+                # Also skip symlinks whose resolved target contains
+                # an excluded component (mirrors _copy_skill).
+                parts = os.path.normpath(real_target).split(os.sep)
+                if any(
+                    any(fnmatch.fnmatch(part, p) for p in exclude_patterns)
+                    for part in parts
+                ):
+                    continue
+
             _scan_file(filepath, 0, frozenset(), ())
 
     return {
