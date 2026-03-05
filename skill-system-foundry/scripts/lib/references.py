@@ -9,6 +9,7 @@ documents, and broken links.
 import fnmatch
 import os
 import re
+from collections.abc import Generator
 from typing import Literal, TypedDict
 
 from .constants import (
@@ -330,6 +331,117 @@ def find_containing_skill(filepath: str, system_root: str) -> str | None:
 
 
 # ===================================================================
+# Skill Directory Traversal
+# ===================================================================
+
+def _should_exclude(name: str, exclude_patterns: list[str]) -> bool:
+    """Check if a filename or directory name matches any exclude pattern."""
+    for pattern in exclude_patterns:
+        if fnmatch.fnmatch(name, pattern):
+            return True
+    return False
+
+
+class BoundaryViolation:
+    """A symlink that escapes the allowed boundary."""
+
+    def __init__(self, link_path: str, real_target: str, kind: str) -> None:
+        self.link_path = link_path
+        self.real_target = real_target
+        self.kind = kind
+
+
+def walk_skill_files(
+    skill_path: str,
+    exclude_patterns: list[str],
+    boundary: str,
+    boundary_violations: list[BoundaryViolation] | None = None,
+) -> Generator[tuple[str, str], None, None]:
+    """Yield ``(root, filename)`` pairs for eligible files in a skill tree.
+
+    Walks *skill_path* with ``followlinks=True``, applying:
+    - exclude-pattern filtering on directory and file names
+    - symlink cycle detection via ancestry tracking
+    - symlink boundary enforcement (targets must stay within *boundary*)
+    - exclude-pattern filtering on symlink target path components
+
+    When *boundary_violations* is a list, symlink violations are recorded
+    there and the offending entry is silently skipped.  When it is ``None``,
+    a ``ValueError`` is raised on the first violation (suitable for the
+    copy phase where prevalidation has already cleared the tree).
+    """
+
+    root_ancestors: dict[str, frozenset[str]] = {
+        skill_path: frozenset({os.path.realpath(skill_path)})
+    }
+
+    for root, dirs, files in os.walk(skill_path, followlinks=True):
+        ancestors = root_ancestors.get(
+            root, frozenset({os.path.realpath(root)})
+        )
+
+        # Filter excluded directory names in-place
+        dirs[:] = [
+            d for d in dirs
+            if not _should_exclude(d, exclude_patterns)
+        ]
+
+        # Filter symlinked directories: cycle, boundary, excluded targets
+        kept_dirs: list[str] = []
+        for d in dirs:
+            dir_path = os.path.join(root, d)
+            real_target = os.path.realpath(dir_path)
+            if os.path.islink(dir_path):
+                if real_target in ancestors:
+                    continue
+                if not is_within_directory(real_target, boundary):
+                    if boundary_violations is not None:
+                        boundary_violations.append(
+                            BoundaryViolation(dir_path, real_target, "directory")
+                        )
+                    else:
+                        rel = os.path.relpath(dir_path, skill_path).replace(os.sep, "/")
+                        raise ValueError(
+                            f"Symlinked directory escapes system boundary: "
+                            f"'{rel}' -> '{real_target}'. "
+                            f"Remove or replace the symlink before bundling."
+                        )
+                    continue
+                parts = os.path.normpath(real_target).split(os.sep)
+                if any(_should_exclude(p, exclude_patterns) for p in parts):
+                    continue
+            root_ancestors[dir_path] = ancestors | frozenset({real_target})
+            kept_dirs.append(d)
+        dirs[:] = kept_dirs
+
+        for filename in files:
+            if _should_exclude(filename, exclude_patterns):
+                continue
+            filepath = os.path.join(root, filename)
+
+            if os.path.islink(filepath):
+                real_target = os.path.realpath(filepath)
+                if not is_within_directory(real_target, boundary):
+                    if boundary_violations is not None:
+                        boundary_violations.append(
+                            BoundaryViolation(filepath, real_target, "file")
+                        )
+                    else:
+                        rel = os.path.relpath(filepath, skill_path).replace(os.sep, "/")
+                        raise ValueError(
+                            f"Symlinked file escapes system boundary: "
+                            f"'{rel}' -> '{real_target}'. "
+                            f"Remove or replace the symlink before bundling."
+                        )
+                    continue
+                parts = os.path.normpath(real_target).split(os.sep)
+                if any(_should_exclude(p, exclude_patterns) for p in parts):
+                    continue
+
+            yield root, filename
+
+
+# ===================================================================
 # Reference Graph Traversal
 # ===================================================================
 
@@ -593,80 +705,25 @@ def scan_references(
         # Normalize separators for stable cross-platform diagnostics.
         return display.replace(os.sep, "/")
 
-    # Scan every file in the skill directory tree, applying the same
-    # exclude patterns and symlink traversal used during bundle copying
-    # so that the set of scanned files matches what ends up in the bundle.
+    # Scan every file in the skill directory tree using the shared
+    # traversal helper so the scanned file set matches what
+    # _copy_skill() puts in the bundle.
     boundary = skill_path if system_root is None else system_root
+    violations: list[BoundaryViolation] = []
 
-    # Track real-directory ancestry per walk path to break only true
-    # symlink cycles (where a target is already on the current
-    # ancestry chain) while still scanning distinct alias paths.
-    root_ancestors: dict[str, frozenset[str]] = {
-        skill_path: frozenset({os.path.realpath(skill_path)})
-    }
+    for root, filename in walk_skill_files(
+        skill_path, exclude_patterns, boundary, violations
+    ):
+        _scan_file(os.path.join(root, filename), 0, frozenset(), ())
 
-    for root, dirs, files in os.walk(skill_path, followlinks=True):
-        ancestors = root_ancestors.get(
-            root, frozenset({os.path.realpath(root)})
+    for v in violations:
+        rel = _rel(v.link_path)
+        errors.append(
+            f"{LEVEL_FAIL}: Symlinked {v.kind} escapes allowed "
+            f"boundary: '{rel}' -> "
+            f"'{v.real_target}'. Symlinks inside the skill "
+            f"must point to targets within the system root."
         )
-
-        dirs[:] = [
-            d for d in dirs
-            if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)
-        ]
-
-        # Skip symlinked directories that escape the allowed boundary,
-        # whose resolved target has any path component matching an
-        # exclude pattern, or that form a true symlink cycle.  This
-        # mirrors _copy_skill() so the scanned file set matches what
-        # ends up in the bundle.
-        kept_dirs: list[str] = []
-        for d in dirs:
-            dir_path = os.path.join(root, d)
-            real_target = os.path.realpath(dir_path)
-            if os.path.islink(dir_path):
-                if real_target in ancestors:
-                    continue
-                if not is_within_directory(real_target, boundary):
-                    continue
-                parts = os.path.normpath(real_target).split(os.sep)
-                if any(
-                    any(fnmatch.fnmatch(part, p) for p in exclude_patterns)
-                    for part in parts
-                ):
-                    continue
-            root_ancestors[dir_path] = ancestors | frozenset({real_target})
-            kept_dirs.append(d)
-        dirs[:] = kept_dirs
-
-        for filename in files:
-            if any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):
-                continue
-            filepath = os.path.join(root, filename)
-
-            # Skip symlinked files that escape the allowed boundary,
-            # mirroring _copy_skill() so prevalidation does not read
-            # content outside the trust boundary.
-            if os.path.islink(filepath):
-                real_target = os.path.realpath(filepath)
-                if not is_within_directory(real_target, boundary):
-                    errors.append(
-                        f"{LEVEL_FAIL}: Symlinked file escapes allowed "
-                        f"boundary: '{_rel(filepath)}' -> "
-                        f"'{real_target}'. Symlinks inside the skill "
-                        f"must point to targets within the system root."
-                    )
-                    continue
-                # Also skip symlinks whose resolved target contains
-                # an excluded component (mirrors _copy_skill).
-                parts = os.path.normpath(real_target).split(os.sep)
-                if any(
-                    any(fnmatch.fnmatch(part, p) for p in exclude_patterns)
-                    for part in parts
-                ):
-                    continue
-
-            _scan_file(filepath, 0, frozenset(), ())
 
     return {
         "external_files": external_files,

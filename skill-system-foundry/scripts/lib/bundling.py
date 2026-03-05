@@ -5,7 +5,6 @@ into a self-contained archive.  This module is pure library code with
 no CLI concerns — see ``bundle.py`` for the command-line entry point.
 """
 
-import fnmatch
 import os
 import re
 import shutil
@@ -30,6 +29,8 @@ from .references import (
     is_within_directory,
     strip_fragment,
     should_skip_reference,
+    walk_skill_files,
+    _should_exclude,
     RE_BUNDLE_MD_LINK,
     RE_BUNDLE_BACKTICK,
 )
@@ -128,37 +129,6 @@ def prevalidate(
 # Phase 2: Bundle Creation
 # ===================================================================
 
-def _should_exclude(path: str, exclude_patterns: list[str]) -> bool:
-    """Check if a path component matches any exclude pattern."""
-    basename = os.path.basename(path)
-    for pattern in exclude_patterns:
-        if fnmatch.fnmatch(basename, pattern):
-            return True
-    return False
-
-
-def _check_symlink_boundary(
-    path: str,
-    boundary: str,
-    skill_path: str,
-    kind: str,
-) -> None:
-    """Raise ``ValueError`` if *path* is a symlink whose target escapes *boundary*.
-
-    *kind* is ``"file"`` or ``"directory"`` and is used in the error message.
-    """
-    if not os.path.islink(path):
-        return
-    real_target = os.path.realpath(path)
-    if not is_within_directory(real_target, boundary):
-        rel = os.path.relpath(path, skill_path).replace(os.sep, "/")
-        raise ValueError(
-            f"Symlinked {kind} escapes system boundary: "
-            f"'{rel}' -> '{real_target}'. "
-            f"Remove or replace the symlink before bundling."
-        )
-
-
 def _copy_skill(
     skill_path: str,
     bundle_dir: str,
@@ -167,82 +137,29 @@ def _copy_skill(
 ) -> None:
     """Copy the skill directory into the bundle, excluding unwanted files.
 
-    Symlinked files and directories whose real target falls outside
-    the allowed boundary (system root, or skill path when no root is
-    set) are rejected to prevent accidentally bundling arbitrary files.
-    Symlinked directories that stay within the boundary are traversed
-    so their contents are included.
+    Delegates directory traversal, symlink boundary enforcement, cycle
+    detection, and exclude-pattern filtering to ``walk_skill_files()``.
+    Boundary violations raise ``ValueError`` (prevalidation has already
+    cleared the tree, so any violation here is unexpected).
     """
     boundary = skill_path if system_root is None else system_root
 
-    # Track real-directory ancestry per walk path to break only true
-    # symlink cycles (where a target is already on the current
-    # ancestry chain) while still copying files for distinct alias paths.
-    root_ancestors: dict[str, frozenset[str]] = {
-        skill_path: frozenset({os.path.realpath(skill_path)})
-    }
-
-    for root, dirs, files in os.walk(skill_path, followlinks=True):
-        ancestors = root_ancestors.get(
-            root, frozenset({os.path.realpath(root)})
-        )
-
-        # Filter excluded directories in-place so os.walk skips them
-        dirs[:] = [
-            d for d in dirs
-            if not _should_exclude(d, exclude_patterns)
-        ]
-
-        # Reject symlinked subdirectories that escape the allowed
-        # boundary, whose resolved target matches an exclude pattern,
-        # or that form a true symlink cycle.  Safe symlinks are
-        # traversed (followlinks=True) so their contents are included.
-        kept_dirs: list[str] = []
-        for d in dirs:
-            dir_path = os.path.join(root, d)
-            real_target = os.path.realpath(dir_path)
-            if os.path.islink(dir_path):
-                if real_target in ancestors:
-                    continue
-                _check_symlink_boundary(
-                    dir_path, boundary, skill_path, "directory"
-                )
-                parts = os.path.normpath(real_target).split(os.sep)
-                if any(_should_exclude(p, exclude_patterns) for p in parts):
-                    continue
-            root_ancestors[dir_path] = ancestors | frozenset({real_target})
-            kept_dirs.append(d)
-        dirs[:] = kept_dirs
-
+    for root, filename in walk_skill_files(
+        skill_path, exclude_patterns, boundary
+    ):
         rel_root = os.path.relpath(root, skill_path)
         target_root = os.path.join(bundle_dir, rel_root)
         os.makedirs(target_root, exist_ok=True)
 
-        for filename in files:
-            if _should_exclude(filename, exclude_patterns):
-                continue
-            src = os.path.join(root, filename)
-
-            # Reject symlinks that escape the allowed boundary.
-            _check_symlink_boundary(src, boundary, skill_path, "file")
-
-            # For symlinked files that stay within the boundary, also
-            # reject any whose resolved target path contains an excluded
-            # component, mirroring the directory symlink logic.
-            if os.path.islink(src):
-                real_target = os.path.realpath(src)
-                parts = os.path.normpath(real_target).split(os.sep)
-                if any(_should_exclude(p, exclude_patterns) for p in parts):
-                    continue
-
-            dst = os.path.join(target_root, filename)
-            try:
-                shutil.copy2(src, dst)
-            except OSError as e:
-                rel_src = os.path.relpath(src, skill_path).replace(os.sep, "/")
-                raise ValueError(
-                    f"Failed to copy bundled file '{rel_src}'"
-                ) from e
+        src = os.path.join(root, filename)
+        dst = os.path.join(target_root, filename)
+        try:
+            shutil.copy2(src, dst)
+        except OSError as e:
+            rel_src = os.path.relpath(src, skill_path).replace(os.sep, "/")
+            raise ValueError(
+                f"Failed to copy bundled file '{rel_src}'"
+            ) from e
 
 
 def _copy_external_files(
@@ -315,7 +232,13 @@ def _copy_external_files(
             )
 
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        shutil.copy2(ext_file, target)
+        try:
+            shutil.copy2(ext_file, target)
+        except OSError as e:
+            rel_ext = os.path.relpath(ext_file, system_root).replace(os.sep, "/") if system_root else ext_file
+            raise ValueError(
+                f"Failed to copy external file '{rel_ext}' into bundle"
+            ) from e
         file_mapping[ext_file] = bundle_rel
 
     return file_mapping

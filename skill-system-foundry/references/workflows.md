@@ -170,11 +170,12 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 ## Packaging a Skill as a Zip Bundle
 
-Create a self-contained zip archive from a project-layout skill. The bundle resolves external references (roles, shared docs), copies them in, rewrites markdown paths, and validates the result.
+Creates a self-contained zip archive from a project-layout skill.
 
-Note: `bundle.py` enforces Claude.ai packaging constraints (including the 200-character description limit). This is target-specific and stricter than the Agent Skills specification limit of 1024 characters.
+Before bundling, review:
 
-See [tool-integration.md](tool-integration.md#zip-bundle-packaging) for platform-specific constraints and [directory-structure.md](directory-structure.md#packaging-for-distribution) for the bundle structure.
+- [Zip bundle constraints and limits](tool-integration.md#zip-bundle-packaging)
+- [Bundle directory structure](directory-structure.md#packaging-for-distribution)
 
 ### Prerequisites
 
@@ -192,35 +193,14 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 - `--system-root`: Path to the skill system root (contains `skills/`, `roles/`). If omitted, inferred by walking up from the skill path.
 - `--output`: Output path for the zip. Defaults to `<skill-name>.zip` in the current directory.
 
-### Three-Phase Process
+### What the Bundler Does
 
-**Phase 1: Pre-validation**
+1. **Pre-validates** — runs spec validation, checks description length, scans references, and rejects broken links, cross-skill references, and cycles.
+2. **Assembles the bundle** — copies skill files and resolved external dependencies, then rewrites markdown paths to bundle-relative form.
+3. **Post-validates** — verifies all markdown references resolve within the bundle and exactly one SKILL.md exists.
+4. **Creates the zip** with the skill folder as the archive root.
 
-1. Validates the skill against the Agent Skills specification
-2. Checks description length against the 200-character Claude.ai limit
-3. Scans skill files for external references (full rewrite support for `.md` files; best-effort detection in other text files)
-4. Verifies all references resolve to existing files
-5. Checks external files for cross-skill references (fails if found)
-6. Traverses references transitively, including from non-markdown detected references (depth limit: 25, configurable in `configuration.yaml`)
-7. Detects cycles between external documents
-8. Emits warnings for non-markdown file references (detected but not rewritten automatically)
-
-**Phase 2: Bundle creation**
-
-1. Copies the skill directory as-is (excluding patterns defined in `scripts/lib/configuration.yaml` under `bundle.exclude_patterns`)
-2. Copies all resolved external files into the bundle (deduplicated):
-   - Role files → `roles/` (preserving group structure)
-   - Other files → `references/`, `assets/`, or `scripts/` per conventions
-3. Rewrites all markdown link and backtick references to use bundle-relative paths
-
-**Phase 3: Post-validation**
-
-1. Verifies all markdown references resolve within the bundle
-2. Verifies exactly one SKILL.md exists (case-insensitive — Claude.ai constraint)
-
-**Archive creation (final step)**
-
-After post-validation passes, `bundle.py` creates the zip archive with the skill folder as the archive root.
+For detailed constraints, exclude patterns, and archive structure see [tool-integration.md](tool-integration.md#zip-bundle-packaging) and [directory-structure.md](directory-structure.md#packaging-for-distribution).
 
 ### Example
 
