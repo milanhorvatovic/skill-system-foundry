@@ -272,7 +272,7 @@ def main() -> None:
         sys.exit(1)
 
     if warnings:
-        print("\n  Warnings:")
+        print("\n  Notices:")
         for warn in warnings:
             print(f"    {warn}")
 

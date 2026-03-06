@@ -30,7 +30,7 @@ from .references import (
     strip_fragment,
     should_skip_reference,
     walk_skill_files,
-    _should_exclude,
+    should_exclude,
     RE_BUNDLE_MD_LINK,
     RE_BUNDLE_BACKTICK,
 )
@@ -198,7 +198,7 @@ def _copy_external_files(
         # leak sensitive files into the bundle.
         real_path = os.path.realpath(ext_file)
         parts = os.path.normpath(real_path).split(os.sep)
-        if any(_should_exclude(p, exclude_patterns) for p in parts):
+        if any(should_exclude(p, exclude_patterns) for p in parts):
             raise ValueError(
                 f"External reference '{ext_file}' resolves to an "
                 f"excluded path. Files matching bundle.exclude_patterns "

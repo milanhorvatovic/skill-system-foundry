@@ -334,7 +334,7 @@ def find_containing_skill(filepath: str, system_root: str) -> str | None:
 # Skill Directory Traversal
 # ===================================================================
 
-def _should_exclude(name: str, exclude_patterns: list[str]) -> bool:
+def should_exclude(name: str, exclude_patterns: list[str]) -> bool:
     """Check if a filename or directory name matches any exclude pattern."""
     for pattern in exclude_patterns:
         if fnmatch.fnmatch(name, pattern):
@@ -383,7 +383,7 @@ def walk_skill_files(
         # Filter excluded directory names in-place
         dirs[:] = [
             d for d in dirs
-            if not _should_exclude(d, exclude_patterns)
+            if not should_exclude(d, exclude_patterns)
         ]
 
         # Filter symlinked directories: cycle, boundary, excluded targets
@@ -409,14 +409,14 @@ def walk_skill_files(
                         )
                     continue
                 parts = os.path.normpath(real_target).split(os.sep)
-                if any(_should_exclude(p, exclude_patterns) for p in parts):
+                if any(should_exclude(p, exclude_patterns) for p in parts):
                     continue
             root_ancestors[dir_path] = ancestors | frozenset({real_target})
             kept_dirs.append(d)
         dirs[:] = kept_dirs
 
         for filename in files:
-            if _should_exclude(filename, exclude_patterns):
+            if should_exclude(filename, exclude_patterns):
                 continue
             filepath = os.path.join(root, filename)
 
@@ -437,7 +437,7 @@ def walk_skill_files(
                         )
                     continue
                 parts = os.path.normpath(real_target).split(os.sep)
-                if any(_should_exclude(p, exclude_patterns) for p in parts):
+                if any(should_exclude(p, exclude_patterns) for p in parts):
                     continue
 
             yield root, filename
