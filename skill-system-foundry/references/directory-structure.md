@@ -114,43 +114,17 @@ Use when: the team wants canonical content highly visible in the repository root
 
 #### Deployment Pointer Mechanism: Wrapper Files vs Symlinks
 
-Deployment pointers can be implemented as **wrapper files** (thin `SKILL.md` that references the canonical source) or **symlinks** (filesystem link to the canonical directory or file). Both achieve the same goal — making canonical content discoverable from a tool-specific path.
+Deployment pointers can be implemented as **wrapper files** or **symlinks**:
 
-**Wrapper file approach:**
-
-```
-.claude/skills/project-mgmt/SKILL.md     ← thin file referencing skills/project-mgmt/SKILL.md
-```
-
-**Symlink approach (directory-level):**
-
-```
-.claude/skills/project-mgmt -> ../../skills/project-mgmt    ← symlink to canonical directory
-```
-
-Creating symlinks by platform:
-
-```bash
-# Linux / macOS
-ln -s ../../skills/project-mgmt .claude/skills/project-mgmt
-```
-
-```cmd
-:: Windows (cmd) — requires Developer Mode or admin
-mklink /D .claude\skills\project-mgmt ..\..\skills\project-mgmt
-```
-
-```powershell
-# Windows (PowerShell) — requires Developer Mode or admin
-New-Item -ItemType SymbolicLink -Path .claude\skills\project-mgmt -Target ..\..\skills\project-mgmt
-```
+- **Wrapper files** — thin `SKILL.md` that references the canonical source. Portable, works everywhere.
+- **Symlinks** — filesystem link to the canonical directory or file. Zero maintenance, no content duplication.
 
 Choose based on team composition:
 - **All Linux/macOS** — symlinks preferred (zero maintenance)
 - **Mixed OS** — wrapper files safer unless all Windows contributors have Developer Mode enabled
 - **Need tool-specific adaptation** — wrapper files required (symlinks cannot carry tool-specific content)
 
-See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the full decision guide, platform matrix, and tool compatibility details.
+See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the full decision guide, platform-specific commands, and tool compatibility details.
 
 **Single-tool canonical location:**
 

@@ -9,6 +9,18 @@ import tempfile
 import unittest
 
 
+def _create_symlink(target: str, link_path: str) -> None:
+    """Create a symlink, raising unittest.SkipTest on unsupported platforms."""
+    if not hasattr(os, "symlink"):
+        raise unittest.SkipTest("symlink is not supported on this platform")
+    try:
+        os.symlink(target, link_path)
+    except OSError:
+        raise unittest.SkipTest(
+            "symlink creation is not permitted in this environment"
+        )
+
+
 class SymlinkCreationTests(unittest.TestCase):
     """Verify that directory-level and file-level symlinks work as documented."""
 
@@ -29,7 +41,7 @@ class SymlinkCreationTests(unittest.TestCase):
             os.makedirs(pointer_parent)
             link_path = os.path.join(pointer_parent, "my-skill")
             target = os.path.join("..", "..", ".agents", "skills", "my-skill")
-            os.symlink(target, link_path)
+            _create_symlink(target, link_path)
 
             # Verify symlink resolves
             self.assertTrue(os.path.islink(link_path))
@@ -58,7 +70,7 @@ class SymlinkCreationTests(unittest.TestCase):
             target = os.path.join(
                 "..", "..", "..", ".agents", "skills", "my-skill", "SKILL.md"
             )
-            os.symlink(target, link_path)
+            _create_symlink(target, link_path)
 
             # Verify symlink resolves
             self.assertTrue(os.path.islink(link_path))
@@ -80,7 +92,7 @@ class SymlinkCreationTests(unittest.TestCase):
             os.makedirs(pointer_parent)
             link_path = os.path.join(pointer_parent, "my-skill")
             target = os.path.join("..", "..", ".agents", "skills", "my-skill")
-            os.symlink(target, link_path)
+            _create_symlink(target, link_path)
 
             # The symlink target should be relative (as anti-pattern docs warn)
             raw_target = os.readlink(link_path)
@@ -110,7 +122,7 @@ class SymlinkCreationTests(unittest.TestCase):
                 target = os.path.join(
                     "..", "..", ".agents", "skills", "my-skill"
                 )
-                os.symlink(target, link_path)
+                _create_symlink(target, link_path)
 
             # All resolve to the same content
             for tool in tools:

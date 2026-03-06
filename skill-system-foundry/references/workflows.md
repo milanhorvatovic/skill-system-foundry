@@ -208,7 +208,7 @@ or should each tool point to a different location?
   > .agents/skills/my-skill
 
   Canonical path for Cursor?
-  > .claude/skills/my-skill
+  > .agents/skills/my-skill
   ```
 
 **3. Create symlinks with platform-appropriate commands:**

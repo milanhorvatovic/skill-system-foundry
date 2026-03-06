@@ -285,8 +285,8 @@ Get-Content .claude\skills\my-skill\SKILL.md
 |---|---|---|
 | Codex | Confirmed | [`codex-extensions.md`](codex-extensions.md) documents symlinked folder support |
 | Gemini CLI | Confirmed | `gemini skills link` command (documented in this file and Gemini docs) |
-| Claude Code | Confirmed | Maintainer verification (2026-03) + [`claude-code-extensions.md`](claude-code-extensions.md) |
-| Cursor | Confirmed | Maintainer verification (2026-03) + [`cursor-extensions.md`](cursor-extensions.md) |
+| Claude Code | Confirmed | Maintainer verification + [`claude-code-extensions.md`](claude-code-extensions.md) |
+| Cursor | Confirmed | Maintainer verification + [`cursor-extensions.md`](cursor-extensions.md) |
 | Windsurf | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
 | Kiro | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
 

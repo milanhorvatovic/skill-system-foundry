@@ -266,33 +266,50 @@ class DocsSafetyTests(unittest.TestCase):
     """Safety checks for documented command snippets."""
 
     def test_documented_symlink_targets_use_expected_relative_depths(self) -> None:
-        """Documented symlink targets should keep stable relative-depth examples."""
+        """Documented symlink targets should use correct relative-depth patterns.
+
+        Validates structural depth (e.g. ``../../.agents/skills/``) rather
+        than exact example names so that harmless doc edits (renaming the
+        example skill) don't break the test.
+        """
+        # Each tuple: (file path, list of regex patterns to match)
+        # Patterns validate relative-depth structure, not exact example names.
         checks = [
             (
                 DOCS["references/tool-integration.md"],
                 [
-                    "../../.agents/skills/my-skill",
-                    "../../../.agents/skills/my-skill/SKILL.md",
-                    "..\\..\\.agents\\skills\\my-skill",
-                    "..\\..\\..\\.agents\\skills\\my-skill\\SKILL.md",
+                    # Unix: two-level relative symlink to .agents/skills/<name>
+                    r"\.\./\.\./\.agents/skills/\S+",
+                    # Unix: three-level relative symlink to .agents/skills/<name>/SKILL.md
+                    r"\.\./\.\./\.\./\.agents/skills/\S+/SKILL\.md",
+                    # Windows: two-level relative path
+                    r"\.\.\\\.\.\\\.agents\\skills\\\S+",
+                    # Windows: three-level relative path with SKILL.md
+                    r"\.\.\\\.\.\\\.\.\\\.agents\\skills\\\S+\\SKILL\.md",
                 ],
             ),
             (
                 DOCS["references/workflows.md"],
                 [
-                    "../../.agents/skills/my-skill",
-                    "..\\..\\.agents\\skills\\my-skill",
+                    # Unix: two-level relative symlink
+                    r"\.\./\.\./\.agents/skills/\S+",
+                    # Windows: two-level relative path
+                    r"\.\.\\\.\.\\\.agents\\skills\\\S+",
                 ],
             ),
         ]
 
-        for path, expected_tokens in checks:
+        for path, patterns in checks:
             if not os.path.isfile(path):
                 continue
             content = _read(path)
-            for token in expected_tokens:
-                with self.subTest(path=path, token=token):
-                    self.assertIn(token, content)
+            for pattern in patterns:
+                with self.subTest(path=path, pattern=pattern):
+                    self.assertRegex(
+                        content,
+                        pattern,
+                        f"Expected relative-depth pattern not found: {pattern}",
+                    )
 
     def test_windows_cmd_verification_snippets_present(self) -> None:
         """Symlink docs should include a cmd verification example."""
