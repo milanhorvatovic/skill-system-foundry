@@ -87,10 +87,12 @@ def _print_failure_block(
 
 def main() -> None:
     # On Windows the default console encoding (cp1252) cannot represent
-    # Unicode symbols like ✓, ✗, ⚠.  Reconfigure stdout to replace
+    # Unicode symbols like ✓, ✗, ⚠.  Reconfigure stdout/stderr to replace
     # unencodable characters rather than crashing.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="replace")
 
     if len(sys.argv) == 1:
         if __doc__:
