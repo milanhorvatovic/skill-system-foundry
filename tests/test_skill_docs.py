@@ -308,6 +308,34 @@ class DocsSafetyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(r"dir .claude\skills /AL", content)
 
+    def test_extension_deployment_sections_reference_symlinks(self) -> None:
+        """Every *-extensions.md with a Deployment Pointer section must
+        cross-reference the symlink decision guide."""
+        extension_files = [
+            DOCS["references/claude-code-extensions.md"],
+            DOCS["references/codex-extensions.md"],
+            DOCS["references/cursor-extensions.md"],
+        ]
+        anchor = "tool-integration.md#symlink-based-deployment-pointers"
+        failures = []
+
+        for path in extension_files:
+            if not os.path.isfile(path):
+                continue
+            content = _read(path)
+            # Only check files that have a Deployment Pointer section
+            if "## Deployment Pointer" not in content:
+                continue
+            if anchor not in content:
+                failures.append(os.path.relpath(path, SKILL_ROOT))
+
+        if failures:
+            self.fail(
+                "Extension files with '## Deployment Pointer' section missing "
+                f"symlink cross-reference ({anchor}):\n  "
+                + "\n  ".join(failures)
+            )
+
     def test_no_dot_slash_prefix_in_file_references(self) -> None:
         """File references must use 'path/to/file' not './path/to/file' per
         agentskills.io spec."""
