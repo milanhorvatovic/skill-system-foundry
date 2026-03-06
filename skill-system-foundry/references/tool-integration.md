@@ -14,6 +14,7 @@ How skills are discovered, loaded, and executed across different AI tools.
 - [Deployment Pointer Guidelines](#deployment-pointer-guidelines)
 - [Convention Coexistence](#convention-coexistence)
 - [Personal vs Project Skills](#personal-vs-project-skills)
+- [Zip Bundle Packaging](#zip-bundle-packaging)
 - [Cross-Surface Limitations](#cross-surface-limitations)
 
 ---
@@ -213,6 +214,62 @@ Skills can be installed at the project level (shared via repository) or the pers
 | Warp | Not publicly documented |
 
 Personal skills are useful for individual productivity tools (custom workflows, personal templates) that don't belong in a shared repository. The same Agent Skills specification applies regardless of install location.
+
+---
+
+## Zip Bundle Packaging
+
+Skills can be distributed as self-contained zip bundles for surfaces that support direct upload, offline sharing, or marketplace distribution.
+
+### Target Surfaces
+
+| Surface | Upload mechanism |
+|---|---|
+| Claude.ai (Consumer) | Upload zip via Settings > Features, per-user |
+| Gemini CLI | `.skill` zipped files via `gemini skills link` |
+| GitHub Releases | Attach `.zip` as release asset |
+
+### Claude.ai Constraints
+
+Claude.ai enforces constraints stricter than the Agent Skills specification:
+
+| Constraint | Claude.ai | Agent Skills spec |
+|---|---|---|
+| SKILL.md count | Exactly one (case-insensitive scan) | One per skill directory |
+| Description length | Max 200 characters | Max 1024 characters |
+| Folder name | Must match skill name | Must match skill name |
+
+The case-insensitive SKILL.md scan is why capability entry points use `capability.md` — a file named `skill.md` (lowercase) would be treated as a second SKILL entry point and fail Claude.ai's validation.
+
+### Required Archive Structure
+
+Per Claude.ai documentation, the zip must contain the skill folder as its root:
+
+```
+<skill-name>.zip
+└── <skill-name>/
+    ├── SKILL.md
+    ├── assets/
+    ├── capabilities/
+    │   └── <capability>/
+    │       ├── capability.md
+    │       └── references/
+    ├── references/
+    ├── scripts/
+    └── roles/                  ← inlined from system level
+```
+
+Files must **not** be placed directly at the archive root. The wrapper directory name must match the skill's `name` field.
+
+Source: [How to create custom Skills (Claude Help Center)](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)
+
+### Key Distinctions from Project Layout
+
+A zip bundle is a self-contained distribution artifact: it inlines any system-level `roles/` directory, omits the `.agents/` wrapper, and excludes deployment pointer files. The project layout can be larger and include additional tooling, manifests, and deployment pointers that never ship inside the bundle.
+
+### Tooling
+
+To package a skill as a zip bundle, run `bundle.py` from the project root. The bundler validates the skill, resolves external references, copies them into the bundle, rewrites markdown paths to bundle-relative form, and creates the archive.
 
 ---
 

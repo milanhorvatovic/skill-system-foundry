@@ -11,7 +11,7 @@ description: >
   AI-agnostic automation across multiple tools like Claude Code, Cursor, or
   Codex.
 allowed-tools: Bash Read Write Edit Glob Grep
-compatibility: Requires Python 3.8+ (stdlib only) for validation and scaffolding scripts.
+compatibility: Requires Python 3.12+ (stdlib only) for validation, scaffolding, and bundling scripts.
 license: MIT
 metadata:
   author: Milan Horvatovič
@@ -23,7 +23,7 @@ metadata:
 
 A meta-skill for constructing and evolving AI-agnostic skill systems.
 
-This skill governs the creation and maintenance of a two-layer architecture: **skills** (with optional capabilities) and **roles**. All skills produced by this skill system follow the Agent Skills open specification (see [`references/agentskills-spec.md`](references/agentskills-spec.md)), incorporate best practices consolidated from official vendor skill authoring guides (see [`references/authoring-principles.md`](references/authoring-principles.md)), and align role contracts with the local convention guidance in [`references/tool-integration.md`](references/tool-integration.md#convention-coexistence).
+This skill governs the creation and maintenance of a two-layer architecture: **skills** (with optional capabilities) and **roles**. All skills produced by this system follow the [Agent Skills specification](references/agentskills-spec.md). They incorporate [authoring best practices](references/authoring-principles.md) from official vendor guides. Role contracts align with [tool integration guidance](references/tool-integration.md#convention-coexistence) for seamless deployment across platforms.
 
 **Important:** Capabilities are optional, granular sub-skills within a parent skill. Do not create capabilities by default. Only introduce them when the integrator explicitly asks for them or when the domain clearly demands decomposition (3+ distinct operations with different trigger contexts). Start with a standalone skill; evolve to router+capabilities only when justified.
 
@@ -76,7 +76,9 @@ Each layer has a clear responsibility:
 - `scripts/audit_skill_system.py` — Audit skill system structure and consistency
 - `scripts/validate_skill.py` — Validate a single skill against the spec
 - `scripts/scaffold.py` — Scaffold new skills or roles from templates
+- `scripts/bundle.py` — Bundle a skill into a self-contained zip bundle for distribution
 - `scripts/lib/validation.py` — Shared name validation logic
+- `scripts/lib/references.py` — Reference scanning, resolution, and graph traversal
 - `scripts/lib/constants.py` — Centralized constants and configuration
 
 ## Core Principles
@@ -132,4 +134,5 @@ Domain knowledge is authored exactly once in the canonical layer (skills and rol
 | Use Claude Code extensions | [`references/claude-code-extensions.md`](references/claude-code-extensions.md) |
 | Use Codex extensions | [`references/codex-extensions.md`](references/codex-extensions.md) |
 | Use Cursor features | [`references/cursor-extensions.md`](references/cursor-extensions.md) |
+| Package a skill as a zip bundle | `scripts/bundle.py` + [`references/workflows.md`](references/workflows.md#packaging-a-skill-as-a-zip-bundle) |
 | Review common mistakes | [`references/anti-patterns.md`](references/anti-patterns.md) |

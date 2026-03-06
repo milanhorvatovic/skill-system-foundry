@@ -69,12 +69,13 @@ Define orchestration patterns that compose multiple skills or capabilities into 
 
 ### 4. Deploy to Tools (Optional)
 
-Create thin deployment pointers for tools that do not natively scan the canonical skill location. A deployment pointer contains only a reference to the canonical source and any genuine tool-specific conventions.
+Create thin deployment pointers for tools that do not natively scan the canonical skill location, or package a skill as a self-contained zip bundle for direct upload to surfaces like Claude.ai.
 
-**When to use:** A skill needs to be accessible from a tool that does not scan `.agents/skills/` natively (e.g., Claude Code, Cursor, Kiro under the recommended layout).
+**When to use:** A skill needs to be accessible from a tool that does not scan `.agents/skills/` natively (e.g., Claude Code, Cursor, Kiro under the recommended layout), or you want to distribute a skill as a zip bundle for Claude.ai upload, Gemini CLI, or offline sharing.
 
 **Key resources:**
-- [`references/tool-integration.md`](references/tool-integration.md) — Tool-specific paths, formats, and deployment guidance
+- [`references/tool-integration.md`](references/tool-integration.md) — Tool-specific paths, formats, deployment guidance, and zip bundle packaging
+- [`references/workflows.md`](references/workflows.md#packaging-a-skill-as-a-zip-bundle) — Step-by-step bundle packaging procedure
 
 ### 5. Migrate Structures
 
@@ -148,20 +149,22 @@ skill-system-foundry/
 │   ├── capability.md                      ← capability template
 │   ├── role.md                            ← role template
 │   └── manifest.yaml                      ← manifest schema template
-└── scripts/                               ← executable validation and scaffolding
+└── scripts/                               ← executable validation, scaffolding, and packaging
     ├── __init__.py                        ← package marker
     ├── lib/                               ← shared library modules
     │   ├── __init__.py                    ← package marker (re-exports public API)
-    │   ├── configuration.yaml             ← validation rules and domain policy
+    │   ├── configuration.yaml             ← validation rules, domain policy, and bundle config
     │   ├── constants.py                   ← centralized constants loaded from configuration
     │   ├── validation.py                  ← shared name validation logic
     │   ├── yaml_parser.py                 ← lightweight YAML-subset parser
     │   ├── frontmatter.py                 ← frontmatter extraction and body utilities
     │   ├── reporting.py                   ← error categorization and formatted output
-    │   └── discovery.py                   ← component discovery (skills, roles)
+    │   ├── discovery.py                   ← component discovery (skills, roles)
+    │   └── references.py                  ← reference scanning, resolution, graph traversal
     ├── validate_skill.py                  ← single skill spec validation
     ├── audit_skill_system.py              ← full skill system audit
-    └── scaffold.py                        ← component scaffolding from templates
+    ├── scaffold.py                        ← component scaffolding from templates
+    └── bundle.py                          ← bundle a skill into a self-contained zip bundle
 ```
 
 ### References
@@ -202,13 +205,15 @@ Scripts handle deterministic, repeatable tasks that should not be left to the mo
 | `validate_skill.py`       | Validates a single skill directory against the Agent Skills specification: checks frontmatter, naming, line counts, and resource directories |
 | `audit_skill_system.py`   | Audits the full skill system: dependency direction, nesting depth, shared resource usage, and manifest presence |
 | `scaffold.py`             | Creates new components from templates with proper directory structure and placeholder content |
+| `bundle.py`               | Bundles a skill into a self-contained zip bundle: validates, resolves external references, rewrites paths, creates bundle |
 | `lib/yaml_parser.py`      | Lightweight YAML-subset parser (no external dependencies) |
 | `lib/frontmatter.py`      | Frontmatter extraction and body line counting |
 | `lib/reporting.py`        | Shared error categorization and formatted output |
 | `lib/discovery.py`        | Component discovery: finds skills and roles in a skill system |
 | `lib/validation.py`       | Shared name validation logic (format, length, reserved words) |
+| `lib/references.py`       | Reference scanning, resolution, and graph traversal for bundling |
 | `lib/constants.py`        | Centralized constants loaded from `configuration.yaml` |
-| `lib/configuration.yaml`  | Validation rules, constraints, and domain policy |
+| `lib/configuration.yaml`  | Validation rules, constraints, domain policy, and bundle configuration |
 
 **Dependencies:** None — all scripts use the Python standard library only.
 
@@ -227,7 +232,13 @@ For project deployments, use `--root` to target the system directory:
 python scripts/scaffold.py skill my-skill --root /path/to/project/.agents
 ```
 
-For complete procedures (creation, migration, auditing) and all command options, see [`references/workflows.md`](references/workflows.md).
+To bundle a skill as a self-contained zip for distribution:
+
+```bash
+python scripts/bundle.py .agents/skills/my-skill --system-root .agents --output my-skill.zip
+```
+
+For complete procedures (creation, migration, auditing, bundling) and all command options, see [`references/workflows.md`](references/workflows.md).
 
 ### Typical Workflow
 
@@ -235,8 +246,9 @@ For complete procedures (creation, migration, auditing) and all command options,
 2. **Edit** the generated files with domain-specific content
 3. **Validate** the skill against the spec
 4. **Deploy to tools** that don't natively scan the canonical location (optional)
-5. **Update the manifest** to reflect the new wiring
-6. **Audit** the full skill system for consistency
+5. **Bundle for distribution** as a self-contained zip bundle (optional)
+6. **Update the manifest** to reflect the new wiring
+7. **Audit** the full skill system for consistency
 
 ## How This Skill Practices What It Preaches
 

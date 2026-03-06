@@ -6,3 +6,9 @@ from .frontmatter import load_frontmatter, count_body_lines
 from .reporting import categorize_errors, print_error_line, print_summary
 from .discovery import find_skill_dirs, find_roles, check_line_count, read_file
 from .validation import validate_name
+from .references import (
+    scan_references,
+    compute_bundle_path,
+    strip_fragment,
+    should_skip_reference,
+)

@@ -20,7 +20,7 @@ Thank you for your interest in contributing. This document explains how to get i
 
 ## Development Setup
 
-**Requirements:** Python 3.8+ (standard library only — no external dependencies).
+**Requirements:** Python 3.12+ (standard library only — no external dependencies).
 
 ```bash
 git clone https://github.com/milanhorvatovic/skill-system-foundry.git
@@ -49,7 +49,7 @@ Both commands should complete successfully. In this distribution repository, `au
     ├── README.md                    ← Skill documentation
     ├── references/                  ← Guidance documents
     ├── assets/                      ← Templates for scaffolding
-    └── scripts/                     ← Validation and scaffolding tools
+    └── scripts/                     ← Validation, scaffolding, and bundling tools
 ```
 
 Changes typically fall into one of these areas:
@@ -59,7 +59,7 @@ Changes typically fall into one of these areas:
 | Documentation | `README.md`, `skill-system-foundry/README.md` | Manual review |
 | References | `skill-system-foundry/references/*.md` | `validate_skill.py` |
 | Templates | `skill-system-foundry/assets/*` | Manual review |
-| Scripts | `skill-system-foundry/scripts/**/*.py` | `validate_skill.py`, `audit_skill_system.py` |
+| Scripts | `skill-system-foundry/scripts/**/*.py` | `validate_skill.py`, `audit_skill_system.py`, `bundle.py` |
 | Spec compliance | `skill-system-foundry/SKILL.md`, frontmatter | `validate_skill.py` |
 
 ## Guidelines

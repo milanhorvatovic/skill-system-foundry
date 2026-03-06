@@ -4,7 +4,7 @@ applyTo: "skill-system-foundry/scripts/**/*.py"
 
 # Python Scripts Instructions
 
-Review changes as a **Python tooling maintainer**, ensuring validation and scaffolding scripts remain reliable, minimal, and consistent.
+Review changes as a **Python tooling maintainer**, ensuring validation, scaffolding, and bundling scripts remain reliable, minimal, and consistent.
 
 ## Design Principles
 
@@ -17,12 +17,12 @@ Review changes as a **Python tooling maintainer**, ensuring validation and scaff
 
 - **Standard library only** — no third-party imports. These scripts ship with the skill and must run without `pip install`
 - **Shared logic in `scripts/lib/`** — entry points in `scripts/` must stay thin; reusable logic belongs in `scripts/lib/`
-- **Python 3.8+ compatibility** — do not use features introduced after Python 3.8 (walrus operator is fine; `match`/`case` is not)
+- **Python 3.12+ compatibility** — do not use features introduced in Python 3.13 or later
 - **Validation rules live in `scripts/lib/configuration.yaml`** — limits, patterns, and reserved words are loaded from YAML at startup. Change rules in the YAML, not by hardcoding values in Python
 
 ## Code Quality
 
-- **Type hints on all function signatures** — use `typing` module for complex types (`List`, `Tuple`, `Dict`, `Optional`). Type hints make code self-documenting and catch errors early
+- **Type hints on all function signatures** — use builtin generic types (`list`, `dict`, `tuple`, `set`) and `X | None` instead of `Optional[X]`. Fall back to `typing` only for advanced types (`TypedDict`, `Literal`, `TypeAlias`). Type hints make code self-documenting and catch errors early
 - **Docstrings on all public functions and modules** — follow PEP 257. Entry point module docstrings must double as the usage message printed when the script is run without arguments (via `print(__doc__)`)
 - **`encoding="utf-8"` on all `open()` calls** — omitting encoding causes platform-dependent behavior
 - **`if __name__ == "__main__"` guard** — required for all entry points so modules remain importable
@@ -45,7 +45,7 @@ Review changes as a **Python tooling maintainer**, ensuring validation and scaff
 
 ## Review Scope
 
-These scripts (`validate_skill.py`, `audit_skill_system.py`) validate repository content — SKILL.md files, manifests, and directory structure — not their own correctness. Regressions in the tooling itself are not caught automatically. Review Python changes for code quality, maintainability, and adherence to the principles above. Only flag issues with high confidence.
+These scripts (`validate_skill.py`, `audit_skill_system.py`, `scaffold.py`, `bundle.py`) handle validation, scaffolding, and bundling of repository content — SKILL.md files, manifests, directory structure, and self-contained zip bundles — not their own correctness. Regressions in the tooling itself are not caught automatically. Review Python changes for code quality, maintainability, and adherence to the principles above. Only flag issues with high confidence.
 
 ## Common Issues to Flag
 
@@ -57,7 +57,7 @@ These scripts (`validate_skill.py`, `audit_skill_system.py`) validate repository
 - Bare `except` or swallowed exception without actionable output
 - Hardcoded error level string (`"FAIL"`) instead of `LEVEL_FAIL` constant
 - Validation rule hardcoded in Python instead of `scripts/lib/configuration.yaml`
-- Use of Python 3.9+ features (`match`/`case`, `dict | dict` merge, `str.removeprefix`)
+- Use of Python 3.13+ features (e.g. `type` parameter defaults `type Alias[T = int]`, `warnings.deprecated` decorator, `PythonFinalizationError`)
 - `print()` or `sys.exit()` in library code outside dedicated output helpers
 - Missing `if __name__ == "__main__"` guard in entry point
 - Unexplained magic numbers or hardcoded values

@@ -37,7 +37,7 @@ from lib.constants import (
     PH_DOMAIN_NAME, PH_DOMAIN_TITLE, PH_SKILL_NAME, PH_SKILL_TITLE,
     PH_CAPABILITY_NAME, PH_CAPABILITY_TITLE,
     PH_ROLE_TITLE,
-    LEVEL_FAIL,
+    LEVEL_FAIL, LEVEL_WARN,
 )
 
 # Resolve paths relative to script location
@@ -54,8 +54,18 @@ def validate_name(name):
     """
     errors, _ = _validate_name_detailed(name, name)
     for e in errors:
-        level = "Error" if e.startswith(LEVEL_FAIL) else "Warning"
-        print(f"{level}: {e.split(': ', 1)[1]}")
+        # Strip level prefix only if present, otherwise print full message
+        if e.startswith(LEVEL_FAIL + ": "):
+            level = "Error"
+            message = e[len(LEVEL_FAIL) + 2:]  # +2 for ": "
+        elif e.startswith(LEVEL_WARN + ": "):
+            level = "Warning"
+            message = e[len(LEVEL_WARN) + 2:]  # +2 for ": "
+        else:
+            # No recognized level prefix - treat as warning and print full message
+            level = "Warning"
+            message = e
+        print(f"{level}: {message}")
     return not any(e.startswith(LEVEL_FAIL) for e in errors)
 
 
@@ -63,7 +73,7 @@ def read_template(template_name):
     """Read a template file from assets/."""
     template_path = os.path.join(ASSETS_DIR, template_name)
     if not os.path.exists(template_path):
-        print(f"Error: Template not found: {template_path}")
+        print(f"{LEVEL_FAIL}: Template not found: {template_path}")
         sys.exit(1)
     with open(template_path, "r", encoding="utf-8") as f:
         return f.read()
@@ -82,7 +92,7 @@ def create_dir_with_gitkeep(path):
     os.makedirs(path, exist_ok=True)
     gitkeep = os.path.join(path, FILE_GITKEEP)
     if not os.path.exists(gitkeep):
-        with open(gitkeep, "w") as f:
+        with open(gitkeep, "w", encoding="utf-8") as f:
             pass
 
 
@@ -93,7 +103,7 @@ def scaffold_skill(name, router=False, root=""):
 
     skill_path = os.path.join(root, DIR_SKILLS, name) if root else os.path.join(DIR_SKILLS, name)
     if os.path.exists(skill_path):
-        print(f"Error: Directory already exists: {skill_path}")
+        print(f"{LEVEL_FAIL}: Directory already exists: {skill_path}")
         sys.exit(1)
 
     if router:
@@ -140,12 +150,12 @@ def scaffold_capability(domain, name, root=""):
 
     cap_path = os.path.join(root, DIR_SKILLS, domain, DIR_CAPABILITIES, name) if root else os.path.join(DIR_SKILLS, domain, DIR_CAPABILITIES, name)
     if os.path.exists(cap_path):
-        print(f"Error: Directory already exists: {cap_path}")
+        print(f"{LEVEL_FAIL}: Directory already exists: {cap_path}")
         sys.exit(1)
 
     router_skill = os.path.join(root, DIR_SKILLS, domain, FILE_SKILL_MD) if root else os.path.join(DIR_SKILLS, domain, FILE_SKILL_MD)
     if not os.path.exists(router_skill):
-        print(f"Error: Parent skill not found: {router_skill}")
+        print(f"{LEVEL_FAIL}: Parent skill not found: {router_skill}")
         sys.exit(1)
 
     template = read_template(TEMPLATE_CAPABILITY)
@@ -172,7 +182,7 @@ def scaffold_role(group, name, root=""):
 
     role_path = os.path.join(root, DIR_ROLES, group, f"{name}{EXT_MARKDOWN}") if root else os.path.join(DIR_ROLES, group, f"{name}{EXT_MARKDOWN}")
     if os.path.exists(role_path):
-        print(f"Error: File already exists: {role_path}")
+        print(f"{LEVEL_FAIL}: File already exists: {role_path}")
         sys.exit(1)
 
     template = read_template(TEMPLATE_ROLE)
@@ -207,7 +217,7 @@ def main():
     if "--root" in args:
         idx = args.index("--root")
         if idx + 1 >= len(args):
-            print("Error: --root requires a path argument")
+            print(f"{LEVEL_FAIL}: --root requires a path argument")
             sys.exit(1)
         root = args[idx + 1]
         del args[idx : idx + 2]
