@@ -33,7 +33,7 @@ class CLISmokeTests(unittest.TestCase):
         )
 
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("Bundle a skill into a self-contained zip archive", proc.stdout)
+        self.assertIn("Bundle a skill into a self-contained zip bundle", proc.stdout)
         self.assertIn("Usage:", proc.stdout)
 
     def test_output_parent_directory_is_created(self) -> None:

@@ -76,7 +76,7 @@ Each layer has a clear responsibility:
 - `scripts/audit_skill_system.py` — Audit skill system structure and consistency
 - `scripts/validate_skill.py` — Validate a single skill against the spec
 - `scripts/scaffold.py` — Scaffold new skills or roles from templates
-- `scripts/bundle.py` — Bundle a skill into a self-contained zip archive for distribution
+- `scripts/bundle.py` — Bundle a skill into a self-contained zip bundle for distribution
 - `scripts/lib/validation.py` — Shared name validation logic
 - `scripts/lib/references.py` — Reference scanning, resolution, and graph traversal
 - `scripts/lib/constants.py` — Centralized constants and configuration

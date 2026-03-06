@@ -639,7 +639,7 @@ def postvalidate(bundle_dir: str) -> list[str]:
 # ===================================================================
 
 def create_zip(bundle_dir: str, output_path: str) -> str:
-    """Create a zip archive from the bundle directory.
+    """Create a zip bundle from the bundle directory.
 
     The archive contains the skill folder at its root, per Claude.ai
     requirements.

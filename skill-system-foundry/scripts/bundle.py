@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bundle a skill into a self-contained zip archive for distribution.
+Bundle a skill into a self-contained zip bundle for distribution.
 
 Resolves external references (roles, shared docs), copies them into
 the bundle, rewrites markdown paths, and validates the result.
@@ -98,7 +98,7 @@ def main() -> None:
         sys.exit(1)
 
     parser = argparse.ArgumentParser(
-        description="Bundle a skill into a self-contained zip archive.",
+        description="Bundle a skill into a self-contained zip bundle.",
         epilog=(
             "Examples:\n"
             "  python scripts/bundle.py skills/my-skill\n"
@@ -125,7 +125,7 @@ def main() -> None:
         "--output",
         default=None,
         help=(
-            "Output file path for the zip archive, or an existing "
+            "Output file path for the zip bundle, or an existing "
             "directory (or path ending with a separator) in which to "
             "place <skill-name>.zip. A non-existent path without a "
             "trailing separator is treated as a file path. "

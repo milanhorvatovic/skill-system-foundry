@@ -170,7 +170,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 ## Packaging a Skill as a Zip Bundle
 
-Creates a self-contained zip archive from a project-layout skill.
+Creates a self-contained zip bundle from a project-layout skill.
 
 Before bundling, review:
 

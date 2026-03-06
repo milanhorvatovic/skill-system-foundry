@@ -71,7 +71,7 @@ Define orchestration patterns that compose multiple skills or capabilities into 
 
 Create thin deployment pointers for tools that do not natively scan the canonical skill location, or package a skill as a self-contained zip bundle for direct upload to surfaces like Claude.ai.
 
-**When to use:** A skill needs to be accessible from a tool that does not scan `.agents/skills/` natively (e.g., Claude Code, Cursor, Kiro under the recommended layout), or you want to distribute a skill as a zip archive for Claude.ai upload, Gemini CLI, or offline sharing.
+**When to use:** A skill needs to be accessible from a tool that does not scan `.agents/skills/` natively (e.g., Claude Code, Cursor, Kiro under the recommended layout), or you want to distribute a skill as a zip bundle for Claude.ai upload, Gemini CLI, or offline sharing.
 
 **Key resources:**
 - [`references/tool-integration.md`](references/tool-integration.md) — Tool-specific paths, formats, deployment guidance, and zip bundle packaging
@@ -164,7 +164,7 @@ skill-system-foundry/
     ├── validate_skill.py                  ← single skill spec validation
     ├── audit_skill_system.py              ← full skill system audit
     ├── scaffold.py                        ← component scaffolding from templates
-    └── bundle.py                          ← bundle a skill into a self-contained zip archive
+    └── bundle.py                          ← bundle a skill into a self-contained zip bundle
 ```
 
 ### References
@@ -205,7 +205,7 @@ Scripts handle deterministic, repeatable tasks that should not be left to the mo
 | `validate_skill.py`       | Validates a single skill directory against the Agent Skills specification: checks frontmatter, naming, line counts, and resource directories |
 | `audit_skill_system.py`   | Audits the full skill system: dependency direction, nesting depth, shared resource usage, and manifest presence |
 | `scaffold.py`             | Creates new components from templates with proper directory structure and placeholder content |
-| `bundle.py`               | Bundles a skill into a self-contained zip archive: validates, resolves external references, rewrites paths, creates archive |
+| `bundle.py`               | Bundles a skill into a self-contained zip bundle: validates, resolves external references, rewrites paths, creates bundle |
 | `lib/yaml_parser.py`      | Lightweight YAML-subset parser (no external dependencies) |
 | `lib/frontmatter.py`      | Frontmatter extraction and body line counting |
 | `lib/reporting.py`        | Shared error categorization and formatted output |
@@ -246,7 +246,7 @@ For complete procedures (creation, migration, auditing, bundling) and all comman
 2. **Edit** the generated files with domain-specific content
 3. **Validate** the skill against the spec
 4. **Deploy to tools** that don't natively scan the canonical location (optional)
-5. **Bundle for distribution** as a self-contained zip archive (optional)
+5. **Bundle for distribution** as a self-contained zip bundle (optional)
 6. **Update the manifest** to reflect the new wiring
 7. **Audit** the full skill system for consistency
 

@@ -280,8 +280,11 @@ def resolve_reference_with_reason(
       - ``"is_directory"``
       - ``"not_found"``
     """
-    # Reject absolute paths — references must be relative.
-    if os.path.isabs(ref_path):
+    # Reject absolute and drive-qualified paths — references must be
+    # relative.  On Windows, ``C:foo/bar`` is drive-relative and passes
+    # ``os.path.isabs()``, but ``os.path.join()`` treats it as rooted on
+    # that drive, effectively bypassing the relative-only rule.
+    if os.path.isabs(ref_path) or os.path.splitdrive(ref_path)[0]:
         return None, "absolute_path"
 
     source_dir = os.path.dirname(os.path.abspath(source_file))

@@ -219,7 +219,7 @@ Personal skills are useful for individual productivity tools (custom workflows, 
 
 ## Zip Bundle Packaging
 
-Skills can be distributed as self-contained zip archives for surfaces that support direct upload, offline sharing, or marketplace distribution.
+Skills can be distributed as self-contained zip bundles for surfaces that support direct upload, offline sharing, or marketplace distribution.
 
 ### Target Surfaces
 
