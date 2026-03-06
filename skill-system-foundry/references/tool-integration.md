@@ -219,6 +219,8 @@ Directory-level symlinks are simpler and preferred. File-level symlinks are usef
 
 Symlink creation syntax differs across platforms. Note the reversed argument order between Unix and Windows.
 
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`.
+
 **Linux / macOS:**
 
 ```bash
@@ -250,6 +252,31 @@ New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\.age
 # File-level
 New-Item -ItemType Directory -Path .claude\skills\my-skill -Force
 New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill\SKILL.md -Target ..\..\..\.agents\skills\my-skill\SKILL.md
+```
+
+### Verification Commands
+
+After creating symlinks, verify both the link target and file content:
+
+**Linux / macOS:**
+
+```bash
+ls -la .claude/skills/my-skill
+cat .claude/skills/my-skill/SKILL.md
+```
+
+**Windows (cmd):**
+
+```cmd
+dir .claude\skills /AL
+type .claude\skills\my-skill\SKILL.md
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Get-Item .claude\skills\my-skill | Select-Object LinkType, Target
+Get-Content .claude\skills\my-skill\SKILL.md
 ```
 
 ### Tool Compatibility

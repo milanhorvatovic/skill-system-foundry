@@ -265,6 +265,72 @@ class TocConsistencyTests(unittest.TestCase):
 class DocsSafetyTests(unittest.TestCase):
     """Safety checks for documented command snippets."""
 
+    def test_documented_symlink_targets_use_expected_relative_depths(self) -> None:
+        """Documented symlink targets should keep stable relative-depth examples."""
+        checks = [
+            (
+                DOCS["references/tool-integration.md"],
+                [
+                    "../../.agents/skills/my-skill",
+                    "../../../.agents/skills/my-skill/SKILL.md",
+                    "..\\..\\.agents\\skills\\my-skill",
+                    "..\\..\\..\\.agents\\skills\\my-skill\\SKILL.md",
+                ],
+            ),
+            (
+                DOCS["references/workflows.md"],
+                [
+                    "../../.agents/skills/my-skill",
+                    "..\\..\\.agents\\skills\\my-skill",
+                ],
+            ),
+        ]
+
+        for path, expected_tokens in checks:
+            if not os.path.isfile(path):
+                continue
+            content = _read(path)
+            for token in expected_tokens:
+                with self.subTest(path=path, token=token):
+                    self.assertIn(token, content)
+
+    def test_windows_cmd_verification_snippets_present(self) -> None:
+        """Symlink docs should include a cmd verification example."""
+        docs_to_check = [
+            DOCS["references/tool-integration.md"],
+            DOCS["references/workflows.md"],
+        ]
+
+        for path in docs_to_check:
+            if not os.path.isfile(path):
+                continue
+            content = _read(path)
+            with self.subTest(path=path):
+                self.assertIn(r"dir .claude\skills /AL", content)
+
+    def test_no_dot_slash_prefix_in_file_references(self) -> None:
+        """File references must use 'path/to/file' not './path/to/file' per
+        agentskills.io spec."""
+        failures = []
+
+        for doc_label, doc_path in DOCS.items():
+            if not os.path.isfile(doc_path):
+                continue
+            content = _read(doc_path)
+            # Check for `./something` in backtick-quoted paths
+            matches = re.findall(r"`\./[^`]+`", content)
+            if matches:
+                failures.append(
+                    f"  {doc_label}: {', '.join(matches)}"
+                )
+
+        if failures:
+            self.fail(
+                "File references with './' prefix violate agentskills.io "
+                "spec (use relative paths from skill root without './'):\n"
+                + "\n".join(failures)
+            )
+
     def test_no_malformed_windows_dot_agents_paths(self) -> None:
         """Windows path snippets should not contain '..agents' typos."""
         docs_to_check = [

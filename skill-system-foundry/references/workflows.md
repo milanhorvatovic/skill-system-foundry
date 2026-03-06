@@ -213,6 +213,8 @@ or should each tool point to a different location?
 
 **3. Create symlinks with platform-appropriate commands:**
 
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`.
+
 **Linux / macOS:**
 
 ```bash
@@ -245,9 +247,15 @@ ls -la .claude/skills/my-skill
 cat .claude/skills/my-skill/SKILL.md
 ```
 
+```cmd
+:: Windows (cmd) — verify the symlink resolves
+dir .claude\skills /AL
+type .claude\skills\my-skill\SKILL.md
+```
+
 ```powershell
 # Windows (PowerShell) — verify the symlink resolves
-Get-Item .claude\skills\my-skill | Select-Object Target
+Get-Item .claude\skills\my-skill | Select-Object LinkType, Target
 Get-Content .claude\skills\my-skill\SKILL.md
 ```
 
