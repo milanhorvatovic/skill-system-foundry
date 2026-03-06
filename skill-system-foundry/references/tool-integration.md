@@ -234,32 +234,32 @@ ln -s ../../../.agents/skills/my-skill/SKILL.md .claude/skills/my-skill/SKILL.md
 
 ```cmd
 :: Directory-level
-mklink /D .claude\skills\my-skill ..\..\..agents\skills\my-skill
+mklink /D .claude\skills\my-skill ..\..\.agents\skills\my-skill
 
 :: File-level
 mkdir .claude\skills\my-skill
-mklink .claude\skills\my-skill\SKILL.md ..\..\..\..agents\skills\my-skill\SKILL.md
+mklink .claude\skills\my-skill\SKILL.md ..\..\..\.agents\skills\my-skill\SKILL.md
 ```
 
 **Windows (PowerShell) — requires Developer Mode or admin:**
 
 ```powershell
 # Directory-level
-New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\..agents\skills\my-skill
+New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\.agents\skills\my-skill
 
 # File-level
 New-Item -ItemType Directory -Path .claude\skills\my-skill -Force
-New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill\SKILL.md -Target ..\..\..\..agents\skills\my-skill\SKILL.md
+New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill\SKILL.md -Target ..\..\..\.agents\skills\my-skill\SKILL.md
 ```
 
 ### Tool Compatibility
 
-| Tool | Symlink support | Notes |
+| Tool | Symlink support | Evidence |
 |---|---|---|
-| Codex | Confirmed | Follows symlinked skill folders (documented) |
-| Gemini CLI | Confirmed | Native `gemini skills link` command for symlink management |
-| Claude Code | Confirmed | Follows symlinked skill directories and files |
-| Cursor | Confirmed | Follows symlinked skill directories and files |
+| Codex | Confirmed | [`codex-extensions.md`](codex-extensions.md) documents symlinked folder support |
+| Gemini CLI | Confirmed | `gemini skills link` command (documented in this file and Gemini docs) |
+| Claude Code | Confirmed | Maintainer verification (2026-03) + [`claude-code-extensions.md`](claude-code-extensions.md) |
+| Cursor | Confirmed | Maintainer verification (2026-03) + [`cursor-extensions.md`](cursor-extensions.md) |
 | Windsurf | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
 | Kiro | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
 
@@ -279,8 +279,9 @@ Or configure an existing checkout:
 
 ```bash
 git config core.symlinks true
-git checkout -- .
 ```
+
+Then re-clone the repository (recommended). In-place retrofitting can rewrite files and should only be attempted after committing or stashing all local changes.
 
 **CI/CD pipelines** on Windows runners need `core.symlinks=true` in their git configuration. Linux/macOS runners handle symlinks natively.
 

@@ -59,6 +59,9 @@ RE_HEADING = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 # Matches ToC entries: - [Display text](#anchor)
 RE_TOC_ENTRY = re.compile(r"^-\s+\[([^\]]+)\]\(#([^)]+)\)", re.MULTILINE)
 
+# Matches fenced code blocks (```...``` or ~~~...~~~)
+RE_FENCED_CODE_BLOCK = re.compile(r"(```[\s\S]*?```|~~~[\s\S]*?~~~)")
+
 
 def _heading_to_anchor(heading_text: str) -> str:
     """Convert a markdown heading to its GitHub-style anchor.
@@ -81,6 +84,7 @@ def _heading_to_anchor(heading_text: str) -> str:
 
 def _extract_headings(content: str) -> dict[str, str]:
     """Return {anchor: heading_text} for all headings in content."""
+    content = RE_FENCED_CODE_BLOCK.sub("", content)
     result = {}
     for match in RE_HEADING.finditer(content):
         heading_text = match.group(2).strip()
@@ -256,6 +260,44 @@ class TocConsistencyTests(unittest.TestCase):
                 f"Headings missing from ToC ({len(failures)}):\n"
                 + "\n".join(failures)
             )
+
+
+class DocsSafetyTests(unittest.TestCase):
+    """Safety checks for documented command snippets."""
+
+    def test_no_malformed_windows_dot_agents_paths(self) -> None:
+        """Windows path snippets should not contain '..agents' typos."""
+        docs_to_check = [
+            DOCS["references/tool-integration.md"],
+            DOCS["references/workflows.md"],
+        ]
+        failures = []
+
+        for path in docs_to_check:
+            if not os.path.isfile(path):
+                continue
+            content = _read(path)
+            if "..agents" in content:
+                failures.append(os.path.relpath(path, SKILL_ROOT))
+
+        if failures:
+            self.fail(
+                "Malformed '..agents' Windows symlink path found in: "
+                + ", ".join(failures)
+            )
+
+    def test_no_destructive_git_checkout_recovery_snippet(self) -> None:
+        """Docs should avoid suggesting destructive checkout refresh commands."""
+        path = DOCS["references/tool-integration.md"]
+        if not os.path.isfile(path):
+            return
+
+        content = _read(path)
+        self.assertNotIn(
+            "git checkout -- .",
+            content,
+            "Use safer guidance than 'git checkout -- .' for symlink recovery.",
+        )
 
 
 if __name__ == "__main__":

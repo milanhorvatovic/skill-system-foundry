@@ -227,14 +227,14 @@ ln -s ../../.agents/skills/my-skill .kiro/skills/my-skill
 
 ```cmd
 :: Example: Claude Code pointer to .agents\skills\my-skill
-mklink /D .claude\skills\my-skill ..\..\..agents\skills\my-skill
+mklink /D .claude\skills\my-skill ..\..\.agents\skills\my-skill
 ```
 
 **Windows (PowerShell) — requires Developer Mode or admin:**
 
 ```powershell
 # Example: Claude Code pointer to .agents\skills\my-skill
-New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\..agents\skills\my-skill
+New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\.agents\skills\my-skill
 ```
 
 **4. Verify symlink resolution:**
