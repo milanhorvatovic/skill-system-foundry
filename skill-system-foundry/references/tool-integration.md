@@ -12,6 +12,7 @@ How skills are discovered, loaded, and executed across different AI tools.
 - [Other Agent Skills-Compatible Tools](#other-agent-skills-compatible-tools)
 - [Non-Agent-Skills Tools](#non-agent-skills-tools)
 - [Deployment Pointer Guidelines](#deployment-pointer-guidelines)
+- [Symlink-Based Deployment Pointers](#symlink-based-deployment-pointers)
 - [Convention Coexistence](#convention-coexistence)
 - [Personal vs Project Skills](#personal-vs-project-skills)
 - [Zip Bundle Packaging](#zip-bundle-packaging)
@@ -177,6 +178,141 @@ Deployment pointers are optional, user-managed files — not Skill System Foundr
 - Domain-specific workflow steps
 - Business logic or decision rules
 - Reference material or examples
+
+---
+
+## Symlink-Based Deployment Pointers
+
+Symlinks are an alternative to wrapper files for deployment pointers. Instead of creating a thin `SKILL.md` that references canonical content, a symlink points the tool's discovery path directly to the canonical source — zero maintenance, no content duplication.
+
+### When to Use Symlinks vs Wrapper Files
+
+| Criteria | Symlinks | Wrapper files |
+|---|---|---|
+| Maintenance | Zero — canonical source always read | Must keep wrapper in sync |
+| Content duplication | None | Risk of divergence |
+| Platform support | Requires setup on Windows | Works everywhere |
+| Tool-specific adaptation | Not possible — content is identical | Can add tool-specific conventions |
+| Team OS mix | Requires all contributors to support symlinks | No platform constraints |
+
+**Use symlinks when:** the team is on Linux/macOS (or Windows with Developer Mode), no tool-specific adaptation is needed, and you want zero-maintenance pointers.
+
+**Use wrapper files when:** the team includes Windows users without Developer Mode, the tool requires specific conventions in its pointer, or platform reliability is more important than maintenance savings.
+
+### Symlink Forms
+
+**Directory-level** — symlink the entire skill directory:
+
+```
+.claude/skills/my-skill -> ../../.agents/skills/my-skill
+```
+
+**File-level** — symlink only SKILL.md:
+
+```
+.claude/skills/my-skill/SKILL.md -> ../../../.agents/skills/my-skill/SKILL.md
+```
+
+Directory-level symlinks are simpler and preferred. File-level symlinks are useful when the pointer directory needs additional tool-specific files alongside the symlinked SKILL.md.
+
+### Platform Commands
+
+Symlink creation syntax differs across platforms. Note the reversed argument order between Unix and Windows.
+
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`.
+
+**Linux / macOS:**
+
+```bash
+# Directory-level
+ln -s ../../.agents/skills/my-skill .claude/skills/my-skill
+
+# File-level
+mkdir -p .claude/skills/my-skill
+ln -s ../../../.agents/skills/my-skill/SKILL.md .claude/skills/my-skill/SKILL.md
+```
+
+**Windows (cmd) — requires Developer Mode or admin:**
+
+```cmd
+:: Directory-level
+mklink /D .claude\skills\my-skill ..\..\.agents\skills\my-skill
+
+:: File-level
+mkdir .claude\skills\my-skill
+mklink .claude\skills\my-skill\SKILL.md ..\..\..\.agents\skills\my-skill\SKILL.md
+```
+
+**Windows (PowerShell) — requires Developer Mode or admin:**
+
+```powershell
+# Directory-level
+New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\.agents\skills\my-skill
+
+# File-level
+New-Item -ItemType Directory -Path .claude\skills\my-skill -Force
+New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill\SKILL.md -Target ..\..\..\.agents\skills\my-skill\SKILL.md
+```
+
+### Verification Commands
+
+After creating symlinks, verify both the link target and file content:
+
+**Linux / macOS:**
+
+```bash
+ls -la .claude/skills/my-skill
+cat .claude/skills/my-skill/SKILL.md
+```
+
+**Windows (cmd):**
+
+```cmd
+dir .claude\skills /AL
+type .claude\skills\my-skill\SKILL.md
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Get-Item .claude\skills\my-skill | Select-Object LinkType, Target
+Get-Content .claude\skills\my-skill\SKILL.md
+```
+
+### Tool Compatibility
+
+| Tool | Symlink support | Evidence |
+|---|---|---|
+| Codex | Confirmed | [`codex-extensions.md`](codex-extensions.md) documents symlinked folder support |
+| Gemini CLI | Confirmed | `gemini skills link` command (documented in this file and Gemini docs) |
+| Claude Code | Confirmed | Maintainer verification + [`claude-code-extensions.md`](claude-code-extensions.md) |
+| Cursor | Confirmed | Maintainer verification + [`cursor-extensions.md`](cursor-extensions.md) |
+| Windsurf | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
+| Kiro | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
+
+Tools marked "Expected" follow symlinks through standard filesystem behavior. If a tool explicitly breaks symlink resolution in a future release, fall back to wrapper files for that tool.
+
+### Git and Platform Considerations
+
+**Git on Windows** does not preserve symlinks by default. Cloning a repository with symlinks on Windows without configuration replaces symlinks with plain text files containing the target path.
+
+Fix before cloning:
+
+```bash
+git clone -c core.symlinks=true <repo-url>
+```
+
+Or configure an existing checkout:
+
+```bash
+git config core.symlinks true
+```
+
+Then re-clone the repository (recommended). In-place retrofitting can rewrite files and should only be attempted after committing or stashing all local changes.
+
+**CI/CD pipelines** on Windows runners need `core.symlinks=true` in their git configuration. Linux/macOS runners handle symlinks natively.
+
+**Cloud editors and remote development environments** (Codespaces, Gitpod, remote SSH) generally support symlinks on their Linux-based backends. Verify if the environment mounts the repository with symlink support.
 
 ---
 

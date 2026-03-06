@@ -116,7 +116,9 @@ Skill descriptions share a dynamic character budget (2% of context window, fallb
 
 ## Deployment Pointer
 
-When creating a deployment pointer for Claude Code (see [tool-integration.md](tool-integration.md)), use these tool conventions:
+Deployment pointers for Claude Code can be wrapper files or symlinks. Claude Code follows symlinked skill directories and files. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
+
+When creating a wrapper-based deployment pointer for Claude Code (see [tool-integration.md](tool-integration.md)), use these tool conventions:
 - File reading: bash `cat` or Claude's `view` tool
 - Tool invocation: bash commands, MCP with `ServerName:tool_name` format
 - Scripts: execute directly via bash

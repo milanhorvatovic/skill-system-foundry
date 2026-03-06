@@ -112,7 +112,9 @@ Requires Codex restart to apply.
 
 ## Deployment Pointer
 
-When creating a deployment pointer for Codex (see [tool-integration.md](tool-integration.md)), use these tool conventions:
+Deployment pointers for Codex can be wrapper files or symlinks. Codex follows symlinked skill folders (see [Discovery Paths](#discovery-paths)). See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
+
+When creating a wrapper-based deployment pointer for Codex (see [tool-integration.md](tool-integration.md)), use these tool conventions:
 - File reading: shell tool (read, cat, head)
 - Tool invocation: shell commands
 - Include `agents/openai.yaml` if UI metadata needed

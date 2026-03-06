@@ -10,6 +10,7 @@ Step-by-step procedures for common skill system operations.
 - [Migrating Flat Skills to Router Pattern](#migrating-flat-skills-to-router-pattern)
 - [Adding a Capability to an Existing Router](#adding-a-capability-to-an-existing-router-optional)
 - [Deploying Skills to Tools](#deploying-skills-to-tools)
+- [Setting Up Symlink-Based Pointers](#setting-up-symlink-based-pointers)
 - [Packaging a Skill as a Zip Bundle](#packaging-a-skill-as-a-zip-bundle)
 - [Auditing System Consistency](#auditing-system-consistency)
 
@@ -150,7 +151,19 @@ Only add a capability when the integrator explicitly requests it or when the dom
 
 ## Deploying Skills to Tools
 
-Skills placed in `.agents/skills/` are natively discovered by most tools (Codex, Gemini CLI, Warp, OpenCode, Windsurf). For tools that do not scan this path, create a thin deployment pointer in the tool's discovery path. See [tool-integration.md](tool-integration.md) for per-tool details.
+Skills placed in `.agents/skills/` are natively discovered by most tools (Codex, Gemini CLI, Warp, OpenCode, Windsurf). For tools that do not scan this path, create a deployment pointer in the tool's discovery path. See [tool-integration.md](tool-integration.md) for per-tool details.
+
+**First, determine the pointer mechanism.** Ask the user before creating any deployment pointers:
+
+```
+How should deployment pointers be created?
+> [ ] Wrapper files (portable, works everywhere)
+> [ ] Symlinks (zero maintenance, but platform requirements apply)
+```
+
+See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the full decision guide. If symlinks are chosen, follow the [Setting Up Symlink-Based Pointers](#setting-up-symlink-based-pointers) workflow below.
+
+**Per-tool instructions (wrapper files):**
 
 **Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source (registered skills only — not capability files). Or use the plugin marketplace.
 
@@ -165,6 +178,88 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 **Windsurf:** Usually no deployment pointer needed when canonical skills live in `.agents/skills/`. Optionally add `.windsurf/rules/<domain>.md` for rules-based activation.
 
 **Kiro:** Create a pointer at `.kiro/skills/<domain>/SKILL.md` that references the canonical source.
+
+---
+
+## Setting Up Symlink-Based Pointers
+
+Use this workflow when the user chose symlinks as the deployment pointer mechanism (see [Deploying Skills to Tools](#deploying-skills-to-tools)). See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for platform compatibility and tool support details.
+
+**1. Determine scope — shared or per-tool path:**
+
+```
+Is the canonical skill path the same for all AI tool integrations,
+or should each tool point to a different location?
+> [ ] Same path for all tools
+> [ ] Different path per tool
+```
+
+**2. Prompt for canonical path(s):**
+
+- **Same path for all tools** — ask once:
+  ```
+  Where is the canonical skill located?
+  > .agents/skills/my-skill
+  ```
+
+- **Different path per tool** — ask per tool being configured:
+  ```
+  Canonical path for Claude Code?
+  > .agents/skills/my-skill
+
+  Canonical path for Cursor?
+  > .agents/skills/my-skill
+  ```
+
+**3. Create symlinks with platform-appropriate commands:**
+
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`.
+
+**Linux / macOS:**
+
+```bash
+# Example: Claude Code pointer to .agents/skills/my-skill
+ln -s ../../.agents/skills/my-skill .claude/skills/my-skill
+
+# Example: Kiro pointer to .agents/skills/my-skill
+ln -s ../../.agents/skills/my-skill .kiro/skills/my-skill
+```
+
+**Windows (cmd) — requires Developer Mode or admin:**
+
+```cmd
+:: Example: Claude Code pointer to .agents\skills\my-skill
+mklink /D .claude\skills\my-skill ..\..\.agents\skills\my-skill
+```
+
+**Windows (PowerShell) — requires Developer Mode or admin:**
+
+```powershell
+# Example: Claude Code pointer to .agents\skills\my-skill
+New-Item -ItemType SymbolicLink -Path .claude\skills\my-skill -Target ..\..\.agents\skills\my-skill
+```
+
+**4. Verify symlink resolution:**
+
+```bash
+# Linux / macOS — verify the symlink resolves
+ls -la .claude/skills/my-skill
+cat .claude/skills/my-skill/SKILL.md
+```
+
+```cmd
+:: Windows (cmd) — verify the symlink resolves
+dir .claude\skills /AL
+type .claude\skills\my-skill\SKILL.md
+```
+
+```powershell
+# Windows (PowerShell) — verify the symlink resolves
+Get-Item .claude\skills\my-skill | Select-Object LinkType, Target
+Get-Content .claude\skills\my-skill\SKILL.md
+```
+
+If the SKILL.md content matches the canonical source, the symlink is working correctly.
 
 ---
 

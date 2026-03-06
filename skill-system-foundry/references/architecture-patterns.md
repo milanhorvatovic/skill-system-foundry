@@ -105,7 +105,7 @@ A domain skill (standalone or router with capabilities) loads one or more roles 
 
 ### Shared Principle
 
-Regardless of path: **the skill owns domain execution, the role owns workflow logic** — keep these concerns separated. A thin deployment pointer can optionally sit in front of any path for tools that require tool-specific adaptation (see [tool-integration.md](tool-integration.md)).
+Regardless of path: **the skill owns domain execution, the role owns workflow logic** — keep these concerns separated. A thin deployment pointer can optionally sit in front of any path for tools that require tool-specific adaptation. Deployment pointers can be implemented as wrapper files or symlinks — see [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide.
 
 ### Decision Checklist
 

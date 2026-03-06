@@ -107,10 +107,24 @@ project/
 ├── roles/
 ├── .claude/skills/            ← deployment pointers
 ├── .cursor/skills/            ← deployment pointers
-└── .agents/skills/            ← deployment pointers (or symlinks)
+└── .agents/skills/            ← deployment pointers
 ```
 
 Use when: the team wants canonical content highly visible in the repository root. Trade-off: adds a non-standard top-level directory and requires deployment pointers for all tools.
+
+#### Deployment Pointer Mechanism: Wrapper Files vs Symlinks
+
+Deployment pointers can be implemented as **wrapper files** or **symlinks**:
+
+- **Wrapper files** — thin `SKILL.md` that references the canonical source. Portable, works everywhere.
+- **Symlinks** — filesystem link to the canonical directory or file. Zero maintenance, no content duplication.
+
+Choose based on team composition:
+- **All Linux/macOS** — symlinks preferred (zero maintenance)
+- **Mixed OS** — wrapper files safer unless all Windows contributors have Developer Mode enabled
+- **Need tool-specific adaptation** — wrapper files required (symlinks cannot carry tool-specific content)
+
+See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the full decision guide, platform-specific commands, and tool compatibility details.
 
 **Single-tool canonical location:**
 
