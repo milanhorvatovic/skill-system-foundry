@@ -24,6 +24,18 @@ import bundle
 
 
 class CLISmokeTests(unittest.TestCase):
+    def test_no_args_prints_docstring_usage(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, BUNDLE_SCRIPT],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Bundle a skill into a self-contained zip archive", proc.stdout)
+        self.assertIn("Usage:", proc.stdout)
+
     def test_output_parent_directory_is_created(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "system")
