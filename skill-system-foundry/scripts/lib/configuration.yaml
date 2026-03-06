@@ -69,3 +69,4 @@ bundle:
     - Desktop.ini
     - $RECYCLE.BIN
     - "*.pyc"
+    - "*.lnk"

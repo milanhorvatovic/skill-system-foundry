@@ -170,12 +170,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 ## Packaging a Skill as a Zip Bundle
 
-Creates a self-contained zip bundle from a project-layout skill.
-
-Before bundling, review:
-
-- [Zip bundle constraints and limits](tool-integration.md#zip-bundle-packaging)
-- [Bundle directory structure](directory-structure.md#packaging-for-distribution)
+Creates a self-contained zip bundle from a project-layout skill. The archive packages exactly one skill directory, preserves its internal layout, and excludes large or non-essential assets not required at runtime (patterns defined in `scripts/lib/configuration.yaml`).
 
 ### Prerequisites
 
@@ -200,7 +195,7 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>]
 3. **Post-validates** — verifies all markdown references resolve within the bundle and exactly one SKILL.md exists.
 4. **Creates the zip** with the skill folder as the archive root.
 
-For detailed constraints, exclude patterns, and archive structure see [tool-integration.md](tool-integration.md#zip-bundle-packaging) and [directory-structure.md](directory-structure.md#packaging-for-distribution).
+The archive root contains a `<skill-name>/` wrapper directory matching the skill's `name` field. Files must not be placed directly at the archive root. Any system-level `roles/` referenced by the skill are inlined under the skill directory to make the bundle self-contained.
 
 ### Example
 

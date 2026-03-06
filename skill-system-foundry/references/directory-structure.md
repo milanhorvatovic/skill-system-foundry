@@ -131,7 +131,7 @@ When a skill is packaged as a zip bundle for distribution (Claude.ai upload, Gem
 
 ### Bundle Structure
 
-The archive structure is defined in [`tool-integration.md` — Required Archive Structure](tool-integration.md#required-archive-structure). The key differences from the project layout are summarised below.
+The archive contains a `<skill-name>/` wrapper directory as its root with `SKILL.md` and any standard subdirectories (`references/`, `assets/`, `scripts/`, `roles/`) mirrored exactly as they appear on disk. Files must not be placed directly at the archive root.
 
 ### Distinctions from Project Layout
 
@@ -152,7 +152,7 @@ The `roles/` directory in a bundle is a **distribution-only exception**. In the 
 
 ### Tooling
 
-See [workflows.md — Packaging a Skill as a Zip Bundle](workflows.md#packaging-a-skill-as-a-zip-bundle) for the end-to-end procedure, command usage, and examples. See [tool-integration.md — Zip Bundle Packaging](tool-integration.md#zip-bundle-packaging) for platform-specific constraints.
+To package a skill as a zip bundle, run `bundle.py` from the project root. The bundler validates the skill, resolves external references, copies them into the bundle, rewrites markdown paths to bundle-relative form, and creates the archive.
 
 ---
 

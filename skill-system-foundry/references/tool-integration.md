@@ -239,7 +239,7 @@ Claude.ai enforces constraints stricter than the Agent Skills specification:
 | Description length | Max 200 characters | Max 1024 characters |
 | Folder name | Must match skill name | Must match skill name |
 
-The case-insensitive SKILL.md scan is why capability entry points use `capability.md` — a file named `skill.md` (lowercase) would collide. See the root [README.md](../../README.md#why-capabilitymd) for details.
+The case-insensitive SKILL.md scan is why capability entry points use `capability.md` — a file named `skill.md` (lowercase) would be treated as a second SKILL entry point and fail Claude.ai's validation.
 
 ### Required Archive Structure
 
@@ -265,11 +265,11 @@ Source: [How to create custom Skills (Claude Help Center)](https://support.claud
 
 ### Key Distinctions from Project Layout
 
-See [directory-structure.md — Packaging for Distribution](directory-structure.md#packaging-for-distribution) for the full project-vs-bundle comparison. In short: the bundle is a self-contained distribution artifact with roles inlined, no `.agents/` wrapper, and no deployment pointers.
+A zip bundle is a self-contained distribution artifact: it inlines any system-level `roles/` directory, omits the `.agents/` wrapper, and excludes deployment pointer files. The project layout can be larger and include additional tooling, manifests, and deployment pointers that never ship inside the bundle.
 
 ### Tooling
 
-See [workflows.md — Packaging a Skill as a Zip Bundle](workflows.md#packaging-a-skill-as-a-zip-bundle) for the end-to-end procedure, command usage, and examples.
+To package a skill as a zip bundle, run `bundle.py` from the project root. The bundler validates the skill, resolves external references, copies them into the bundle, rewrites markdown paths to bundle-relative form, and creates the archive.
 
 ---
 
