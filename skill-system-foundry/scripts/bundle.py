@@ -199,15 +199,16 @@ def main() -> None:
         )
         if not has_manifest and not has_skills_dir:
             print_error_line(
-                f"{LEVEL_WARN}: '{system_root}' does not look like a skill "
+                f"{LEVEL_FAIL}: '{system_root}' does not look like a skill "
                 f"system root (no '{FILE_MANIFEST}' and no "
                 f"'{DIR_SKILLS}/' directory). Expected layout:\n"
                 f"  {system_root}/\n"
                 f"    {FILE_MANIFEST}\n"
                 f"    {DIR_SKILLS}/\n"
                 f"      <your-skill>/\n"
-                f"If this is intentional, you can ignore this warning."
+                f"Provide a valid --system-root that contains your skill."
             )
+            sys.exit(1)
     else:
         system_root = infer_system_root(skill_path)
         if system_root:

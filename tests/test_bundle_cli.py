@@ -54,6 +54,31 @@ class CLISmokeTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             self.assertTrue(os.path.exists(output_path))
 
+    def test_invalid_system_root_markers_fail_fast(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "not-a-system-root")
+            skill_dir = os.path.join(system_root, "demo-skill")
+            # Keep skill inside provided root, but omit both manifest.yaml
+            # and skills/ so root-shape validation fails.
+            write_skill_md(skill_dir)
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    BUNDLE_SCRIPT,
+                    skill_dir,
+                    "--system-root",
+                    system_root,
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("does not look like a skill system root", proc.stdout)
+            self.assertIn("Provide a valid --system-root", proc.stdout)
+
     def test_output_directory_argument_writes_skill_zip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "system")
@@ -123,6 +148,7 @@ class CLISmokeTests(unittest.TestCase):
 class MainErrorHandlingTests(unittest.TestCase):
     def test_unexpected_create_bundle_error_is_reported_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "manifest.yaml"), "name: demo\n")
             skill_dir = os.path.join(tmpdir, "demo-skill")
             write_skill_md(skill_dir, description="Tests unexpected bundle errors.")
 
@@ -167,6 +193,7 @@ class MainErrorHandlingTests(unittest.TestCase):
 
     def test_verbose_flag_prints_traceback_for_unexpected_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "manifest.yaml"), "name: demo\n")
             skill_dir = os.path.join(tmpdir, "demo-skill")
             write_skill_md(skill_dir, description="Tests verbose traceback behavior.")
 
