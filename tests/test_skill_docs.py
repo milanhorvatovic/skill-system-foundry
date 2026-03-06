@@ -1,0 +1,262 @@
+"""Tests for skill documentation integrity.
+
+Validates cross-reference anchors and Table of Contents consistency
+for the skill-system-foundry skill's markdown files.
+"""
+
+import os
+import re
+import unittest
+
+
+SKILL_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry")
+)
+
+# Markdown files that are part of the skill documentation.
+DOCS = {
+    "SKILL.md": os.path.join(SKILL_ROOT, "SKILL.md"),
+    "references/tool-integration.md": os.path.join(
+        SKILL_ROOT, "references", "tool-integration.md"
+    ),
+    "references/directory-structure.md": os.path.join(
+        SKILL_ROOT, "references", "directory-structure.md"
+    ),
+    "references/architecture-patterns.md": os.path.join(
+        SKILL_ROOT, "references", "architecture-patterns.md"
+    ),
+    "references/workflows.md": os.path.join(
+        SKILL_ROOT, "references", "workflows.md"
+    ),
+    "references/anti-patterns.md": os.path.join(
+        SKILL_ROOT, "references", "anti-patterns.md"
+    ),
+    "references/authoring-principles.md": os.path.join(
+        SKILL_ROOT, "references", "authoring-principles.md"
+    ),
+    "references/agentskills-spec.md": os.path.join(
+        SKILL_ROOT, "references", "agentskills-spec.md"
+    ),
+    "references/claude-code-extensions.md": os.path.join(
+        SKILL_ROOT, "references", "claude-code-extensions.md"
+    ),
+    "references/codex-extensions.md": os.path.join(
+        SKILL_ROOT, "references", "codex-extensions.md"
+    ),
+    "references/cursor-extensions.md": os.path.join(
+        SKILL_ROOT, "references", "cursor-extensions.md"
+    ),
+}
+
+# ---------- helpers ----------
+
+# Matches markdown links: [text](target) or [text](target "title")
+RE_MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+# Matches markdown headings: # Heading, ## Heading, etc.
+RE_HEADING = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+
+# Matches ToC entries: - [Display text](#anchor)
+RE_TOC_ENTRY = re.compile(r"^-\s+\[([^\]]+)\]\(#([^)]+)\)", re.MULTILINE)
+
+
+def _heading_to_anchor(heading_text: str) -> str:
+    """Convert a markdown heading to its GitHub-style anchor.
+
+    Rules: lowercase, strip non-alphanumeric except hyphens and spaces,
+    replace spaces with hyphens, collapse consecutive hyphens.
+    """
+    text = heading_text.strip()
+    # Remove markdown formatting (bold, italic, code, links)
+    text = re.sub(r"\*+", "", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = text.lower()
+    # Keep alphanumeric, spaces, and hyphens only
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"\s+", "-", text.strip())
+    text = re.sub(r"-+", "-", text)
+    return text
+
+
+def _extract_headings(content: str) -> dict[str, str]:
+    """Return {anchor: heading_text} for all headings in content."""
+    result = {}
+    for match in RE_HEADING.finditer(content):
+        heading_text = match.group(2).strip()
+        anchor = _heading_to_anchor(heading_text)
+        result[anchor] = heading_text
+    return result
+
+
+def _extract_toc_entries(content: str) -> list[tuple[str, str]]:
+    """Return [(display_text, anchor), ...] from Table of Contents section."""
+    entries = []
+    in_toc = False
+    for line in content.splitlines():
+        # ToC starts after a "## Table of Contents" heading
+        if re.match(r"^##\s+Table of Contents", line):
+            in_toc = True
+            continue
+        # ToC ends at the next heading or horizontal rule
+        if in_toc and (re.match(r"^#{1,6}\s+", line) or re.match(r"^---", line)):
+            break
+        if in_toc:
+            m = RE_TOC_ENTRY.match(line.strip())
+            if m:
+                entries.append((m.group(1), m.group(2)))
+    return entries
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+# ---------- test classes ----------
+
+
+class AnchorValidationTests(unittest.TestCase):
+    """Every markdown link with a #anchor must resolve to an actual heading."""
+
+    def test_all_anchors_resolve(self) -> None:
+        failures = []
+
+        for doc_label, doc_path in DOCS.items():
+            if not os.path.isfile(doc_path):
+                continue
+            content = _read(doc_path)
+            doc_dir = os.path.dirname(doc_path)
+
+            for match in RE_MD_LINK.finditer(content):
+                raw_target = match.group(1).strip()
+
+                # Strip optional title: (path "title")
+                raw_target = re.sub(r'\s+"[^"]*"$', "", raw_target)
+
+                # Skip external URLs and pure anchors
+                if re.match(r"https?://|mailto:|file:///|<", raw_target):
+                    continue
+
+                if "#" not in raw_target:
+                    continue
+
+                parts = raw_target.split("#", 1)
+                file_part = parts[0]
+                anchor = parts[1]
+
+                if not anchor:
+                    continue
+
+                # Determine which file the anchor should be in
+                if file_part:
+                    target_path = os.path.normpath(
+                        os.path.join(doc_dir, file_part)
+                    )
+                else:
+                    # Self-reference: #anchor within the same file
+                    target_path = doc_path
+
+                if not os.path.isfile(target_path):
+                    # Missing file — not this test's concern (validate_skill
+                    # handles that). Skip.
+                    continue
+
+                target_content = _read(target_path)
+                headings = _extract_headings(target_content)
+
+                if anchor not in headings:
+                    target_label = os.path.relpath(target_path, SKILL_ROOT)
+                    failures.append(
+                        f"  {doc_label}: anchor '#{anchor}' not found in "
+                        f"{target_label} (available: "
+                        f"{', '.join(sorted(headings.keys())[:5])}...)"
+                    )
+
+        if failures:
+            self.fail(
+                f"Broken anchors found ({len(failures)}):\n"
+                + "\n".join(failures)
+            )
+
+
+class TocConsistencyTests(unittest.TestCase):
+    """ToC entries must match actual headings (bidirectional)."""
+
+    # Files that have an explicit Table of Contents section.
+    TOC_FILES = [
+        ("references/tool-integration.md", DOCS["references/tool-integration.md"]),
+        (
+            "references/directory-structure.md",
+            DOCS["references/directory-structure.md"],
+        ),
+        (
+            "references/architecture-patterns.md",
+            DOCS["references/architecture-patterns.md"],
+        ),
+        ("references/workflows.md", DOCS["references/workflows.md"]),
+    ]
+
+    def test_toc_entries_have_matching_headings(self) -> None:
+        """Every ToC entry must correspond to an actual heading."""
+        failures = []
+
+        for doc_label, doc_path in self.TOC_FILES:
+            if not os.path.isfile(doc_path):
+                continue
+            content = _read(doc_path)
+            toc_entries = _extract_toc_entries(content)
+            headings = _extract_headings(content)
+
+            for display_text, anchor in toc_entries:
+                if anchor not in headings:
+                    failures.append(
+                        f"  {doc_label}: ToC entry '{display_text}' "
+                        f"(#{anchor}) has no matching heading"
+                    )
+
+        if failures:
+            self.fail(
+                f"ToC entries without matching headings ({len(failures)}):\n"
+                + "\n".join(failures)
+            )
+
+    def test_headings_have_toc_entries(self) -> None:
+        """Every ## heading should have a ToC entry (except Table of Contents
+        itself)."""
+        failures = []
+
+        for doc_label, doc_path in self.TOC_FILES:
+            if not os.path.isfile(doc_path):
+                continue
+            content = _read(doc_path)
+            toc_entries = _extract_toc_entries(content)
+            toc_anchors = {anchor for _, anchor in toc_entries}
+            headings = _extract_headings(content)
+
+            # Only check ## headings (top-level sections), not ### or deeper
+            for match in RE_HEADING.finditer(content):
+                level = len(match.group(1))
+                heading_text = match.group(2).strip()
+                anchor = _heading_to_anchor(heading_text)
+
+                if level != 2:
+                    continue
+                if anchor == "table-of-contents":
+                    continue
+
+                if anchor not in toc_anchors:
+                    failures.append(
+                        f"  {doc_label}: heading '{heading_text}' "
+                        f"(#{anchor}) missing from ToC"
+                    )
+
+        if failures:
+            self.fail(
+                f"Headings missing from ToC ({len(failures)}):\n"
+                + "\n".join(failures)
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

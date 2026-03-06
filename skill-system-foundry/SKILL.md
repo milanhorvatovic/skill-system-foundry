@@ -108,7 +108,7 @@ Match specificity to the task's fragility. High freedom for flexible tasks, low 
 
 ### 5. Write Once, Adapt Everywhere
 
-Domain knowledge is authored exactly once in the canonical layer (skills and roles). When domain knowledge changes, one file changes. Tool-specific deployment pointers, if needed, are optional user-managed customizations documented in [`references/tool-integration.md`](references/tool-integration.md).
+Domain knowledge is authored exactly once in the canonical layer (skills and roles). When domain knowledge changes, one file changes. Tool-specific deployment pointers, if needed, are optional user-managed customizations — implemented as wrapper files or symlinks. When deploying, always ask the user which mechanism to use. See [`references/tool-integration.md`](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide.
 
 ---
 
@@ -120,11 +120,11 @@ Domain knowledge is authored exactly once in the canonical layer (skills and rol
 | Create a new skill | [`assets/skill-standalone.md`](assets/skill-standalone.md) or [`assets/skill-router.md`](assets/skill-router.md) |
 | Create a new capability | [`assets/capability.md`](assets/capability.md) + [`references/workflows.md`](references/workflows.md#adding-a-capability-to-an-existing-router-optional) |
 | Create a new role | [`assets/role.md`](assets/role.md) |
-| Deploy to a specific tool | [`references/tool-integration.md`](references/tool-integration.md) |
+| Deploy to a specific tool (wrapper or symlink) | [`references/tool-integration.md`](references/tool-integration.md) + [`references/workflows.md`](references/workflows.md#setting-up-symlink-based-pointers) |
 | Set up the manifest | [`assets/manifest.yaml`](assets/manifest.yaml) |
 | Write effective descriptions | [`references/authoring-principles.md`](references/authoring-principles.md) |
 | Decide skill architecture (standalone vs router) | [`references/architecture-patterns.md`](references/architecture-patterns.md#standalone-vs-router-when-to-split) |
-| Deploy to Claude Code, Cursor, Kiro (Codex, Gemini CLI, Warp, OpenCode, Windsurf scan natively) | [`references/tool-integration.md`](references/tool-integration.md) |
+| Deploy to Claude Code, Cursor, Kiro (wrapper or symlink; Codex, Gemini CLI, Warp, OpenCode, Windsurf scan natively) | [`references/tool-integration.md`](references/tool-integration.md) |
 | Migrate flat skills to router | [`references/workflows.md`](references/workflows.md#migrating-flat-skills-to-router-pattern) |
 | Audit skill system | `scripts/audit_skill_system.py` + [`references/workflows.md`](references/workflows.md#auditing-system-consistency) |
 | Validate a skill | `scripts/validate_skill.py` |

@@ -62,6 +62,6 @@ Remote skills can be imported via Settings > Rules > Add Rule > Remote Rule (Git
 
 ## Deployment Pointer
 
-Use `.cursor/skills/<domain>/SKILL.md` for Cursor-native placement.
+Use `.cursor/skills/<domain>/SKILL.md` for Cursor-native placement. Deployment pointers can be wrapper files or symlinks — Cursor follows symlinked skill directories and files. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
 
 If canonical content lives in `.claude/skills/` or `.codex/skills/`, no Cursor deployment pointer is needed at all — Cursor discovers it natively.
