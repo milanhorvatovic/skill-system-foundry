@@ -117,8 +117,13 @@ Download the latest versioned zip from [Releases](https://github.com/milanhorvat
    ```
    Expected output:
    ```
-   Created skill at /path/to/project/.agents/skills/my-skill/
-     /path/to/project/.agents/skills/my-skill/SKILL.md
+     Created: /path/to/project/.agents/skills/my-skill/SKILL.md
+     Created: /path/to/project/.agents/skills/my-skill/references/
+     Created: /path/to/project/.agents/skills/my-skill/scripts/
+     Created: /path/to/project/.agents/skills/my-skill/assets/
+
+   ✓ Skill 'my-skill' scaffolded at /path/to/project/.agents/skills/my-skill
+     Next: edit /path/to/project/.agents/skills/my-skill/SKILL.md and update manifest.yaml
    ```
 
 2. **Validate your work** — Run validation to ensure spec compliance:
@@ -128,19 +133,17 @@ Download the latest versioned zip from [Releases](https://github.com/milanhorvat
    Expected output:
    ```
    Validating: /path/to/project/.agents/skills/my-skill
-     ✓ SKILL.md exists
-     ✓ Frontmatter valid
-     ✓ Name matches directory
-     ✓ Body within line limit
-
-   Result: PASS
+   Type: registered skill
+   ------------------------------------------------------------
+   ✓ All checks passed
    ```
 
 3. **Deploy to tools** — Tools that scan `.agents/skills/` natively (Codex, Gemini CLI, Warp, OpenCode, Windsurf) need nothing else. For other tools, create thin deployment pointers. See the [Project Integration wiki page](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Project-Integration) for details.
 
 4. **Bundle for distribution** (optional) — Package a skill as a self-contained zip for Claude.ai upload, Gemini CLI, or offline sharing:
    ```bash
-   python scripts/bundle.py .agents/skills/my-skill --system-root .agents --output my-skill.zip
+   python scripts/bundle.py /path/to/project/.agents/skills/my-skill \
+     --system-root /path/to/project/.agents --output my-skill.zip
    ```
 
 ## Repository Structure
