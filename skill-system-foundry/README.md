@@ -1,6 +1,6 @@
 # Skill System Foundry — Skill Documentation
 
-This is the meta-skill for constructing and evolving AI-agnostic skill systems. It follows a **router-style pattern**: a lean `SKILL.md` entry point, conceptual capabilities loaded on demand via references, templates for scaffolding, and scripts for validation.
+This is a **meta-skill** — a skill whose domain is building other skills. It provides the architecture, templates, validation tools, and guidance needed to construct and evolve AI-agnostic skill systems. It follows a **router-style pattern**: a lean `SKILL.md` entry point, conceptual capabilities loaded on demand via references, templates for scaffolding, and scripts for validation.
 
 ## What This Skill Does
 
@@ -11,6 +11,18 @@ This is not a general-purpose coding skill. It is specifically scoped to the str
 ## Capabilities (Optional)
 
 The skill supports nine optional operations (conceptual capabilities — no literal `capabilities/` directory exists for this meta-skill). Most map to a distinct workflow defined in [`references/workflows.md`](references/workflows.md); others are advisory and reference-driven. These operations are **not required** — only introduce them when the integrator asks about them or when the task clearly warrants it. A standalone skill is the default starting point; capabilities are added incrementally as the domain grows.
+
+| # | Capability | When to Use |
+|---|------------|-------------|
+| 1 | [Create Skills](#1-create-skills) | Add a new domain of automation |
+| 2 | [Create Capabilities](#2-create-capabilities-optional) | Add operations under an existing router skill |
+| 3 | [Create Roles](#3-create-roles) | Coordinate across multiple skills or capabilities |
+| 4 | [Deploy to Tools](#4-deploy-to-tools-optional) | Make skills accessible in tools that need pointers |
+| 5 | [Migrate Structures](#5-migrate-structures) | Convert flat skills to router+capabilities pattern |
+| 6 | [Validate Skills](#6-validate-skills) | Check a skill against the Agent Skills specification |
+| 7 | [Audit Skill Systems](#7-audit-skill-systems) | Check full system for structural consistency |
+| 8 | [Maintain the Manifest](#8-maintain-the-manifest) | Keep manifest accurate after structural changes |
+| 9 | [Reason About Architecture](#9-reason-about-architecture) | Evaluate token economy and structural trade-offs |
 
 ### 1. Create Skills
 
@@ -252,6 +264,8 @@ For complete procedures (creation, migration, auditing, bundling) and all comman
 
 ## How This Skill Practices What It Preaches
 
+> This section is for readers already familiar with the skill system's architecture and design principles. For background, see the [Architecture](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Architecture) and [Design Principles](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Design-Principles) wiki pages.
+
 This skill is itself organized as a **logical router** within the skill system it describes. It routes to nine conceptual capabilities through reference files rather than literal `capabilities/` subdirectories. This is a valid pattern when capabilities are documentation-driven (reference files and templates) rather than independent execution units requiring their own `capability.md` and resources:
 
 - **SKILL.md** is a lean router (~140 lines total, ~115 body lines) with YAML frontmatter, an architecture overview, resource pointers, core principles summary, and a quick reference table. It does not contain detailed instructions — those live in references.
@@ -260,3 +274,16 @@ This skill is itself organized as a **logical router** within the skill system i
 - **Bundled resources** follow the standard layout: references for guidance, assets for templates, scripts for automation.
 - **The spec is followed**: valid frontmatter, name matches directory, description is third-person with trigger words, body is recommended max 500 lines.
 - **Nested references are a documented exception.** Reference files cross-reference each other for navigability (e.g., `workflows.md` links to templates, `anti-patterns.md` links to `workflows.md`). This is an accepted exception to the one-level-deep rule because the meta-skill's reference files describe the skill system's own components. Running `validate_skill.py` on this skill produces nested-reference warnings; all are expected. Use `--allow-nested-references` to suppress them.
+
+## Learn More
+
+For supplementary context beyond this skill documentation:
+
+| Topic | Link |
+|-------|------|
+| Architecture and orchestration paths | [Architecture](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Architecture) |
+| Token economy and design principles | [Design Principles](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Design-Principles) |
+| Tool landscape and discovery paths | [Supported Tools](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Supported-Tools) |
+| Project layout and deployment strategy | [Project Integration](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Project-Integration) |
+| Key terms defined | [Glossary](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Glossary) |
+| Guided examples | [Walkthroughs](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Walkthroughs) |
