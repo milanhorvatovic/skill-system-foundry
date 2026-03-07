@@ -1,7 +1,8 @@
 """Tests for Claude distribution metadata quality guardrails.
 
 Validates `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
-for required fields, cross-file consistency, and keyword/tag semantics.
+for required fields, type correctness, cross-file consistency, and
+keyword/tag semantics.
 
 Keyword/tag convention (AvdLee pattern):
 - ``keywords`` are exhaustive search terms — every term someone might search for.
@@ -28,32 +29,63 @@ def _load_json(path: str) -> dict:
         return json.load(f)
 
 
+def _assert_string_list(values: object, label: str) -> list[str]:
+    """Assert *values* is a ``list[str]`` of non-empty strings.
+
+    Returns the validated list on success.  Raises ``AssertionError`` on
+    any type or emptiness violation so callers get a clear diagnostic.
+    """
+    if not isinstance(values, list):
+        raise AssertionError(
+            f"{label} must be a list, got {type(values).__name__}: {values!r}"
+        )
+    for i, item in enumerate(values):
+        if not isinstance(item, str):
+            raise AssertionError(
+                f"{label}[{i}] must be a string, "
+                f"got {type(item).__name__}: {item!r}"
+            )
+        if not item.strip():
+            raise AssertionError(
+                f"{label}[{i}] must be a non-empty string, got {item!r}"
+            )
+    return values
+
+
 def _normalize_terms(values: list[str]) -> set[str]:
-    normalized = set()
-    for value in values:
-        text = str(value).strip().lower()
-        if text:
-            normalized.add(text)
-    return normalized
+    """Lowercase and deduplicate a validated ``list[str]``.
 
-
-def _sorted_terms(values: list[str]) -> list[str]:
-    return sorted(values, key=lambda value: str(value).lower())
+    Callers must pass values through ``_assert_string_list`` first;
+    this function assumes every element is a non-empty ``str``.
+    """
+    return {v.strip().lower() for v in values}
 
 
 def _find_marketplace_plugin(marketplace: dict, plugin_name: str) -> dict | None:
     """Find the marketplace plugin entry matching *plugin_name*."""
-    for plugin in marketplace.get("plugins", []):
+    plugins = marketplace.get("plugins", [])
+    if not isinstance(plugins, list):
+        raise AssertionError(
+            f"marketplace.json 'plugins' must be a list, "
+            f"got {type(plugins).__name__}"
+        )
+    for plugin in plugins:
         if plugin.get("name") == plugin_name:
             return plugin
     return None
 
 
+# ------------------------------------------------------------------
+# Required fields & type validation
+# ------------------------------------------------------------------
+
+
 class PluginManifestRequiredFieldsTests(unittest.TestCase):
-    """Verify plugin.json contains all required metadata."""
+    """Verify plugin.json contains all required metadata with correct types."""
 
     def test_plugin_json_has_required_fields(self) -> None:
-        """plugin.json must contain name, description, version, author, and keywords."""
+        """plugin.json must contain name, description, version, author,
+        keywords, and license."""
         manifest = _load_json(PLUGIN_PATH)
         required = ["name", "description", "version", "author", "keywords", "license"]
         missing = [f for f in required if f not in manifest]
@@ -63,10 +95,12 @@ class PluginManifestRequiredFieldsTests(unittest.TestCase):
             f"plugin.json is missing required fields: {missing}",
         )
 
-    def test_plugin_json_keywords_are_non_empty(self) -> None:
-        """plugin.json keywords must not be empty."""
+    def test_plugin_json_keywords_are_valid_non_empty_string_list(self) -> None:
+        """plugin.json keywords must be a non-empty list of non-empty strings."""
         manifest = _load_json(PLUGIN_PATH)
-        keywords = manifest.get("keywords", [])
+        keywords = _assert_string_list(
+            manifest.get("keywords"), "plugin.json keywords"
+        )
         self.assertGreater(
             len(keywords), 0, "plugin.json keywords must not be empty."
         )
@@ -86,6 +120,14 @@ class MarketplaceRequiredFieldsTests(unittest.TestCase):
             f"marketplace.json is missing required top-level fields: {missing}",
         )
 
+    def test_marketplace_plugins_is_a_list(self) -> None:
+        """marketplace.json plugins field must be a list."""
+        marketplace = _load_json(MARKETPLACE_PATH)
+        plugins = marketplace.get("plugins")
+        self.assertIsInstance(
+            plugins, list, "marketplace.json 'plugins' must be a list."
+        )
+
     def test_marketplace_plugins_have_required_fields(self) -> None:
         """Each marketplace plugin entry must have name, source, description,
         keywords, and tags."""
@@ -101,23 +143,30 @@ class MarketplaceRequiredFieldsTests(unittest.TestCase):
                     f"Marketplace plugin '{name}' is missing: {missing}",
                 )
 
-    def test_marketplace_plugin_keywords_and_tags_are_non_empty(self) -> None:
-        """Each marketplace plugin must have non-empty keywords and tags."""
+    def test_marketplace_plugin_keywords_and_tags_are_valid_non_empty_string_lists(
+        self,
+    ) -> None:
+        """Each marketplace plugin must have non-empty keyword and tag lists
+        of non-empty strings."""
         marketplace = _load_json(MARKETPLACE_PATH)
         for plugin in marketplace.get("plugins", []):
             name = plugin.get("name", "<unknown>")
-            with self.subTest(plugin=name, field="keywords"):
-                self.assertGreater(
-                    len(plugin.get("keywords", [])),
-                    0,
-                    f"Marketplace plugin '{name}' keywords must not be empty.",
-                )
-            with self.subTest(plugin=name, field="tags"):
-                self.assertGreater(
-                    len(plugin.get("tags", [])),
-                    0,
-                    f"Marketplace plugin '{name}' tags must not be empty.",
-                )
+            for field in ("keywords", "tags"):
+                with self.subTest(plugin=name, field=field):
+                    values = plugin.get(field)
+                    _assert_string_list(
+                        values, f"Marketplace plugin '{name}' {field}"
+                    )
+                    self.assertGreater(
+                        len(values),
+                        0,
+                        f"Marketplace plugin '{name}' {field} must not be empty.",
+                    )
+
+
+# ------------------------------------------------------------------
+# Cross-file consistency
+# ------------------------------------------------------------------
 
 
 class CrossFileConsistencyTests(unittest.TestCase):
@@ -175,9 +224,16 @@ class CrossFileConsistencyTests(unittest.TestCase):
         """plugin.json and marketplace plugin entry must have identical keywords."""
         if self.marketplace_plugin is None:
             self.skipTest("No matching marketplace entry found.")
-        manifest_kw = _normalize_terms(self.manifest.get("keywords", []))
+        manifest_kw = _normalize_terms(
+            _assert_string_list(
+                self.manifest.get("keywords"), "plugin.json keywords"
+            )
+        )
         market_kw = _normalize_terms(
-            self.marketplace_plugin.get("keywords", [])
+            _assert_string_list(
+                self.marketplace_plugin.get("keywords"),
+                "marketplace.json keywords",
+            )
         )
         missing = sorted(manifest_kw - market_kw)
         extra = sorted(market_kw - manifest_kw)
@@ -193,6 +249,11 @@ class CrossFileConsistencyTests(unittest.TestCase):
         )
 
 
+# ------------------------------------------------------------------
+# Keyword / tag semantics
+# ------------------------------------------------------------------
+
+
 class KeywordTagSemanticsTests(unittest.TestCase):
     """Enforce the AvdLee convention: tags are a curated subset of keywords."""
 
@@ -201,8 +262,16 @@ class KeywordTagSemanticsTests(unittest.TestCase):
         marketplace = _load_json(MARKETPLACE_PATH)
         for plugin in marketplace.get("plugins", []):
             name = plugin.get("name", "<unknown>")
-            keywords = _normalize_terms(plugin.get("keywords", []))
-            tags = _normalize_terms(plugin.get("tags", []))
+            keywords = _normalize_terms(
+                _assert_string_list(
+                    plugin.get("keywords"), f"plugin '{name}' keywords"
+                )
+            )
+            tags = _normalize_terms(
+                _assert_string_list(
+                    plugin.get("tags"), f"plugin '{name}' tags"
+                )
+            )
             not_in_keywords = sorted(tags - keywords)
             with self.subTest(plugin=name):
                 self.assertEqual(
@@ -217,8 +286,12 @@ class KeywordTagSemanticsTests(unittest.TestCase):
         marketplace = _load_json(MARKETPLACE_PATH)
         for plugin in marketplace.get("plugins", []):
             name = plugin.get("name", "<unknown>")
-            keywords = plugin.get("keywords", [])
-            tags = plugin.get("tags", [])
+            keywords = _assert_string_list(
+                plugin.get("keywords"), f"plugin '{name}' keywords"
+            )
+            tags = _assert_string_list(
+                plugin.get("tags"), f"plugin '{name}' tags"
+            )
             with self.subTest(plugin=name):
                 self.assertLess(
                     len(tags),
@@ -229,31 +302,40 @@ class KeywordTagSemanticsTests(unittest.TestCase):
                 )
 
 
+# ------------------------------------------------------------------
+# Alphabetical ordering
+# ------------------------------------------------------------------
+
+
 class AlphabeticalOrderTests(unittest.TestCase):
     """Keywords and tags must be alphabetically ordered for maintainability."""
 
     def test_plugin_json_keywords_are_ordered(self) -> None:
         """plugin.json keywords must be alphabetically ordered."""
         manifest = _load_json(PLUGIN_PATH)
-        keywords = manifest.get("keywords", [])
+        keywords = _assert_string_list(
+            manifest.get("keywords"), "plugin.json keywords"
+        )
+        expected = sorted(keywords, key=str.lower)
         self.assertEqual(
             keywords,
-            _sorted_terms(keywords),
+            expected,
             "plugin.json keywords must be alphabetically ordered.",
         )
 
     def test_marketplace_keywords_and_tags_are_ordered(self) -> None:
         """Marketplace plugin keywords and tags must be alphabetically ordered."""
         marketplace = _load_json(MARKETPLACE_PATH)
-        failures = []
+        failures: list[str] = []
         for plugin in marketplace.get("plugins", []):
             name = plugin.get("name", "<unknown>")
-            keywords = plugin.get("keywords", [])
-            tags = plugin.get("tags", [])
-            if keywords != _sorted_terms(keywords):
-                failures.append(f"  {name}: keywords are not ordered")
-            if tags != _sorted_terms(tags):
-                failures.append(f"  {name}: tags are not ordered")
+            for field in ("keywords", "tags"):
+                values = _assert_string_list(
+                    plugin.get(field), f"plugin '{name}' {field}"
+                )
+                expected = sorted(values, key=str.lower)
+                if values != expected:
+                    failures.append(f"  {name}: {field} are not ordered")
         if failures:
             self.fail(
                 "marketplace.json metadata fields must be alphabetically "
