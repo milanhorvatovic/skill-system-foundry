@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "description": "Plugin marketplace for the Skill System Foundry meta-skill"
+  },
+  "name": "skill-system-foundry",
+  "owner": {
+    "name": "Milan Horvatovič"
+  },
+  "plugins": [
+    {
+      "author": {
+        "name": "Milan Horvatovič"
+      },
+      "description": "Meta-skill for building AI-agnostic skill systems with two-layer architecture, templates, validation tools, and cross-platform authoring guidance.",
+      "category": "development",
+      "keywords": [
+        "skill-system",
+        "skill-creator",
+        "skill-authoring",
+        "agent-skills",
+        "meta-skill",
+        "scaffolding",
+        "validation",
+        "ai-agnostic",
+        "cross-platform",
+        "universal-skills",
+        "roles",
+        "capabilities"
+      ],
+      "license": "MIT",
+      "name": "skill-system-foundry",
+      "repository": "https://github.com/milanhorvatovic/skill-system-foundry",
+      "source": "./",
+      "tags": [
+        "skill-creator",
+        "agent-skills",
+        "ai-agnostic",
+        "cross-platform",
+        "validation"
+      ],
+      "version": "1.0.0"
+    }
+  ]
+}

@@ -45,6 +45,41 @@ If you are writing a single skill for a single tool, the vendor's skill creator 
 - [AGENTS.md convention](https://agents.md/) — project-level context convention, governed by the Agentic AI Foundation under the Linux Foundation
 - [ROLES.md convention](https://www.roles.md) — AI agent behavioral contracts (responsibilities, allowed/forbidden actions, handoff rules)
 
+## Installation
+
+### npx skills (39+ agents)
+
+```bash
+npx skills add milanhorvatovic/skill-system-foundry
+```
+
+Installs the skill to Claude Code, Codex, Cursor, Gemini CLI, Windsurf, Kiro, GitHub Copilot, Cline, OpenCode, and 30+ more agents. See [skills.sh](https://skills.sh) for the full list.
+
+### Claude Code Plugin
+
+```
+/plugin marketplace add milanhorvatovic/skill-system-foundry
+/plugin install skill-system-foundry@skill-system-foundry
+```
+
+### Gemini CLI
+
+```bash
+gemini skills link milanhorvatovic/skill-system-foundry
+```
+
+### Manual
+
+Copy the `skill-system-foundry/` directory into your project's `.agents/skills/` path:
+
+```bash
+cp -r skill-system-foundry /path/to/project/.agents/skills/
+```
+
+### GitHub Releases
+
+Download the latest versioned zip from [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) and extract into your skills directory.
+
 ## Architecture
 
 The skill system follows a two-layer architecture — **skills** and **roles** — that separates **what** from **who**. Each layer has one job. Dependencies flow strictly downward — never the reverse. A capability must never know it's being orchestrated. A role references skills but never other roles. Capabilities are optional sub-units within a skill, not a separate layer. Canonical knowledge lives in one place and is adapted, never duplicated, for each tool.
