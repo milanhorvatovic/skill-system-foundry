@@ -47,13 +47,13 @@ If you are writing a single skill for a single tool, the vendor's skill creator 
 
 ## Installation
 
-### npx skills (39+ agents)
+### npx skills
 
 ```bash
 npx skills add milanhorvatovic/skill-system-foundry
 ```
 
-Installs the skill to Claude Code, Codex, Cursor, Gemini CLI, Windsurf, Kiro, GitHub Copilot, Cline, OpenCode, and 30+ more agents. See [skills.sh](https://skills.sh) for the full list.
+Installs the skill to Claude Code, Codex, Cursor, Gemini CLI, Windsurf, Kiro, GitHub Copilot, Cline, OpenCode, and many more agents. See [skills.sh](https://skills.sh) for the full list of supported agents.
 
 ### Claude Code Plugin
 
