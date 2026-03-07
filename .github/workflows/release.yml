@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build zip bundle
+        run: |
+          python skill-system-foundry/scripts/bundle.py \
+            skill-system-foundry \
+            --output "dist/skill-system-foundry-${GITHUB_REF_NAME}.zip"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            "dist/skill-system-foundry-${GITHUB_REF_NAME}.zip" \
+            --clobber
