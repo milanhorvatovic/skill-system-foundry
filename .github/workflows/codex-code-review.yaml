@@ -72,6 +72,7 @@ jobs:
         id: diff
         if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
         run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --no-color --unified=3 \
             "${{ github.event.pull_request.base.sha }}" \
             "${{ github.event.pull_request.head.sha }}" > pr.diff
@@ -252,6 +253,10 @@ jobs:
                 .replace(/^\.\/+/, '');
             }
 
+            function escapeTableCell(text) {
+              return String(text || '').trim().replace(/\|/g, '\\|').replace(/\n/g, ' ');
+            }
+
             function normalizeFinding(finding) {
               const title = String(finding?.title || '').trim();
               const severity = String(finding?.severity || 'medium').trim().toLowerCase();
@@ -273,6 +278,7 @@ jobs:
 
             const diffText = fs.readFileSync('pr.diff', 'utf8');
             const addedByFile = parseAddedLinesByFile(diffText);
+            const totalChangedFiles = (diffText.match(/^diff --git /gm) || []).length;
 
             const reviewComments = [];
             let skippedInvalidLocation = 0;
@@ -339,7 +345,7 @@ jobs:
 
             function buildReviewedLine(commentCount) {
               const commentLabel = commentCount > 0 ? `${commentCount} comment(s)` : 'no new comments';
-              return `Codex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated ${commentLabel}.`;
+              return `Codex reviewed ${totalChangedFiles} out of ${totalChangedFiles} changed files in this pull request and generated ${commentLabel}.`;
             }
 
             function buildReviewBody(commentCount) {
@@ -350,7 +356,7 @@ jobs:
                 sections.push(`**Changes:**\n${changes.map(c => `- ${c}`).join('\n')}`);
               }
               const fileTable = files.length > 0
-                ? `| File | Description |\n|------|-------------|\n${files.map(f => `| \`${normalizePath(f.path)}\` | ${String(f.description || '').trim()} |`).join('\n')}`
+                ? `| File | Description |\n|------|-------------|\n${files.map(f => `| \`${normalizePath(f.path)}\` | ${escapeTableCell(f.description)} |`).join('\n')}`
                 : '';
               const reviewedSection = fileTable
                 ? `## Reviewed changes\n\n${reviewedLine}\n\n${fileTable}`
@@ -420,7 +426,7 @@ jobs:
             const bodySections = [
               summaryMarker,
               '## Pull request overview',
-              parsed ? reviewedLine : fallbackSummary,
+              parsed ? [summaryText, reviewedLine].filter(Boolean).join('\n\n') : fallbackSummary,
               executionNotes ? `### Review metadata\n${executionNotes}` : '',
               footer,
             ].filter(Boolean);
