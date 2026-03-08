@@ -394,7 +394,7 @@ jobs:
                   comments: reviewComments,
                 });
                 inlinePosted = reviewComments.length;
-              } else if (isFirstReview && parsed && findings.length === 0) {
+              } else if (parsed && findings.length === 0) {
                 await github.rest.pulls.createReview({
                   owner,
                   repo,
