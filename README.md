@@ -4,7 +4,7 @@ Meta-skill for building AI-agnostic skill systems with a two-layer architecture 
 
 ## What a Skill Looks Like
 
-A skill is a markdown file with YAML frontmatter. Here's a minimal standalone skill:
+A skill is a Markdown file with YAML frontmatter. Here's a minimal standalone skill:
 
 ````markdown
 ---
@@ -35,7 +35,7 @@ Before deploying, verify:
 
 That's it — a `SKILL.md` file with a name, a description, and instructions. AI tools discover it, inject its metadata into the system prompt, and load its full content when triggered.
 
-When a domain grows beyond what one file can handle, a **router skill** dispatches to **capabilities** — self-contained sub-skills loaded on demand. The system scales from one skill to hundreds while keeping discovery cost constant.
+When a domain grows beyond what one file can handle, a **router skill** dispatches to **capabilities** — self-contained sub-skills loaded on demand. Adding capabilities to a router doesn't increase its discovery cost — only adding new registered skills does.
 
 ## Architecture
 
@@ -109,6 +109,8 @@ cp -r skill-system-foundry /path/to/project/.agents/skills/
 Download the latest versioned zip from [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) and extract into your skills directory.
 
 ## Getting Started
+
+**Prerequisites:** Python 3.12+ and a local checkout of this repository (the scripts run from `skill-system-foundry/`).
 
 1. **Create your first skill** — Use the scaffolding tool to generate a new skill from a template:
    ```bash
