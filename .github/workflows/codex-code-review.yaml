@@ -36,15 +36,17 @@ jobs:
         shell: bash
         run: |
           allowed=false
+          pr_author_lower="$(printf '%s' "$PR_AUTHOR" | tr '[:upper:]' '[:lower:]')"
           normalized_users="$(
             printf '%s' "$REVIEW_USERS_RAW" \
+              | tr '[:upper:]' '[:lower:]' \
               | tr ',\r\n\t' '\n' \
               | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
               | sed '/^$/d'
           )"
 
           while IFS= read -r username; do
-            if [ "$username" = "$PR_AUTHOR" ]; then
+            if [ "$username" = "$pr_author_lower" ]; then
               allowed=true
               break
             fi
@@ -56,9 +58,10 @@ jobs:
           fi
 
       - name: Checkout PR
-        if: ${{ steps.allowlist.outputs.allowed == 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Skip when OPENAI_API_KEY is missing
@@ -210,13 +213,13 @@ jobs:
                   continue;
                 }
 
-                if (line.startsWith('+') && !line.startsWith('+++')) {
+                if (line.startsWith('+') && !line.startsWith('+++ ')) {
                   addedByFile.get(currentFile).add(newLine);
                   newLine += 1;
                   continue;
                 }
 
-                if (line.startsWith('-') && !line.startsWith('---')) {
+                if (line.startsWith('-') && !line.startsWith('--- ')) {
                   continue;
                 }
 
@@ -248,7 +251,6 @@ jobs:
             const parsed = parseStructuredReview(process.env.CODEX_REVIEW || '');
             const parsedFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
             const findings = parsedFindings.map(normalizeFinding);
-            const summaryText = String(parsed?.summary || '').trim();
 
             const diffText = fs.readFileSync('pr.diff', 'utf8');
             const addedByFile = parseAddedLinesByFile(diffText);
@@ -287,7 +289,7 @@ jobs:
 
               const signature = crypto
                 .createHash('sha256')
-                .update(`${finding.path}|${finding.line}|${finding.title}|${finding.comment}`)
+                .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}`)
                 .digest('hex')
                 .slice(0, 16);
               if (existingInlineMarkers.has(signature)) {
