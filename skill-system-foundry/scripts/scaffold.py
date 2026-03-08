@@ -240,30 +240,40 @@ _WITH_FLAG_MAP = {
     "--with-assets": DIR_ASSETS,
 }
 
-# Flags allowed per component type.
-_ALLOWED_WITH_FLAGS = {
-    "skill": {"--with-references", "--with-scripts", "--with-assets"},
+# All flags recognised per component type (excluding --root, which is
+# stripped before component dispatch).
+_KNOWN_FLAGS = {
+    "skill": {"--router", "--with-references", "--with-scripts", "--with-assets"},
     "capability": {"--with-references"},
+    "role": set(),
 }
 
 
-def _parse_optional_dirs(flags, component):
-    """Return list of optional directory constants requested via --with-* flags.
+def _validate_flags(flags, component):
+    """Validate *flags* against the known set for *component*.
 
-    Validates that only flags supported by *component* are used; exits with
-    an error message for unsupported flags.  Duplicates are silently ignored.
+    Exits with an error message listing the unrecognised flags.
+    Duplicates are silently ignored.
     """
-    allowed = _ALLOWED_WITH_FLAGS.get(component, set())
-    with_flags = list(dict.fromkeys(f for f in flags if f.startswith("--with-")))
-    unsupported = [f for f in with_flags if f not in allowed]
-    if unsupported:
+    known = _KNOWN_FLAGS.get(component, set())
+    unique_flags = list(dict.fromkeys(flags))
+    unknown = [f for f in unique_flags if f not in known]
+    if unknown:
         print(
-            f"{LEVEL_FAIL}: Unsupported flag(s) for '{component}': "
-            f"{', '.join(unsupported)}"
+            f"{LEVEL_FAIL}: Unknown flag(s) for '{component}': "
+            f"{', '.join(unknown)}"
         )
-        print(f"  Allowed: {', '.join(sorted(allowed)) or '(none)'}")
+        print(f"  Allowed: {', '.join(sorted(known)) or '(none)'}")
         sys.exit(1)
-    return [_WITH_FLAG_MAP[f] for f in with_flags if f in _WITH_FLAG_MAP]
+
+
+def _parse_optional_dirs(flags):
+    """Return deduplicated list of optional directory constants from *flags*.
+
+    Call *_validate_flags* first to ensure all flags are recognised.
+    """
+    with_flags = list(dict.fromkeys(f for f in flags if f in _WITH_FLAG_MAP))
+    return [_WITH_FLAG_MAP[f] for f in with_flags]
 
 
 def main():
@@ -291,9 +301,10 @@ def main():
         if not positional:
             print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets]")
             sys.exit(1)
+        _validate_flags(flags, "skill")
         name = positional[0]
         router = "--router" in flags
-        optional_dirs = _parse_optional_dirs(flags, "skill")
+        optional_dirs = _parse_optional_dirs(flags)
         scaffold_skill(name, router, root, optional_dirs)
 
     elif component == "capability":
@@ -302,7 +313,8 @@ def main():
         if len(positional) < 2:
             print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references]")
             sys.exit(1)
-        optional_dirs = _parse_optional_dirs(flags, "capability")
+        _validate_flags(flags, "capability")
+        optional_dirs = _parse_optional_dirs(flags)
         scaffold_capability(positional[0], positional[1], root, optional_dirs)
 
     elif component == "role":
@@ -311,7 +323,7 @@ def main():
         if len(positional) < 2:
             print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>]")
             sys.exit(1)
-        _parse_optional_dirs(flags, "role")
+        _validate_flags(flags, "role")
         scaffold_role(positional[0], positional[1], root)
 
     else:

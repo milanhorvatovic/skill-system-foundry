@@ -156,7 +156,11 @@ class CapabilityTests(unittest.TestCase):
             ["skill", "my-domain", "--router", "--root", tmpdir],
             cwd=REPO_ROOT,
         )
-        assert proc.returncode == 0, proc.stdout + proc.stderr
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Router prerequisite failed (exit {proc.returncode}):\n"
+                f"{proc.stdout}{proc.stderr}"
+            )
 
     def test_default_creates_only_capability_md(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -203,7 +207,7 @@ class CapabilityTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Unsupported flag(s) for 'capability'", proc.stdout)
+            self.assertIn("Unknown flag(s) for 'capability'", proc.stdout)
             self.assertIn("--with-scripts", proc.stdout)
 
     def test_unsupported_with_assets_fails(self):
@@ -217,7 +221,7 @@ class CapabilityTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Unsupported flag(s) for 'capability'", proc.stdout)
+            self.assertIn("Unknown flag(s) for 'capability'", proc.stdout)
             self.assertIn("--with-assets", proc.stdout)
 
     def test_multiple_unsupported_flags_all_reported(self):
@@ -249,7 +253,7 @@ class RoleTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Unsupported flag(s) for 'role'", proc.stdout)
+            self.assertIn("Unknown flag(s) for 'role'", proc.stdout)
             self.assertIn("--with-references", proc.stdout)
 
     def test_role_rejects_with_scripts(self):
@@ -259,7 +263,7 @@ class RoleTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Unsupported flag(s) for 'role'", proc.stdout)
+            self.assertIn("Unknown flag(s) for 'role'", proc.stdout)
 
     def test_role_rejects_with_assets(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -268,7 +272,7 @@ class RoleTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Unsupported flag(s) for 'role'", proc.stdout)
+            self.assertIn("Unknown flag(s) for 'role'", proc.stdout)
 
     def test_role_allowed_for_role_shows_none(self):
         """Error message for role should show '(none)' as allowed flags."""
@@ -282,11 +286,11 @@ class RoleTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Unknown --with-* flag
+# Unknown flags (both --with-* and other --* flags)
 # ---------------------------------------------------------------------------
 
-class UnknownWithFlagTests(unittest.TestCase):
-    """Completely unknown --with-* flags (e.g. --with-foo) are rejected."""
+class UnknownFlagTests(unittest.TestCase):
+    """Unknown --* flags are rejected for all component types."""
 
     def test_skill_rejects_unknown_with_flag(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -295,14 +299,35 @@ class UnknownWithFlagTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Unsupported flag(s) for 'skill'", proc.stdout)
+            self.assertIn("Unknown flag(s) for 'skill'", proc.stdout)
             self.assertIn("--with-foo", proc.stdout)
+
+    def test_skill_rejects_typo_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "my-skill", "--routre", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("Unknown flag(s) for 'skill'", proc.stdout)
+            self.assertIn("--routre", proc.stdout)
+
+    def test_skill_rejects_arbitrary_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "my-skill", "--foo", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("--foo", proc.stdout)
 
     def test_capability_rejects_unknown_with_flag(self):
         """Unknown --with-* should fail even when mixed with valid flags."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create router prerequisite
-            _run(["skill", "my-domain", "--router", "--root", tmpdir], cwd=REPO_ROOT)
+            pre = _run(["skill", "my-domain", "--router", "--root", tmpdir], cwd=REPO_ROOT)
+            if pre.returncode != 0:
+                raise RuntimeError(f"Router prerequisite failed:\n{pre.stdout}{pre.stderr}")
             proc = _run(
                 [
                     "capability", "my-domain", "my-cap",
@@ -312,6 +337,31 @@ class UnknownWithFlagTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 1)
             self.assertIn("--with-foo", proc.stdout)
+
+    def test_capability_rejects_arbitrary_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pre = _run(["skill", "my-domain", "--router", "--root", tmpdir], cwd=REPO_ROOT)
+            if pre.returncode != 0:
+                raise RuntimeError(f"Router prerequisite failed:\n{pre.stdout}{pre.stderr}")
+            proc = _run(
+                [
+                    "capability", "my-domain", "my-cap",
+                    "--verbose", "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("--verbose", proc.stdout)
+
+    def test_role_rejects_arbitrary_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["role", "my-group", "my-role", "--foo", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("Unknown flag(s) for 'role'", proc.stdout)
+            self.assertIn("--foo", proc.stdout)
 
 
 # ---------------------------------------------------------------------------
