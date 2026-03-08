@@ -72,6 +72,7 @@ jobs:
         id: diff
         if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
         run: |
+          set -euo pipefail
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --no-color --unified=3 \
             "${{ github.event.pull_request.base.sha }}" \
@@ -392,7 +393,7 @@ jobs:
                   comments: reviewComments,
                 });
                 inlinePosted = reviewComments.length;
-              } else if (parsed && findings.length === 0) {
+              } else if (isFirstReview && parsed && findings.length === 0) {
                 await github.rest.pulls.createReview({
                   owner,
                   repo,
