@@ -732,10 +732,12 @@ def scan_references(
                                     abs_skill_dir if system_root is None
                                     else system_root
                                 )
+                                inlined_violations: list[BoundaryViolation] = []
                                 for iroot, ifilename in walk_skill_files(
                                     abs_skill_dir,
-                                    exclude_patterns or BUNDLE_EXCLUDE_PATTERNS,
+                                    exclude_patterns,
                                     inlined_boundary,
+                                    inlined_violations,
                                 ):
                                     ifile = os.path.join(iroot, ifilename)
                                     if ifile not in scanned_external:
@@ -744,6 +746,37 @@ def scan_references(
                                             ifile, depth + 1,
                                             frozenset(), (),
                                         )
+                                # Convert boundary violations from the
+                                # inlined skill walk into FAIL entries.
+                                for iv in inlined_violations:
+                                    iv_rel = os.path.relpath(
+                                        iv.link_path, abs_skill_dir
+                                    ).replace(os.sep, "/")
+                                    errors.append(
+                                        f"{LEVEL_FAIL}: Symlinked {iv.kind} "
+                                        f"in inlined skill "
+                                        f"'{other_skill_name}' escapes "
+                                        f"allowed boundary rooted at "
+                                        f"'{inlined_boundary}': "
+                                        f"'{iv_rel}' -> '{iv.real_target}'. "
+                                        f"Symlink targets must stay within "
+                                        f"this boundary."
+                                    )
+                            # text_detected references (from non-markdown
+                            # files) are not rewritten in the bundle.
+                            # Warn the user so they know the stale path
+                            # needs manual attention.
+                            if ref_type == "text_detected":
+                                warnings.append(
+                                    f"{LEVEL_WARN}: Non-markdown cross-skill "
+                                    f"reference detected in "
+                                    f"'{_rel(filepath)}' line {line_num}: "
+                                    f"'{raw_ref}'. This reference points to "
+                                    f"inlined skill '{other_skill_name}' but "
+                                    f"cannot be automatically rewritten in "
+                                    f"the bundle. You may need to update it "
+                                    f"manually."
+                                )
                             continue
                         errors.append(
                             f"{LEVEL_FAIL}: Cross-skill reference in "

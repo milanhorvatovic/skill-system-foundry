@@ -661,6 +661,147 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             self.assertEqual(len(fails), 1)
             self.assertIn("nonexistent.md", fails[0])
 
+    def test_text_detected_cross_skill_ref_warns_when_inlining(self) -> None:
+        """A text_detected cross-skill reference emits a WARN in inline mode
+        because non-markdown references are not automatically rewritten."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "notes.md"), "Testing notes\n")
+
+            # Non-markdown file with a text_detected cross-skill reference
+            write_text(
+                os.path.join(coordinator, "config.yaml"),
+                "ref: skills/testing/notes.md\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # No hard errors — the skill is collected for inlining
+            self.assertEqual(result["errors"], [])
+            # But a warning about the non-rewritable reference
+            warns = [w for w in result["warnings"] if "Non-markdown cross-skill" in w]
+            self.assertEqual(len(warns), 1, (
+                f"Expected exactly one non-markdown cross-skill WARN. "
+                f"Warnings: {result['warnings']}"
+            ))
+            self.assertIn("testing", warns[0])
+            self.assertIn("config.yaml", warns[0])
+            # The testing skill should still be collected for inlining
+            abs_testing = os.path.abspath(testing)
+            self.assertIn(abs_testing, result["inlined_skills"])
+
+    def test_explicit_empty_exclude_patterns_respected(self) -> None:
+        """An explicit empty exclude_patterns=[] must not fall back to
+        BUNDLE_EXCLUDE_PATTERNS — it should scan all files including those
+        that the defaults would skip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has a file in a .git directory (normally excluded)
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+            hidden_file = os.path.join(testing, ".git", "config.md")
+            write_text(hidden_file, "See [broken](nonexistent.md)\n")
+
+            # With default excludes, .git is skipped — no error from hidden_file
+            result_default = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            fails_default = [e for e in result_default["errors"] if "Broken reference" in e]
+            self.assertEqual(len(fails_default), 0)
+
+            # With exclude_patterns=[], nothing is skipped — the broken ref
+            # in .git/config.md should be discovered
+            result_empty = scan_references(
+                coordinator, system_root,
+                exclude_patterns=[],
+                inline_orchestrated_skills=True,
+            )
+            fails_empty = [e for e in result_empty["errors"] if "Broken reference" in e]
+            self.assertGreaterEqual(len(fails_empty), 1, (
+                f"Expected broken reference FAIL when exclude_patterns=[]. "
+                f"Errors: {result_empty['errors']}"
+            ))
+
+    def test_inlined_skill_symlink_boundary_violation_produces_fail(self) -> None:
+        """A symlink in an inlined skill that escapes the boundary should
+        produce a FAIL instead of crashing with ValueError."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # File completely outside the system root
+            outside_file = os.path.join(tmpdir, "outside", "secret.md")
+            write_text(outside_file, "Secret content\n")
+
+            # Symlink inside the testing skill pointing outside the boundary
+            link_path = os.path.join(testing, "secret.md")
+            try:
+                os.symlink(outside_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # This must NOT raise — it should produce a FAIL entry
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            fails = [e for e in result["errors"] if "escapes" in e.lower()]
+            self.assertGreaterEqual(len(fails), 1, (
+                f"Expected at least one boundary violation FAIL. "
+                f"Errors: {result['errors']}"
+            ))
+            # Should mention the inlined skill name
+            boundary_fails = [e for e in fails if "inlined skill" in e]
+            self.assertGreaterEqual(len(boundary_fails), 1, (
+                f"Expected boundary FAIL to mention 'inlined skill'. "
+                f"Errors: {fails}"
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()
