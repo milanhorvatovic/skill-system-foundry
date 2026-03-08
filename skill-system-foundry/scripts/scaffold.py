@@ -118,10 +118,10 @@ def scaffold_skill(name, router=False, root=""):
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_REFERENCES))
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_SCRIPTS))
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_ASSETS))
-        print(f"  Created: {skill_path}/{DIR_CAPABILITIES}/")
-        print(f"  Created: {skill_path}/{DIR_REFERENCES}/")
-        print(f"  Created: {skill_path}/{DIR_SCRIPTS}/")
-        print(f"  Created: {skill_path}/{DIR_ASSETS}/")
+        print(f"  Created: {os.path.join(skill_path, DIR_CAPABILITIES)}")
+        print(f"  Created: {os.path.join(skill_path, DIR_REFERENCES)}")
+        print(f"  Created: {os.path.join(skill_path, DIR_SCRIPTS)}")
+        print(f"  Created: {os.path.join(skill_path, DIR_ASSETS)}")
         print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
     else:
         template = read_template(TEMPLATE_SKILL_STANDALONE)
@@ -133,12 +133,14 @@ def scaffold_skill(name, router=False, root=""):
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_REFERENCES))
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_SCRIPTS))
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_ASSETS))
-        print(f"  Created: {skill_path}/{DIR_REFERENCES}/")
-        print(f"  Created: {skill_path}/{DIR_SCRIPTS}/")
-        print(f"  Created: {skill_path}/{DIR_ASSETS}/")
+        print(f"  Created: {os.path.join(skill_path, DIR_REFERENCES)}")
+        print(f"  Created: {os.path.join(skill_path, DIR_SCRIPTS)}")
+        print(f"  Created: {os.path.join(skill_path, DIR_ASSETS)}")
 
+    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Skill '{name}' scaffolded at {skill_path}")
-    print(f"  Next: edit {skill_path}/{FILE_SKILL_MD} and update {FILE_MANIFEST}")
+    skill_md_path = os.path.join(skill_path, FILE_SKILL_MD)
+    print(f"  Next: edit {skill_md_path} and update {manifest_path}")
 
 
 def scaffold_capability(domain, name, root=""):
@@ -165,12 +167,14 @@ def scaffold_capability(domain, name, root=""):
     )
     write_file(os.path.join(cap_path, FILE_CAPABILITY_MD), content)
     create_dir_with_gitkeep(os.path.join(cap_path, DIR_REFERENCES))
-    print(f"  Created: {cap_path}/{DIR_REFERENCES}/")
+    print(f"  Created: {os.path.join(cap_path, DIR_REFERENCES)}")
 
+    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Capability '{name}' scaffolded at {cap_path}")
-    print(f"  Next: edit {cap_path}/{FILE_CAPABILITY_MD}")
+    cap_md_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
+    print(f"  Next: edit {cap_md_path}")
     print(f"  Next: add capability to {router_skill} routing table")
-    print(f"  Next: update {FILE_MANIFEST}")
+    print(f"  Next: update {manifest_path}")
 
 
 def scaffold_role(group, name, root=""):
@@ -204,9 +208,10 @@ def scaffold_role(group, name, root=""):
     if not os.path.exists(readme_path):
         write_file(readme_path, f"# {group.replace('-', ' ').title()}\n\nRoles:\n- {name}\n")
 
+    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Role '{name}' scaffolded at {role_path}")
     print(f"  Next: edit {role_path}")
-    print(f"  Next: update {FILE_MANIFEST}")
+    print(f"  Next: update {manifest_path}")
 
 
 def main():
