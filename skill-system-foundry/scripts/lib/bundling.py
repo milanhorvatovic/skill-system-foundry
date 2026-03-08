@@ -650,16 +650,27 @@ def create_bundle(
             # avoid rescanning the entire inlined_mapping for every
             # alias.  This reduces O(aliases × inlined_files) to
             # O(inlined_files + aliases × files_per_skill).
+            #
+            # Use lexical containment (abspath + commonpath, no
+            # realpath) because inlined skill files may themselves
+            # be symlinks whose real targets are outside the skill
+            # directory.  ``is_within_directory`` would incorrectly
+            # exclude those files since it resolves symlinks.
             primary_roots = {primary_abs for _alias_abs, primary_abs in aliases}
             primary_to_sources: dict[str, list[tuple[str, str]]] = {
                 pr: [] for pr in primary_roots
             }
             for abs_source, bundle_rel in inlined_mapping.items():
+                src_norm = os.path.normcase(os.path.abspath(abs_source))
                 for pr in primary_roots:
-                    if is_within_directory(abs_source, pr):
-                        primary_to_sources[pr].append(
-                            (abs_source, bundle_rel)
-                        )
+                    pr_norm = os.path.normcase(os.path.abspath(pr))
+                    try:
+                        if os.path.commonpath([src_norm, pr_norm]) == pr_norm:
+                            primary_to_sources[pr].append(
+                                (abs_source, bundle_rel)
+                            )
+                    except ValueError:
+                        pass
 
             for alias_abs, primary_abs in aliases:
                 for abs_source, bundle_rel in primary_to_sources.get(

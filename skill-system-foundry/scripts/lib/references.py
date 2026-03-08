@@ -184,10 +184,12 @@ class ScanResult(TypedDict):
     # coordinator and external files).
     inlined_skills: dict[str, str]  # {abs_skill_dir: skill_name}
     # Alias roots observed for inlined skills.  Each entry maps an
-    # alias directory (e.g. a symlink) to the primary real_skill_dir
-    # already recorded in ``inlined_skills``.  Consumers use this to
-    # add rewrite-map entries for alias-path references.
-    inlined_skill_aliases: list[tuple[str, str]]  # [(alias_abs, primary_real)]
+    # alias directory (e.g. a symlink) to the primary skill directory
+    # already recorded in ``inlined_skills``, expressed on the same
+    # system_root-based absolute path basis (not necessarily realpath).
+    # Consumers use this to add rewrite-map entries for alias-path
+    # references.
+    inlined_skill_aliases: list[tuple[str, str]]  # [(alias_abs, primary_abs)]
 
 
 def extract_references(filepath: str) -> list[FilteredRef]:
@@ -499,8 +501,9 @@ def scan_references(
             'inlined_skills': {abs_skill_dir: skill_name} (always present;
                               empty when ``inline_orchestrated_skills`` is
                               False; keys are canonical abspath directories),
-            'inlined_skill_aliases': [(alias_abs, primary_real), ...] alias
-                              roots for skills referenced via symlinks,
+            'inlined_skill_aliases': [(alias_abs, primary_abs), ...] alias
+                              roots for skills referenced via symlinks
+                              (primary is system_root-basis, not realpath),
         }
     """
     if max_depth is None:
@@ -523,9 +526,10 @@ def scan_references(
     # lexical system_root so they share the same path basis as the
     # coordinator and external files.
     inlined_skills: dict[str, str] = {}  # {abs_skill_dir: skill_name}
-    # Alias roots: (alias_abs_dir, primary_real_dir) for symlink paths
-    # that resolve to an already-collected inlined skill.  Used to add
-    # rewrite-map entries for alias-path references.
+    # Alias roots: (alias_abs_dir, primary_abs_dir) for symlink paths
+    # that resolve to an already-collected inlined skill.  The primary
+    # dir is on the system_root path basis (not realpath).  Used to
+    # add rewrite-map entries for alias-path references.
     inlined_skill_aliases: list[tuple[str, str]] = []
     # Canonical set (normcase + realpath) for deduplication — ensures
     # the same skill referenced via symlinks or different case is not
