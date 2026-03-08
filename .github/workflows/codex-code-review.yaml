@@ -121,7 +121,9 @@ jobs:
                   "severity": "high|medium|low",
                   "path": "repo-relative/path.ext",
                   "line": 123,
-                  "comment": "why this matters and concrete fix guidance"
+                  "startLine": 120,
+                  "comment": "why this matters and concrete fix guidance",
+                  "suggestion": "exact replacement code for lines startLine..line (optional)"
                 }
               ]
             }
@@ -132,6 +134,8 @@ jobs:
             - Include only high-confidence findings in `findings`.
             - `path` must be a repo-relative path.
             - `line` in findings must refer to a changed line on the RIGHT side of this PR diff.
+            - `startLine` is optional. Use it only when the suggestion spans multiple consecutive lines. It must be ≤ `line`.
+            - When a finding has a concrete fix, include `suggestion` with the exact replacement source code (preserve indentation). The suggestion replaces lines `startLine` through `line` (or just `line` when `startLine` is omitted). Omit `suggestion` when the fix is non-trivial or ambiguous.
             - Keep all text concise and action-oriented.
 
             Pull request #${{ github.event.pull_request.number }}:
@@ -253,8 +257,11 @@ jobs:
               const severity = String(finding?.severity || 'medium').trim().toLowerCase();
               const path = normalizePath(finding?.path);
               const line = Number(finding?.line);
+              const startLine = Number(finding?.startLine) || null;
               const comment = String(finding?.comment || '').trim();
-              return { title, severity, path, line, comment };
+              const rawSuggestion = finding?.suggestion != null ? String(finding.suggestion) : '';
+              const suggestion = rawSuggestion.length > 0 ? rawSuggestion : null;
+              return { title, severity, path, line, startLine, comment, suggestion };
             }
 
             const parsed = parseStructuredReview(process.env.CODEX_REVIEW || '');
@@ -309,12 +316,21 @@ jobs:
               }
 
               const alertType = { high: 'CAUTION', medium: 'WARNING', low: 'NOTE' }[finding.severity] || 'WARNING';
-              reviewComments.push({
+              const suggestionBlock = finding.suggestion
+                ? `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``
+                : '';
+              const commentBody = `> [!${alertType}]\n> **${finding.title}**\n> ${finding.comment.split('\n').join('\n> ')}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+              const commentObj = {
                 path: finding.path,
                 line: finding.line,
                 side: 'RIGHT',
-                body: `> [!${alertType}]\n> **${finding.title}**\n> ${finding.comment.split('\n').join('\n> ')}\n\n<!-- codex-inline:${signature} -->`,
-              });
+                body: commentBody,
+              };
+              if (finding.startLine && Number.isInteger(finding.startLine) && finding.startLine > 0 && finding.startLine < finding.line) {
+                commentObj.start_line = finding.startLine;
+                commentObj.start_side = 'RIGHT';
+              }
+              reviewComments.push(commentObj);
 
               if (reviewComments.length >= maxInlineConversations) {
                 break;
