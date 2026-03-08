@@ -1,4 +1,4 @@
-name: Codex Code Review
+name: Codex code review
 
 on:
   pull_request:
