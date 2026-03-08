@@ -11,9 +11,9 @@ Options:
     --root <path>        Base directory for output (default: current working
                          directory). Use --root .agents to scaffold into
                          .agents/skills/, .agents/roles/, etc.
-    --with-references    Also create an empty references/ directory
-    --with-scripts       Also create an empty scripts/ directory
-    --with-assets        Also create an empty assets/ directory
+    --with-references    Also create a references/ directory (with .gitkeep)
+    --with-scripts       Also create a scripts/ directory (with .gitkeep)
+    --with-assets        Also create an assets/ directory (with .gitkeep)
 
 Examples:
     python scripts/scaffold.py skill my-skill
@@ -251,10 +251,10 @@ def _parse_optional_dirs(flags, component):
     """Return list of optional directory constants requested via --with-* flags.
 
     Validates that only flags supported by *component* are used; exits with
-    an error message for unsupported flags.
+    an error message for unsupported flags.  Duplicates are silently ignored.
     """
     allowed = _ALLOWED_WITH_FLAGS.get(component, set())
-    with_flags = [f for f in flags if f.startswith("--with-")]
+    with_flags = list(dict.fromkeys(f for f in flags if f.startswith("--with-")))
     unsupported = [f for f in with_flags if f not in allowed]
     if unsupported:
         print(
@@ -306,10 +306,13 @@ def main():
         scaffold_capability(positional[0], positional[1], root, optional_dirs)
 
     elif component == "role":
-        if len(args) < 4:
+        positional = [a for a in args[2:] if not a.startswith("--")]
+        flags = [a for a in args[2:] if a.startswith("--")]
+        if len(positional) < 2:
             print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>]")
             sys.exit(1)
-        scaffold_role(args[2], args[3], root)
+        _parse_optional_dirs(flags, "role")
+        scaffold_role(positional[0], positional[1], root)
 
     else:
         print(f"Unknown component type: {component}")
