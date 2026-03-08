@@ -233,16 +233,37 @@ def scaffold_role(group, name, root=""):
     print(f"  Next: update {manifest_path}")
 
 
-def _parse_optional_dirs(flags):
-    """Return list of optional directory constants requested via --with-* flags."""
-    dirs = []
-    if "--with-references" in flags:
-        dirs.append(DIR_REFERENCES)
-    if "--with-scripts" in flags:
-        dirs.append(DIR_SCRIPTS)
-    if "--with-assets" in flags:
-        dirs.append(DIR_ASSETS)
-    return dirs
+# Maps --with-* CLI flags to directory constants.
+_WITH_FLAG_MAP = {
+    "--with-references": DIR_REFERENCES,
+    "--with-scripts": DIR_SCRIPTS,
+    "--with-assets": DIR_ASSETS,
+}
+
+# Flags allowed per component type.
+_ALLOWED_WITH_FLAGS = {
+    "skill": {"--with-references", "--with-scripts", "--with-assets"},
+    "capability": {"--with-references"},
+}
+
+
+def _parse_optional_dirs(flags, component):
+    """Return list of optional directory constants requested via --with-* flags.
+
+    Validates that only flags supported by *component* are used; exits with
+    an error message for unsupported flags.
+    """
+    allowed = _ALLOWED_WITH_FLAGS.get(component, set())
+    with_flags = [f for f in flags if f.startswith("--with-")]
+    unsupported = [f for f in with_flags if f not in allowed]
+    if unsupported:
+        print(
+            f"{LEVEL_FAIL}: Unsupported flag(s) for '{component}': "
+            f"{', '.join(unsupported)}"
+        )
+        print(f"  Allowed: {', '.join(sorted(allowed)) or '(none)'}")
+        sys.exit(1)
+    return [_WITH_FLAG_MAP[f] for f in with_flags if f in _WITH_FLAG_MAP]
 
 
 def main():
@@ -268,25 +289,25 @@ def main():
         positional = [a for a in args[2:] if not a.startswith("--")]
         flags = [a for a in args[2:] if a.startswith("--")]
         if not positional:
-            print("Usage: python scaffold.py skill <name> [--router] [--with-references] [--with-scripts] [--with-assets]")
+            print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets]")
             sys.exit(1)
         name = positional[0]
         router = "--router" in flags
-        optional_dirs = _parse_optional_dirs(flags)
+        optional_dirs = _parse_optional_dirs(flags, "skill")
         scaffold_skill(name, router, root, optional_dirs)
 
     elif component == "capability":
         positional = [a for a in args[2:] if not a.startswith("--")]
         flags = [a for a in args[2:] if a.startswith("--")]
         if len(positional) < 2:
-            print("Usage: python scaffold.py capability <domain> <name> [--with-references]")
+            print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references]")
             sys.exit(1)
-        optional_dirs = _parse_optional_dirs(flags)
+        optional_dirs = _parse_optional_dirs(flags, "capability")
         scaffold_capability(positional[0], positional[1], root, optional_dirs)
 
     elif component == "role":
         if len(args) < 4:
-            print("Usage: python scaffold.py role <group> <name>")
+            print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>]")
             sys.exit(1)
         scaffold_role(args[2], args[3], root)
 
