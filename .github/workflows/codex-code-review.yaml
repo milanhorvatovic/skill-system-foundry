@@ -333,7 +333,7 @@ jobs:
                 side: 'RIGHT',
                 body: commentBody,
               };
-              if (finding.startLine && Number.isInteger(finding.startLine) && finding.startLine > 0 && finding.startLine < finding.line) {
+              if (finding.startLine && Number.isInteger(finding.startLine) && finding.startLine > 0 && finding.startLine < finding.line && addedLines.has(finding.startLine)) {
                 commentObj.start_line = finding.startLine;
                 commentObj.start_side = 'RIGHT';
               }
