@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from typing import TypedDict
 
 from .constants import (
+    DIR_CAPABILITIES,
+    FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     BUNDLE_DESCRIPTION_MAX_LENGTH,
     BUNDLE_EXCLUDE_PATTERNS,
@@ -35,7 +37,13 @@ from .references import (
     RE_BUNDLE_BACKTICK,
 )
 
-class BundleStats(TypedDict):
+class _BundleStatsOptional(TypedDict, total=False):
+    """Optional fields for BundleStats."""
+
+    inlined_skill_count: int
+
+
+class BundleStats(_BundleStatsOptional):
     """Bundle creation statistics used in summary output."""
 
     file_count: int
@@ -52,6 +60,8 @@ class BundleStats(TypedDict):
 def prevalidate(
     skill_path: str,
     system_root: str | None,
+    *,
+    inline_orchestrated_skills: bool = False,
 ) -> tuple[list[str], list[str], ScanResult | None]:
     """Run all pre-validation checks.
 
@@ -118,7 +128,10 @@ def prevalidate(
         effective_root = infer_system_root(skill_path)
     else:
         effective_root = system_root
-    scan_result = scan_references(skill_path, effective_root)
+    scan_result = scan_references(
+        skill_path, effective_root,
+        inline_orchestrated_skills=inline_orchestrated_skills,
+    )
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
 
@@ -331,6 +344,7 @@ def _build_rewrite_map(
     file_mapping: dict[str, str],
     reverse_mapping: dict[str, str],
     skill_files: dict[str, str],
+    inlined_skills: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build the old-path -> new-path map used for rewriting one file.
 
@@ -338,7 +352,14 @@ def _build_rewrite_map(
     for files that originated from the skill directory.  This allows
     system-root-relative references to skill-internal files (e.g.
     ``skills/<name>/SKILL.md`` in inlined roles) to be rewritten.
+
+    *inlined_skills* maps ``{abs_skill_dir: skill_name}`` for skills
+    inlined as capabilities.  When provided, system-root-relative
+    references to files in those skills are rewritten to the
+    ``capabilities/<name>/`` copies.
     """
+    if inlined_skills is None:
+        inlined_skills = {}
     bundle_file_dir = os.path.dirname(bundle_file)
     rewrite_map: dict[str, str] = {}
 
@@ -374,6 +395,23 @@ def _build_rewrite_map(
             except ValueError:
                 pass
 
+    # Add system-root-relative paths for files inside inlined skills.
+    # E.g. "skills/testing/SKILL.md" -> "capabilities/testing/capability.md"
+    if system_root and inlined_skills:
+        for abs_source, bundle_rel in sorted(file_mapping.items(), key=lambda item: item[1]):
+            # Only process files that belong to an inlined skill.
+            for abs_skill_dir in inlined_skills:
+                if is_within_directory(abs_source, abs_skill_dir):
+                    abs_target = os.path.join(bundle_dir, bundle_rel)
+                    new_rel = os.path.relpath(abs_target, bundle_file_dir).replace(os.sep, "/")
+                    try:
+                        system_rel = os.path.relpath(abs_source, system_root)
+                        rewrite_map.setdefault(system_rel, new_rel)
+                        rewrite_map.setdefault(system_rel.replace(os.sep, "/"), new_rel)
+                    except ValueError:
+                        pass
+                    break
+
     return rewrite_map
 
 
@@ -382,8 +420,18 @@ def _rewrite_markdown_paths(
     skill_path: str,
     system_root: str | None,
     file_mapping: dict[str, str],
+    *,
+    inlined_skills: dict[str, str] | None = None,
 ) -> int:
-    """Rewrite file references in all markdown files within the bundle."""
+    """Rewrite file references in all markdown files within the bundle.
+
+    *inlined_skills* maps ``{abs_skill_dir: skill_name}`` for skills
+    inlined as capabilities.  When provided, system-root-relative
+    references to files in those skills are rewritten to point to the
+    ``capabilities/<name>/`` copies.
+    """
+    if inlined_skills is None:
+        inlined_skills = {}
     rewrite_count = 0
     reverse_mapping = {
         bundle_rel: abs_source for abs_source, bundle_rel in file_mapping.items()
@@ -415,6 +463,7 @@ def _rewrite_markdown_paths(
                 file_mapping,
                 reverse_mapping,
                 skill_files,
+                inlined_skills,
             )
             if not rewrite_map:
                 continue
@@ -478,6 +527,62 @@ def _compute_original_paths(
     return paths
 
 
+def _copy_inlined_skills(
+    inlined_skills: dict[str, str],
+    bundle_dir: str,
+    exclude_patterns: list[str],
+    system_root: str | None,
+) -> dict[str, str]:
+    """Copy each inlined skill into ``capabilities/<name>/`` in the bundle.
+
+    Renames ``SKILL.md`` to ``capability.md`` in each copy.
+
+    Returns a file mapping ``{abs_source_path: bundle_relative_path}``
+    covering all files from inlined skills, suitable for merging into
+    the main ``file_mapping`` used by the rewriter.
+    """
+    file_mapping: dict[str, str] = {}
+    boundary = bundle_dir if system_root is None else system_root
+
+    for abs_skill_dir, skill_name in sorted(inlined_skills.items()):
+        cap_dir = os.path.join(bundle_dir, DIR_CAPABILITIES, skill_name)
+        if os.path.exists(cap_dir):
+            raise ValueError(
+                f"Capability directory '{DIR_CAPABILITIES}/{skill_name}' "
+                f"already exists in the bundle. Cannot inline skill "
+                f"'{skill_name}' — resolve the naming conflict."
+            )
+
+        for root, filename in walk_skill_files(
+            abs_skill_dir, exclude_patterns, boundary
+        ):
+            rel_root = os.path.relpath(root, abs_skill_dir)
+            target_root = os.path.join(cap_dir, rel_root)
+            os.makedirs(target_root, exist_ok=True)
+
+            # Rename SKILL.md -> capability.md
+            target_filename = filename
+            if filename == FILE_SKILL_MD:
+                target_filename = FILE_CAPABILITY_MD
+
+            src = os.path.join(root, filename)
+            dst = os.path.join(target_root, target_filename)
+            try:
+                shutil.copy2(src, dst)
+            except OSError as e:
+                rel_src = os.path.relpath(src, abs_skill_dir).replace(os.sep, "/")
+                raise ValueError(
+                    f"Failed to copy inlined skill file "
+                    f"'{skill_name}/{rel_src}'"
+                ) from e
+
+            # Build mapping: source abs path -> bundle relative path
+            rel_in_cap = os.path.relpath(dst, bundle_dir).replace(os.sep, "/")
+            file_mapping[src] = rel_in_cap
+
+    return file_mapping
+
+
 def create_bundle(
     skill_path: str,
     system_root: str | None,
@@ -485,6 +590,7 @@ def create_bundle(
     exclude_patterns: list[str],
     *,
     bundle_base: str,
+    inline_orchestrated_skills: bool = False,
 ) -> tuple[str, dict[str, str], BundleStats]:
     """Create the bundle directory.
 
@@ -508,11 +614,22 @@ def create_bundle(
             external_files, system_root, bundle_dir, exclude_patterns
         )
 
+    # Step 2b: Copy inlined skills as capabilities
+    inlined_skill_count = 0
+    inlined_skills = scan_result.get("inlined_skills", {})
+    if inline_orchestrated_skills and inlined_skills:
+        inlined_mapping = _copy_inlined_skills(
+            inlined_skills, bundle_dir, exclude_patterns, system_root,
+        )
+        file_mapping.update(inlined_mapping)
+        inlined_skill_count = len(inlined_skills)
+
     # Step 3: Rewrite markdown paths
     rewrite_count = 0
     if file_mapping:
         rewrite_count = _rewrite_markdown_paths(
-            bundle_dir, skill_path, system_root, file_mapping
+            bundle_dir, skill_path, system_root, file_mapping,
+            inlined_skills=inlined_skills if inline_orchestrated_skills else {},
         )
 
     # Compute stats
@@ -530,6 +647,7 @@ def create_bundle(
         "external_count": len(external_files),
         "rewrite_count": rewrite_count,
         "skill_name": skill_name,
+        "inlined_skill_count": inlined_skill_count,
     }
     return bundle_dir, file_mapping, stats
 

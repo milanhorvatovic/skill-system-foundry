@@ -15,11 +15,14 @@ if SCRIPTS_DIR not in sys.path:
 
 from lib.bundling import (
     _copy_external_files,
+    _copy_inlined_skills,
     _copy_skill,
     _rewrite_markdown_content,
+    create_bundle,
     postvalidate,
+    prevalidate,
 )
-from lib.references import compute_bundle_path
+from lib.references import compute_bundle_path, scan_references
 
 
 class MarkdownRewriteTests(unittest.TestCase):
@@ -302,6 +305,327 @@ class CopySkillSymlinkBoundaryTests(unittest.TestCase):
             self.assertTrue(
                 os.path.exists(os.path.join(bundle_dir, "SKILL.md"))
             )
+
+
+class CopyInlinedSkillsTests(unittest.TestCase):
+    """Tests for _copy_inlined_skills() directory copying and renaming."""
+
+    def test_skill_md_renamed_to_capability_md(self) -> None:
+        """SKILL.md in inlined skills is renamed to capability.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            testing_skill = os.path.join(system_root, "skills", "testing")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            write_text(os.path.join(testing_skill, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing_skill, "references", "guide.md"), "Guide\n")
+
+            inlined_skills = {os.path.abspath(testing_skill): "testing"}
+            mapping = _copy_inlined_skills(
+                inlined_skills, bundle_dir, [], system_root,
+            )
+
+            # capability.md exists, SKILL.md does not
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "testing", "capability.md"))
+            )
+            self.assertFalse(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "testing", "SKILL.md"))
+            )
+            # Sub-files are copied
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "testing", "references", "guide.md"))
+            )
+            # Mapping includes both files
+            abs_skill_md = os.path.join(testing_skill, "SKILL.md")
+            self.assertEqual(
+                mapping[abs_skill_md], "capabilities/testing/capability.md"
+            )
+
+    def test_multiple_skills_inlined(self) -> None:
+        """Multiple skills are inlined into separate capability directories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            testing = os.path.join(system_root, "skills", "testing")
+            deployment = os.path.join(system_root, "skills", "deployment")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(deployment, "SKILL.md"), "---\nname: deployment\n---\n")
+            write_text(os.path.join(deployment, "scripts", "deploy.sh"), "#!/bin/bash\n")
+
+            inlined_skills = {
+                os.path.abspath(testing): "testing",
+                os.path.abspath(deployment): "deployment",
+            }
+            mapping = _copy_inlined_skills(
+                inlined_skills, bundle_dir, [], system_root,
+            )
+
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "testing", "capability.md"))
+            )
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "deployment", "capability.md"))
+            )
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "deployment", "scripts", "deploy.sh"))
+            )
+
+    def test_existing_capability_dir_raises(self) -> None:
+        """Collision with existing capability directory raises ValueError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            testing = os.path.join(system_root, "skills", "testing")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            # Pre-create the collision
+            write_text(os.path.join(bundle_dir, "capabilities", "testing", "existing.md"), "exists\n")
+
+            inlined_skills = {os.path.abspath(testing): "testing"}
+            with self.assertRaises(ValueError) as cm:
+                _copy_inlined_skills(
+                    inlined_skills, bundle_dir, [], system_root,
+                )
+
+            self.assertIn("already exists", str(cm.exception))
+
+
+class InlinedBundleIntegrationTests(unittest.TestCase):
+    """End-to-end tests for bundling with --inline-orchestrated-skills."""
+
+    def _create_path1_layout(self, tmpdir: str) -> tuple[str, str]:
+        """Create a Path 1 coordination skill layout.
+
+        Returns (system_root, coordinator_skill_path).
+        """
+        system_root = os.path.join(tmpdir, "root")
+
+        # Coordinator skill
+        coordinator = os.path.join(system_root, "skills", "release-coordinator")
+        write_text(
+            os.path.join(coordinator, "SKILL.md"),
+            "---\n"
+            "name: release-coordinator\n"
+            "description: Coordinates release workflows across domains.\n"
+            "---\n\n"
+            "# Release Coordinator\n\n"
+            "Delegate to roles:\n"
+            "- [QA Role](../../roles/qa-role.md)\n"
+            "- [Release Role](../../roles/release-role.md)\n",
+        )
+
+        # Domain skills
+        testing = os.path.join(system_root, "skills", "testing")
+        write_text(
+            os.path.join(testing, "SKILL.md"),
+            "---\nname: testing\ndescription: Testing domain skill.\n---\n\n# Testing\n",
+        )
+        write_text(
+            os.path.join(testing, "references", "test-guide.md"),
+            "# Test Guide\n\nHow to run tests.\n",
+        )
+
+        deployment = os.path.join(system_root, "skills", "deployment")
+        write_text(
+            os.path.join(deployment, "SKILL.md"),
+            "---\nname: deployment\ndescription: Deployment domain skill.\n---\n\n# Deployment\n",
+        )
+        write_text(
+            os.path.join(deployment, "scripts", "deploy.sh"),
+            "#!/bin/bash\necho deploy\n",
+        )
+
+        # Roles that reference domain skills
+        write_text(
+            os.path.join(system_root, "roles", "qa-role.md"),
+            "# QA Role\n\n"
+            "Follow the testing skill: [Testing](../skills/testing/SKILL.md)\n"
+            "See [guide](../skills/testing/references/test-guide.md)\n",
+        )
+        write_text(
+            os.path.join(system_root, "roles", "release-role.md"),
+            "# Release Role\n\n"
+            "Follow the deployment skill: [Deployment](../skills/deployment/SKILL.md)\n",
+        )
+
+        # Manifest
+        write_text(os.path.join(system_root, "manifest.yaml"), "name: test-system\n")
+
+        return system_root, coordinator
+
+    def test_successful_path1_bundle(self) -> None:
+        """Full Path 1 bundle produces correct structure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, coordinator = self._create_path1_layout(tmpdir)
+
+            # Pre-validate with inline flag
+            errors, warnings, scan_result = prevalidate(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [], f"Unexpected errors: {errors}")
+            self.assertIsNotNone(scan_result)
+
+            # Create bundle
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, file_mapping, stats = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base,
+                inline_orchestrated_skills=True,
+            )
+
+            # Verify structure: capabilities/testing/capability.md
+            cap_testing = os.path.join(bundle_dir, "capabilities", "testing")
+            self.assertTrue(os.path.exists(os.path.join(cap_testing, "capability.md")))
+            self.assertFalse(os.path.exists(os.path.join(cap_testing, "SKILL.md")))
+            self.assertTrue(os.path.exists(os.path.join(cap_testing, "references", "test-guide.md")))
+
+            # Verify structure: capabilities/deployment/capability.md
+            cap_deployment = os.path.join(bundle_dir, "capabilities", "deployment")
+            self.assertTrue(os.path.exists(os.path.join(cap_deployment, "capability.md")))
+            self.assertTrue(os.path.exists(os.path.join(cap_deployment, "scripts", "deploy.sh")))
+
+            # Verify roles are included
+            self.assertTrue(os.path.exists(os.path.join(bundle_dir, "roles", "qa-role.md")))
+            self.assertTrue(os.path.exists(os.path.join(bundle_dir, "roles", "release-role.md")))
+
+            # Verify stats
+            self.assertEqual(stats["inlined_skill_count"], 2)
+
+    def test_role_references_rewritten_to_capabilities(self) -> None:
+        """Role references to skills are rewritten to capability paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, coordinator = self._create_path1_layout(tmpdir)
+
+            errors, warnings, scan_result = prevalidate(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [])
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, _, _ = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base,
+                inline_orchestrated_skills=True,
+            )
+
+            # Read the rewritten qa-role.md
+            qa_role_path = os.path.join(bundle_dir, "roles", "qa-role.md")
+            with open(qa_role_path, "r", encoding="utf-8") as f:
+                qa_content = f.read()
+
+            # References should point to capabilities, not skills
+            self.assertIn("capabilities/testing/capability.md", qa_content)
+            self.assertIn("capabilities/testing/references/test-guide.md", qa_content)
+            self.assertNotIn("skills/testing/SKILL.md", qa_content)
+
+            # Read the rewritten release-role.md
+            release_role_path = os.path.join(bundle_dir, "roles", "release-role.md")
+            with open(release_role_path, "r", encoding="utf-8") as f:
+                release_content = f.read()
+
+            self.assertIn("capabilities/deployment/capability.md", release_content)
+            self.assertNotIn("skills/deployment/SKILL.md", release_content)
+
+    def test_postvalidation_passes(self) -> None:
+        """The resulting bundle passes post-validation (single SKILL.md, no broken refs)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, coordinator = self._create_path1_layout(tmpdir)
+
+            errors, _, scan_result = prevalidate(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [])
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, _, _ = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base,
+                inline_orchestrated_skills=True,
+            )
+
+            post_errors = postvalidate(bundle_dir)
+            self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")
+
+    def test_without_flag_cross_skill_fails(self) -> None:
+        """Without --inline-orchestrated-skills, the bundle fails pre-validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, coordinator = self._create_path1_layout(tmpdir)
+
+            errors, _, scan_result = prevalidate(
+                coordinator, system_root,
+                inline_orchestrated_skills=False,
+            )
+
+            cross_skill_fails = [e for e in errors if "Cross-skill reference" in e]
+            self.assertGreater(len(cross_skill_fails), 0)
+
+    def test_role_referencing_multiple_inlined_skills(self) -> None:
+        """A role that references multiple inlined skills rewrites all of them."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+
+            # Coordinator
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\n"
+                "name: coordinator\n"
+                "description: Coordinates across domains.\n"
+                "---\n\n"
+                "# Coordinator\n\n"
+                "See [qa](../../roles/qa-role.md)\n",
+            )
+
+            # Two domain skills
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\ndescription: Testing.\n---\n")
+
+            deployment = os.path.join(system_root, "skills", "deployment")
+            write_text(os.path.join(deployment, "SKILL.md"), "---\nname: deployment\ndescription: Deploy.\n---\n")
+
+            # Role references both skills
+            write_text(
+                os.path.join(system_root, "roles", "qa-role.md"),
+                "# QA\n"
+                "See [testing](../skills/testing/SKILL.md) and "
+                "[deployment](../skills/deployment/SKILL.md)\n",
+            )
+
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: test\n")
+
+            errors, _, scan_result = prevalidate(
+                coordinator, system_root, inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [])
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, _, _ = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base, inline_orchestrated_skills=True,
+            )
+
+            qa_path = os.path.join(bundle_dir, "roles", "qa-role.md")
+            with open(qa_path, "r", encoding="utf-8") as f:
+                qa_content = f.read()
+
+            self.assertIn("capabilities/testing/capability.md", qa_content)
+            self.assertIn("capabilities/deployment/capability.md", qa_content)
+            self.assertNotIn("skills/testing/SKILL.md", qa_content)
+            self.assertNotIn("skills/deployment/SKILL.md", qa_content)
+
+            post_errors = postvalidate(bundle_dir)
+            self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")
 
 
 if __name__ == "__main__":

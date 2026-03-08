@@ -389,5 +389,88 @@ class ScanReferencesTests(unittest.TestCase):
             self.assertIn("beta", fails[0])
 
 
+class InlineOrchestratedSkillsTests(unittest.TestCase):
+    """Tests for scan_references() with inline_orchestrated_skills=True."""
+
+    def test_cross_skill_collected_when_flag_set(self) -> None:
+        """Cross-skill references are collected instead of rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing_skill = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing_skill, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing_skill, "references", "guide.md"), "Guide\n")
+
+            # Role references the testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            # Coordinator references the role
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # No errors — cross-skill references are tolerated
+            self.assertEqual(result["errors"], [])
+            # The testing skill should be collected for inlining
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            abs_testing = os.path.abspath(testing_skill)
+            self.assertIn(abs_testing, result["inlined_skills"])
+            self.assertEqual(result["inlined_skills"][abs_testing], "testing")
+            # The role should be in external_files
+            self.assertIn(os.path.abspath(role_file), result["external_files"])
+
+    def test_cross_skill_still_rejected_without_flag(self) -> None:
+        """Without the flag, cross-skill references produce FAIL as before."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing_skill = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing_skill, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Role references the testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            result = scan_references(coordinator, system_root)
+
+            fails = [e for e in result["errors"] if "Cross-skill reference" in e]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("testing", fails[0])
+            self.assertEqual(len(result["inlined_skills"]), 0)
+
+    def test_inlined_skills_empty_when_no_cross_refs(self) -> None:
+        """A skill with no cross-skill references has an empty inlined_skills."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            result = scan_references(
+                skill_dir, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["inlined_skills"], {})
+
+
 if __name__ == "__main__":
     unittest.main()

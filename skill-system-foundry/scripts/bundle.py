@@ -10,6 +10,7 @@ Usage:
     python scripts/bundle.py <skill-path> --system-root .agents
     python scripts/bundle.py <skill-path> --output /tmp/my-skill.zip
     python scripts/bundle.py <skill-path> --system-root .agents --output dist/
+    python scripts/bundle.py <skill-path> --system-root .agents --inline-orchestrated-skills
 """
 
 import argparse
@@ -135,6 +136,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--inline-orchestrated-skills",
+        action="store_true",
+        help=(
+            "When bundling a Path 1 coordination skill, inline "
+            "referenced domain skills as capabilities instead of "
+            "rejecting cross-skill references. The result is a "
+            "self-contained Path 2 router bundle."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print traceback details when unexpected errors occur.",
@@ -255,11 +266,16 @@ def main() -> None:
     print(f"Output:   {output_path}")
     print("=" * SEPARATOR_WIDTH)
 
+    inline_skills = args.inline_orchestrated_skills
+
     # ---- Phase 1: Pre-validation ----
     print("\nPhase 1: Pre-validation")
     print("-" * SEPARATOR_WIDTH)
     print("  Running pre-validation checks...")
-    errors, warnings, scan_result = prevalidate(skill_path, system_root)
+    errors, warnings, scan_result = prevalidate(
+        skill_path, system_root,
+        inline_orchestrated_skills=inline_skills,
+    )
 
     if errors:
         _print_failure_block(
@@ -300,6 +316,7 @@ def main() -> None:
         bundle_dir, file_mapping, stats = create_bundle(
             skill_path, system_root, scan_result, BUNDLE_EXCLUDE_PATTERNS,
             bundle_base=bundle_base,
+            inline_orchestrated_skills=inline_skills,
         )
         print(
             f"  Assembled {stats['file_count']} files"
@@ -361,6 +378,8 @@ def main() -> None:
     print(f"  Archive size:   {_format_size(zip_size)}")
     if stats["external_count"] > 0:
         print(f"  External files: {stats['external_count']} (inlined)")
+    if stats.get("inlined_skill_count", 0) > 0:
+        print(f"  Inlined skills: {stats['inlined_skill_count']} (as capabilities)")
 
 
 if __name__ == "__main__":

@@ -177,6 +177,9 @@ class ScanResult(TypedDict):
     errors: list[str]
     warnings: list[str]
     reference_map: dict[str, list[ResolvedRef]]
+    # Skill directories to inline as capabilities (only populated when
+    # ``inline_orchestrated_skills=True``).
+    inlined_skills: dict[str, str]  # {abs_skill_dir: skill_name}
 
 
 def extract_references(filepath: str) -> list[FilteredRef]:
@@ -455,6 +458,8 @@ def scan_references(
     system_root: str | None = None,
     max_depth: int | None = None,
     exclude_patterns: list[str] | None = None,
+    *,
+    inline_orchestrated_skills: bool = False,
 ) -> ScanResult:
     """Scan a skill's full reference graph for external dependencies.
 
@@ -471,6 +476,10 @@ def scan_references(
         exclude_patterns: Glob patterns for files/directories to skip
                           during the skill walk.  Defaults to
                           ``BUNDLE_EXCLUDE_PATTERNS`` from config.
+        inline_orchestrated_skills:
+                          When ``True``, cross-skill references are
+                          collected for inlining as capabilities instead
+                          of being rejected.
 
     Returns a dict::
 
@@ -479,6 +488,7 @@ def scan_references(
             'errors':         list of FAIL strings,
             'warnings':       list of WARN strings,
             'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
+            'inlined_skills': {abs_skill_dir: skill_name} (only with inline flag),
         }
     """
     if max_depth is None:
@@ -496,6 +506,8 @@ def scan_references(
     errors: list[str] = []
     warnings: list[str] = []
     reference_map: dict[str, list[ResolvedRef]] = {}
+    # Skill directories collected for inlining (only when flag is set).
+    inlined_skills: dict[str, str] = {}  # {abs_skill_dir: skill_name}
 
     # External files whose subtrees have been fully traversed.
     scanned_external: set[str] = set()
@@ -689,11 +701,20 @@ def scan_references(
                         os.path.realpath(skill_path)
                     )
                     if containing_norm != skill_path_norm:
-                        skill_name = os.path.basename(containing_skill)
+                        other_skill_name = os.path.basename(containing_skill)
+                        if inline_orchestrated_skills:
+                            # Collect for inlining instead of rejecting.
+                            abs_skill_dir = os.path.abspath(containing_skill)
+                            inlined_skills[abs_skill_dir] = other_skill_name
+                            # The resolved file is inside the skill being
+                            # inlined — do NOT add it to external_files
+                            # (it will be copied as part of the full skill
+                            # directory during inlining).
+                            continue
                         errors.append(
                             f"{LEVEL_FAIL}: Cross-skill reference in "
                             f"'{_rel(filepath)}' line {line_num}: "
-                            f"'{raw_ref}' points to skill '{skill_name}'. "
+                            f"'{raw_ref}' points to skill '{other_skill_name}'. "
                             f"A bundle must be self-contained — it cannot "
                             f"reference other skills. Remove this reference "
                             f"or inline the needed content."
@@ -783,6 +804,7 @@ def scan_references(
         "errors": errors,
         "warnings": warnings,
         "reference_map": reference_map,
+        "inlined_skills": inlined_skills,
     }
 
 
