@@ -23,7 +23,7 @@ jobs:
       !github.event.pull_request.draft &&
       vars.CODEX_REVIEW_USERS != '' &&
       contains(
-        format(',{0},', vars.CODEX_REVIEW_USERS),
+        format(',{0},', replace(vars.CODEX_REVIEW_USERS, ' ', '')),
         format(',{0},', github.event.pull_request.user.login)
       )
     runs-on: ubuntu-latest
