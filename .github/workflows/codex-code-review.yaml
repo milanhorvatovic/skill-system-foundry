@@ -105,7 +105,16 @@ jobs:
 
             Return STRICT JSON only (no markdown/code fences) with this schema:
             {
-              "summary": "short overall summary",
+              "summary": "1-5 sentence description of what the PR changes and why",
+              "changes": [
+                "short bullet describing a logical change"
+              ],
+              "files": [
+                {
+                  "path": "repo-relative/path.ext",
+                  "description": "short description of what changed in this file"
+                }
+              ],
               "findings": [
                 {
                   "title": "short issue title",
@@ -118,12 +127,12 @@ jobs:
             }
 
             Rules:
-            - If there are no high-confidence issues, return:
-              {"summary":"No high-confidence issues found.","findings":[]}
-            - Include only high-confidence findings.
+            - Always include `summary`, `changes`, and `files` — even when there are no findings.
+            - If there are no high-confidence issues, set `findings` to an empty array.
+            - Include only high-confidence findings in `findings`.
             - `path` must be a repo-relative path.
-            - `line` must refer to a changed line on the RIGHT side of this PR diff.
-            - Keep findings concise and action-oriented.
+            - `line` in findings must refer to a changed line on the RIGHT side of this PR diff.
+            - Keep all text concise and action-oriented.
 
             Pull request #${{ github.event.pull_request.number }}:
             Title: ${{ github.event.pull_request.title }}
@@ -251,6 +260,9 @@ jobs:
             const parsed = parseStructuredReview(process.env.CODEX_REVIEW || '');
             const parsedFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
             const findings = parsedFindings.map(normalizeFinding);
+            const summaryText = String(parsed?.summary || '').trim();
+            const changes = Array.isArray(parsed?.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean) : [];
+            const files = Array.isArray(parsed?.files) ? parsed.files : [];
 
             const diffText = fs.readFileSync('pr.diff', 'utf8');
             const addedByFile = parseAddedLinesByFile(diffText);
@@ -309,6 +321,41 @@ jobs:
               }
             }
 
+            function buildReviewedLine(commentCount) {
+              const commentLabel = commentCount > 0 ? `${commentCount} comment(s)` : 'no new comments';
+              return `Codex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated ${commentLabel}.`;
+            }
+
+            function buildReviewBody(commentCount) {
+              const reviewedLine = buildReviewedLine(commentCount);
+              const sections = ['## Pull request overview'];
+              if (summaryText) sections.push(summaryText);
+              if (changes.length > 0) {
+                sections.push(`**Changes:**\n${changes.map(c => `- ${c}`).join('\n')}`);
+              }
+              const fileTable = files.length > 0
+                ? `| File | Description |\n|------|-------------|\n${files.map(f => `| \`${normalizePath(f.path)}\` | ${String(f.description || '').trim()} |`).join('\n')}`
+                : '';
+              const reviewedSection = fileTable
+                ? `## Reviewed changes\n\n${reviewedLine}\n\n${fileTable}`
+                : `## Reviewed changes\n\n${reviewedLine}`;
+              sections.push(reviewedSection);
+              return sections.join('\n\n');
+            }
+
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existingSummaryComment = issueComments.find(
+              (comment) =>
+                comment.user?.type === 'Bot' &&
+                comment.body?.includes(summaryMarker),
+            );
+            const isFirstReview = !existingSummaryComment;
+
             let inlinePosted = 0;
             let inlineError = '';
             try {
@@ -319,7 +366,7 @@ jobs:
                   pull_number: issue_number,
                   commit_id: prHeadSha,
                   event: 'COMMENT',
-                  body: `## Pull request overview\n\nCodex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated ${reviewComments.length} comment(s).`,
+                  body: isFirstReview ? buildReviewBody(reviewComments.length) : buildReviewedLine(reviewComments.length),
                   comments: reviewComments,
                 });
                 inlinePosted = reviewComments.length;
@@ -330,7 +377,7 @@ jobs:
                   pull_number: issue_number,
                   commit_id: prHeadSha,
                   event: 'COMMENT',
-                  body: `## Pull request overview\n\nCodex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated no new comments.`,
+                  body: isFirstReview ? buildReviewBody(0) : buildReviewedLine(0),
                 });
               }
             } catch (error) {
@@ -338,31 +385,12 @@ jobs:
               console.warn(`Failed to create review: ${inlineError}`);
             }
 
-            const totalChangedFiles = addedByFile.size;
-            const totalComments = inlinePosted;
-
             const fallbackText = (process.env.CODEX_REVIEW || '').trim();
             const fallbackTextLimited = fallbackText.length > 12000 ? `${fallbackText.slice(0, 12000)}\n...<truncated>` : fallbackText;
             const fallbackSummary = fallbackText
               ? `Could not parse structured Codex output. Raw response:\n\n\`\`\`\n${fallbackTextLimited}\n\`\`\``
               : 'Codex returned an empty response.';
 
-            const commentLabel = totalComments > 0 ? `${totalComments} comment(s)` : 'no new comments';
-            const overviewLine = parsed
-              ? `Codex reviewed ${totalChangedFiles} out of ${totalChangedFiles} changed files in this pull request and generated ${commentLabel}.`
-              : '';
-
-            const findingsPreview =
-              findings.length > 0
-                ? findings
-                    .filter((f) => f.title && f.path && Number.isInteger(f.line) && f.line > 0)
-                    .slice(0, 10)
-                    .map((f) => {
-                      const label = { high: 'Caution', medium: 'Warning', low: 'Note' }[f.severity] || 'Warning';
-                      return `- **${label}:** ${f.title} (\`${f.path}:${f.line}\`)`;
-                    })
-                    .join('\n')
-                : '';
             const executionNotes = [
               skippedInvalidLocation > 0 ? `Skipped ${skippedInvalidLocation} finding(s) not on changed RIGHT-side lines.` : null,
               skippedIncomplete > 0 ? `Skipped ${skippedIncomplete} incomplete finding(s).` : null,
@@ -371,35 +399,22 @@ jobs:
               .filter(Boolean)
               .join('\n');
 
+            const reviewedLine = buildReviewedLine(inlinePosted);
             const footer = `---\n*Generated by [Codex Review](${process.env.RUN_URL}) using ${process.env.CODEX_MODEL}*`;
             const bodySections = [
               summaryMarker,
               '## Pull request overview',
-              parsed ? overviewLine : fallbackSummary,
-              findingsPreview ? `### Findings\n${findingsPreview}` : '',
-              executionNotes ? `### Review Metadata\n${executionNotes}` : '',
+              parsed ? reviewedLine : fallbackSummary,
+              executionNotes ? `### Review metadata\n${executionNotes}` : '',
               footer,
             ].filter(Boolean);
             const body = bodySections.join('\n\n').trim();
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            });
-
-            const existing = comments.find(
-              (comment) =>
-                comment.user?.type === 'Bot' &&
-                comment.body?.includes(summaryMarker),
-            );
-
-            if (existing) {
+            if (existingSummaryComment) {
               await github.rest.issues.updateComment({
                 owner,
                 repo,
-                comment_id: existing.id,
+                comment_id: existingSummaryComment.id,
                 body,
               });
             } else {
