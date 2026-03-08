@@ -578,6 +578,89 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             self.assertEqual(len(fails), 1)
             self.assertIn("nonexistent.md", fails[0])
 
+    def test_unreachable_file_in_inlined_skill_scanned(self) -> None:
+        """A file in an inlined skill NOT referenced from SKILL.md but
+        having its own external dependency should still be scanned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing SKILL.md does NOT reference the helper file
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n# Testing\n",
+            )
+            # But the helper file references a shared external doc
+            shared_ref = os.path.join(system_root, "references", "shared-guide.md")
+            write_text(shared_ref, "# Shared Guide\n")
+            write_text(
+                os.path.join(testing, "references", "helper.md"),
+                "See [shared](../../../references/shared-guide.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The shared guide should be discovered even though it's
+            # only reachable from the unreferenced helper.md
+            self.assertIn(os.path.abspath(shared_ref), result["external_files"])
+
+    def test_unreachable_broken_ref_in_inlined_skill_reported(self) -> None:
+        """A broken reference in an unreferenced file inside an inlined
+        skill should still produce a FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # SKILL.md is clean
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n# Testing\n",
+            )
+            # But an unreferenced file has a broken reference to a
+            # non-existent file within the skill (using a relative path
+            # that stays within the skill boundary).
+            write_text(
+                os.path.join(testing, "references", "broken.md"),
+                "See [missing](nonexistent.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            fails = [e for e in result["errors"] if "FAIL" in e]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("nonexistent.md", fails[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -715,19 +715,35 @@ def scan_references(
                         if inline_orchestrated_skills:
                             # Collect for inlining instead of rejecting.
                             abs_skill_dir = os.path.abspath(containing_skill)
+                            already_collected = abs_skill_dir in inlined_skills
                             inlined_skills[abs_skill_dir] = other_skill_name
                             # The resolved file is inside the skill being
                             # inlined — do NOT add it to external_files
                             # (it will be copied as part of the full skill
-                            # directory during inlining).  Still recurse
-                            # into the file so its own dependencies (e.g.
-                            # shared references, roles) and any validation
-                            # issues are discovered.
-                            if resolved not in scanned_external:
-                                scanned_external.add(resolved)
-                                new_set = ancestor_set | frozenset({resolved})
-                                new_path = ancestor_path + (resolved,)
-                                _scan_file(resolved, depth + 1, new_set, new_path)
+                            # directory during inlining).
+                            #
+                            # When a skill is first collected, scan ALL
+                            # files in its directory tree so that every
+                            # external dependency and validation issue is
+                            # discovered — not just those reachable from
+                            # the single referenced entry point.
+                            if not already_collected:
+                                inlined_boundary = (
+                                    abs_skill_dir if system_root is None
+                                    else system_root
+                                )
+                                for iroot, ifilename in walk_skill_files(
+                                    abs_skill_dir,
+                                    exclude_patterns or BUNDLE_EXCLUDE_PATTERNS,
+                                    inlined_boundary,
+                                ):
+                                    ifile = os.path.join(iroot, ifilename)
+                                    if ifile not in scanned_external:
+                                        scanned_external.add(ifile)
+                                        _scan_file(
+                                            ifile, depth + 1,
+                                            frozenset(), (),
+                                        )
                             continue
                         errors.append(
                             f"{LEVEL_FAIL}: Cross-skill reference in "

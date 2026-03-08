@@ -96,7 +96,7 @@ Add tests covering:
 
 ## Verification
 
-1. Bundle a Path 1 coordination skill: `python skill-system-foundry/scripts/bundle.py release-coordinator --root .agents --inline-orchestrated-skills`
+1. Bundle a Path 1 coordination skill: `python skill-system-foundry/scripts/bundle.py release-coordinator --system-root .agents --inline-orchestrated-skills`
 2. Resulting zip contains `capabilities/<skill-name>/capability.md` for each referenced skill
 3. Role references within the bundle point to the correct capability paths
 4. Without `--inline-orchestrated-skills`, cross-skill references still fail validation

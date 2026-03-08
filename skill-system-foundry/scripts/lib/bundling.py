@@ -571,6 +571,20 @@ def _copy_inlined_skills(
 
             src = os.path.join(root, filename)
             dst = os.path.join(target_root, target_filename)
+
+            # Guard against destination collisions — e.g. a skill that
+            # already contains a capability.md alongside SKILL.md would
+            # cause a silent overwrite after the rename.
+            if os.path.exists(dst):
+                rel_src = os.path.relpath(src, abs_skill_dir).replace(os.sep, "/")
+                rel_dst = os.path.relpath(dst, cap_dir).replace(os.sep, "/")
+                raise ValueError(
+                    f"Cannot inline skill file due to destination collision: "
+                    f"copying '{skill_name}/{rel_src}' would overwrite "
+                    f"'{DIR_CAPABILITIES}/{skill_name}/{rel_dst}'. "
+                    f"Rename or remove the conflicting file before bundling."
+                )
+
             try:
                 shutil.copy2(src, dst)
             except OSError as e:

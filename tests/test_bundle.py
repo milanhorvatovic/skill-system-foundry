@@ -426,6 +426,26 @@ class CopyInlinedSkillsTests(unittest.TestCase):
                 os.path.exists(os.path.join(bundle_dir, "capabilities", "testing", "link.txt"))
             )
 
+    def test_skill_with_existing_capability_md_raises_collision(self) -> None:
+        """An inlined skill containing both SKILL.md and capability.md raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            testing = os.path.join(system_root, "skills", "testing")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            # Pre-existing capability.md in the source skill
+            write_text(os.path.join(testing, "capability.md"), "# Existing\n")
+
+            inlined_skills = {os.path.abspath(testing): "testing"}
+            with self.assertRaises(ValueError) as cm:
+                _copy_inlined_skills(
+                    inlined_skills, bundle_dir, [], system_root,
+                )
+
+            self.assertIn("destination collision", str(cm.exception))
+
 
 class InlinedBundleIntegrationTests(unittest.TestCase):
     """End-to-end tests for bundling with --inline-orchestrated-skills."""
