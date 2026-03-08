@@ -971,7 +971,7 @@ def scan_references(
                                 # inlined skill walk into FAIL entries.
                                 for iv in inlined_violations:
                                     iv_rel = os.path.relpath(
-                                        iv.link_path, abs_skill_dir
+                                        iv.link_path, primary_dir
                                     ).replace(os.sep, "/")
                                     errors.append(
                                          f"{LEVEL_FAIL}: Symlinked {iv.kind} "
