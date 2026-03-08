@@ -508,7 +508,16 @@ def scan_references(
     warnings: list[str] = []
     reference_map: dict[str, list[ResolvedRef]] = {}
     # Skill directories collected for inlining (only when flag is set).
+    # Keys are abspath for consistency with the rest of the codebase.
     inlined_skills: dict[str, str] = {}  # {abs_skill_dir: skill_name}
+    # Canonical set (normcase + realpath) for deduplication — ensures
+    # the same skill referenced via symlinks or different case is not
+    # collected twice.
+    _inlined_canonical: set[str] = set()
+    # Canonical form of the coordinator (top-level skill being bundled)
+    # so we can avoid collecting it for inlining when an inlined skill
+    # references it back.
+    coordinator_canonical = os.path.normcase(os.path.realpath(skill_path))
 
     # External files whose subtrees have been fully traversed.
     scanned_external: set[str] = set()
@@ -736,7 +745,23 @@ def scan_references(
                         if inline_orchestrated_skills:
                             # Collect for inlining instead of rejecting.
                             abs_skill_dir = os.path.abspath(containing_skill)
-                            already_collected = abs_skill_dir in inlined_skills
+                            # Canonical form for deduplication — ensures
+                            # symlinks and case differences don't cause
+                            # the same skill to be collected twice.
+                            canonical_skill_dir = os.path.normcase(
+                                os.path.realpath(abs_skill_dir)
+                            )
+                            # Never inline the coordinator itself —
+                            # a back-reference from an inlined skill to
+                            # the coordinator is a reference to the
+                            # bundle root, not a new skill to inline.
+                            if canonical_skill_dir == coordinator_canonical:
+                                continue
+                            already_collected = (
+                                canonical_skill_dir in _inlined_canonical
+                            )
+                            if not already_collected:
+                                _inlined_canonical.add(canonical_skill_dir)
                             inlined_skills[abs_skill_dir] = other_skill_name
                             # The resolved file is inside the skill being
                             # inlined — do NOT add it to external_files

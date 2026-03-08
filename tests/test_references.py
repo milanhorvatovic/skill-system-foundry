@@ -1033,5 +1033,98 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             self.assertNotIn(abs_helpers, result["external_files"])
 
 
+    def test_coordinator_back_reference_not_inlined(self) -> None:
+        """If an inlined skill references back to the coordinator, the
+        coordinator must NOT be collected for inlining into itself."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill references the coordinator back
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n"
+                "See [coordinator](../coordinator/SKILL.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # Only testing should be inlined, NOT the coordinator
+            self.assertEqual(len(result["inlined_skills"]), 1, (
+                f"Expected only 1 inlined skill (testing), not coordinator. "
+                f"Inlined: {result['inlined_skills']}"
+            ))
+            # The inlined skill should be testing
+            names = list(result["inlined_skills"].values())
+            self.assertIn("testing", names)
+            self.assertNotIn("coordinator", names)
+
+    def test_symlinked_skill_reference_deduplicates(self) -> None:
+        """When the same skill is referenced via a symlink and a direct
+        path, it should only be collected once for inlining."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "doc.md"), "Test doc\n")
+
+            # Create a symlink: skills/testing-alias -> skills/testing
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # Two roles: one references via direct path, one via symlink
+            role_a = os.path.join(system_root, "roles", "role-a.md")
+            role_b = os.path.join(system_root, "roles", "role-b.md")
+            write_text(
+                role_a,
+                "See [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                role_b,
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [a](../../roles/role-a.md)\nSee [b](../../roles/role-b.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # Should only have 1 inlined skill (not 2)
+            self.assertEqual(len(result["inlined_skills"]), 1, (
+                f"Expected exactly 1 inlined skill after dedup. "
+                f"Inlined: {result['inlined_skills']}"
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()
