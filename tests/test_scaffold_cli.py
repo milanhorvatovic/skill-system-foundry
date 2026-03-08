@@ -10,8 +10,6 @@ import sys
 import tempfile
 import unittest
 
-from helpers import write_text
-
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
 )
@@ -30,7 +28,7 @@ def _run(args, cwd):
 
 
 def _list_tree(root):
-    """Return a sorted set of all relative paths (dirs and files) under *root*."""
+    """Return a set of all relative paths (dirs and files) under *root*."""
     paths = set()
     for dirpath, dirnames, filenames in os.walk(root):
         for d in dirnames:
@@ -53,7 +51,7 @@ class StandaloneSkillTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
             skill_dir = os.path.join(tmpdir, "skills", "my-skill")
-            entries = os.listdir(skill_dir)
+            entries = sorted(os.listdir(skill_dir))
             self.assertEqual(entries, ["SKILL.md"])
             self.assertTrue(os.path.isfile(os.path.join(skill_dir, "SKILL.md")))
 
@@ -172,7 +170,7 @@ class CapabilityTests(unittest.TestCase):
             cap_dir = os.path.join(
                 tmpdir, "skills", "my-domain", "capabilities", "my-cap"
             )
-            entries = os.listdir(cap_dir)
+            entries = sorted(os.listdir(cap_dir))
             self.assertEqual(entries, ["capability.md"])
 
     def test_with_references_creates_references_dir(self):
