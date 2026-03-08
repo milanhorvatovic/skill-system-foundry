@@ -180,6 +180,11 @@ class ScanResult(TypedDict):
     # Skill directories to inline as capabilities.  Always present;
     # empty when ``inline_orchestrated_skills`` is ``False``.
     inlined_skills: dict[str, str]  # {abs_skill_dir: skill_name}
+    # Alias roots observed for inlined skills.  Each entry maps an
+    # alias directory (e.g. a symlink) to the primary abs_skill_dir
+    # already recorded in ``inlined_skills``.  Consumers use this to
+    # add rewrite-map entries for alias-path references.
+    inlined_skill_aliases: list[tuple[str, str]]  # [(alias_abs, primary_abs)]
 
 
 def extract_references(filepath: str) -> list[FilteredRef]:
@@ -490,6 +495,8 @@ def scan_references(
             'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
             'inlined_skills': {abs_skill_dir: skill_name} (always present;
                               empty when ``inline_orchestrated_skills`` is False),
+            'inlined_skill_aliases': [(alias_abs, primary_abs), ...] alias
+                              roots for skills referenced via symlinks,
         }
     """
     if max_depth is None:
@@ -510,10 +517,16 @@ def scan_references(
     # Skill directories collected for inlining (only when flag is set).
     # Keys are abspath for consistency with the rest of the codebase.
     inlined_skills: dict[str, str] = {}  # {abs_skill_dir: skill_name}
+    # Alias roots: (alias_abs_dir, primary_abs_dir) for symlink paths
+    # that resolve to an already-collected inlined skill.  Used to add
+    # rewrite-map entries for alias-path references.
+    inlined_skill_aliases: list[tuple[str, str]] = []
     # Canonical set (normcase + realpath) for deduplication — ensures
     # the same skill referenced via symlinks or different case is not
     # collected twice.
     _inlined_canonical: set[str] = set()
+    # Maps canonical_skill_dir -> primary abs_skill_dir for alias lookups.
+    _canonical_to_primary: dict[str, str] = {}
     # Canonical form of the coordinator (top-level skill being bundled)
     # so we can avoid collecting it for inlining when an inlined skill
     # references it back.
@@ -630,12 +643,63 @@ def scan_references(
             # skill are also internal — they will be copied as part of
             # the full skill directory, not as external files.
             if inline_orchestrated_skills:
-                containing_inlined = next(
-                    (name for isd, name in inlined_skills.items()
+                containing_inlined_pair = next(
+                    ((isd, name) for isd, name in inlined_skills.items()
                      if is_within_directory(resolved, isd)),
                     None,
                 )
-                if containing_inlined is not None:
+                if containing_inlined_pair is not None:
+                    matched_isd, containing_inlined = containing_inlined_pair
+                    # Check whether the lexical (normpath) resolved
+                    # path reaches the skill through an alias — i.e.
+                    # a symlink directory that differs from the primary
+                    # inlined skill directory.  ``is_within_directory``
+                    # matched via realpath, but the lexical path may go
+                    # through a different root.
+                    resolved_norm = os.path.normcase(
+                        os.path.abspath(resolved)
+                    )
+                    matched_norm = os.path.normcase(matched_isd)
+                    lexically_within = False
+                    try:
+                        lexically_within = (
+                            os.path.commonpath(
+                                [resolved_norm, matched_norm]
+                            )
+                            == matched_norm
+                        )
+                    except ValueError:
+                        pass
+                    if (
+                        not lexically_within
+                        and system_root is not None
+                    ):
+                        # Derive the alias skill root from the
+                        # lexical resolved path by walking up to
+                        # find a SKILL.md, staying under system_root.
+                        alias_candidate = os.path.dirname(
+                            os.path.abspath(resolved)
+                        )
+                        sr_norm = os.path.normcase(
+                            os.path.abspath(system_root)
+                        )
+                        while alias_candidate != sr_norm:
+                            if os.path.exists(
+                                os.path.join(
+                                    alias_candidate, FILE_SKILL_MD
+                                )
+                            ):
+                                if alias_candidate != matched_isd and (
+                                    alias_candidate, matched_isd
+                                ) not in inlined_skill_aliases:
+                                    inlined_skill_aliases.append(
+                                        (alias_candidate, matched_isd)
+                                    )
+                                break
+                            parent = os.path.dirname(alias_candidate)
+                            if parent == alias_candidate:
+                                break
+                            alias_candidate = parent
                     # text_detected references are not rewritten in the
                     # bundle, so warn about stale paths.
                     if ref_type == "text_detected":
@@ -757,6 +821,20 @@ def scan_references(
                             # the coordinator is a reference to the
                             # bundle root, not a new skill to inline.
                             if canonical_skill_dir == coordinator_canonical:
+                                # text_detected references are not
+                                # rewritten; warn about the stale path.
+                                if ref_type == "text_detected":
+                                    warnings.append(
+                                        f"{LEVEL_WARN}: Non-markdown "
+                                        f"reference to coordinator skill "
+                                        f"detected in "
+                                        f"'{_rel(filepath)}' line "
+                                        f"{line_num}: '{raw_ref}'. This "
+                                        f"reference cannot be "
+                                        f"automatically rewritten in "
+                                        f"the bundle. You may need to "
+                                        f"update it manually."
+                                    )
                                 continue
                             # Derive the skill name from the resolved
                             # real path so aliases don't produce
@@ -769,7 +847,16 @@ def scan_references(
                             )
                             if not already_collected:
                                 _inlined_canonical.add(canonical_skill_dir)
+                                _canonical_to_primary[canonical_skill_dir] = abs_skill_dir
                                 inlined_skills[abs_skill_dir] = canonical_name
+                            else:
+                                # Record the alias so the rewrite map
+                                # covers both path forms.
+                                primary = _canonical_to_primary[canonical_skill_dir]
+                                if abs_skill_dir != primary:
+                                    inlined_skill_aliases.append(
+                                        (abs_skill_dir, primary)
+                                    )
                             # The resolved file is inside the skill being
                             # inlined — do NOT add it to external_files
                             # (it will be copied as part of the full skill
@@ -932,6 +1019,7 @@ def scan_references(
         "warnings": warnings,
         "reference_map": reference_map,
         "inlined_skills": inlined_skills,
+        "inlined_skill_aliases": inlined_skill_aliases,
     }
 
 

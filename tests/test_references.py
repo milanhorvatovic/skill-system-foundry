@@ -1180,5 +1180,99 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             ))
 
 
+    def test_alias_recorded_in_inlined_skill_aliases(self) -> None:
+        """When a skill is referenced via both direct and alias paths,
+        the alias is recorded in inlined_skill_aliases."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Two roles: direct + alias
+            write_text(
+                os.path.join(system_root, "roles", "role-a.md"),
+                "See [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "roles", "role-b.md"),
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [a](../../roles/role-a.md)\nSee [b](../../roles/role-b.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            aliases = result["inlined_skill_aliases"]
+            self.assertEqual(len(aliases), 1, (
+                f"Expected 1 alias entry. Got: {aliases}"
+            ))
+            alias_abs, primary_abs = aliases[0]
+            self.assertIn("testing-alias", alias_abs)
+            # Primary should be the direct path entry
+            self.assertEqual(
+                primary_abs,
+                list(result["inlined_skills"].keys())[0],
+            )
+
+    def test_text_detected_coordinator_back_ref_warns(self) -> None:
+        """A text_detected reference back to the coordinator from an
+        inlined skill emits a WARN (the path won't be rewritten)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Non-markdown file in testing references the coordinator
+            write_text(
+                os.path.join(testing, "config.yaml"),
+                "coordinator: skills/coordinator/SKILL.md\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            warns = [w for w in result["warnings"]
+                     if "coordinator" in w.lower() and "non-markdown" in w.lower()]
+            self.assertGreaterEqual(len(warns), 1, (
+                f"Expected WARN for text_detected coordinator back-ref. "
+                f"Warnings: {result['warnings']}"
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()

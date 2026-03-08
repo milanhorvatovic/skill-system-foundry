@@ -601,6 +601,17 @@ def create_bundle(
         file_mapping.update(inlined_mapping)
         inlined_skill_count = len(inlined_skills)
 
+        # Add alias-path entries to the file mapping so the rewrite
+        # pipeline can rewrite references that use symlink/alias paths
+        # (e.g. skills/testing-alias/SKILL.md -> capabilities/testing/...).
+        aliases = scan_result.get("inlined_skill_aliases", [])
+        for alias_abs, primary_abs in aliases:
+            for abs_source, bundle_rel in list(inlined_mapping.items()):
+                if is_within_directory(abs_source, primary_abs):
+                    rel = os.path.relpath(abs_source, primary_abs)
+                    alias_source = os.path.join(alias_abs, rel)
+                    file_mapping.setdefault(alias_source, bundle_rel)
+
     # Step 3: Rewrite markdown paths
     rewrite_count = 0
     if file_mapping:

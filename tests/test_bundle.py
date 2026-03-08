@@ -737,5 +737,70 @@ class InlinedBundleIntegrationTests(unittest.TestCase):
             self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")
 
 
+    def test_alias_references_rewritten_in_bundle(self) -> None:
+        """When a role references an inlined skill via a symlink alias,
+        the alias path is still rewritten to the capability path."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\ndescription: Coord.\n---\n\n"
+                "See [qa](../../roles/qa-role.md)\n",
+            )
+
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\ndescription: Testing.\n---\n",
+            )
+
+            # Symlink alias
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Role uses the ALIAS path
+            write_text(
+                os.path.join(system_root, "roles", "qa-role.md"),
+                "# QA\nSee [testing](../skills/testing-alias/SKILL.md)\n",
+            )
+
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: test\n")
+
+            errors, _, scan_result = prevalidate(
+                coordinator, system_root, inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [])
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, _, _ = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base, inline_orchestrated_skills=True,
+            )
+
+            qa_path = os.path.join(bundle_dir, "roles", "qa-role.md")
+            with open(qa_path, "r", encoding="utf-8") as f:
+                qa_content = f.read()
+
+            # The alias reference should be rewritten
+            self.assertIn("capabilities/testing/capability.md", qa_content, (
+                f"Alias reference should be rewritten. Content: {qa_content}"
+            ))
+            self.assertNotIn("testing-alias", qa_content, (
+                f"Alias name should not remain. Content: {qa_content}"
+            ))
+
+            post_errors = postvalidate(bundle_dir)
+            self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")
+
+
 if __name__ == "__main__":
     unittest.main()
