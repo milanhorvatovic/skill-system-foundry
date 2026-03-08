@@ -393,6 +393,39 @@ class CopyInlinedSkillsTests(unittest.TestCase):
 
             self.assertIn("already exists", str(cm.exception))
 
+    def test_symlink_within_skill_boundary_allowed_without_system_root(self) -> None:
+        """Symlinks within an inlined skill are allowed when system_root is None."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            testing = os.path.join(tmpdir, "skills", "testing")
+            shared_file = os.path.join(testing, "shared", "data.txt")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(shared_file, "shared data")
+
+            # Create a symlink within the skill pointing to another file
+            # in the same skill directory tree.
+            link_path = os.path.join(testing, "link.txt")
+            try:
+                os.symlink(shared_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            inlined_skills = {os.path.abspath(testing): "testing"}
+            # system_root=None — boundary should be the skill dir itself
+            mapping = _copy_inlined_skills(
+                inlined_skills, bundle_dir, [], None,
+            )
+
+            # Symlinked file should be copied
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "capabilities", "testing", "link.txt"))
+            )
+
 
 class InlinedBundleIntegrationTests(unittest.TestCase):
     """End-to-end tests for bundling with --inline-orchestrated-skills."""
@@ -623,6 +656,62 @@ class InlinedBundleIntegrationTests(unittest.TestCase):
             self.assertIn("capabilities/deployment/capability.md", qa_content)
             self.assertNotIn("skills/testing/SKILL.md", qa_content)
             self.assertNotIn("skills/deployment/SKILL.md", qa_content)
+
+            post_errors = postvalidate(bundle_dir)
+            self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")
+
+    def test_inlined_skill_transitive_deps_included(self) -> None:
+        """External references from inlined skills are discovered and bundled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\n"
+                "name: coordinator\n"
+                "description: Coordinates across domains.\n"
+                "---\n\n"
+                "# Coordinator\n\n"
+                "See [qa](../../roles/qa-role.md)\n",
+            )
+
+            # Domain skill references a shared external reference
+            testing = os.path.join(system_root, "skills", "testing")
+            shared_ref = os.path.join(system_root, "references", "shared-guide.md")
+            write_text(shared_ref, "# Shared Guide\n")
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\ndescription: Testing.\n---\n"
+                "See [shared](../../references/shared-guide.md)\n",
+            )
+
+            write_text(
+                os.path.join(system_root, "roles", "qa-role.md"),
+                "# QA\nSee [testing](../skills/testing/SKILL.md)\n",
+            )
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: test\n")
+
+            errors, _, scan_result = prevalidate(
+                coordinator, system_root, inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [], f"Unexpected errors: {errors}")
+            # The shared guide must have been discovered as an external file
+            self.assertIn(
+                os.path.abspath(shared_ref), scan_result["external_files"],
+            )
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, _, _ = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base, inline_orchestrated_skills=True,
+            )
+
+            # The shared guide should be in the bundle
+            self.assertTrue(
+                os.path.exists(os.path.join(bundle_dir, "references", "shared-guide.md"))
+            )
 
             post_errors = postvalidate(bundle_dir)
             self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")

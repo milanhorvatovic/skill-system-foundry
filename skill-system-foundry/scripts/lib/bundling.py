@@ -542,9 +542,13 @@ def _copy_inlined_skills(
     the main ``file_mapping`` used by the rewriter.
     """
     file_mapping: dict[str, str] = {}
-    boundary = bundle_dir if system_root is None else system_root
 
     for abs_skill_dir, skill_name in sorted(inlined_skills.items()):
+        # Use the same boundary logic as _copy_skill: when no system
+        # root is available, the skill's own directory is the boundary
+        # so that symlinks within the skill are not incorrectly rejected.
+        boundary = abs_skill_dir if system_root is None else system_root
+
         cap_dir = os.path.join(bundle_dir, DIR_CAPABILITIES, skill_name)
         if os.path.exists(cap_dir):
             raise ValueError(

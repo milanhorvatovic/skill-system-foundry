@@ -488,7 +488,8 @@ def scan_references(
             'errors':         list of FAIL strings,
             'warnings':       list of WARN strings,
             'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
-            'inlined_skills': {abs_skill_dir: skill_name} (only with inline flag),
+            'inlined_skills': {abs_skill_dir: skill_name} (populated only when
+                              ``inline_orchestrated_skills`` is True),
         }
     """
     if max_depth is None:
@@ -606,9 +607,18 @@ def scan_references(
                     )
                 continue
 
-            # ---- Internal (within the skill) ----
+            # ---- Internal (within the skill or an already-collected
+            #      inlined skill) ----
             # Treat files whose real path is within the skill as internal.
             if is_within_directory(resolved, skill_path):
+                continue
+            # When inlining, files inside an already-collected inlined
+            # skill are also internal — they will be copied as part of
+            # the full skill directory, not as external files.
+            if inline_orchestrated_skills and any(
+                is_within_directory(resolved, isd)
+                for isd in inlined_skills
+            ):
                 continue
 
             # For entries that are only lexically within the skill (i.e.
@@ -709,7 +719,15 @@ def scan_references(
                             # The resolved file is inside the skill being
                             # inlined — do NOT add it to external_files
                             # (it will be copied as part of the full skill
-                            # directory during inlining).
+                            # directory during inlining).  Still recurse
+                            # into the file so its own dependencies (e.g.
+                            # shared references, roles) and any validation
+                            # issues are discovered.
+                            if resolved not in scanned_external:
+                                scanned_external.add(resolved)
+                                new_set = ancestor_set | frozenset({resolved})
+                                new_path = ancestor_path + (resolved,)
+                                _scan_file(resolved, depth + 1, new_set, new_path)
                             continue
                         errors.append(
                             f"{LEVEL_FAIL}: Cross-skill reference in "

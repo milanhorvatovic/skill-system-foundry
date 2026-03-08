@@ -471,6 +471,113 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             self.assertEqual(result["errors"], [])
             self.assertEqual(result["inlined_skills"], {})
 
+    def test_inlined_skill_transitive_external_deps_collected(self) -> None:
+        """External files referenced by an inlined skill are collected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill references an external shared reference
+            shared_guide = os.path.join(system_root, "references", "shared-guide.md")
+            write_text(shared_guide, "# Shared Guide\n")
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [guide](../../references/shared-guide.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The shared guide should be discovered as an external file
+            self.assertIn(os.path.abspath(shared_guide), result["external_files"])
+            # Both the role and the shared guide should be external
+            self.assertIn(os.path.abspath(role_file), result["external_files"])
+
+    def test_inlined_skill_internal_refs_not_external(self) -> None:
+        """Files inside an inlined skill that reference other files in
+        the same skill should not appear in external_files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has internal references between its own files
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [guide](references/test-guide.md)\n",
+            )
+            internal_guide = os.path.join(testing, "references", "test-guide.md")
+            write_text(internal_guide, "# Internal Guide\n")
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The internal guide should NOT be in external_files
+            self.assertNotIn(os.path.abspath(internal_guide), result["external_files"])
+
+    def test_inlined_skill_broken_ref_produces_fail(self) -> None:
+        """A broken reference inside an inlined skill is still reported."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has a broken reference
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [missing](references/nonexistent.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            fails = [e for e in result["errors"] if "Broken reference" in e]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("nonexistent.md", fails[0])
+
 
 if __name__ == "__main__":
     unittest.main()
