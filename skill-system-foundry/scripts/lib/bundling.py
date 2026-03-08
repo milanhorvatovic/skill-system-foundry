@@ -645,9 +645,26 @@ def create_bundle(
         # pipeline can rewrite references that use symlink/alias paths
         # (e.g. skills/testing-alias/SKILL.md -> capabilities/testing/...).
         aliases = scan_result.get("inlined_skill_aliases", [])
-        for alias_abs, primary_abs in aliases:
-            for abs_source, bundle_rel in list(inlined_mapping.items()):
-                if is_within_directory(abs_source, primary_abs):
+        if aliases:
+            # Group inlined files by their primary skill root so we
+            # avoid rescanning the entire inlined_mapping for every
+            # alias.  This reduces O(aliases × inlined_files) to
+            # O(inlined_files + aliases × files_per_skill).
+            primary_roots = {primary_abs for _alias_abs, primary_abs in aliases}
+            primary_to_sources: dict[str, list[tuple[str, str]]] = {
+                pr: [] for pr in primary_roots
+            }
+            for abs_source, bundle_rel in inlined_mapping.items():
+                for pr in primary_roots:
+                    if is_within_directory(abs_source, pr):
+                        primary_to_sources[pr].append(
+                            (abs_source, bundle_rel)
+                        )
+
+            for alias_abs, primary_abs in aliases:
+                for abs_source, bundle_rel in primary_to_sources.get(
+                    primary_abs, ()
+                ):
                     rel = os.path.relpath(abs_source, primary_abs)
                     alias_source = os.path.join(alias_abs, rel)
                     file_mapping.setdefault(alias_source, bundle_rel)
