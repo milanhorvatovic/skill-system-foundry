@@ -69,7 +69,7 @@ graph TD
 
 - **Skills** define *what* to do — canonical, AI-agnostic knowledge. Standalone for focused tasks, router for complex domains. A skill can load one or more **roles** for interactive workflow logic.
 - **Roles** define *who* orchestrates — composing multiple skills/capabilities into workflows with responsibility, authority, and constraints. Roles never reference other roles; when orchestration spans multiple roles, a coordination skill sequences them.
-- **Dependencies flow downward** — a capability never knows it's being orchestrated; changes propagate predictably.
+- **Dependencies flow downward in composition** — roles compose skills and capabilities; capabilities never know they are being orchestrated. The only upward references are orchestration skills that load roles by contract.
 
 For the full architecture (orchestration paths, dependency rules, manifest), see the [Architecture wiki page](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Architecture).
 
