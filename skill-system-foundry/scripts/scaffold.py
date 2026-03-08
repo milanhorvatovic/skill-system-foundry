@@ -3,18 +3,22 @@
 Scaffold new skill system components from templates.
 
 Usage:
-    python scripts/scaffold.py skill <name> [--router] [--root <path>]
-    python scripts/scaffold.py capability <domain> <name> [--root <path>]
+    python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets]
+    python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references]
     python scripts/scaffold.py role <group> <name> [--root <path>]
 
 Options:
-    --root <path>   Base directory for output (default: current working
-                    directory). Use --root .agents to scaffold into
-                    .agents/skills/, .agents/roles/, etc.
+    --root <path>        Base directory for output (default: current working
+                         directory). Use --root .agents to scaffold into
+                         .agents/skills/, .agents/roles/, etc.
+    --with-references    Also create an empty references/ directory
+    --with-scripts       Also create an empty scripts/ directory
+    --with-assets        Also create an empty assets/ directory
 
 Examples:
     python scripts/scaffold.py skill my-skill
     python scripts/scaffold.py skill my-skill --root .agents
+    python scripts/scaffold.py skill my-skill --with-references --with-scripts
     python scripts/scaffold.py skill my-domain --router
     python scripts/scaffold.py capability my-domain my-capability
     python scripts/scaffold.py role my-group my-role
@@ -96,8 +100,18 @@ def create_dir_with_gitkeep(path):
             pass
 
 
-def scaffold_skill(name, router=False, root=""):
-    """Create a new skill directory."""
+def scaffold_skill(name, router=False, root="", optional_dirs=None):
+    """Create a new skill directory.
+
+    Args:
+        name: Skill name (lowercase + hyphens).
+        router: If True, create a router skill with capabilities/.
+        root: Base directory for output.
+        optional_dirs: List of optional directories to create (e.g.
+            references/, scripts/, assets/). Empty by default.
+    """
+    if optional_dirs is None:
+        optional_dirs = []
     if not validate_name(name):
         sys.exit(1)
 
@@ -115,13 +129,10 @@ def scaffold_skill(name, router=False, root=""):
         )
         write_file(os.path.join(skill_path, FILE_SKILL_MD), content)
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_CAPABILITIES))
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_REFERENCES))
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_SCRIPTS))
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_ASSETS))
         print(f"  Created: {os.path.join(skill_path, DIR_CAPABILITIES)}")
-        print(f"  Created: {os.path.join(skill_path, DIR_REFERENCES)}")
-        print(f"  Created: {os.path.join(skill_path, DIR_SCRIPTS)}")
-        print(f"  Created: {os.path.join(skill_path, DIR_ASSETS)}")
+        for d in optional_dirs:
+            create_dir_with_gitkeep(os.path.join(skill_path, d))
+            print(f"  Created: {os.path.join(skill_path, d)}")
         print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
     else:
         template = read_template(TEMPLATE_SKILL_STANDALONE)
@@ -130,12 +141,9 @@ def scaffold_skill(name, router=False, root=""):
             PH_SKILL_TITLE, title
         )
         write_file(os.path.join(skill_path, FILE_SKILL_MD), content)
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_REFERENCES))
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_SCRIPTS))
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_ASSETS))
-        print(f"  Created: {os.path.join(skill_path, DIR_REFERENCES)}")
-        print(f"  Created: {os.path.join(skill_path, DIR_SCRIPTS)}")
-        print(f"  Created: {os.path.join(skill_path, DIR_ASSETS)}")
+        for d in optional_dirs:
+            create_dir_with_gitkeep(os.path.join(skill_path, d))
+            print(f"  Created: {os.path.join(skill_path, d)}")
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Skill '{name}' scaffolded at {skill_path}")
@@ -143,8 +151,18 @@ def scaffold_skill(name, router=False, root=""):
     print(f"  Next: edit {skill_md_path} and update {manifest_path}")
 
 
-def scaffold_capability(domain, name, root=""):
-    """Create a new capability under an existing router skill."""
+def scaffold_capability(domain, name, root="", optional_dirs=None):
+    """Create a new capability under an existing router skill.
+
+    Args:
+        domain: Parent router skill name.
+        name: Capability name (lowercase + hyphens).
+        root: Base directory for output.
+        optional_dirs: List of optional directories to create (e.g.
+            references/). Empty by default.
+    """
+    if optional_dirs is None:
+        optional_dirs = []
     if not validate_name(domain):
         sys.exit(1)
     if not validate_name(name):
@@ -166,8 +184,9 @@ def scaffold_capability(domain, name, root=""):
         PH_CAPABILITY_TITLE, title
     )
     write_file(os.path.join(cap_path, FILE_CAPABILITY_MD), content)
-    create_dir_with_gitkeep(os.path.join(cap_path, DIR_REFERENCES))
-    print(f"  Created: {os.path.join(cap_path, DIR_REFERENCES)}")
+    for d in optional_dirs:
+        create_dir_with_gitkeep(os.path.join(cap_path, d))
+        print(f"  Created: {os.path.join(cap_path, d)}")
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Capability '{name}' scaffolded at {cap_path}")
@@ -214,6 +233,18 @@ def scaffold_role(group, name, root=""):
     print(f"  Next: update {manifest_path}")
 
 
+def _parse_optional_dirs(flags):
+    """Return list of optional directory constants requested via --with-* flags."""
+    dirs = []
+    if "--with-references" in flags:
+        dirs.append(DIR_REFERENCES)
+    if "--with-scripts" in flags:
+        dirs.append(DIR_SCRIPTS)
+    if "--with-assets" in flags:
+        dirs.append(DIR_ASSETS)
+    return dirs
+
+
 def main():
     args = sys.argv[:]
 
@@ -237,17 +268,21 @@ def main():
         positional = [a for a in args[2:] if not a.startswith("--")]
         flags = [a for a in args[2:] if a.startswith("--")]
         if not positional:
-            print("Usage: python scaffold.py skill <name> [--router]")
+            print("Usage: python scaffold.py skill <name> [--router] [--with-references] [--with-scripts] [--with-assets]")
             sys.exit(1)
         name = positional[0]
         router = "--router" in flags
-        scaffold_skill(name, router, root)
+        optional_dirs = _parse_optional_dirs(flags)
+        scaffold_skill(name, router, root, optional_dirs)
 
     elif component == "capability":
-        if len(args) < 4:
-            print("Usage: python scaffold.py capability <domain> <name>")
+        positional = [a for a in args[2:] if not a.startswith("--")]
+        flags = [a for a in args[2:] if a.startswith("--")]
+        if len(positional) < 2:
+            print("Usage: python scaffold.py capability <domain> <name> [--with-references]")
             sys.exit(1)
-        scaffold_capability(args[2], args[3], root)
+        optional_dirs = _parse_optional_dirs(flags)
+        scaffold_capability(positional[0], positional[1], root, optional_dirs)
 
     elif component == "role":
         if len(args) < 4:
