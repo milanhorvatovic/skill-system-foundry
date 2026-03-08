@@ -294,14 +294,12 @@ jobs:
                 continue;
               }
 
-              const severityLabel = ['high', 'medium', 'low'].includes(finding.severity)
-                ? finding.severity.toUpperCase()
-                : 'MEDIUM';
+              const alertType = { high: 'CAUTION', medium: 'WARNING', low: 'NOTE' }[finding.severity] || 'WARNING';
               reviewComments.push({
                 path: finding.path,
                 line: finding.line,
                 side: 'RIGHT',
-                body: `**[${severityLabel}] ${finding.title}**\n\n${finding.comment}\n\n<!-- codex-inline:${signature} -->`,
+                body: `> [!${alertType}]\n> **${finding.title}**\n> ${finding.comment.split('\n').join('\n> ')}\n\n<!-- codex-inline:${signature} -->`,
               });
 
               if (reviewComments.length >= maxInlineConversations) {
@@ -357,7 +355,10 @@ jobs:
                 ? findings
                     .filter((f) => f.title && f.path && Number.isInteger(f.line) && f.line > 0)
                     .slice(0, 10)
-                    .map((f) => `- [${(f.severity || 'medium').toUpperCase()}] ${f.title} (${f.path}:${f.line})`)
+                    .map((f) => {
+                      const label = { high: 'Caution', medium: 'Warning', low: 'Note' }[f.severity] || 'Warning';
+                      return `- **${label}:** ${f.title} (\`${f.path}:${f.line}\`)`;
+                    })
                     .join('\n')
                 : '';
             const executionNotes = [
