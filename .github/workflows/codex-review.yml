@@ -21,29 +21,52 @@ jobs:
   codex-review:
     if: >-
       !github.event.pull_request.draft &&
-      vars.CODEX_REVIEW_USERS != '' &&
-      contains(
-        format(',{0},', vars.CODEX_REVIEW_USERS),
-        format(',{0},', github.event.pull_request.user.login)
-      )
+      vars.CODEX_REVIEW_USERS != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+      REVIEW_USERS_RAW: ${{ vars.CODEX_REVIEW_USERS }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
     steps:
+      - name: Check PR author allowlist
+        id: allowlist
+        shell: bash
+        run: |
+          allowed=false
+          normalized_users="$(
+            printf '%s' "$REVIEW_USERS_RAW" \
+              | tr ',\r\n\t' '\n' \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+              | sed '/^$/d'
+          )"
+
+          while IFS= read -r username; do
+            if [ "$username" = "$PR_AUTHOR" ]; then
+              allowed=true
+              break
+            fi
+          done <<< "$normalized_users"
+
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" != "true" ]; then
+            echo "PR author '$PR_AUTHOR' is not in CODEX_REVIEW_USERS. Skipping review."
+          fi
+
       - name: Checkout PR
+        if: ${{ steps.allowlist.outputs.allowed == 'true' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
           fetch-depth: 0
 
       - name: Skip when OPENAI_API_KEY is missing
-        if: ${{ env.HAS_OPENAI_API_KEY != 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY != 'true' }}
         run: echo "OPENAI_API_KEY is not set. Skipping Codex review."
 
       - name: Build PR diff
         id: diff
-        if: ${{ env.HAS_OPENAI_API_KEY == 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
         run: |
           git diff --no-color --unified=3 \
             "${{ github.event.pull_request.base.sha }}" \
@@ -56,7 +79,7 @@ jobs:
           fi
 
       - name: Run Codex review
-        if: ${{ env.HAS_OPENAI_API_KEY == 'true' && steps.diff.outputs.has_changes == 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' && steps.diff.outputs.has_changes == 'true' }}
         id: codex
         uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4
         with:
@@ -87,7 +110,7 @@ jobs:
             ${{ github.event.pull_request.body }}
 
       - name: Upsert PR comment
-        if: ${{ env.HAS_OPENAI_API_KEY == 'true' && steps.codex.outputs.final-message != '' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' && steps.codex.outputs.final-message != '' }}
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
         env:
           CODEX_REVIEW: ${{ steps.codex.outputs.final-message }}
