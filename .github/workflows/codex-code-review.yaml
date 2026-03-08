@@ -251,7 +251,8 @@ jobs:
               return String(pathValue || '')
                 .trim()
                 .replace(/^`+|`+$/g, '')
-                .replace(/^\.\/+/, '');
+                .replace(/^\.\/+/, '')
+                .replace(/^(?:a|b)\//, '');
             }
 
             function escapeTableCell(text) {
