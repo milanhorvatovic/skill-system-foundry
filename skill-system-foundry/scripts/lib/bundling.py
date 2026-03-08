@@ -339,7 +339,6 @@ def _build_rewrite_map(
     file_mapping: dict[str, str],
     reverse_mapping: dict[str, str],
     skill_files: dict[str, str],
-    inlined_skills: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build the old-path -> new-path map used for rewriting one file.
 
@@ -347,14 +346,7 @@ def _build_rewrite_map(
     for files that originated from the skill directory.  This allows
     system-root-relative references to skill-internal files (e.g.
     ``skills/<name>/SKILL.md`` in inlined roles) to be rewritten.
-
-    *inlined_skills* maps ``{abs_skill_dir: skill_name}`` for skills
-    inlined as capabilities.  When provided, system-root-relative
-    references to files in those skills are rewritten to the
-    ``capabilities/<name>/`` copies.
     """
-    if inlined_skills is None:
-        inlined_skills = {}
     bundle_file_dir = os.path.dirname(bundle_file)
     rewrite_map: dict[str, str] = {}
 
@@ -390,23 +382,6 @@ def _build_rewrite_map(
             except ValueError:
                 pass
 
-    # Add system-root-relative paths for files inside inlined skills.
-    # E.g. "skills/testing/SKILL.md" -> "capabilities/testing/capability.md"
-    if system_root and inlined_skills:
-        for abs_source, bundle_rel in sorted(file_mapping.items(), key=lambda item: item[1]):
-            # Only process files that belong to an inlined skill.
-            for abs_skill_dir in inlined_skills:
-                if is_within_directory(abs_source, abs_skill_dir):
-                    abs_target = os.path.join(bundle_dir, bundle_rel)
-                    new_rel = os.path.relpath(abs_target, bundle_file_dir).replace(os.sep, "/")
-                    try:
-                        system_rel = os.path.relpath(abs_source, system_root)
-                        rewrite_map.setdefault(system_rel, new_rel)
-                        rewrite_map.setdefault(system_rel.replace(os.sep, "/"), new_rel)
-                    except ValueError:
-                        pass
-                    break
-
     return rewrite_map
 
 
@@ -415,18 +390,8 @@ def _rewrite_markdown_paths(
     skill_path: str,
     system_root: str | None,
     file_mapping: dict[str, str],
-    *,
-    inlined_skills: dict[str, str] | None = None,
 ) -> int:
-    """Rewrite file references in all markdown files within the bundle.
-
-    *inlined_skills* maps ``{abs_skill_dir: skill_name}`` for skills
-    inlined as capabilities.  When provided, system-root-relative
-    references to files in those skills are rewritten to point to the
-    ``capabilities/<name>/`` copies.
-    """
-    if inlined_skills is None:
-        inlined_skills = {}
+    """Rewrite file references in all markdown files within the bundle."""
     rewrite_count = 0
     reverse_mapping = {
         bundle_rel: abs_source for abs_source, bundle_rel in file_mapping.items()
@@ -458,7 +423,6 @@ def _rewrite_markdown_paths(
                 file_mapping,
                 reverse_mapping,
                 skill_files,
-                inlined_skills,
             )
             if not rewrite_map:
                 continue
@@ -642,7 +606,6 @@ def create_bundle(
     if file_mapping:
         rewrite_count = _rewrite_markdown_paths(
             bundle_dir, skill_path, system_root, file_mapping,
-            inlined_skills=inlined_skills if inline_orchestrated_skills else {},
         )
 
     # Compute stats

@@ -1124,6 +1124,60 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
                 f"Expected exactly 1 inlined skill after dedup. "
                 f"Inlined: {result['inlined_skills']}"
             ))
+            # The name should be the canonical directory name, not the alias
+            names = list(result["inlined_skills"].values())
+            self.assertIn("testing", names)
+            self.assertNotIn("testing-alias", names)
+
+    def test_alias_first_reference_uses_canonical_name(self) -> None:
+        """When the first cross-skill reference is through a symlink alias,
+        the capability name must still be the canonical (realpath-resolved)
+        directory name, not the alias."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Create alias symlink
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # Role references ONLY via alias — this is the first (and only)
+            # reference, so it determines the inlined skill name.
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            # Name must be canonical ("testing"), not the alias
+            names = list(result["inlined_skills"].values())
+            self.assertIn("testing", names, (
+                f"Expected canonical name 'testing', got: {names}"
+            ))
+            self.assertNotIn("testing-alias", names, (
+                f"Alias name should not appear: {names}"
+            ))
 
 
 if __name__ == "__main__":

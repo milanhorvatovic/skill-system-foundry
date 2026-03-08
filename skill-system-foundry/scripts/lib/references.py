@@ -748,8 +748,9 @@ def scan_references(
                             # Canonical form for deduplication — ensures
                             # symlinks and case differences don't cause
                             # the same skill to be collected twice.
+                            real_skill_dir = os.path.realpath(abs_skill_dir)
                             canonical_skill_dir = os.path.normcase(
-                                os.path.realpath(abs_skill_dir)
+                                real_skill_dir
                             )
                             # Never inline the coordinator itself —
                             # a back-reference from an inlined skill to
@@ -757,12 +758,18 @@ def scan_references(
                             # bundle root, not a new skill to inline.
                             if canonical_skill_dir == coordinator_canonical:
                                 continue
+                            # Derive the skill name from the resolved
+                            # real path so aliases don't produce
+                            # inconsistent capability directory names.
+                            canonical_name = os.path.basename(
+                                real_skill_dir
+                            )
                             already_collected = (
                                 canonical_skill_dir in _inlined_canonical
                             )
                             if not already_collected:
                                 _inlined_canonical.add(canonical_skill_dir)
-                            inlined_skills[abs_skill_dir] = other_skill_name
+                                inlined_skills[abs_skill_dir] = canonical_name
                             # The resolved file is inside the skill being
                             # inlined — do NOT add it to external_files
                             # (it will be copied as part of the full skill
@@ -800,9 +807,9 @@ def scan_references(
                                         iv.link_path, abs_skill_dir
                                     ).replace(os.sep, "/")
                                     errors.append(
-                                        f"{LEVEL_FAIL}: Symlinked {iv.kind} "
+                                         f"{LEVEL_FAIL}: Symlinked {iv.kind} "
                                         f"in inlined skill "
-                                        f"'{other_skill_name}' escapes "
+                                        f"'{canonical_name}' escapes "
                                         f"allowed boundary rooted at "
                                         f"'{inlined_boundary}': "
                                         f"'{iv_rel}' -> '{iv.real_target}'. "
@@ -819,7 +826,7 @@ def scan_references(
                                     f"reference detected in "
                                     f"'{_rel(filepath)}' line {line_num}: "
                                     f"'{raw_ref}'. This reference points to "
-                                    f"inlined skill '{other_skill_name}' but "
+                                    f"inlined skill '{canonical_name}' but "
                                     f"cannot be automatically rewritten in "
                                     f"the bundle. You may need to update it "
                                     f"manually."
