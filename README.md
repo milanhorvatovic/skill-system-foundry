@@ -120,13 +120,12 @@ Download the latest versioned zip from [Releases](https://github.com/milanhorvat
    Expected output:
    ```
      Created: /path/to/project/.agents/skills/my-skill/SKILL.md
-     Created: /path/to/project/.agents/skills/my-skill/references/
-     Created: /path/to/project/.agents/skills/my-skill/scripts/
-     Created: /path/to/project/.agents/skills/my-skill/assets/
 
    ✓ Skill 'my-skill' scaffolded at /path/to/project/.agents/skills/my-skill
      Next: edit /path/to/project/.agents/skills/my-skill/SKILL.md and update manifest.yaml
    ```
+
+   Optional directories (`references/`, `scripts/`, `assets/`) are not created by default. Add them when needed with `--with-references`, `--with-scripts`, or `--with-assets`.
 
 2. **Validate your work** — Run validation to ensure spec compliance:
    ```bash

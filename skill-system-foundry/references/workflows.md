@@ -22,8 +22,9 @@ Step-by-step procedures for common skill system operations.
 
 2. **Scaffold** (optional):
    ```bash
-   python scripts/scaffold.py skill <skill-name> [--router]
+   python scripts/scaffold.py skill <skill-name> [--router] [--with-references] [--with-scripts] [--with-assets]
    ```
+   By default only `SKILL.md` is created (plus `capabilities/` for routers). Use the `--with-*` flags to include optional directories upfront.
 
 3. **Or create manually** using templates from `assets/`:
    - Standalone: copy `assets/skill-standalone.md` → `skills/<name>/SKILL.md`
