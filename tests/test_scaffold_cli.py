@@ -399,6 +399,12 @@ class UsageStringTests(unittest.TestCase):
         proc = _run([], cwd=REPO_ROOT)
         self.assertIn(".gitkeep", proc.stdout)
 
+    def test_unknown_component_shows_fail_prefix(self):
+        proc = _run(["bogus", "x"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL", proc.stdout)
+        self.assertIn("Unknown component type: bogus", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

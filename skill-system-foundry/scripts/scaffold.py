@@ -327,8 +327,8 @@ def main():
         scaffold_role(positional[0], positional[1], root)
 
     else:
-        print(f"Unknown component type: {component}")
-        print("Valid types: skill, capability, role")
+        print(f"{LEVEL_FAIL}: Unknown component type: {component}")
+        print("  Valid types: skill, capability, role")
         sys.exit(1)
 
 
