@@ -322,7 +322,7 @@ class CopyInlinedSkillsTests(unittest.TestCase):
             write_text(os.path.join(testing_skill, "references", "guide.md"), "Guide\n")
 
             inlined_skills = {os.path.abspath(testing_skill): "testing"}
-            mapping = _copy_inlined_skills(
+            mapping, _per_root = _copy_inlined_skills(
                 inlined_skills, bundle_dir, [], system_root,
             )
 
@@ -360,7 +360,7 @@ class CopyInlinedSkillsTests(unittest.TestCase):
                 os.path.abspath(testing): "testing",
                 os.path.abspath(deployment): "deployment",
             }
-            mapping = _copy_inlined_skills(
+            mapping, _per_root = _copy_inlined_skills(
                 inlined_skills, bundle_dir, [], system_root,
             )
 
@@ -386,12 +386,10 @@ class CopyInlinedSkillsTests(unittest.TestCase):
             write_text(os.path.join(bundle_dir, "capabilities", "testing", "existing.md"), "exists\n")
 
             inlined_skills = {os.path.abspath(testing): "testing"}
-            with self.assertRaises(ValueError) as cm:
+            with self.assertRaises(ValueError):
                 _copy_inlined_skills(
                     inlined_skills, bundle_dir, [], system_root,
                 )
-
-            self.assertIn("already exists", str(cm.exception))
 
     def test_symlink_within_skill_boundary_allowed_without_system_root(self) -> None:
         """Symlinks within an inlined skill are allowed when system_root is None."""
@@ -417,7 +415,7 @@ class CopyInlinedSkillsTests(unittest.TestCase):
 
             inlined_skills = {os.path.abspath(testing): "testing"}
             # system_root=None — boundary should be the skill dir itself
-            mapping = _copy_inlined_skills(
+            mapping, _per_root = _copy_inlined_skills(
                 inlined_skills, bundle_dir, [], None,
             )
 

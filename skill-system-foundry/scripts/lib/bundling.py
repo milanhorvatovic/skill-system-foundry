@@ -522,16 +522,23 @@ def _copy_inlined_skills(
     bundle_dir: str,
     exclude_patterns: list[str],
     system_root: str | None,
-) -> dict[str, str]:
+) -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
     """Copy each inlined skill into ``capabilities/<name>/`` in the bundle.
 
     Renames ``SKILL.md`` to ``capability.md`` in each copy.
 
-    Returns a file mapping ``{abs_source_path: bundle_relative_path}``
-    covering all files from inlined skills, suitable for merging into
-    the main ``file_mapping`` used by the rewriter.
+    Returns ``(file_mapping, per_root)`` where:
+
+    - *file_mapping*: ``{abs_source_path: bundle_relative_path}``
+      covering all files from inlined skills, suitable for merging
+      into the main ``file_mapping`` used by the rewriter.
+    - *per_root*: ``{abs_skill_dir: [(abs_source, bundle_rel), ...]}``
+      grouping copied files by their primary skill root so alias
+      expansion can look up files in O(1) per root without a
+      secondary containment scan.
     """
     file_mapping: dict[str, str] = {}
+    per_root: dict[str, list[tuple[str, str]]] = {}
 
     for abs_skill_dir, skill_name in sorted(inlined_skills.items()):
         # Use the same boundary logic as _copy_skill: when no system
@@ -546,6 +553,8 @@ def _copy_inlined_skills(
                 f"already exists in the bundle. Cannot inline skill "
                 f"'{skill_name}' — resolve the naming conflict."
             )
+
+        root_sources: list[tuple[str, str]] = []
 
         for root, filename in walk_skill_files(
             abs_skill_dir, exclude_patterns, boundary
@@ -587,8 +596,11 @@ def _copy_inlined_skills(
             # Build mapping: source abs path -> bundle relative path
             rel_in_cap = os.path.relpath(dst, bundle_dir).replace(os.sep, "/")
             file_mapping[src] = rel_in_cap
+            root_sources.append((src, rel_in_cap))
 
-    return file_mapping
+        per_root[abs_skill_dir] = root_sources
+
+    return file_mapping, per_root
 
 
 def create_bundle(
@@ -635,7 +647,7 @@ def create_bundle(
     inlined_skill_count = 0
     inlined_skills = scan_result.get("inlined_skills", {})
     if inline_orchestrated_skills and inlined_skills:
-        inlined_mapping = _copy_inlined_skills(
+        inlined_mapping, per_root = _copy_inlined_skills(
             inlined_skills, bundle_dir, exclude_patterns, effective_root,
         )
         file_mapping.update(inlined_mapping)
@@ -644,41 +656,16 @@ def create_bundle(
         # Add alias-path entries to the file mapping so the rewrite
         # pipeline can rewrite references that use symlink/alias paths
         # (e.g. skills/testing-alias/SKILL.md -> capabilities/testing/...).
+        # Uses ``per_root`` (built during the copy phase) for O(1)
+        # per-root lookup instead of scanning all inlined files.
         aliases = scan_result.get("inlined_skill_aliases", [])
-        if aliases:
-            # Group inlined files by their primary skill root so we
-            # avoid rescanning the entire inlined_mapping for every
-            # alias.  This reduces O(aliases × inlined_files) to
-            # O(inlined_files + aliases × files_per_skill).
-            #
-            # Use lexical containment (abspath + commonpath, no
-            # realpath) because inlined skill files may themselves
-            # be symlinks whose real targets are outside the skill
-            # directory.  ``is_within_directory`` would incorrectly
-            # exclude those files since it resolves symlinks.
-            primary_roots = {primary_abs for _alias_abs, primary_abs in aliases}
-            primary_to_sources: dict[str, list[tuple[str, str]]] = {
-                pr: [] for pr in primary_roots
-            }
-            for abs_source, bundle_rel in inlined_mapping.items():
-                src_norm = os.path.normcase(os.path.abspath(abs_source))
-                for pr in primary_roots:
-                    pr_norm = os.path.normcase(os.path.abspath(pr))
-                    try:
-                        if os.path.commonpath([src_norm, pr_norm]) == pr_norm:
-                            primary_to_sources[pr].append(
-                                (abs_source, bundle_rel)
-                            )
-                    except ValueError:
-                        pass
-
-            for alias_abs, primary_abs in aliases:
-                for abs_source, bundle_rel in primary_to_sources.get(
-                    primary_abs, ()
-                ):
-                    rel = os.path.relpath(abs_source, primary_abs)
-                    alias_source = os.path.join(alias_abs, rel)
-                    file_mapping.setdefault(alias_source, bundle_rel)
+        for alias_abs, primary_abs in aliases:
+            for abs_source, bundle_rel in per_root.get(
+                primary_abs, ()
+            ):
+                rel = os.path.relpath(abs_source, primary_abs)
+                alias_source = os.path.join(alias_abs, rel)
+                file_mapping.setdefault(alias_source, bundle_rel)
 
     # Step 3: Rewrite markdown paths
     rewrite_count = 0
