@@ -867,6 +867,81 @@ class InlinedBundleIntegrationTests(unittest.TestCase):
                 f"Post-validation errors: {post_errors}",
             )
 
+    def test_inlined_skill_symlink_with_inferred_root(self) -> None:
+        """When system_root is None, create_bundle should infer the
+        root so that inlined skill symlinks within the inferable root
+        are accepted (matching prevalidate's behavior)."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\ndescription: Coord.\n---\n\n"
+                "See [qa](../../roles/qa-role.md)\n",
+            )
+
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\ndescription: Testing.\n---\n",
+            )
+
+            # Shared reference outside the skill but within system root
+            shared_ref = os.path.join(
+                system_root, "references", "shared.md"
+            )
+            write_text(shared_ref, "# Shared reference\n")
+
+            # Symlink inside the inlined skill pointing to the shared ref
+            link_path = os.path.join(testing, "shared-link.md")
+            try:
+                os.symlink(shared_ref, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            write_text(
+                os.path.join(system_root, "roles", "qa-role.md"),
+                "# QA\nSee [testing](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "manifest.yaml"),
+                "name: test\n",
+            )
+
+            # Use system_root=None so both prevalidate and create_bundle
+            # must infer it.  Before the fix, create_bundle would reject
+            # the symlink because _copy_inlined_skills fell back to
+            # boundary = abs_skill_dir.
+            errors, _, scan_result = prevalidate(
+                coordinator, None,
+                inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [], (
+                f"Prevalidation should pass. Errors: {errors}"
+            ))
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            # This should NOT raise — create_bundle infers the root.
+            bundle_dir, _, _ = create_bundle(
+                coordinator, None, scan_result, [],
+                bundle_base=bundle_base,
+                inline_orchestrated_skills=True,
+            )
+
+            # Verify the inlined skill was copied
+            cap_skill = os.path.join(
+                bundle_dir, "capabilities", "testing", "capability.md"
+            )
+            self.assertTrue(
+                os.path.exists(cap_skill),
+                "Inlined capability should exist in bundle.",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

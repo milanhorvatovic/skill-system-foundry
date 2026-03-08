@@ -677,15 +677,22 @@ def scan_references(
                         # Derive the alias skill root from the
                         # lexical resolved path by walking up to
                         # find a SKILL.md, staying under system_root.
+                        # Use realpath for the termination check so
+                        # platform path aliases (e.g. macOS /tmp ->
+                        # /private/tmp) don't cause the loop to walk
+                        # above the intended boundary.
                         alias_candidate = os.path.dirname(
                             os.path.abspath(resolved)
                         )
-                        sr_norm = os.path.normcase(
-                            os.path.abspath(system_root)
+                        sr_real = os.path.normcase(
+                            os.path.realpath(system_root)
                         )
-                        while (
-                            os.path.normcase(alias_candidate) != sr_norm
-                        ):
+                        while True:
+                            ac_real = os.path.normcase(
+                                os.path.realpath(alias_candidate)
+                            )
+                            if ac_real == sr_real:
+                                break
                             if os.path.exists(
                                 os.path.join(
                                     alias_candidate, FILE_SKILL_MD

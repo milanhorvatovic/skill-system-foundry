@@ -611,15 +611,24 @@ def create_bundle(
     bundle_dir = os.path.join(bundle_base, skill_name)
     os.makedirs(bundle_dir)
 
+    # Resolve effective system root so the bundle phase uses the same
+    # boundary as prevalidation (which also infers when system_root
+    # is None).  Without this, _copy_inlined_skills would fall back
+    # to abs_skill_dir as the boundary and reject symlinks that
+    # prevalidation already accepted under the inferred root.
+    effective_root = system_root
+    if effective_root is None:
+        effective_root = infer_system_root(skill_path)
+
     # Step 1: Copy skill as-is
-    _copy_skill(skill_path, bundle_dir, exclude_patterns, system_root)
+    _copy_skill(skill_path, bundle_dir, exclude_patterns, effective_root)
 
     # Step 2: Copy external files
     external_files = scan_result["external_files"]
     file_mapping: dict[str, str] = {}
     if external_files:
         file_mapping = _copy_external_files(
-            external_files, system_root, bundle_dir, exclude_patterns
+            external_files, effective_root, bundle_dir, exclude_patterns
         )
 
     # Step 2b: Copy inlined skills as capabilities
@@ -627,7 +636,7 @@ def create_bundle(
     inlined_skills = scan_result.get("inlined_skills", {})
     if inline_orchestrated_skills and inlined_skills:
         inlined_mapping = _copy_inlined_skills(
-            inlined_skills, bundle_dir, exclude_patterns, system_root,
+            inlined_skills, bundle_dir, exclude_patterns, effective_root,
         )
         file_mapping.update(inlined_mapping)
         inlined_skill_count = len(inlined_skills)
@@ -647,7 +656,7 @@ def create_bundle(
     rewrite_count = 0
     if file_mapping:
         rewrite_count = _rewrite_markdown_paths(
-            bundle_dir, skill_path, system_root, file_mapping,
+            bundle_dir, skill_path, effective_root, file_mapping,
         )
 
     # Compute stats
