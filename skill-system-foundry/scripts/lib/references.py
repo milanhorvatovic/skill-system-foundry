@@ -683,7 +683,9 @@ def scan_references(
                         sr_norm = os.path.normcase(
                             os.path.abspath(system_root)
                         )
-                        while alias_candidate != sr_norm:
+                        while (
+                            os.path.normcase(alias_candidate) != sr_norm
+                        ):
                             if os.path.exists(
                                 os.path.join(
                                     alias_candidate, FILE_SKILL_MD
@@ -851,11 +853,18 @@ def scan_references(
                                 inlined_skills[abs_skill_dir] = canonical_name
                             else:
                                 # Record the alias so the rewrite map
-                                # covers both path forms.
+                                # covers both path forms.  Guard against
+                                # duplicates when the same alias is
+                                # referenced more than once.
                                 primary = _canonical_to_primary[canonical_skill_dir]
-                                if abs_skill_dir != primary:
+                                alias_pair = (abs_skill_dir, primary)
+                                if (
+                                    abs_skill_dir != primary
+                                    and alias_pair
+                                    not in inlined_skill_aliases
+                                ):
                                     inlined_skill_aliases.append(
-                                        (abs_skill_dir, primary)
+                                        alias_pair
                                     )
                             # The resolved file is inside the skill being
                             # inlined — do NOT add it to external_files

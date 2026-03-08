@@ -1273,6 +1273,73 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
                 f"Warnings: {result['warnings']}"
             ))
 
+    def test_alias_dedup_in_cross_skill_collection(self) -> None:
+        """Multiple references through the same alias path should not
+        produce duplicate entries in inlined_skill_aliases."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "extra.md"),
+                "Extra docs.\n",
+            )
+
+            alias_path = os.path.join(
+                system_root, "skills", "testing-alias"
+            )
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Two roles that BOTH use the alias path
+            write_text(
+                os.path.join(system_root, "roles", "role-a.md"),
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "roles", "role-b.md"),
+                "See [extra](../skills/testing-alias/extra.md)\n",
+            )
+
+            # Direct reference too, so testing is the primary
+            write_text(
+                os.path.join(system_root, "roles", "role-c.md"),
+                "See [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [a](../../roles/role-a.md)\n"
+                "See [b](../../roles/role-b.md)\n"
+                "See [c](../../roles/role-c.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            aliases = result["inlined_skill_aliases"]
+            # Only ONE alias entry despite two references via the alias
+            self.assertEqual(len(aliases), 1, (
+                f"Expected exactly 1 alias entry (no duplicates). "
+                f"Got: {aliases}"
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()

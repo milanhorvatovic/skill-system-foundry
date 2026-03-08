@@ -368,19 +368,50 @@ def _build_rewrite_map(
             rewrite_map.setdefault(orig_path, new_rel)
             rewrite_map.setdefault(orig_path.replace(os.sep, "/"), new_rel)
 
-    # Add system-root-relative paths for skill-internal files so that
-    # inlined external docs referencing e.g. "skills/<name>/SKILL.md"
-    # get rewritten to the correct bundle-relative path.
-    if system_root:
+    # Add paths for skill-internal files (coordinator files not in
+    # file_mapping) so that both system-root-relative references
+    # (e.g. "skills/<name>/SKILL.md" from inlined external docs) AND
+    # relative references from inlined capability files back to the
+    # coordinator (e.g. "../coordinator/SKILL.md") are rewritten.
+    if skill_files:
+        # Determine the original file location for relative-path
+        # computations.  This mirrors _compute_original_paths logic.
+        bf_rel = os.path.relpath(bundle_file, bundle_dir).replace(
+            os.sep, "/"
+        )
+        orig_file = reverse_mapping.get(bf_rel)
+        if not orig_file:
+            orig_file = os.path.join(skill_path, bf_rel)
+        orig_dir = os.path.dirname(orig_file)
+
         for abs_skill_file, skill_bundle_rel in sorted(skill_files.items()):
             abs_target = os.path.join(bundle_dir, skill_bundle_rel)
             new_rel = os.path.relpath(abs_target, bundle_file_dir).replace(os.sep, "/")
+
+            # Relative from the original file position — covers
+            # references like "../coordinator/SKILL.md" used by
+            # inlined capability files referencing the coordinator.
             try:
-                system_rel = os.path.relpath(abs_skill_file, system_root)
-                rewrite_map.setdefault(system_rel, new_rel)
-                rewrite_map.setdefault(system_rel.replace(os.sep, "/"), new_rel)
+                rel_from_orig = os.path.relpath(abs_skill_file, orig_dir)
+                rewrite_map.setdefault(rel_from_orig, new_rel)
+                rewrite_map.setdefault(
+                    rel_from_orig.replace(os.sep, "/"), new_rel
+                )
             except ValueError:
                 pass
+
+            # System-root-relative form.
+            if system_root:
+                try:
+                    system_rel = os.path.relpath(
+                        abs_skill_file, system_root
+                    )
+                    rewrite_map.setdefault(system_rel, new_rel)
+                    rewrite_map.setdefault(
+                        system_rel.replace(os.sep, "/"), new_rel
+                    )
+                except ValueError:
+                    pass
 
     return rewrite_map
 

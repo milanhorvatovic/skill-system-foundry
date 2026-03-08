@@ -801,6 +801,72 @@ class InlinedBundleIntegrationTests(unittest.TestCase):
             post_errors = postvalidate(bundle_dir)
             self.assertEqual(post_errors, [], f"Post-validation errors: {post_errors}")
 
+    def test_coordinator_back_reference_rewritten_in_bundle(self) -> None:
+        """When an inlined skill references back to the coordinator,
+        the reference is rewritten to the correct bundle-relative path
+        and postvalidation passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\ndescription: Coord.\n---\n\n"
+                "See [qa](../../roles/qa-role.md)\n",
+            )
+
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\ndescription: Testing.\n---\n\n"
+                "Back to [coord](../coordinator/SKILL.md)\n",
+            )
+
+            write_text(
+                os.path.join(system_root, "roles", "qa-role.md"),
+                "# QA\nSee [testing](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "manifest.yaml"),
+                "name: test\n",
+            )
+
+            errors, _, scan_result = prevalidate(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [])
+
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, _, _ = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base, inline_orchestrated_skills=True,
+            )
+
+            # The inlined capability should have its coordinator
+            # back-reference rewritten to the bundle-root SKILL.md.
+            cap_path = os.path.join(
+                bundle_dir, "capabilities", "testing", "capability.md"
+            )
+            with open(cap_path, "r", encoding="utf-8") as f:
+                cap_content = f.read()
+
+            self.assertIn("../../SKILL.md", cap_content, (
+                f"Coordinator back-reference should be rewritten. "
+                f"Content: {cap_content}"
+            ))
+            self.assertNotIn("../coordinator/SKILL.md", cap_content, (
+                f"Original coordinator path should not remain. "
+                f"Content: {cap_content}"
+            ))
+
+            post_errors = postvalidate(bundle_dir)
+            self.assertEqual(
+                post_errors, [],
+                f"Post-validation errors: {post_errors}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
