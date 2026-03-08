@@ -378,7 +378,7 @@ def main() -> None:
     print(f"  Archive size:   {_format_size(zip_size)}")
     if stats["external_count"] > 0:
         print(f"  External files: {stats['external_count']} (inlined)")
-    if stats.get("inlined_skill_count", 0) > 0:
+    if stats["inlined_skill_count"] > 0:
         print(f"  Inlined skills: {stats['inlined_skill_count']} (as capabilities)")
 
 

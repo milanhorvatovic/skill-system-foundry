@@ -803,5 +803,56 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             ))
 
 
+    def test_text_detected_ref_into_already_inlined_skill_warns(self) -> None:
+        """A text_detected reference into an already-collected inlined skill
+        must still emit a WARN (the path won't be rewritten)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "notes.md"), "Testing notes\n")
+
+            # A markdown role reference collects 'testing' for inlining first
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # A non-markdown file also references files inside 'testing'.
+            # By the time this is scanned, 'testing' is already collected
+            # — so it hits the "already-inlined" early-return path.
+            write_text(
+                os.path.join(coordinator, "config.yaml"),
+                "ref: skills/testing/notes.md\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The warning should still be emitted for the text_detected ref
+            warns = [w for w in result["warnings"] if "Non-markdown cross-skill" in w]
+            self.assertGreaterEqual(len(warns), 1, (
+                f"Expected at least one non-markdown cross-skill WARN. "
+                f"Warnings: {result['warnings']}"
+            ))
+            # Should mention the config.yaml source file
+            config_warns = [w for w in warns if "config.yaml" in w]
+            self.assertGreaterEqual(len(config_warns), 1, (
+                f"Expected WARN to mention config.yaml. "
+                f"Warnings: {warns}"
+            ))
+
+
 if __name__ == "__main__":
     unittest.main()

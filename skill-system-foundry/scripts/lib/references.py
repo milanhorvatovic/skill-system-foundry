@@ -177,8 +177,8 @@ class ScanResult(TypedDict):
     errors: list[str]
     warnings: list[str]
     reference_map: dict[str, list[ResolvedRef]]
-    # Skill directories to inline as capabilities (only populated when
-    # ``inline_orchestrated_skills=True``).
+    # Skill directories to inline as capabilities.  Always present;
+    # empty when ``inline_orchestrated_skills`` is ``False``.
     inlined_skills: dict[str, str]  # {abs_skill_dir: skill_name}
 
 
@@ -488,8 +488,8 @@ def scan_references(
             'errors':         list of FAIL strings,
             'warnings':       list of WARN strings,
             'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
-            'inlined_skills': {abs_skill_dir: skill_name} (populated only when
-                              ``inline_orchestrated_skills`` is True),
+            'inlined_skills': {abs_skill_dir: skill_name} (always present;
+                              empty when ``inline_orchestrated_skills`` is False),
         }
     """
     if max_depth is None:
@@ -615,11 +615,27 @@ def scan_references(
             # When inlining, files inside an already-collected inlined
             # skill are also internal — they will be copied as part of
             # the full skill directory, not as external files.
-            if inline_orchestrated_skills and any(
-                is_within_directory(resolved, isd)
-                for isd in inlined_skills
-            ):
-                continue
+            if inline_orchestrated_skills:
+                containing_inlined = next(
+                    (name for isd, name in inlined_skills.items()
+                     if is_within_directory(resolved, isd)),
+                    None,
+                )
+                if containing_inlined is not None:
+                    # text_detected references are not rewritten in the
+                    # bundle, so warn about stale paths.
+                    if ref_type == "text_detected":
+                        warnings.append(
+                            f"{LEVEL_WARN}: Non-markdown cross-skill "
+                            f"reference detected in "
+                            f"'{_rel(filepath)}' line {line_num}: "
+                            f"'{raw_ref}'. This reference points to "
+                            f"inlined skill '{containing_inlined}' but "
+                            f"cannot be automatically rewritten in "
+                            f"the bundle. You may need to update it "
+                            f"manually."
+                        )
+                    continue
 
             # For entries that are only lexically within the skill (i.e.
             # a symlink living inside the skill pointing elsewhere),

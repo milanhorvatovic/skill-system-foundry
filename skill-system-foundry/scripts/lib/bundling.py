@@ -37,13 +37,7 @@ from .references import (
     RE_BUNDLE_BACKTICK,
 )
 
-class _BundleStatsOptional(TypedDict, total=False):
-    """Optional fields for BundleStats."""
-
-    inlined_skill_count: int
-
-
-class BundleStats(_BundleStatsOptional):
+class BundleStats(TypedDict):
     """Bundle creation statistics used in summary output."""
 
     file_count: int
@@ -51,6 +45,7 @@ class BundleStats(_BundleStatsOptional):
     external_count: int
     rewrite_count: int
     skill_name: str
+    inlined_skill_count: int
 
 
 # ===================================================================
