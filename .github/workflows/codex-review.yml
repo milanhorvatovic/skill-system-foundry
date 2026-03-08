@@ -319,7 +319,7 @@ jobs:
                   pull_number: issue_number,
                   commit_id: prHeadSha,
                   event: 'COMMENT',
-                  body: `Codex posted ${reviewComments.length} inline conversation(s).`,
+                  body: `## Pull request overview\n\nCodex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated ${reviewComments.length} comment(s).`,
                   comments: reviewComments,
                 });
                 inlinePosted = reviewComments.length;
@@ -330,7 +330,7 @@ jobs:
                   pull_number: issue_number,
                   commit_id: prHeadSha,
                   event: 'COMMENT',
-                  body: `Codex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated 0 comments.`,
+                  body: `## Pull request overview\n\nCodex reviewed ${addedByFile.size} out of ${addedByFile.size} changed files in this pull request and generated no new comments.`,
                 });
               }
             } catch (error) {
@@ -347,8 +347,9 @@ jobs:
               ? `Could not parse structured Codex output. Raw response:\n\n\`\`\`\n${fallbackTextLimited}\n\`\`\``
               : 'Codex returned an empty response.';
 
+            const commentLabel = totalComments > 0 ? `${totalComments} comment(s)` : 'no new comments';
             const overviewLine = parsed
-              ? `Codex reviewed ${totalChangedFiles} out of ${totalChangedFiles} changed files in this pull request and generated ${totalComments} comment(s).`
+              ? `Codex reviewed ${totalChangedFiles} out of ${totalChangedFiles} changed files in this pull request and generated ${commentLabel}.`
               : '';
 
             const findingsPreview =
