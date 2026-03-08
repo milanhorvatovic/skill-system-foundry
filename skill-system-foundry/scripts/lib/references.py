@@ -518,12 +518,17 @@ def scan_references(
         depth: int,
         ancestor_set: frozenset[str],
         ancestor_path: tuple[str, ...],
+        current_skill: str | None = None,
     ) -> None:
         """Recursively scan *filepath* and classify its references.
 
         *ancestor_set* is a frozenset for O(1) cycle membership checks.
         *ancestor_path* is an ordered tuple for deterministic cycle display.
+        *current_skill* is the skill directory context for internal/
+        cross-skill checks (defaults to the top-level *skill_path*).
         """
+        if current_skill is None:
+            current_skill = skill_path
         filepath = os.path.abspath(filepath)
 
         if depth > max_depth:
@@ -610,7 +615,7 @@ def scan_references(
             # ---- Internal (within the skill or an already-collected
             #      inlined skill) ----
             # Treat files whose real path is within the skill as internal.
-            if is_within_directory(resolved, skill_path):
+            if is_within_directory(resolved, current_skill):
                 continue
             # When inlining, files inside an already-collected inlined
             # skill are also internal — they will be copied as part of
@@ -642,7 +647,7 @@ def scan_references(
             # allow them as internal unless they actually target another
             # skill under system_root/skills/ (cross-skill symlink bypass).
             lexical_path_norm = os.path.normcase(os.path.abspath(resolved))
-            skill_norm = os.path.normcase(skill_path)
+            skill_norm = os.path.normcase(current_skill)
             lexical_within_skill = False
             try:
                 lexical_within_skill = (
@@ -665,7 +670,7 @@ def scan_references(
                         os.path.realpath(resolved)
                     )
                     skill_real = os.path.normcase(
-                        os.path.realpath(skill_path)
+                        os.path.realpath(current_skill)
                     )
                     try:
                         under_skills_root = (
@@ -723,10 +728,10 @@ def scan_references(
                     containing_norm = os.path.normcase(
                         os.path.realpath(os.path.abspath(containing_skill))
                     )
-                    skill_path_norm = os.path.normcase(
-                        os.path.realpath(skill_path)
+                    current_skill_norm = os.path.normcase(
+                        os.path.realpath(current_skill)
                     )
-                    if containing_norm != skill_path_norm:
+                    if containing_norm != current_skill_norm:
                         other_skill_name = os.path.basename(containing_skill)
                         if inline_orchestrated_skills:
                             # Collect for inlining instead of rejecting.
@@ -759,8 +764,9 @@ def scan_references(
                                     if ifile not in scanned_external:
                                         scanned_external.add(ifile)
                                         _scan_file(
-                                            ifile, depth + 1,
+                                            ifile, 0,
                                             frozenset(), (),
+                                            current_skill=abs_skill_dir,
                                         )
                                 # Convert boundary violations from the
                                 # inlined skill walk into FAIL entries.
@@ -820,14 +826,17 @@ def scan_references(
                     scanned_external.add(resolved)
                     new_set = ancestor_set | frozenset({resolved})
                     new_path = ancestor_path + (resolved,)
-                    _scan_file(resolved, depth + 1, new_set, new_path)
+                    _scan_file(
+                        resolved, depth + 1, new_set, new_path,
+                        current_skill=current_skill,
+                    )
                 continue
 
             # ---- Cycle between external documents ----
             if resolved in ancestor_set:
                 cycle_display = " -> ".join(
                     _rel(f) for f in ancestor_path + (resolved,)
-                    if not is_within_directory(f, skill_path)
+                    if not is_within_directory(f, current_skill)
                 )
                 errors.append(
                     f"{LEVEL_FAIL}: Circular reference detected between "
@@ -844,7 +853,10 @@ def scan_references(
                 scanned_external.add(resolved)
                 new_set = ancestor_set | frozenset({resolved})
                 new_path = ancestor_path + (resolved,)
-                _scan_file(resolved, depth + 1, new_set, new_path)
+                _scan_file(
+                    resolved, depth + 1, new_set, new_path,
+                    current_skill=current_skill,
+                )
 
         if resolved_refs:
             reference_map[filepath] = resolved_refs
