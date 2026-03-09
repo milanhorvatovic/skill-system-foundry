@@ -8,6 +8,10 @@ on:
       - synchronize
       - ready_for_review
 
+# pull-requests: write is required for pulls.createReview in the publish step.
+# The third-party Codex action runs in a read-only sandbox and cannot access
+# the PR token because persist-credentials: false removes git credentials
+# before it executes.
 permissions:
   contents: read
   pull-requests: write
@@ -22,7 +26,7 @@ jobs:
       !github.event.pull_request.draft &&
       vars.CODEX_REVIEW_USERS != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 30 # Codex sandbox may need up to 30 min for large diffs
     env:
       HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
       REVIEW_USERS_RAW: ${{ vars.CODEX_REVIEW_USERS }}
@@ -62,6 +66,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Skip when OPENAI_API_KEY is missing
         if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY != 'true' }}
@@ -70,11 +75,20 @@ jobs:
       - name: Build PR diff
         id: diff
         if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-          git diff --no-color --unified=3 \
-            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" > pr.diff
+          # fetch-depth: 0 normally makes the base SHA available locally.
+          # Fetch explicitly as a fallback (e.g. when the base branch was force-pushed).
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::Base SHA ${BASE_SHA} not found locally — fetching from origin"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)" \
+              fetch --no-tags --depth=1 origin "${BASE_SHA}"
+          fi
+          git diff --no-color --unified=3 "${BASE_SHA}...${HEAD_SHA}" > pr.diff
           if [ -s pr.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -344,6 +358,7 @@ jobs:
 
             const reviewMarker = '<!-- codex-pr-review -->';
 
+            // "N out of N" format matches Copilot's review output.
             function buildReviewedLine(commentCount) {
               const commentLabel = commentCount > 0 ? `${commentCount} comment(s)` : 'no new comments';
               return `Codex reviewed ${totalChangedFiles} out of ${totalChangedFiles} changed files in this pull request and generated ${commentLabel}.`;
@@ -403,6 +418,9 @@ jobs:
               (review) => review.user?.type === 'Bot' && review.body?.includes(reviewMarker),
             );
 
+            // Each push creates a NEW review (never upserted). This matches
+            // Copilot's behavior: every synchronize event produces a fresh review
+            // so the PR timeline shows the review history per push.
             let inlinePosted = 0;
             let inlineError = '';
             try {
