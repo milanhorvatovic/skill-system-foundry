@@ -459,7 +459,6 @@ jobs:
             // Each push creates a NEW review (never upserted). This matches
             // Copilot's behavior: every synchronize event produces a fresh review
             // so the PR timeline shows the review history per push.
-            let inlinePosted = 0;
             let inlineError = '';
             try {
               const commentCount = reviewComments.length;
@@ -487,7 +486,6 @@ jobs:
                 reviewPayload.comments = reviewComments;
               }
               await github.rest.pulls.createReview(reviewPayload);
-              inlinePosted = reviewComments.length;
             } catch (error) {
               inlineError = error.message;
               console.warn(`Failed to create review: ${inlineError}`);
