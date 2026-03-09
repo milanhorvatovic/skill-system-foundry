@@ -315,7 +315,7 @@ jobs:
 
               const signature = crypto
                 .createHash('sha256')
-                .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}|${prHeadSha}`)
+                .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}`)
                 .digest('hex')
                 .slice(0, 16);
               if (existingInlineMarkers.has(signature)) {
