@@ -426,7 +426,7 @@ jobs:
               const sections = ['## Pull request overview'];
               if (summaryText) {
                 const summary = summaryText.length > maxSummaryChars
-                  ? `${summaryText.slice(0, maxSummaryChars)}\n\n...<summary truncated>`
+                  ? `${summaryText.slice(0, maxSummaryChars)}\n\n...(summary truncated)`
                   : summaryText;
                 sections.push(summary);
               }
@@ -453,7 +453,7 @@ jobs:
               sections.push(reviewedSection);
               let body = sections.join('\n\n');
               if (body.length > maxReviewBodyChars) {
-                body = `${body.slice(0, maxReviewBodyChars)}\n\n...<review truncated to fit GitHub limits>`;
+                body = `${body.slice(0, maxReviewBodyChars)}\n\n...(review truncated to fit GitHub limits)`;
               }
               return body;
             }
@@ -465,7 +465,7 @@ jobs:
 
             function buildFallbackBody() {
               const fallbackText = codexReview.trim();
-              const fallbackTextLimited = fallbackText.length > 12000 ? `${fallbackText.slice(0, 12000)}\n...<truncated>` : fallbackText;
+              const fallbackTextLimited = fallbackText.length > 12000 ? `${fallbackText.slice(0, 12000)}\n...(truncated)` : fallbackText;
               return fallbackText
                 ? `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n\`\`\`\n${fallbackTextLimited}\n\`\`\``
                 : '## Pull request overview\n\nCodex returned an empty response.';
