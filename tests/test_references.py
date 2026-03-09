@@ -1341,5 +1341,81 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             ))
 
 
+    def test_alias_root_loop_does_not_escape_system_root(self) -> None:
+        """The alias-root detection loop must not walk above system_root.
+
+        If a SKILL.md exists in a directory above system_root, the loop
+        should ignore it — the ``is_within_directory`` guard prevents
+        the walk from escaping the intended boundary.
+        """
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Place a decoy SKILL.md ABOVE the system root.  Without the
+            # boundary guard this would be incorrectly recorded as an
+            # alias root.
+            system_root = os.path.join(tmpdir, "outer", "root")
+            decoy_dir = os.path.join(tmpdir, "outer")
+            write_text(
+                os.path.join(decoy_dir, "SKILL.md"),
+                "---\nname: decoy\n---\nDecoy skill above system root.\n",
+            )
+
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+
+            # Create a symlink alias for the testing skill.
+            alias_path = os.path.join(
+                system_root, "skills", "testing-alias"
+            )
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Role that references via the alias.
+            write_text(
+                os.path.join(system_root, "roles", "role.md"),
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [role](../../roles/role.md)\n",
+            )
+
+            result = scan_references(
+                coordinator,
+                system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # The alias should be recorded normally.
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            aliases = result["inlined_skill_aliases"]
+            self.assertEqual(len(aliases), 1)
+            alias_abs, primary_abs = aliases[0]
+            self.assertIn("testing-alias", alias_abs)
+            # Primary should be within system_root, not the decoy.
+            self.assertTrue(
+                os.path.realpath(primary_abs).startswith(
+                    os.path.realpath(system_root)
+                ),
+                f"Primary {primary_abs} should be within system_root",
+            )
+            # No errors — the decoy SKILL.md above system_root was
+            # never reached by the alias-root walk.
+            self.assertEqual(result["errors"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

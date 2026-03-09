@@ -701,22 +701,29 @@ def scan_references(
                     ):
                         # Derive the alias skill root from the
                         # lexical resolved path by walking up to
-                        # find a SKILL.md, staying under system_root.
-                        # Use realpath for the termination check so
-                        # platform path aliases (e.g. macOS /tmp ->
-                        # /private/tmp) don't cause the loop to walk
-                        # above the intended boundary.
+                        # find a SKILL.md, staying strictly within
+                        # system_root.  Use ``is_within_directory``
+                        # (realpath + commonpath) as the loop guard
+                        # so that platform path aliases (e.g. macOS
+                        # /tmp -> /private/tmp) and unusual mount
+                        # structures can never cause the walk to
+                        # escape the intended boundary and
+                        # accidentally match a SKILL.md above
+                        # system_root.
                         alias_candidate = os.path.dirname(
                             os.path.abspath(resolved)
                         )
-                        sr_real = os.path.normcase(
-                            os.path.realpath(system_root)
-                        )
                         while True:
-                            ac_real = os.path.normcase(
+                            # Stop when we've reached or escaped
+                            # system_root — there is no valid skill
+                            # root at or above the system root.
+                            if not is_within_directory(
+                                alias_candidate, system_root
+                            ) or os.path.normcase(
                                 os.path.realpath(alias_candidate)
-                            )
-                            if ac_real == sr_real:
+                            ) == os.path.normcase(
+                                os.path.realpath(system_root)
+                            ):
                                 break
                             if os.path.exists(
                                 os.path.join(
@@ -886,6 +893,14 @@ def scan_references(
                             # the lexical system_root to avoid platform
                             # path aliases (e.g. macOS /var -> /private/
                             # var) leaking into the key.
+                            #
+                            # This ensures the primary is always the
+                            # canonical real directory regardless of
+                            # whether the first reference arrived via a
+                            # symlink alias — alias-first discovery
+                            # still produces the same primary_dir
+                            # because the derivation is from realpath,
+                            # not from the discovered abs_skill_dir.
                             if system_root is not None:
                                 _sr_real = os.path.realpath(system_root)
                                 try:
