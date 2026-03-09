@@ -43,8 +43,8 @@ jobs:
       # and whether the PR author is in the allowlist.
       - name: Check prerequisites
         id: allowlist
-        shell: bash
         run: |
+          set -euo pipefail
           if [ "$HAS_OPENAI_API_KEY" != "true" ]; then
             echo "OPENAI_API_KEY is not set. Skipping Codex review."
             echo "allowed=false" >> "$GITHUB_OUTPUT"
@@ -268,7 +268,9 @@ jobs:
                   continue;
                 }
 
-                if (line.startsWith('+++ ')) {
+                // Only treat +++ as a file header before the first hunk.
+                // Inside a hunk (newLine != null), +++ is a content line.
+                if (line.startsWith('+++ ') && newLine == null) {
                   const nextPath = line.slice(4).trim();
                   if (nextPath === '/dev/null') {
                     currentFile = null;
@@ -291,13 +293,13 @@ jobs:
                   continue;
                 }
 
-                if (line.startsWith('+') && !line.startsWith('+++ ')) {
+                if (line.startsWith('+')) {
                   addedByFile.get(currentFile).add(newLine);
                   newLine += 1;
                   continue;
                 }
 
-                if (line.startsWith('-') && !line.startsWith('--- ')) {
+                if (line.startsWith('-')) {
                   continue;
                 }
 
@@ -536,7 +538,7 @@ jobs:
               await github.rest.pulls.createReview(reviewPayload);
             } catch (error) {
               inlineError = error.message;
-              console.warn(`Failed to create review: ${inlineError}`);
+              core.warning(`Failed to create review: ${inlineError}`);
 
               // If review with comments failed, retry without comments
               if (reviewComments.length > 0) {
@@ -562,7 +564,7 @@ jobs:
                     body,
                   });
                 } catch (retryError) {
-                  console.warn(`Failed to create fallback review: ${retryError.message}`);
+                  core.warning(`Failed to create fallback review: ${retryError.message}`);
                 }
               }
             }
