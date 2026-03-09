@@ -22,9 +22,7 @@ concurrency:
 
 jobs:
   codex-review:
-    if: >-
-      !github.event.pull_request.draft &&
-      vars.CODEX_REVIEW_USERS != ''
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 30 # Codex sandbox may need up to 30 min for large diffs
     env:
@@ -35,13 +33,20 @@ jobs:
 
     steps:
       # This step gates all subsequent steps via the "allowed" output.
-      # It checks both the author allowlist and the OPENAI_API_KEY secret.
+      # It checks the OPENAI_API_KEY secret, the CODEX_REVIEW_USERS variable,
+      # and whether the PR author is in the allowlist.
       - name: Check prerequisites
         id: allowlist
         shell: bash
         run: |
           if [ "$HAS_OPENAI_API_KEY" != "true" ]; then
             echo "OPENAI_API_KEY is not set. Skipping Codex review."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$REVIEW_USERS_RAW" ]; then
+            echo "CODEX_REVIEW_USERS is not set. Skipping Codex review."
             echo "allowed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
