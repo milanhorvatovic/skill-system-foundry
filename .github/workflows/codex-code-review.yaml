@@ -189,6 +189,7 @@ jobs:
         with:
           name: codex-review
           path: .codex/
+          include-hidden-files: true
           retention-days: 1
 
   # ── Job 2: Publish PR review (write access) ──────────────────────────
