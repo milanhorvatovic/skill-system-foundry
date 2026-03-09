@@ -97,8 +97,9 @@ jobs:
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)" \
               fetch --no-tags origin "${BASE_SHA}"
           fi
-          git diff --no-color --unified=3 "${BASE_SHA}...${HEAD_SHA}" > pr.diff
-          if [ -s pr.diff ]; then
+          mkdir -p .codex
+          git diff --no-color --unified=3 "${BASE_SHA}...${HEAD_SHA}" > .codex/pr.diff
+          if [ -s .codex/pr.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
             echo "Diff is empty — nothing to review."
@@ -115,7 +116,7 @@ jobs:
           sandbox: read-only
           prompt: |
             You are reviewing a GitHub pull request for this repository.
-            Analyze `pr.diff` and the referenced files.
+            Analyze `.codex/pr.diff` and the referenced files.
 
             Prioritize:
             1) Behavioral bugs and regressions
@@ -303,7 +304,7 @@ jobs:
             const changes = Array.isArray(parsed?.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean) : [];
             const files = Array.isArray(parsed?.files) ? parsed.files : [];
 
-            const diffText = fs.readFileSync('pr.diff', 'utf8');
+            const diffText = fs.readFileSync('.codex/pr.diff', 'utf8');
             const addedByFile = parseAddedLinesByFile(diffText);
             const totalChangedFiles = (diffText.match(/^diff --git /gm) || []).length;
 
