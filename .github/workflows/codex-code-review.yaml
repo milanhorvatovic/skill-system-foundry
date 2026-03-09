@@ -34,10 +34,18 @@ jobs:
       CODEX_MODEL: gpt-5.3-codex
 
     steps:
-      - name: Check PR author allowlist
+      # This step gates all subsequent steps via the "allowed" output.
+      # It checks both the author allowlist and the OPENAI_API_KEY secret.
+      - name: Check prerequisites
         id: allowlist
         shell: bash
         run: |
+          if [ "$HAS_OPENAI_API_KEY" != "true" ]; then
+            echo "OPENAI_API_KEY is not set. Skipping Codex review."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           allowed=false
           pr_author_lower="$(printf '%s' "$PR_AUTHOR" | tr '[:upper:]' '[:lower:]')"
           normalized_users="$(
@@ -61,20 +69,16 @@ jobs:
           fi
 
       - name: Checkout PR
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Skip when OPENAI_API_KEY is missing
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY != 'true' }}
-        run: echo "OPENAI_API_KEY is not set. Skipping Codex review."
-
       - name: Build PR diff
         id: diff
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -97,7 +101,7 @@ jobs:
           fi
 
       - name: Run Codex review
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' && steps.diff.outputs.has_changes == 'true' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has_changes == 'true' }}
         id: codex
         uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4
         with:
@@ -158,7 +162,7 @@ jobs:
             ${{ github.event.pull_request.body }}
 
       - name: Publish PR review
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && env.HAS_OPENAI_API_KEY == 'true' && steps.codex.outputs.final-message != '' }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.codex.outputs.final-message != '' }}
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
         env:
           CODEX_REVIEW: ${{ steps.codex.outputs.final-message }}
@@ -338,7 +342,7 @@ jobs:
               const suggestionBlock = finding.suggestion
                 ? `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``
                 : '';
-              const commentBody = `> [!${alertType}]\n> **${finding.title}**\n> ${finding.comment.split('\n').join('\n> ')}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+              const commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.comment}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
               const commentObj = {
                 path: finding.path,
                 line: finding.line,
