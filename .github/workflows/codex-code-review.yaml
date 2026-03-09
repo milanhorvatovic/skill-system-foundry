@@ -8,28 +8,34 @@ on:
       - synchronize
       - ready_for_review
 
-# pull-requests: write is required for pulls.createReview in the publish step.
-# The third-party Codex action runs in a read-only sandbox and cannot access
-# the PR token because persist-credentials: false removes git credentials
-# before it executes.
-permissions:
-  contents: read
-  pull-requests: write
+env:
+  CODEX_MODEL: gpt-5.3-codex
 
 concurrency:
   group: codex-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  codex-review:
+  # Two-job architecture for permission isolation:
+  # - "review" runs Codex in a read-only sandbox (contents: read only),
+  #   so the third-party Codex action never has write access to the repo.
+  # - "publish" receives the review artifact and posts the PR review
+  #   (pull-requests: write only). No checkout, no third-party actions.
+
+  # ── Job 1: Run Codex review (read-only) ──────────────────────────────
+  review:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 30 # Codex sandbox may need up to 30 min for large diffs
+    permissions:
+      contents: read
+    outputs:
+      allowed: ${{ steps.allowlist.outputs.allowed }}
+      has-review: ${{ steps.save.outputs.has-review }}
     env:
       HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
       REVIEW_USERS_RAW: ${{ vars.CODEX_REVIEW_USERS }}
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-      CODEX_MODEL: gpt-5.3-codex
 
     steps:
       # This step gates all subsequent steps via the "allowed" output.
@@ -167,18 +173,49 @@ jobs:
             Body:
             ${{ github.event.pull_request.body }}
 
-      - name: Publish PR review
+      - name: Save review output
+        id: save
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.codex.outputs.final-message != '' }}
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
         env:
           CODEX_REVIEW: ${{ steps.codex.outputs.final-message }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          CODEX_MODEL: ${{ env.CODEX_MODEL }}
-          MAX_INLINE_CONVERSATIONS: '20'
-          MAX_SUMMARY_CHARS: '4000'
-          MAX_CHANGE_ITEMS: '50'
-          MAX_FILES_IN_TABLE: '100'
-          MAX_REVIEW_BODY_CHARS: '60000'
+        run: |
+          mkdir -p .codex
+          printf '%s' "$CODEX_REVIEW" > .codex/review-output.txt
+          echo "has-review=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload review artifacts
+        if: ${{ steps.save.outputs.has-review == 'true' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # @v7 as 7.0.0
+        with:
+          name: codex-review
+          path: .codex/
+          retention-days: 1
+
+  # ── Job 2: Publish PR review (write access) ──────────────────────────
+  publish:
+    needs: review
+    if: ${{ needs.review.outputs.allowed == 'true' && needs.review.outputs.has-review == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      MAX_INLINE_CONVERSATIONS: '20'
+      MAX_SUMMARY_CHARS: '4000'
+      MAX_CHANGE_ITEMS: '50'
+      MAX_FILES_IN_TABLE: '100'
+      MAX_REVIEW_BODY_CHARS: '60000'
+
+    steps:
+      - name: Download review artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
+        with:
+          name: codex-review
+          path: .codex
+
+      - name: Publish PR review
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
         with:
           script: |
             const fs = require('node:fs');
@@ -297,7 +334,8 @@ jobs:
               return { title, severity, path, line, startLine, comment, suggestion };
             }
 
-            const parsed = parseStructuredReview(process.env.CODEX_REVIEW || '');
+            const codexReview = fs.readFileSync('.codex/review-output.txt', 'utf8');
+            const parsed = parseStructuredReview(codexReview);
             const parsedFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
             const findings = parsedFindings.map(normalizeFinding);
             const summaryText = String(parsed?.summary || '').trim();
@@ -426,7 +464,7 @@ jobs:
             }
 
             function buildFallbackBody() {
-              const fallbackText = (process.env.CODEX_REVIEW || '').trim();
+              const fallbackText = codexReview.trim();
               const fallbackTextLimited = fallbackText.length > 12000 ? `${fallbackText.slice(0, 12000)}\n...<truncated>` : fallbackText;
               return fallbackText
                 ? `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n\`\`\`\n${fallbackTextLimited}\n\`\`\``
