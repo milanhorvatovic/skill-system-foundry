@@ -95,7 +95,7 @@ jobs:
           if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             echo "::warning::Base SHA ${BASE_SHA} not found locally — fetching from origin"
             git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w0)" \
-              fetch --no-tags --depth=1 origin "${BASE_SHA}"
+              fetch --no-tags origin "${BASE_SHA}"
           fi
           git diff --no-color --unified=3 "${BASE_SHA}...${HEAD_SHA}" > pr.diff
           if [ -s pr.diff ]; then
@@ -173,12 +173,17 @@ jobs:
           CODEX_REVIEW: ${{ steps.codex.outputs.final-message }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CODEX_MODEL: ${{ env.CODEX_MODEL }}
+          MAX_INLINE_CONVERSATIONS: '20'
+          MAX_SUMMARY_CHARS: '4000'
+          MAX_CHANGE_ITEMS: '50'
+          MAX_FILES_IN_TABLE: '100'
+          MAX_REVIEW_BODY_CHARS: '60000'
         with:
           script: |
             const fs = require('node:fs');
             const crypto = require('node:crypto');
 
-            const maxInlineConversations = 20;
+            const maxInlineConversations = Number(process.env.MAX_INLINE_CONVERSATIONS);
             const issue_number = context.payload.pull_request.number;
             const { owner, repo } = context.repo;
             const prHeadSha = context.payload.pull_request.head.sha;
@@ -366,6 +371,10 @@ jobs:
             }
 
             const reviewMarker = '<!-- codex-pr-review -->';
+            const maxSummaryChars = Number(process.env.MAX_SUMMARY_CHARS);
+            const maxChangeItems = Number(process.env.MAX_CHANGE_ITEMS);
+            const maxFilesInTable = Number(process.env.MAX_FILES_IN_TABLE);
+            const maxReviewBodyChars = Number(process.env.MAX_REVIEW_BODY_CHARS);
 
             // "N out of N" format matches Copilot's review output.
             function buildReviewedLine(commentCount) {
@@ -376,18 +385,38 @@ jobs:
             function buildFirstReviewBody(commentCount) {
               const reviewedLine = buildReviewedLine(commentCount);
               const sections = ['## Pull request overview'];
-              if (summaryText) sections.push(summaryText);
-              if (changes.length > 0) {
-                sections.push(`**Changes:**\n${changes.map(c => `- ${c}`).join('\n')}`);
+              if (summaryText) {
+                const summary = summaryText.length > maxSummaryChars
+                  ? `${summaryText.slice(0, maxSummaryChars)}\n\n...<summary truncated>`
+                  : summaryText;
+                sections.push(summary);
               }
-              const fileTable = files.length > 0
-                ? `| File | Description |\n| ---- | ----------- |\n${files.map(f => `| \`${normalizePath(f.path)}\` | ${escapeTableCell(f.description)} |`).join('\n')}`
-                : '';
+              if (changes.length > 0) {
+                const limitedChanges = changes.slice(0, maxChangeItems);
+                const changeLines = limitedChanges.map(c => `- ${c}`);
+                if (changes.length > maxChangeItems) {
+                  changeLines.push(`- ...and ${changes.length - maxChangeItems} more change(s)`);
+                }
+                sections.push(`**Changes:**\n${changeLines.join('\n')}`);
+              }
+              let fileTable = '';
+              if (files.length > 0) {
+                const limitedFiles = files.slice(0, maxFilesInTable);
+                const rows = limitedFiles.map(f => `| \`${normalizePath(f.path)}\` | ${escapeTableCell(f.description)} |`);
+                if (files.length > maxFilesInTable) {
+                  rows.push(`| ... | ${files.length - maxFilesInTable} more file(s) not shown |`);
+                }
+                fileTable = `| File | Description |\n| ---- | ----------- |\n${rows.join('\n')}`;
+              }
               const reviewedSection = fileTable
                 ? `### Reviewed changes\n\n${reviewedLine}\n\n<details>\n<summary>Show a summary per file</summary>\n\n${fileTable}\n\n</details>`
                 : `### Reviewed changes\n\n${reviewedLine}`;
               sections.push(reviewedSection);
-              return sections.join('\n\n');
+              let body = sections.join('\n\n');
+              if (body.length > maxReviewBodyChars) {
+                body = `${body.slice(0, maxReviewBodyChars)}\n\n...<review truncated to fit GitHub limits>`;
+              }
+              return body;
             }
 
             function buildSubsequentReviewBody(commentCount) {
