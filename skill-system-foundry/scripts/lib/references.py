@@ -179,9 +179,10 @@ class ScanResult(TypedDict):
     reference_map: dict[str, list[ResolvedRef]]
     # Skill directories to inline as capabilities.  Always present;
     # empty when ``inline_orchestrated_skills`` is ``False``.
-    # Keys are canonical abspath directories (re-expressed through the
-    # lexical system_root so they share the same path basis as the
-    # coordinator and external files).
+    # Keys are absolute path directories on the lexical system_root
+    # basis (i.e. realpath re-expressed through the user-supplied
+    # system_root so they share the same path basis as the coordinator
+    # and external files — not necessarily realpath).
     inlined_skills: dict[str, str]  # {abs_skill_dir: skill_name}
     # Alias roots observed for inlined skills.  Each entry maps an
     # alias directory (e.g. a symlink) to the primary skill directory
@@ -536,7 +537,7 @@ def scan_references(
     # collected twice.  Also used for O(path_depth) containment checks
     # so the already-inlined lookup avoids O(refs × skills) scanning.
     _inlined_canonical: set[str] = set()
-    # Maps canonical_skill_dir -> primary real_skill_dir for lookups.
+    # Maps canonical_skill_dir -> primary_dir (system_root-basis) for lookups.
     _canonical_to_primary: dict[str, str] = {}
     # Canonical form of the coordinator (top-level skill being bundled)
     # so we can avoid collecting it for inlining when an inlined skill

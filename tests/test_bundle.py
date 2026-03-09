@@ -22,7 +22,7 @@ from lib.bundling import (
     postvalidate,
     prevalidate,
 )
-from lib.references import compute_bundle_path, scan_references
+from lib.references import compute_bundle_path
 
 
 class MarkdownRewriteTests(unittest.TestCase):
