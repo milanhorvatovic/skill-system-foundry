@@ -75,8 +75,7 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
           git diff --no-color --unified=3 \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" > pr.diff
+            "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" > pr.diff
           if [ -s pr.diff ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -316,7 +315,7 @@ jobs:
 
               const signature = crypto
                 .createHash('sha256')
-                .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}`)
+                .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}|${prHeadSha}`)
                 .digest('hex')
                 .slice(0, 16);
               if (existingInlineMarkers.has(signature)) {
