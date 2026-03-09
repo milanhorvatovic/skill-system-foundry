@@ -310,6 +310,45 @@ class InlineOrchestratedSkillsCLITests(unittest.TestCase):
             skill_md_entries = [n for n in names if n.endswith("/SKILL.md")]
             self.assertEqual(len(skill_md_entries), 1)  # Only the top-level one
 
+    def test_inline_flag_with_output_directory(self) -> None:
+        """--inline-orchestrated-skills with --output <directory> auto-names zip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, coordinator = self._create_path1_layout(tmpdir)
+            output_dir = os.path.join(tmpdir, "output")
+            os.makedirs(output_dir)
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    BUNDLE_SCRIPT,
+                    coordinator,
+                    "--system-root",
+                    system_root,
+                    "--output",
+                    output_dir,
+                    "--inline-orchestrated-skills",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+            # Zip should be auto-named inside the directory
+            zip_files = [f for f in os.listdir(output_dir) if f.endswith(".zip")]
+            self.assertEqual(len(zip_files), 1, f"Expected 1 zip, got: {zip_files}")
+            zip_path = os.path.join(output_dir, zip_files[0])
+
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                names = zf.namelist()
+
+            self.assertIn("release-coordinator/SKILL.md", names)
+            self.assertIn(
+                "release-coordinator/capabilities/testing/capability.md",
+                names,
+            )
+
     def test_without_flag_cross_skill_fails_cli(self) -> None:
         """Without the flag, cross-skill references still fail."""
         with tempfile.TemporaryDirectory() as tmpdir:

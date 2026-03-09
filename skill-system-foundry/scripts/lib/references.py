@@ -730,7 +730,7 @@ def scan_references(
                                     alias_candidate, FILE_SKILL_MD
                                 )
                             ):
-                                if alias_candidate != matched_isd and (
+                                if os.path.normcase(alias_candidate) != os.path.normcase(matched_isd) and (
                                     alias_candidate, matched_isd
                                 ) not in inlined_skill_aliases:
                                     inlined_skill_aliases.append(
@@ -921,15 +921,12 @@ def scan_references(
                                 _canonical_to_primary[canonical_skill_dir] = primary_dir
                                 inlined_skills[primary_dir] = canonical_name
                                 # If discovered via a symlink alias,
-                                # record it immediately.  Compare
-                                # lexical paths: primary_dir is already
-                                # on the system_root path basis (no
-                                # realpath aliases), so a simple !=
-                                # correctly identifies symlink aliases
-                                # without being confused by platform
-                                # path aliases (macOS /var -> /private/
-                                # var).
-                                if abs_skill_dir != primary_dir:
+                                # record it immediately.  Use normcase
+                                # so case-insensitive filesystems
+                                # (macOS, Windows) don't produce
+                                # spurious alias entries when the only
+                                # difference is letter case.
+                                if os.path.normcase(abs_skill_dir) != os.path.normcase(primary_dir):
                                     inlined_skill_aliases.append(
                                         (abs_skill_dir, primary_dir)
                                     )
@@ -938,10 +935,10 @@ def scan_references(
                                     canonical_skill_dir
                                 ]
                                 # Record the alias so the rewrite map
-                                # covers both path forms.  Guard against
-                                # duplicates when the same alias is
-                                # referenced more than once.
-                                if abs_skill_dir != primary_dir:
+                                # covers both path forms.  Use normcase
+                                # for the guard (case-insensitive FS
+                                # safety) and for the dedup check.
+                                if os.path.normcase(abs_skill_dir) != os.path.normcase(primary_dir):
                                     alias_pair = (
                                         abs_skill_dir, primary_dir
                                     )

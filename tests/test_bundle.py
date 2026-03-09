@@ -444,6 +444,56 @@ class CopyInlinedSkillsTests(unittest.TestCase):
 
             self.assertIn("destination collision", str(cm.exception))
 
+    def test_deeply_nested_subdirectories_inlined(self) -> None:
+        """Inlined skills with deeply nested subdirectories (3+ levels)
+        preserve the full directory tree in capabilities/<name>/."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            testing = os.path.join(system_root, "skills", "testing")
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            os.makedirs(bundle_dir)
+
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "a", "b", "c", "deep.md"),
+                "# Deeply nested\n",
+            )
+            write_text(
+                os.path.join(testing, "a", "top.md"),
+                "# Top of a\n",
+            )
+
+            inlined_skills = {os.path.abspath(testing): "testing"}
+            mapping, per_root = _copy_inlined_skills(
+                inlined_skills, bundle_dir, [], system_root,
+            )
+
+            # All levels are created
+            self.assertTrue(os.path.exists(
+                os.path.join(bundle_dir, "capabilities", "testing", "capability.md")
+            ))
+            self.assertTrue(os.path.exists(
+                os.path.join(bundle_dir, "capabilities", "testing", "a", "top.md")
+            ))
+            self.assertTrue(os.path.exists(
+                os.path.join(bundle_dir, "capabilities", "testing", "a", "b", "c", "deep.md")
+            ))
+
+            # Mapping covers all files
+            self.assertEqual(len(mapping), 3)
+            bundle_rels = set(mapping.values())
+            self.assertIn("capabilities/testing/capability.md", bundle_rels)
+            self.assertIn("capabilities/testing/a/top.md", bundle_rels)
+            self.assertIn("capabilities/testing/a/b/c/deep.md", bundle_rels)
+
+            # per_root groups them correctly
+            abs_testing = os.path.abspath(testing)
+            self.assertIn(abs_testing, per_root)
+            self.assertEqual(len(per_root[abs_testing]), 3)
+
 
 class InlinedBundleIntegrationTests(unittest.TestCase):
     """End-to-end tests for bundling with --inline-orchestrated-skills."""
@@ -938,6 +988,67 @@ class InlinedBundleIntegrationTests(unittest.TestCase):
             self.assertTrue(
                 os.path.exists(cap_skill),
                 "Inlined capability should exist in bundle.",
+            )
+
+
+    def test_inlined_skills_ignored_when_flag_false(self) -> None:
+        """create_bundle ignores inlined_skills data when flag is False.
+
+        Even if scan_result contains populated inlined_skills (e.g.
+        from a prevalidation with the flag enabled), passing
+        inline_orchestrated_skills=False to create_bundle should
+        produce a bundle with no capabilities/ directory and
+        inlined_skill_count == 0.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, coordinator = self._create_path1_layout(tmpdir)
+
+            # Prevalidate WITH the flag so scan_result has inlined_skills
+            errors, warnings, scan_result = prevalidate(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            self.assertEqual(errors, [])
+            self.assertIsNotNone(scan_result)
+            self.assertTrue(len(scan_result["inlined_skills"]) > 0)
+
+            # Create bundle WITHOUT the flag
+            bundle_base = os.path.join(tmpdir, "bundle_base")
+            os.makedirs(bundle_base)
+            bundle_dir, file_mapping, stats = create_bundle(
+                coordinator, system_root, scan_result, [],
+                bundle_base=bundle_base,
+                inline_orchestrated_skills=False,
+            )
+
+            # No capabilities directory
+            cap_dir = os.path.join(bundle_dir, "capabilities")
+            self.assertFalse(
+                os.path.exists(cap_dir),
+                "capabilities/ should not exist when flag is False",
+            )
+            # Stat reports zero
+            self.assertEqual(stats["inlined_skill_count"], 0)
+
+    def test_postvalidate_catches_missing_capability_md(self) -> None:
+        """postvalidate detects a capability directory missing capability.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "my-skill")
+            os.makedirs(bundle_dir)
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: my-skill\n---\n# Skill\n",
+            )
+            # Create a capability directory WITHOUT capability.md
+            cap_dir = os.path.join(bundle_dir, "capabilities", "broken")
+            os.makedirs(cap_dir)
+            write_text(os.path.join(cap_dir, "notes.md"), "# Notes\n")
+
+            errors = postvalidate(bundle_dir)
+            cap_errors = [e for e in errors if "missing" in e.lower() and "capability.md" in e.lower()]
+            self.assertGreaterEqual(
+                len(cap_errors), 1,
+                f"Expected error about missing capability.md. Errors: {errors}",
             )
 
 

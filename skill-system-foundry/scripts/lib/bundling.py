@@ -563,9 +563,13 @@ def _copy_inlined_skills(
             target_root = os.path.join(cap_dir, rel_root)
             os.makedirs(target_root, exist_ok=True)
 
-            # Rename SKILL.md -> capability.md
+            # Rename SKILL.md -> capability.md at the skill root only.
+            # Nested SKILL.md files (unusual but possible) are kept
+            # as-is so the bundle mirrors the original structure and
+            # the postvalidation SKILL.md-uniqueness check flags them
+            # if they should not be there.
             target_filename = filename
-            if filename == FILE_SKILL_MD:
+            if filename == FILE_SKILL_MD and root == os.path.abspath(abs_skill_dir):
                 target_filename = FILE_CAPABILITY_MD
 
             src = os.path.join(root, filename)
@@ -727,7 +731,27 @@ def postvalidate(bundle_dir: str) -> list[str]:
             f"archive. Capability entry points should use capability.md."
         )
 
-    # 2. Reference integrity — every markdown link should resolve
+    # 2. Capability entry-point completeness — every capabilities/<name>/
+    #    directory must contain a capability.md (case-insensitive).
+    cap_root = os.path.join(bundle_dir, DIR_CAPABILITIES)
+    if os.path.isdir(cap_root):
+        for entry in sorted(os.listdir(cap_root)):
+            cap_dir = os.path.join(cap_root, entry)
+            if not os.path.isdir(cap_dir):
+                continue
+            cap_files = [
+                f for f in os.listdir(cap_dir)
+                if f.lower() == FILE_CAPABILITY_MD.lower()
+            ]
+            if not cap_files:
+                errors.append(
+                    f"{LEVEL_FAIL}: Capability directory "
+                    f"'{DIR_CAPABILITIES}/{entry}' is missing "
+                    f"'{FILE_CAPABILITY_MD}'. Each inlined capability "
+                    f"must have an entry-point file."
+                )
+
+    # 3. Reference integrity — every markdown link should resolve
     for root, _dirs, files in os.walk(bundle_dir):
         for filename in files:
             if not is_markdown_file(filename):
