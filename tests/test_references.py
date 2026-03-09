@@ -389,5 +389,1033 @@ class ScanReferencesTests(unittest.TestCase):
             self.assertIn("beta", fails[0])
 
 
+class InlineOrchestratedSkillsTests(unittest.TestCase):
+    """Tests for scan_references() with inline_orchestrated_skills=True."""
+
+    def test_cross_skill_collected_when_flag_set(self) -> None:
+        """Cross-skill references are collected instead of rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing_skill = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing_skill, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing_skill, "references", "guide.md"), "Guide\n")
+
+            # Role references the testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            # Coordinator references the role
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # No errors — cross-skill references are tolerated
+            self.assertEqual(result["errors"], [])
+            # The testing skill should be collected for inlining
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            abs_testing = os.path.abspath(testing_skill)
+            self.assertIn(abs_testing, result["inlined_skills"])
+            self.assertEqual(result["inlined_skills"][abs_testing], "testing")
+            # The role should be in external_files
+            self.assertIn(os.path.abspath(role_file), result["external_files"])
+
+    def test_cross_skill_still_rejected_without_flag(self) -> None:
+        """Without the flag, cross-skill references produce FAIL as before."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing_skill = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing_skill, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Role references the testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            result = scan_references(coordinator, system_root)
+
+            fails = [e for e in result["errors"] if "Cross-skill reference" in e]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("testing", fails[0])
+            self.assertEqual(len(result["inlined_skills"]), 0)
+
+    def test_inlined_skills_empty_when_no_cross_refs(self) -> None:
+        """A skill with no cross-skill references has an empty inlined_skills."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            result = scan_references(
+                skill_dir, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["inlined_skills"], {})
+
+    def test_inlined_skill_transitive_external_deps_collected(self) -> None:
+        """External files referenced by an inlined skill are collected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill references an external shared reference
+            shared_guide = os.path.join(system_root, "references", "shared-guide.md")
+            write_text(shared_guide, "# Shared Guide\n")
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [guide](../../references/shared-guide.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The shared guide should be discovered as an external file
+            self.assertIn(os.path.abspath(shared_guide), result["external_files"])
+            # Both the role and the shared guide should be external
+            self.assertIn(os.path.abspath(role_file), result["external_files"])
+
+    def test_inlined_skill_internal_refs_not_external(self) -> None:
+        """Files inside an inlined skill that reference other files in
+        the same skill should not appear in external_files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has internal references between its own files
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [guide](references/test-guide.md)\n",
+            )
+            internal_guide = os.path.join(testing, "references", "test-guide.md")
+            write_text(internal_guide, "# Internal Guide\n")
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The internal guide should NOT be in external_files
+            self.assertNotIn(os.path.abspath(internal_guide), result["external_files"])
+
+    def test_inlined_skill_broken_ref_produces_fail(self) -> None:
+        """A broken reference inside an inlined skill is still reported."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has a broken reference
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [missing](references/nonexistent.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            fails = [e for e in result["errors"] if "Broken reference" in e]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("nonexistent.md", fails[0])
+
+    def test_unreachable_file_in_inlined_skill_scanned(self) -> None:
+        """A file in an inlined skill NOT referenced from SKILL.md but
+        having its own external dependency should still be scanned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing SKILL.md does NOT reference the helper file
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n# Testing\n",
+            )
+            # But the helper file references a shared external doc
+            shared_ref = os.path.join(system_root, "references", "shared-guide.md")
+            write_text(shared_ref, "# Shared Guide\n")
+            write_text(
+                os.path.join(testing, "references", "helper.md"),
+                "See [shared](../../../references/shared-guide.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The shared guide should be discovered even though it's
+            # only reachable from the unreferenced helper.md
+            self.assertIn(os.path.abspath(shared_ref), result["external_files"])
+
+    def test_unreachable_broken_ref_in_inlined_skill_reported(self) -> None:
+        """A broken reference in an unreferenced file inside an inlined
+        skill should still produce a FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # SKILL.md is clean
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n# Testing\n",
+            )
+            # But an unreferenced file has a broken reference to a
+            # non-existent file within the skill (using a relative path
+            # that stays within the skill boundary).
+            write_text(
+                os.path.join(testing, "references", "broken.md"),
+                "See [missing](nonexistent.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            fails = [e for e in result["errors"] if "FAIL" in e]
+            self.assertEqual(len(fails), 1)
+            self.assertIn("nonexistent.md", fails[0])
+
+    def test_text_detected_cross_skill_ref_warns_when_inlining(self) -> None:
+        """A text_detected cross-skill reference emits a WARN in inline mode
+        because non-markdown references are not automatically rewritten."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "notes.md"), "Testing notes\n")
+
+            # Non-markdown file with a text_detected cross-skill reference
+            write_text(
+                os.path.join(coordinator, "config.yaml"),
+                "ref: skills/testing/notes.md\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # No hard errors — the skill is collected for inlining
+            self.assertEqual(result["errors"], [])
+            # But a warning about the non-rewritable reference
+            warns = [w for w in result["warnings"] if "Non-markdown cross-skill" in w]
+            self.assertEqual(len(warns), 1, (
+                f"Expected exactly one non-markdown cross-skill WARN. "
+                f"Warnings: {result['warnings']}"
+            ))
+            self.assertIn("testing", warns[0])
+            self.assertIn("config.yaml", warns[0])
+            # The testing skill should still be collected for inlining
+            abs_testing = os.path.abspath(testing)
+            self.assertIn(abs_testing, result["inlined_skills"])
+
+    def test_explicit_empty_exclude_patterns_respected(self) -> None:
+        """An explicit empty exclude_patterns=[] must not fall back to
+        BUNDLE_EXCLUDE_PATTERNS — it should scan all files including those
+        that the defaults would skip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has a file in a .git directory (normally excluded)
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+            hidden_file = os.path.join(testing, ".git", "config.md")
+            write_text(hidden_file, "See [broken](nonexistent.md)\n")
+
+            # With default excludes, .git is skipped — no error from hidden_file
+            result_default = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+            fails_default = [e for e in result_default["errors"] if "Broken reference" in e]
+            self.assertEqual(len(fails_default), 0)
+
+            # With exclude_patterns=[], nothing is skipped — the broken ref
+            # in .git/config.md should be discovered
+            result_empty = scan_references(
+                coordinator, system_root,
+                exclude_patterns=[],
+                inline_orchestrated_skills=True,
+            )
+            fails_empty = [e for e in result_empty["errors"] if "Broken reference" in e]
+            self.assertGreaterEqual(len(fails_empty), 1, (
+                f"Expected broken reference FAIL when exclude_patterns=[]. "
+                f"Errors: {result_empty['errors']}"
+            ))
+
+    def test_inlined_skill_symlink_boundary_violation_produces_fail(self) -> None:
+        """A symlink in an inlined skill that escapes the boundary should
+        produce a FAIL instead of crashing with ValueError."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # File completely outside the system root
+            outside_file = os.path.join(tmpdir, "outside", "secret.md")
+            write_text(outside_file, "Secret content\n")
+
+            # Symlink inside the testing skill pointing outside the boundary
+            link_path = os.path.join(testing, "secret.md")
+            try:
+                os.symlink(outside_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # This must NOT raise — it should produce a FAIL entry
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            fails = [e for e in result["errors"] if "escapes" in e.lower()]
+            self.assertGreaterEqual(len(fails), 1, (
+                f"Expected at least one boundary violation FAIL. "
+                f"Errors: {result['errors']}"
+            ))
+            # Should mention the inlined skill name
+            boundary_fails = [e for e in fails if "inlined skill" in e]
+            self.assertGreaterEqual(len(boundary_fails), 1, (
+                f"Expected boundary FAIL to mention 'inlined skill'. "
+                f"Errors: {fails}"
+            ))
+
+
+    def test_text_detected_ref_into_already_inlined_skill_warns(self) -> None:
+        """A text_detected reference into an already-collected inlined skill
+        must still emit a WARN (the path won't be rewritten)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "notes.md"), "Testing notes\n")
+
+            # A markdown role reference collects 'testing' for inlining first
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # A non-markdown file also references files inside 'testing'.
+            # By the time this is scanned, 'testing' is already collected
+            # — so it hits the "already-inlined" early-return path.
+            write_text(
+                os.path.join(coordinator, "config.yaml"),
+                "ref: skills/testing/notes.md\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # The warning should still be emitted for the text_detected ref
+            warns = [w for w in result["warnings"] if "Non-markdown cross-skill" in w]
+            self.assertGreaterEqual(len(warns), 1, (
+                f"Expected at least one non-markdown cross-skill WARN. "
+                f"Warnings: {result['warnings']}"
+            ))
+            # Should mention the config.yaml source file
+            config_warns = [w for w in warns if "config.yaml" in w]
+            self.assertGreaterEqual(len(config_warns), 1, (
+                f"Expected WARN to mention config.yaml. "
+                f"Warnings: {warns}"
+            ))
+
+
+    def test_inlined_skill_depth_does_not_inherit_coordinator_depth(self) -> None:
+        """Inlined skill scanning should start at depth 0, not inherit the
+        coordinator's depth.  With max_depth=2, a coordinator at depth 1
+        that discovers a skill should still scan the inlined skill's own
+        2-level reference chain without hitting a false depth limit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Coordinator references a role (depth 1 from coordinator)
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has a 2-level external reference chain:
+            # testing/SKILL.md -> ../../references/a.md -> b.md
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [a](../../references/a.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "references", "a.md"),
+                "See [b](b.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "references", "b.md"),
+                "Final doc\n",
+            )
+
+            # With max_depth=2, if the inlined skill inherited the
+            # coordinator's depth, scanning a.md (depth 2+1=3) would
+            # fail.  Starting at 0 means a.md is at depth 1 and b.md
+            # at depth 2 — both within limit.
+            result = scan_references(
+                coordinator, system_root,
+                max_depth=2,
+                inline_orchestrated_skills=True,
+            )
+
+            depth_fails = [e for e in result["errors"] if "depth limit" in e]
+            self.assertEqual(len(depth_fails), 0, (
+                f"Inlined skill scanning should start at depth 0. "
+                f"Errors: {result['errors']}"
+            ))
+            # Both external files should be discovered
+            abs_a = os.path.abspath(os.path.join(system_root, "references", "a.md"))
+            abs_b = os.path.abspath(os.path.join(system_root, "references", "b.md"))
+            self.assertIn(abs_a, result["external_files"])
+            self.assertIn(abs_b, result["external_files"])
+
+    def test_inlined_skill_cross_skill_symlink_detected(self) -> None:
+        """A symlink inside an inlined skill that points to another skill
+        should be detected as a cross-skill symlink violation, using the
+        inlined skill as the context (not the coordinator)."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+            deploy = os.path.join(system_root, "skills", "deploy")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(deploy, "SKILL.md"), "---\nname: deploy\n---\n")
+            write_text(os.path.join(deploy, "doc.md"), "Deploy doc\n")
+
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Symlink inside testing that points to a file in deploy
+            link_path = os.path.join(testing, "refs", "deploy-doc.md")
+            os.makedirs(os.path.dirname(link_path), exist_ok=True)
+            try:
+                os.symlink(
+                    os.path.join(deploy, "doc.md"),
+                    link_path,
+                )
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # testing/SKILL.md references the symlink
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [deploy](refs/deploy-doc.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # The cross-skill symlink from testing -> deploy should be
+            # detected using testing as the context, not coordinator.
+            cross_skill_fails = [
+                e for e in result["errors"]
+                if "Cross-skill" in e and "symlink" in e.lower()
+            ]
+            self.assertGreaterEqual(len(cross_skill_fails), 1, (
+                f"Expected cross-skill symlink FAIL from testing -> deploy. "
+                f"Errors: {result['errors']}"
+            ))
+
+    def test_inlined_skill_internal_ref_not_flagged_as_cross_skill(self) -> None:
+        """Files inside an inlined skill that reference other files within
+        the same skill should be treated as internal (using the inlined
+        skill as context), not misidentified as cross-skill references."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill has multiple files referencing each other
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\nSee [guide](references/guide.md)\n",
+            )
+            write_text(
+                os.path.join(testing, "references", "guide.md"),
+                "See [helpers](helpers.md)\n",
+            )
+            write_text(
+                os.path.join(testing, "references", "helpers.md"),
+                "Helper content\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # No errors — internal refs within the inlined skill should
+            # be handled correctly with the proper skill context.
+            self.assertEqual(result["errors"], [], (
+                f"Internal refs within an inlined skill should not produce "
+                f"errors. Errors: {result['errors']}"
+            ))
+            # No cross-skill warnings about internal references
+            cross_warns = [w for w in result["warnings"] if "cross-skill" in w.lower()]
+            self.assertEqual(len(cross_warns), 0, (
+                f"Internal refs should not produce cross-skill warnings. "
+                f"Warnings: {result['warnings']}"
+            ))
+            # The internal files should NOT appear as external files
+            abs_guide = os.path.abspath(os.path.join(testing, "references", "guide.md"))
+            abs_helpers = os.path.abspath(os.path.join(testing, "references", "helpers.md"))
+            self.assertNotIn(abs_guide, result["external_files"])
+            self.assertNotIn(abs_helpers, result["external_files"])
+
+
+    def test_coordinator_back_reference_not_inlined(self) -> None:
+        """If an inlined skill references back to the coordinator, the
+        coordinator must NOT be collected for inlining into itself."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Testing skill references the coordinator back
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n"
+                "See [coordinator](../coordinator/SKILL.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            # Only testing should be inlined, NOT the coordinator
+            self.assertEqual(len(result["inlined_skills"]), 1, (
+                f"Expected only 1 inlined skill (testing), not coordinator. "
+                f"Inlined: {result['inlined_skills']}"
+            ))
+            # The inlined skill should be testing
+            names = list(result["inlined_skills"].values())
+            self.assertIn("testing", names)
+            self.assertNotIn("coordinator", names)
+
+    def test_symlinked_skill_reference_deduplicates(self) -> None:
+        """When the same skill is referenced via a symlink and a direct
+        path, it should only be collected once for inlining."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "doc.md"), "Test doc\n")
+
+            # Create a symlink: skills/testing-alias -> skills/testing
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # Two roles: one references via direct path, one via symlink
+            role_a = os.path.join(system_root, "roles", "role-a.md")
+            role_b = os.path.join(system_root, "roles", "role-b.md")
+            write_text(
+                role_a,
+                "See [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                role_b,
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [a](../../roles/role-a.md)\nSee [b](../../roles/role-b.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # Should only have 1 inlined skill (not 2)
+            self.assertEqual(len(result["inlined_skills"]), 1, (
+                f"Expected exactly 1 inlined skill after dedup. "
+                f"Inlined: {result['inlined_skills']}"
+            ))
+            # The name should be the canonical directory name, not the alias
+            names = list(result["inlined_skills"].values())
+            self.assertIn("testing", names)
+            self.assertNotIn("testing-alias", names)
+
+    def test_alias_first_reference_uses_canonical_name(self) -> None:
+        """When the first cross-skill reference is through a symlink alias,
+        the capability name must still be the canonical (realpath-resolved)
+        directory name, not the alias."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Create alias symlink
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted in this environment")
+
+            # Role references ONLY via alias — this is the first (and only)
+            # reference, so it determines the inlined skill name.
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            # Name must be canonical ("testing"), not the alias
+            names = list(result["inlined_skills"].values())
+            self.assertIn("testing", names, (
+                f"Expected canonical name 'testing', got: {names}"
+            ))
+            self.assertNotIn("testing-alias", names, (
+                f"Alias name should not appear: {names}"
+            ))
+
+
+    def test_alias_recorded_in_inlined_skill_aliases(self) -> None:
+        """When a skill is referenced via both direct and alias paths,
+        the alias is recorded in inlined_skill_aliases."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            alias_path = os.path.join(system_root, "skills", "testing-alias")
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Two roles: direct + alias
+            write_text(
+                os.path.join(system_root, "roles", "role-a.md"),
+                "See [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "roles", "role-b.md"),
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [a](../../roles/role-a.md)\nSee [b](../../roles/role-b.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            aliases = result["inlined_skill_aliases"]
+            self.assertEqual(len(aliases), 1, (
+                f"Expected 1 alias entry. Got: {aliases}"
+            ))
+            alias_abs, primary_abs = aliases[0]
+            self.assertIn("testing-alias", alias_abs)
+            # Primary should be the direct path entry
+            self.assertEqual(
+                primary_abs,
+                list(result["inlined_skills"].keys())[0],
+            )
+
+    def test_text_detected_coordinator_back_ref_warns(self) -> None:
+        """A text_detected reference back to the coordinator from an
+        inlined skill emits a WARN (the path won't be rewritten)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            # Role references testing skill
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            # Non-markdown file in testing references the coordinator
+            write_text(
+                os.path.join(testing, "config.yaml"),
+                "coordinator: skills/coordinator/SKILL.md\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(result["errors"], [])
+            warns = [w for w in result["warnings"]
+                     if "coordinator" in w.lower() and "non-markdown" in w.lower()]
+            self.assertGreaterEqual(len(warns), 1, (
+                f"Expected WARN for text_detected coordinator back-ref. "
+                f"Warnings: {result['warnings']}"
+            ))
+
+    def test_alias_dedup_in_cross_skill_collection(self) -> None:
+        """Multiple references through the same alias path should not
+        produce duplicate entries in inlined_skill_aliases."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "extra.md"),
+                "Extra docs.\n",
+            )
+
+            alias_path = os.path.join(
+                system_root, "skills", "testing-alias"
+            )
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Two roles that BOTH use the alias path
+            write_text(
+                os.path.join(system_root, "roles", "role-a.md"),
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(system_root, "roles", "role-b.md"),
+                "See [extra](../skills/testing-alias/extra.md)\n",
+            )
+
+            # Direct reference too, so testing is the primary
+            write_text(
+                os.path.join(system_root, "roles", "role-c.md"),
+                "See [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [a](../../roles/role-a.md)\n"
+                "See [b](../../roles/role-b.md)\n"
+                "See [c](../../roles/role-c.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            aliases = result["inlined_skill_aliases"]
+            # Only ONE alias entry despite two references via the alias
+            self.assertEqual(len(aliases), 1, (
+                f"Expected exactly 1 alias entry (no duplicates). "
+                f"Got: {aliases}"
+            ))
+
+
+    def test_alias_root_loop_does_not_escape_system_root(self) -> None:
+        """The alias-root detection loop must not walk above system_root.
+
+        If a SKILL.md exists in a directory above system_root, the loop
+        should ignore it — the ``is_within_directory`` guard prevents
+        the walk from escaping the intended boundary.
+        """
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink is not supported on this platform")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Place a decoy SKILL.md ABOVE the system root.  Without the
+            # boundary guard this would be incorrectly recorded as an
+            # alias root.
+            system_root = os.path.join(tmpdir, "outer", "root")
+            decoy_dir = os.path.join(tmpdir, "outer")
+            write_text(
+                os.path.join(decoy_dir, "SKILL.md"),
+                "---\nname: decoy\n---\nDecoy skill above system root.\n",
+            )
+
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+
+            write_text(
+                os.path.join(coordinator, "SKILL.md"),
+                "---\nname: coordinator\n---\n",
+            )
+            write_text(
+                os.path.join(testing, "SKILL.md"),
+                "---\nname: testing\n---\n",
+            )
+
+            # Create a symlink alias for the testing skill.
+            alias_path = os.path.join(
+                system_root, "skills", "testing-alias"
+            )
+            try:
+                os.symlink(testing, alias_path)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+
+            # Role that references via the alias.
+            write_text(
+                os.path.join(system_root, "roles", "role.md"),
+                "See [skill](../skills/testing-alias/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [role](../../roles/role.md)\n",
+            )
+
+            result = scan_references(
+                coordinator,
+                system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # The alias should be recorded normally.
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            aliases = result["inlined_skill_aliases"]
+            self.assertEqual(len(aliases), 1)
+            alias_abs, primary_abs = aliases[0]
+            self.assertIn("testing-alias", alias_abs)
+            # Primary should be within system_root, not the decoy.
+            self.assertTrue(
+                os.path.realpath(primary_abs).startswith(
+                    os.path.realpath(system_root)
+                ),
+                f"Primary {primary_abs} should be within system_root",
+            )
+            # No errors — the decoy SKILL.md above system_root was
+            # never reached by the alias-root walk.
+            self.assertEqual(result["errors"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

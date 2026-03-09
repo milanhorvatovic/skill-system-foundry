@@ -177,6 +177,20 @@ class ScanResult(TypedDict):
     errors: list[str]
     warnings: list[str]
     reference_map: dict[str, list[ResolvedRef]]
+    # Skill directories to inline as capabilities.  Always present;
+    # empty when ``inline_orchestrated_skills`` is ``False``.
+    # Keys are absolute path directories on the lexical system_root
+    # basis (i.e. realpath re-expressed through the user-supplied
+    # system_root so they share the same path basis as the coordinator
+    # and external files — not necessarily realpath).
+    inlined_skills: dict[str, str]  # {abs_skill_dir: skill_name}
+    # Alias roots observed for inlined skills.  Each entry maps an
+    # alias directory (e.g. a symlink) to the primary skill directory
+    # already recorded in ``inlined_skills``, expressed on the same
+    # system_root-based absolute path basis (not necessarily realpath).
+    # Consumers use this to add rewrite-map entries for alias-path
+    # references.
+    inlined_skill_aliases: list[tuple[str, str]]  # [(alias_abs, primary_abs)]
 
 
 def extract_references(filepath: str) -> list[FilteredRef]:
@@ -455,6 +469,8 @@ def scan_references(
     system_root: str | None = None,
     max_depth: int | None = None,
     exclude_patterns: list[str] | None = None,
+    *,
+    inline_orchestrated_skills: bool = False,
 ) -> ScanResult:
     """Scan a skill's full reference graph for external dependencies.
 
@@ -471,6 +487,10 @@ def scan_references(
         exclude_patterns: Glob patterns for files/directories to skip
                           during the skill walk.  Defaults to
                           ``BUNDLE_EXCLUDE_PATTERNS`` from config.
+        inline_orchestrated_skills:
+                          When ``True``, cross-skill references are
+                          collected for inlining as capabilities instead
+                          of being rejected.
 
     Returns a dict::
 
@@ -479,6 +499,12 @@ def scan_references(
             'errors':         list of FAIL strings,
             'warnings':       list of WARN strings,
             'reference_map':  {source_path: [(raw_ref, line, type, resolved), ...]},
+            'inlined_skills': {abs_skill_dir: skill_name} (always present;
+                              empty when ``inline_orchestrated_skills`` is
+                              False; keys are canonical abspath directories),
+            'inlined_skill_aliases': [(alias_abs, primary_abs), ...] alias
+                              roots for skills referenced via symlinks
+                              (primary is system_root-basis, not realpath),
         }
     """
     if max_depth is None:
@@ -496,6 +522,27 @@ def scan_references(
     errors: list[str] = []
     warnings: list[str] = []
     reference_map: dict[str, list[ResolvedRef]] = {}
+    # Skill directories collected for inlining (only when flag is set).
+    # Keys are canonical abspath directories, re-expressed through the
+    # lexical system_root so they share the same path basis as the
+    # coordinator and external files.
+    inlined_skills: dict[str, str] = {}  # {abs_skill_dir: skill_name}
+    # Alias roots: (alias_abs_dir, primary_abs_dir) for symlink paths
+    # that resolve to an already-collected inlined skill.  The primary
+    # dir is on the system_root path basis (not realpath).  Used to
+    # add rewrite-map entries for alias-path references.
+    inlined_skill_aliases: list[tuple[str, str]] = []
+    # Canonical set (normcase + realpath) for deduplication — ensures
+    # the same skill referenced via symlinks or different case is not
+    # collected twice.  Also used for O(path_depth) containment checks
+    # so the already-inlined lookup avoids O(refs × skills) scanning.
+    _inlined_canonical: set[str] = set()
+    # Maps canonical_skill_dir -> primary_dir (system_root-basis) for lookups.
+    _canonical_to_primary: dict[str, str] = {}
+    # Canonical form of the coordinator (top-level skill being bundled)
+    # so we can avoid collecting it for inlining when an inlined skill
+    # references it back.
+    coordinator_canonical = os.path.normcase(os.path.realpath(skill_path))
 
     # External files whose subtrees have been fully traversed.
     scanned_external: set[str] = set()
@@ -505,12 +552,17 @@ def scan_references(
         depth: int,
         ancestor_set: frozenset[str],
         ancestor_path: tuple[str, ...],
+        current_skill: str | None = None,
     ) -> None:
         """Recursively scan *filepath* and classify its references.
 
         *ancestor_set* is a frozenset for O(1) cycle membership checks.
         *ancestor_path* is an ordered tuple for deterministic cycle display.
+        *current_skill* is the skill directory context for internal/
+        cross-skill checks (defaults to the top-level *skill_path*).
         """
+        if current_skill is None:
+            current_skill = skill_path
         filepath = os.path.abspath(filepath)
 
         if depth > max_depth:
@@ -594,17 +646,123 @@ def scan_references(
                     )
                 continue
 
-            # ---- Internal (within the skill) ----
+            # ---- Internal (within the skill or an already-collected
+            #      inlined skill) ----
             # Treat files whose real path is within the skill as internal.
-            if is_within_directory(resolved, skill_path):
+            if is_within_directory(resolved, current_skill):
                 continue
+            # When inlining, files inside an already-collected inlined
+            # skill are also internal — they will be copied as part of
+            # the full skill directory, not as external files.
+            # Use an O(path_depth) walk up the realpath of resolved
+            # checking the canonical set, instead of iterating all
+            # inlined_skills with is_within_directory on each.
+            if inline_orchestrated_skills:
+                real_resolved = os.path.normcase(
+                    os.path.realpath(resolved)
+                )
+                containing_canonical = None
+                _check_dir = os.path.dirname(real_resolved)
+                while True:
+                    if _check_dir in _inlined_canonical:
+                        containing_canonical = _check_dir
+                        break
+                    _parent = os.path.dirname(_check_dir)
+                    if _parent == _check_dir:
+                        break
+                    _check_dir = _parent
+                if containing_canonical is not None:
+                    matched_isd = _canonical_to_primary[
+                        containing_canonical
+                    ]
+                    containing_inlined = inlined_skills[matched_isd]
+                    # Check whether the lexical (normpath) resolved
+                    # path reaches the skill through an alias — i.e.
+                    # a symlink directory that differs from the primary
+                    # inlined skill directory.  ``is_within_directory``
+                    # matched via realpath, but the lexical path may go
+                    # through a different root.
+                    resolved_norm = os.path.normcase(
+                        os.path.abspath(resolved)
+                    )
+                    matched_norm = os.path.normcase(matched_isd)
+                    lexically_within = False
+                    try:
+                        lexically_within = (
+                            os.path.commonpath(
+                                [resolved_norm, matched_norm]
+                            )
+                            == matched_norm
+                        )
+                    except ValueError:
+                        pass
+                    if (
+                        not lexically_within
+                        and system_root is not None
+                    ):
+                        # Derive the alias skill root from the
+                        # lexical resolved path by walking up to
+                        # find a SKILL.md, staying strictly within
+                        # system_root.  Use ``is_within_directory``
+                        # (realpath + commonpath) as the loop guard
+                        # so that platform path aliases (e.g. macOS
+                        # /tmp -> /private/tmp) and unusual mount
+                        # structures can never cause the walk to
+                        # escape the intended boundary and
+                        # accidentally match a SKILL.md above
+                        # system_root.
+                        alias_candidate = os.path.dirname(
+                            os.path.abspath(resolved)
+                        )
+                        while True:
+                            # Stop when we've reached or escaped
+                            # system_root — there is no valid skill
+                            # root at or above the system root.
+                            if not is_within_directory(
+                                alias_candidate, system_root
+                            ) or os.path.normcase(
+                                os.path.realpath(alias_candidate)
+                            ) == os.path.normcase(
+                                os.path.realpath(system_root)
+                            ):
+                                break
+                            if os.path.exists(
+                                os.path.join(
+                                    alias_candidate, FILE_SKILL_MD
+                                )
+                            ):
+                                if os.path.normcase(alias_candidate) != os.path.normcase(matched_isd) and (
+                                    alias_candidate, matched_isd
+                                ) not in inlined_skill_aliases:
+                                    inlined_skill_aliases.append(
+                                        (alias_candidate, matched_isd)
+                                    )
+                                break
+                            parent = os.path.dirname(alias_candidate)
+                            if parent == alias_candidate:
+                                break
+                            alias_candidate = parent
+                    # text_detected references are not rewritten in the
+                    # bundle, so warn about stale paths.
+                    if ref_type == "text_detected":
+                        warnings.append(
+                            f"{LEVEL_WARN}: Non-markdown cross-skill "
+                            f"reference detected in "
+                            f"'{_rel(filepath)}' line {line_num}: "
+                            f"'{raw_ref}'. This reference points to "
+                            f"inlined skill '{containing_inlined}' but "
+                            f"cannot be automatically rewritten in "
+                            f"the bundle. You may need to update it "
+                            f"manually."
+                        )
+                    continue
 
             # For entries that are only lexically within the skill (i.e.
             # a symlink living inside the skill pointing elsewhere),
             # allow them as internal unless they actually target another
             # skill under system_root/skills/ (cross-skill symlink bypass).
             lexical_path_norm = os.path.normcase(os.path.abspath(resolved))
-            skill_norm = os.path.normcase(skill_path)
+            skill_norm = os.path.normcase(current_skill)
             lexical_within_skill = False
             try:
                 lexical_within_skill = (
@@ -627,7 +785,7 @@ def scan_references(
                         os.path.realpath(resolved)
                     )
                     skill_real = os.path.normcase(
-                        os.path.realpath(skill_path)
+                        os.path.realpath(current_skill)
                     )
                     try:
                         under_skills_root = (
@@ -685,15 +843,179 @@ def scan_references(
                     containing_norm = os.path.normcase(
                         os.path.realpath(os.path.abspath(containing_skill))
                     )
-                    skill_path_norm = os.path.normcase(
-                        os.path.realpath(skill_path)
+                    current_skill_norm = os.path.normcase(
+                        os.path.realpath(current_skill)
                     )
-                    if containing_norm != skill_path_norm:
-                        skill_name = os.path.basename(containing_skill)
+                    if containing_norm != current_skill_norm:
+                        other_skill_name = os.path.basename(containing_skill)
+                        if inline_orchestrated_skills:
+                            # Collect for inlining instead of rejecting.
+                            abs_skill_dir = os.path.abspath(containing_skill)
+                            # Canonical form for deduplication — ensures
+                            # symlinks and case differences don't cause
+                            # the same skill to be collected twice.
+                            real_skill_dir = os.path.realpath(abs_skill_dir)
+                            canonical_skill_dir = os.path.normcase(
+                                real_skill_dir
+                            )
+                            # Never inline the coordinator itself —
+                            # a back-reference from an inlined skill to
+                            # the coordinator is a reference to the
+                            # bundle root, not a new skill to inline.
+                            if canonical_skill_dir == coordinator_canonical:
+                                # text_detected references are not
+                                # rewritten; warn about the stale path.
+                                if ref_type == "text_detected":
+                                    warnings.append(
+                                        f"{LEVEL_WARN}: Non-markdown "
+                                        f"reference to coordinator skill "
+                                        f"detected in "
+                                        f"'{_rel(filepath)}' line "
+                                        f"{line_num}: '{raw_ref}'. This "
+                                        f"reference cannot be "
+                                        f"automatically rewritten in "
+                                        f"the bundle. You may need to "
+                                        f"update it manually."
+                                    )
+                                continue
+                            # Derive the skill name from the resolved
+                            # real path so aliases don't produce
+                            # inconsistent capability directory names.
+                            canonical_name = os.path.basename(
+                                real_skill_dir
+                            )
+                            already_collected = (
+                                canonical_skill_dir in _inlined_canonical
+                            )
+                            # Derive the primary directory on the same
+                            # path basis as system_root so the bundling
+                            # pipeline can compute consistent relative
+                            # paths.  Convert the realpath back through
+                            # the lexical system_root to avoid platform
+                            # path aliases (e.g. macOS /var -> /private/
+                            # var) leaking into the key.
+                            #
+                            # This ensures the primary is always the
+                            # canonical real directory regardless of
+                            # whether the first reference arrived via a
+                            # symlink alias — alias-first discovery
+                            # still produces the same primary_dir
+                            # because the derivation is from realpath,
+                            # not from the discovered abs_skill_dir.
+                            if system_root is not None:
+                                _sr_real = os.path.realpath(system_root)
+                                try:
+                                    _rel_from_sr = os.path.relpath(
+                                        real_skill_dir, _sr_real
+                                    )
+                                    primary_dir = os.path.normpath(
+                                        os.path.join(
+                                            system_root, _rel_from_sr
+                                        )
+                                    )
+                                except ValueError:
+                                    primary_dir = abs_skill_dir
+                            else:
+                                primary_dir = abs_skill_dir
+                            if not already_collected:
+                                _inlined_canonical.add(canonical_skill_dir)
+                                _canonical_to_primary[canonical_skill_dir] = primary_dir
+                                inlined_skills[primary_dir] = canonical_name
+                                # If discovered via a symlink alias,
+                                # record it immediately.  Use normcase
+                                # so case-insensitive filesystems
+                                # (macOS, Windows) don't produce
+                                # spurious alias entries when the only
+                                # difference is letter case.
+                                if os.path.normcase(abs_skill_dir) != os.path.normcase(primary_dir):
+                                    inlined_skill_aliases.append(
+                                        (abs_skill_dir, primary_dir)
+                                    )
+                            else:
+                                primary_dir = _canonical_to_primary[
+                                    canonical_skill_dir
+                                ]
+                                # Record the alias so the rewrite map
+                                # covers both path forms.  Use normcase
+                                # for the guard (case-insensitive FS
+                                # safety) and for the dedup check.
+                                if os.path.normcase(abs_skill_dir) != os.path.normcase(primary_dir):
+                                    alias_pair = (
+                                        abs_skill_dir, primary_dir
+                                    )
+                                    if (
+                                        alias_pair
+                                        not in inlined_skill_aliases
+                                    ):
+                                        inlined_skill_aliases.append(
+                                            alias_pair
+                                        )
+                            # The resolved file is inside the skill being
+                            # inlined — do NOT add it to external_files
+                            # (it will be copied as part of the full skill
+                            # directory during inlining).
+                            #
+                            # When a skill is first collected, scan ALL
+                            # files in its directory tree so that every
+                            # external dependency and validation issue is
+                            # discovered — not just those reachable from
+                            # the single referenced entry point.
+                            if not already_collected:
+                                inlined_boundary = (
+                                    primary_dir if system_root is None
+                                    else system_root
+                                )
+                                inlined_violations: list[BoundaryViolation] = []
+                                for iroot, ifilename in walk_skill_files(
+                                    primary_dir,
+                                    exclude_patterns,
+                                    inlined_boundary,
+                                    inlined_violations,
+                                ):
+                                    ifile = os.path.join(iroot, ifilename)
+                                    if ifile not in scanned_external:
+                                        scanned_external.add(ifile)
+                                        _scan_file(
+                                            ifile, 0,
+                                            frozenset(), (),
+                                            current_skill=primary_dir,
+                                        )
+                                # Convert boundary violations from the
+                                # inlined skill walk into FAIL entries.
+                                for iv in inlined_violations:
+                                    iv_rel = os.path.relpath(
+                                        iv.link_path, primary_dir
+                                    ).replace(os.sep, "/")
+                                    errors.append(
+                                         f"{LEVEL_FAIL}: Symlinked {iv.kind} "
+                                        f"in inlined skill "
+                                        f"'{canonical_name}' escapes "
+                                        f"allowed boundary rooted at "
+                                        f"'{inlined_boundary}': "
+                                        f"'{iv_rel}' -> '{iv.real_target}'. "
+                                        f"Symlink targets must stay within "
+                                        f"this boundary."
+                                    )
+                            # text_detected references (from non-markdown
+                            # files) are not rewritten in the bundle.
+                            # Warn the user so they know the stale path
+                            # needs manual attention.
+                            if ref_type == "text_detected":
+                                warnings.append(
+                                    f"{LEVEL_WARN}: Non-markdown cross-skill "
+                                    f"reference detected in "
+                                    f"'{_rel(filepath)}' line {line_num}: "
+                                    f"'{raw_ref}'. This reference points to "
+                                    f"inlined skill '{canonical_name}' but "
+                                    f"cannot be automatically rewritten in "
+                                    f"the bundle. You may need to update it "
+                                    f"manually."
+                                )
+                            continue
                         errors.append(
                             f"{LEVEL_FAIL}: Cross-skill reference in "
                             f"'{_rel(filepath)}' line {line_num}: "
-                            f"'{raw_ref}' points to skill '{skill_name}'. "
+                            f"'{raw_ref}' points to skill '{other_skill_name}'. "
                             f"A bundle must be self-contained — it cannot "
                             f"reference other skills. Remove this reference "
                             f"or inline the needed content."
@@ -716,14 +1038,17 @@ def scan_references(
                     scanned_external.add(resolved)
                     new_set = ancestor_set | frozenset({resolved})
                     new_path = ancestor_path + (resolved,)
-                    _scan_file(resolved, depth + 1, new_set, new_path)
+                    _scan_file(
+                        resolved, depth + 1, new_set, new_path,
+                        current_skill=current_skill,
+                    )
                 continue
 
             # ---- Cycle between external documents ----
             if resolved in ancestor_set:
                 cycle_display = " -> ".join(
                     _rel(f) for f in ancestor_path + (resolved,)
-                    if not is_within_directory(f, skill_path)
+                    if not is_within_directory(f, current_skill)
                 )
                 errors.append(
                     f"{LEVEL_FAIL}: Circular reference detected between "
@@ -740,7 +1065,10 @@ def scan_references(
                 scanned_external.add(resolved)
                 new_set = ancestor_set | frozenset({resolved})
                 new_path = ancestor_path + (resolved,)
-                _scan_file(resolved, depth + 1, new_set, new_path)
+                _scan_file(
+                    resolved, depth + 1, new_set, new_path,
+                    current_skill=current_skill,
+                )
 
         if resolved_refs:
             reference_map[filepath] = resolved_refs
@@ -783,6 +1111,8 @@ def scan_references(
         "errors": errors,
         "warnings": warnings,
         "reference_map": reference_map,
+        "inlined_skills": inlined_skills,
+        "inlined_skill_aliases": inlined_skill_aliases,
     }
 
 

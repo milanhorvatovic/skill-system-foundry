@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from typing import TypedDict
 
 from .constants import (
+    DIR_CAPABILITIES,
+    FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     BUNDLE_DESCRIPTION_MAX_LENGTH,
     BUNDLE_EXCLUDE_PATTERNS,
@@ -43,6 +45,7 @@ class BundleStats(TypedDict):
     external_count: int
     rewrite_count: int
     skill_name: str
+    inlined_skill_count: int
 
 
 # ===================================================================
@@ -52,6 +55,8 @@ class BundleStats(TypedDict):
 def prevalidate(
     skill_path: str,
     system_root: str | None,
+    *,
+    inline_orchestrated_skills: bool = False,
 ) -> tuple[list[str], list[str], ScanResult | None]:
     """Run all pre-validation checks.
 
@@ -118,7 +123,10 @@ def prevalidate(
         effective_root = infer_system_root(skill_path)
     else:
         effective_root = system_root
-    scan_result = scan_references(skill_path, effective_root)
+    scan_result = scan_references(
+        skill_path, effective_root,
+        inline_orchestrated_skills=inline_orchestrated_skills,
+    )
     errors.extend(scan_result["errors"])
     warnings.extend(scan_result["warnings"])
 
@@ -360,19 +368,50 @@ def _build_rewrite_map(
             rewrite_map.setdefault(orig_path, new_rel)
             rewrite_map.setdefault(orig_path.replace(os.sep, "/"), new_rel)
 
-    # Add system-root-relative paths for skill-internal files so that
-    # inlined external docs referencing e.g. "skills/<name>/SKILL.md"
-    # get rewritten to the correct bundle-relative path.
-    if system_root:
+    # Add paths for skill-internal files (coordinator files not in
+    # file_mapping) so that both system-root-relative references
+    # (e.g. "skills/<name>/SKILL.md" from inlined external docs) AND
+    # relative references from inlined capability files back to the
+    # coordinator (e.g. "../coordinator/SKILL.md") are rewritten.
+    if skill_files:
+        # Determine the original file location for relative-path
+        # computations.  This mirrors _compute_original_paths logic.
+        bf_rel = os.path.relpath(bundle_file, bundle_dir).replace(
+            os.sep, "/"
+        )
+        orig_file = reverse_mapping.get(bf_rel)
+        if not orig_file:
+            orig_file = os.path.join(skill_path, bf_rel)
+        orig_dir = os.path.dirname(orig_file)
+
         for abs_skill_file, skill_bundle_rel in sorted(skill_files.items()):
             abs_target = os.path.join(bundle_dir, skill_bundle_rel)
             new_rel = os.path.relpath(abs_target, bundle_file_dir).replace(os.sep, "/")
+
+            # Relative from the original file position — covers
+            # references like "../coordinator/SKILL.md" used by
+            # inlined capability files referencing the coordinator.
             try:
-                system_rel = os.path.relpath(abs_skill_file, system_root)
-                rewrite_map.setdefault(system_rel, new_rel)
-                rewrite_map.setdefault(system_rel.replace(os.sep, "/"), new_rel)
+                rel_from_orig = os.path.relpath(abs_skill_file, orig_dir)
+                rewrite_map.setdefault(rel_from_orig, new_rel)
+                rewrite_map.setdefault(
+                    rel_from_orig.replace(os.sep, "/"), new_rel
+                )
             except ValueError:
                 pass
+
+            # System-root-relative form.
+            if system_root:
+                try:
+                    system_rel = os.path.relpath(
+                        abs_skill_file, system_root
+                    )
+                    rewrite_map.setdefault(system_rel, new_rel)
+                    rewrite_map.setdefault(
+                        system_rel.replace(os.sep, "/"), new_rel
+                    )
+                except ValueError:
+                    pass
 
     return rewrite_map
 
@@ -478,6 +517,96 @@ def _compute_original_paths(
     return paths
 
 
+def _copy_inlined_skills(
+    inlined_skills: dict[str, str],
+    bundle_dir: str,
+    exclude_patterns: list[str],
+    system_root: str | None,
+) -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
+    """Copy each inlined skill into ``capabilities/<name>/`` in the bundle.
+
+    Renames ``SKILL.md`` to ``capability.md`` in each copy.
+
+    Returns ``(file_mapping, per_root)`` where:
+
+    - *file_mapping*: ``{abs_source_path: bundle_relative_path}``
+      covering all files from inlined skills, suitable for merging
+      into the main ``file_mapping`` used by the rewriter.
+    - *per_root*: ``{abs_skill_dir: [(abs_source, bundle_rel), ...]}``
+      grouping copied files by their primary skill root so alias
+      expansion can look up files in O(1) per root without a
+      secondary containment scan.
+    """
+    file_mapping: dict[str, str] = {}
+    per_root: dict[str, list[tuple[str, str]]] = {}
+
+    for abs_skill_dir, skill_name in sorted(inlined_skills.items()):
+        # Use the same boundary logic as _copy_skill: when no system
+        # root is available, the skill's own directory is the boundary
+        # so that symlinks within the skill are not incorrectly rejected.
+        boundary = abs_skill_dir if system_root is None else system_root
+
+        cap_dir = os.path.join(bundle_dir, DIR_CAPABILITIES, skill_name)
+        if os.path.exists(cap_dir):
+            raise ValueError(
+                f"Capability directory '{DIR_CAPABILITIES}/{skill_name}' "
+                f"already exists in the bundle. Cannot inline skill "
+                f"'{skill_name}' — resolve the naming conflict."
+            )
+
+        root_sources: list[tuple[str, str]] = []
+
+        for root, filename in walk_skill_files(
+            abs_skill_dir, exclude_patterns, boundary
+        ):
+            rel_root = os.path.relpath(root, abs_skill_dir)
+            target_root = os.path.join(cap_dir, rel_root)
+            os.makedirs(target_root, exist_ok=True)
+
+            # Rename SKILL.md -> capability.md at the skill root only.
+            # Nested SKILL.md files (unusual but possible) are kept
+            # as-is so the bundle mirrors the original structure and
+            # the postvalidation SKILL.md-uniqueness check flags them
+            # if they should not be there.
+            target_filename = filename
+            if filename == FILE_SKILL_MD and root == os.path.abspath(abs_skill_dir):
+                target_filename = FILE_CAPABILITY_MD
+
+            src = os.path.join(root, filename)
+            dst = os.path.join(target_root, target_filename)
+
+            # Guard against destination collisions — e.g. a skill that
+            # already contains a capability.md alongside SKILL.md would
+            # cause a silent overwrite after the rename.
+            if os.path.exists(dst):
+                rel_src = os.path.relpath(src, abs_skill_dir).replace(os.sep, "/")
+                rel_dst = os.path.relpath(dst, cap_dir).replace(os.sep, "/")
+                raise ValueError(
+                    f"Cannot inline skill file due to destination collision: "
+                    f"copying '{skill_name}/{rel_src}' would overwrite "
+                    f"'{DIR_CAPABILITIES}/{skill_name}/{rel_dst}'. "
+                    f"Rename or remove the conflicting file before bundling."
+                )
+
+            try:
+                shutil.copy2(src, dst)
+            except OSError as e:
+                rel_src = os.path.relpath(src, abs_skill_dir).replace(os.sep, "/")
+                raise ValueError(
+                    f"Failed to copy inlined skill file "
+                    f"'{skill_name}/{rel_src}'"
+                ) from e
+
+            # Build mapping: source abs path -> bundle relative path
+            rel_in_cap = os.path.relpath(dst, bundle_dir).replace(os.sep, "/")
+            file_mapping[src] = rel_in_cap
+            root_sources.append((src, rel_in_cap))
+
+        per_root[abs_skill_dir] = root_sources
+
+    return file_mapping, per_root
+
+
 def create_bundle(
     skill_path: str,
     system_root: str | None,
@@ -485,6 +614,7 @@ def create_bundle(
     exclude_patterns: list[str],
     *,
     bundle_base: str,
+    inline_orchestrated_skills: bool = False,
 ) -> tuple[str, dict[str, str], BundleStats]:
     """Create the bundle directory.
 
@@ -497,22 +627,55 @@ def create_bundle(
     bundle_dir = os.path.join(bundle_base, skill_name)
     os.makedirs(bundle_dir)
 
+    # Resolve effective system root so the bundle phase uses the same
+    # boundary as prevalidation (which also infers when system_root
+    # is None).  Without this, _copy_inlined_skills would fall back
+    # to abs_skill_dir as the boundary and reject symlinks that
+    # prevalidation already accepted under the inferred root.
+    effective_root = system_root
+    if effective_root is None:
+        effective_root = infer_system_root(skill_path)
+
     # Step 1: Copy skill as-is
-    _copy_skill(skill_path, bundle_dir, exclude_patterns, system_root)
+    _copy_skill(skill_path, bundle_dir, exclude_patterns, effective_root)
 
     # Step 2: Copy external files
     external_files = scan_result["external_files"]
     file_mapping: dict[str, str] = {}
     if external_files:
         file_mapping = _copy_external_files(
-            external_files, system_root, bundle_dir, exclude_patterns
+            external_files, effective_root, bundle_dir, exclude_patterns
         )
+
+    # Step 2b: Copy inlined skills as capabilities
+    inlined_skill_count = 0
+    inlined_skills = scan_result.get("inlined_skills", {})
+    if inline_orchestrated_skills and inlined_skills:
+        inlined_mapping, per_root = _copy_inlined_skills(
+            inlined_skills, bundle_dir, exclude_patterns, effective_root,
+        )
+        file_mapping.update(inlined_mapping)
+        inlined_skill_count = len(inlined_skills)
+
+        # Add alias-path entries to the file mapping so the rewrite
+        # pipeline can rewrite references that use symlink/alias paths
+        # (e.g. skills/testing-alias/SKILL.md -> capabilities/testing/...).
+        # Uses ``per_root`` (built during the copy phase) for O(1)
+        # per-root lookup instead of scanning all inlined files.
+        aliases = scan_result.get("inlined_skill_aliases", [])
+        for alias_abs, primary_abs in aliases:
+            for abs_source, bundle_rel in per_root.get(
+                primary_abs, ()
+            ):
+                rel = os.path.relpath(abs_source, primary_abs)
+                alias_source = os.path.join(alias_abs, rel)
+                file_mapping.setdefault(alias_source, bundle_rel)
 
     # Step 3: Rewrite markdown paths
     rewrite_count = 0
     if file_mapping:
         rewrite_count = _rewrite_markdown_paths(
-            bundle_dir, skill_path, system_root, file_mapping
+            bundle_dir, skill_path, effective_root, file_mapping,
         )
 
     # Compute stats
@@ -530,6 +693,7 @@ def create_bundle(
         "external_count": len(external_files),
         "rewrite_count": rewrite_count,
         "skill_name": skill_name,
+        "inlined_skill_count": inlined_skill_count,
     }
     return bundle_dir, file_mapping, stats
 
@@ -567,7 +731,27 @@ def postvalidate(bundle_dir: str) -> list[str]:
             f"archive. Capability entry points should use capability.md."
         )
 
-    # 2. Reference integrity — every markdown link should resolve
+    # 2. Capability entry-point completeness — every capabilities/<name>/
+    #    directory must contain a capability.md (case-insensitive).
+    cap_root = os.path.join(bundle_dir, DIR_CAPABILITIES)
+    if os.path.isdir(cap_root):
+        for entry in sorted(os.listdir(cap_root)):
+            cap_dir = os.path.join(cap_root, entry)
+            if not os.path.isdir(cap_dir):
+                continue
+            cap_files = [
+                f for f in os.listdir(cap_dir)
+                if f.lower() == FILE_CAPABILITY_MD.lower()
+            ]
+            if not cap_files:
+                errors.append(
+                    f"{LEVEL_FAIL}: Capability directory "
+                    f"'{DIR_CAPABILITIES}/{entry}' is missing "
+                    f"'{FILE_CAPABILITY_MD}'. Each inlined capability "
+                    f"must have an entry-point file."
+                )
+
+    # 3. Reference integrity — every markdown link should resolve
     for root, _dirs, files in os.walk(bundle_dir):
         for filename in files:
             if not is_markdown_file(filename):
