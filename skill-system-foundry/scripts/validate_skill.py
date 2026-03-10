@@ -110,7 +110,11 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     nested_found = False
 
     for ref in refs:
-        ref_path = os.path.join(os.path.dirname(skill_md_path), ref)
+        # Strip URL fragments and queries for filesystem check
+        normalized_ref = ref.split("#", 1)[0].split("?", 1)[0]
+        if not normalized_ref:
+            continue  # Nothing to check (pure fragment reference)
+        ref_path = os.path.join(os.path.dirname(skill_md_path), normalized_ref)
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(

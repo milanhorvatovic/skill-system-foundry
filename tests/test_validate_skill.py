@@ -524,6 +524,28 @@ class ValidateBodyTests(unittest.TestCase):
         ref_passes = [p for p in passes if "one level deep" in p]
         self.assertEqual(ref_passes, [])
 
+    def test_ref_with_fragment_to_existing_file_no_warn(self) -> None:
+        """References with URL fragments to existing files don't trigger false WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            # Create the referenced file
+            write_text(
+                os.path.join(ref_dir, "guide.md"),
+                "# Guide\n\nSome content here.\n",
+            )
+            # Reference with fragment
+            body = "# Skill\n\nSee [guide](references/guide.md#section) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should NOT warn about "does not exist"
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+        # Should get "one level deep" pass since file exists and has no nested refs
+        ref_passes = [p for p in passes if "one level deep" in p]
+        self.assertEqual(len(ref_passes), 1)
+
     def test_body_with_no_refs_produces_no_ref_pass(self) -> None:
         """A body with no references produces no reference-related pass."""
         body = "# Skill\n\nJust plain content, no refs.\n"
