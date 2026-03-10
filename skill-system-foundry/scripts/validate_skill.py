@@ -111,6 +111,7 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     nested_found = False
 
     skill_dir = os.path.dirname(skill_md_path)
+    seen_paths: set[str] = set()
 
     for ref in refs:
         # Strip URL fragments, queries, and markdown link titles
@@ -120,6 +121,11 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         ref_path = os.path.normpath(
             os.path.join(os.path.dirname(skill_md_path), normalized_ref)
         )
+
+        # Skip refs that resolve to the same file (e.g., guide.md#one vs guide.md#two)
+        if ref_path in seen_paths:
+            continue
+        seen_paths.add(ref_path)
 
         # Reject references that escape the skill directory
         if not is_within_directory(ref_path, skill_dir):

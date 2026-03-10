@@ -546,6 +546,46 @@ class ValidateBodyTests(unittest.TestCase):
         ref_passes = [p for p in passes if "one level deep" in p]
         self.assertEqual(len(ref_passes), 1)
 
+    def test_duplicate_fragment_refs_to_existing_file_checked_once(self) -> None:
+        """Multiple fragment refs to the same file produce a single nested-ref check."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            # Create a file that contains nested references
+            write_text(
+                os.path.join(ref_dir, "guide.md"),
+                "# Guide\n\nSee [deep](references/deep.md) for more.\n",
+            )
+            write_text(os.path.join(ref_dir, "deep.md"), "# Deep\n")
+            # Two links to the same file with different fragments
+            body = (
+                "# Skill\n\n"
+                "See [intro](references/guide.md#intro) for details.\n"
+                "See [setup](references/guide.md#setup) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should produce exactly one nested-ref WARN, not two
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(len(nested_warns), 1)
+
+    def test_duplicate_fragment_refs_to_missing_file_warned_once(self) -> None:
+        """Multiple fragment refs to the same missing file produce a single WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Two links to the same missing file with different fragments
+            body = (
+                "# Skill\n\n"
+                "See [intro](references/missing.md#intro) for details.\n"
+                "See [setup](references/missing.md#setup) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should produce exactly one "does not exist" WARN, not two
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/missing.md", broken_warns[0])
+
     def test_body_with_no_refs_produces_no_ref_pass(self) -> None:
         """A body with no references produces no reference-related pass."""
         body = "# Skill\n\nJust plain content, no refs.\n"
