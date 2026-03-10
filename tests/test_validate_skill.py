@@ -608,6 +608,7 @@ class ValidateBodyTests(unittest.TestCase):
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(broken_warns, [])
 
+    @unittest.skipIf(os.name == "nt", "Permission-denied behavior is not reliable on Windows")
     def test_unreadable_ref_file_returns_warn(self) -> None:
         """A reference to an unreadable file produces a WARN, not a crash."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -615,7 +616,7 @@ class ValidateBodyTests(unittest.TestCase):
             ref_dir = os.path.join(tmpdir, "references")
             ref_file = os.path.join(ref_dir, "locked.md")
             write_text(ref_file, "# Locked\n")
-            # Remove read permission
+            # Remove read permission (POSIX only)
             os.chmod(ref_file, 0o000)
             body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
             write_text(skill_md, body)
