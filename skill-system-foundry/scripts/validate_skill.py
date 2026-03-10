@@ -105,30 +105,39 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     # Exclude template placeholders (e.g., references/<file>.md)
     refs = [r for r in refs if "<" not in r and ">" not in r]
 
-    if not allow_nested_refs:
-        nested_found = False
-        for ref in refs:
-            ref_path = os.path.join(os.path.dirname(skill_md_path), ref)
-            if os.path.exists(ref_path):
-                with open(ref_path, "r", encoding="utf-8") as f:
-                    ref_content = f.read()
-                nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
-                nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
-                nested_refs = list(set(nested_refs + nested_backtick_refs))
-                # Exclude template placeholders in nested refs too
-                nested_refs = [r for r in nested_refs if "<" not in r and ">" not in r]
-                if nested_refs:
-                    nested_found = True
-                    errors.append(
-                        f"{LEVEL_WARN}: '{ref}' contains nested references: {nested_refs}. "
-                        f"Keep references one level deep from {entry_filename}."
-                    )
+    # Always check for broken references regardless of allow_nested_refs
+    broken_found = False
+    nested_found = False
 
-        if refs and not nested_found:
-            passes.append("references: one level deep, no nested refs")
-    else:
-        if refs:
-            passes.append("references: nested-reference check skipped (--allow-nested-references)")
+    for ref in refs:
+        ref_path = os.path.join(os.path.dirname(skill_md_path), ref)
+        if not os.path.exists(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} does not exist"
+            )
+            continue
+
+        # Nested reference check — only when flag is not set
+        if not allow_nested_refs:
+            with open(ref_path, "r", encoding="utf-8") as f:
+                ref_content = f.read()
+            nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
+            nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
+            nested_refs = list(set(nested_refs + nested_backtick_refs))
+            # Exclude template placeholders in nested refs too
+            nested_refs = [r for r in nested_refs if "<" not in r and ">" not in r]
+            if nested_refs:
+                nested_found = True
+                errors.append(
+                    f"{LEVEL_WARN}: '{ref}' contains nested references: {nested_refs}. "
+                    f"Keep references one level deep from {entry_filename}."
+                )
+
+    if allow_nested_refs and refs and not broken_found:
+        passes.append("references: nested-reference check skipped (--allow-nested-references)")
+    elif refs and not nested_found and not broken_found:
+        passes.append("references: one level deep, no nested refs")
 
     return errors, passes
 
