@@ -674,6 +674,50 @@ class ValidateBodyTests(unittest.TestCase):
         skip_passes = [p for p in passes if "skipped" in p]
         self.assertEqual(skip_passes, [])
 
+    def test_binary_ref_file_returns_warn(self) -> None:
+        """A reference to a binary file produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir, exist_ok=True)
+            ref_file = os.path.join(ref_dir, "image.png")
+            # Write raw bytes that are invalid UTF-8
+            with open(ref_file, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\xfd")
+            body = "# Skill\n\nSee [image](references/image.png) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/image.png", read_warns[0])
+        self.assertIn("UnicodeDecodeError", read_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_non_utf8_ref_file_returns_warn(self) -> None:
+        """A reference to a non-UTF8 text file produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir, exist_ok=True)
+            ref_file = os.path.join(ref_dir, "latin1.md")
+            # Write Latin-1 encoded text with bytes invalid in UTF-8
+            with open(ref_file, "wb") as f:
+                f.write("# Résumé\n\nCafé crème à côté".encode("latin-1"))
+            body = "# Skill\n\nSee [latin1](references/latin1.md) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/latin1.md", read_warns[0])
+        self.assertIn("UnicodeDecodeError", read_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
     def test_path_traversal_via_references_dotdot_returns_warn(self) -> None:
         """A reference using references/../.. to escape the skill dir produces a WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -149,7 +149,7 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         try:
             with open(ref_path, "r", encoding="utf-8") as f:
                 ref_content = f.read()
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             broken_found = True
             errors.append(
                 f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} "
