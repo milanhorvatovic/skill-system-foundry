@@ -18,6 +18,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from lib.frontmatter import load_frontmatter, count_body_lines
+from lib.references import is_within_directory, strip_fragment
 from lib.reporting import categorize_errors, print_error_line, print_summary
 from lib.validation import validate_name
 from lib.constants import (
@@ -109,12 +110,25 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     broken_found = False
     nested_found = False
 
+    skill_dir = os.path.dirname(skill_md_path)
+
     for ref in refs:
-        # Strip URL fragments and queries for filesystem check
-        normalized_ref = ref.split("#", 1)[0].split("?", 1)[0]
+        # Strip URL fragments, queries, and markdown link titles
+        normalized_ref = strip_fragment(ref)
         if not normalized_ref:
             continue  # Nothing to check (pure fragment reference)
-        ref_path = os.path.join(os.path.dirname(skill_md_path), normalized_ref)
+        ref_path = os.path.normpath(
+            os.path.join(os.path.dirname(skill_md_path), normalized_ref)
+        )
+
+        # Reject references that escape the skill directory
+        if not is_within_directory(ref_path, skill_dir):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} escapes skill directory"
+            )
+            continue
+
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
@@ -122,10 +136,26 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             )
             continue
 
+        # Handle directory references gracefully
+        if not os.path.isfile(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} resolves to a non-file path"
+            )
+            continue
+
         # Nested reference check — only when flag is not set
         if not allow_nested_refs:
-            with open(ref_path, "r", encoding="utf-8") as f:
-                ref_content = f.read()
+            try:
+                with open(ref_path, "r", encoding="utf-8") as f:
+                    ref_content = f.read()
+            except OSError as exc:
+                broken_found = True
+                errors.append(
+                    f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} "
+                    f"cannot be read ({exc.__class__.__name__}: {exc})"
+                )
+                continue
             nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
             nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
             nested_refs = list(set(nested_refs + nested_backtick_refs))

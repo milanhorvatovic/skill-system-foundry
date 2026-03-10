@@ -558,6 +558,103 @@ class ValidateBodyTests(unittest.TestCase):
         nested_warns = [e for e in errors if "nested" in e.lower()]
         self.assertEqual(nested_warns, [])
 
+    def test_directory_reference_returns_warn(self) -> None:
+        """A reference pointing to a directory produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Create a subdirectory at the referenced path
+            os.makedirs(os.path.join(tmpdir, "references", "subdir"))
+            body = "# Skill\n\nSee [refs](references/subdir) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        non_file_warns = [e for e in warn_errors if "non-file" in e]
+        self.assertEqual(len(non_file_warns), 1)
+        self.assertIn("references/subdir", non_file_warns[0])
+        self.assertIn("SKILL.md", non_file_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_path_traversal_returns_warn(self) -> None:
+        """A reference escaping the skill directory produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [escape](references/../../somewhere) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        escape_warns = [e for e in warn_errors if "escapes skill directory" in e]
+        self.assertEqual(len(escape_warns), 1)
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_markdown_link_title_handled(self) -> None:
+        """A markdown link with a title suffix resolves correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            write_text(
+                os.path.join(ref_dir, "foo.md"),
+                "# Foo\n\nSome content.\n",
+            )
+            # The regex captures the full (path "title") as the ref
+            body = '# Skill\n\nSee [foo](references/foo.md "Title") for details.\n'
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should NOT warn about "does not exist" — strip_fragment handles the title
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+
+    def test_unreadable_ref_file_returns_warn(self) -> None:
+        """A reference to an unreadable file produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            ref_file = os.path.join(ref_dir, "locked.md")
+            write_text(ref_file, "# Locked\n")
+            # Remove read permission
+            os.chmod(ref_file, 0o000)
+            body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
+            write_text(skill_md, body)
+            try:
+                errors, passes = validate_body(body, skill_md)
+            finally:
+                # Restore permissions for cleanup
+                os.chmod(ref_file, 0o644)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/locked.md", read_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_path_traversal_via_references_dotdot_returns_warn(self) -> None:
+        """A reference using references/../.. to escape the skill dir produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [escape](references/../../../etc/passwd) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        escape_warns = [e for e in warn_errors if "escapes skill directory" in e]
+        self.assertEqual(len(escape_warns), 1)
+
+    def test_directory_ref_with_allow_nested_refs_returns_warn(self) -> None:
+        """Directory references are caught even with allow_nested_refs=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            os.makedirs(os.path.join(tmpdir, "references", "subdir"))
+            body = "# Skill\n\nSee [refs](references/subdir) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        non_file_warns = [e for e in warn_errors if "non-file" in e]
+        self.assertEqual(len(non_file_warns), 1)
+
 
 # ===================================================================
 # validate_directories
