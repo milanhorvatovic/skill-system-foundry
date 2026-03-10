@@ -373,6 +373,25 @@ class ValidateBodyTests(unittest.TestCase):
         skip_pass = [p for p in passes if "skipped" in p]
         self.assertEqual(len(skip_pass), 1)
 
+    def test_broken_ref_detected_with_allow_nested_refs(self) -> None:
+        """Broken references are detected even when allow_nested_refs=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [guide](references/missing.md) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/missing.md", broken_warns[0])
+        self.assertIn("SKILL.md", broken_warns[0])
+        # No FAIL errors for broken refs
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        # No "skipped" pass when a broken ref exists
+        skip_pass = [p for p in passes if "skipped" in p]
+        self.assertEqual(skip_pass, [])
+
     def test_template_placeholders_excluded_from_ref_checks(self) -> None:
         """Template placeholders with < > are excluded from reference checks."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -404,25 +423,168 @@ class ValidateBodyTests(unittest.TestCase):
         nested_warns = [e for e in errors if "nested references" in e]
         self.assertEqual(len(nested_warns), 1)
 
-    def test_nonexistent_ref_file_silently_skipped(self) -> None:
-        """A reference to a nonexistent file produces no error.
-
-        The ref is found in the body so refs is non-empty, but the file
-        doesn't exist so no nesting can be detected.  The code still
-        emits the 'one level deep' pass because nested_found stays False.
-        """
+    def test_nonexistent_ref_file_returns_warn(self) -> None:
+        """A reference to a nonexistent file produces a WARN error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [guide](references/missing.md) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md)
-        nested_warns = [e for e in errors if "nested" in e.lower()]
-        self.assertEqual(nested_warns, [])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/missing.md", broken_warns[0])
+        self.assertIn("SKILL.md", broken_warns[0])
+        # No FAIL errors for broken refs
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
-        # Still reports "one level deep" since no nesting was found
+        # No "one level deep" pass when a broken ref exists
+        ref_passes = [p for p in passes if "one level deep" in p]
+        self.assertEqual(ref_passes, [])
+
+    def test_multiple_broken_refs_each_reported(self) -> None:
+        """Multiple broken references each produce a separate WARN error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\n"
+                "See [guide](references/missing-a.md) for details.\n"
+                "Also see [other](references/missing-b.md) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 2)
+        warn_text = " ".join(broken_warns)
+        self.assertIn("missing-a.md", warn_text)
+        self.assertIn("missing-b.md", warn_text)
+        # No FAIL errors for broken refs
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        ref_passes = [p for p in passes if "one level deep" in p]
+        self.assertEqual(ref_passes, [])
+
+    def test_broken_and_valid_refs_mixed(self) -> None:
+        """A mix of broken and valid refs reports WARN only for the broken one."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            write_text(
+                os.path.join(ref_dir, "valid.md"),
+                "# Valid\n\nNo nested references here.\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "See [valid](references/valid.md) for details.\n"
+                "Also see [missing](references/missing.md) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/missing.md", broken_warns[0])
+        self.assertIn("SKILL.md", broken_warns[0])
+        # No FAIL errors for broken refs
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        # No "one level deep" pass because a broken ref exists
+        ref_passes = [p for p in passes if "one level deep" in p]
+        self.assertEqual(ref_passes, [])
+
+    def test_broken_and_nested_refs_both_reported(self) -> None:
+        """Both broken refs and nested refs are reported when both exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            # Create a reference file that itself contains a nested reference
+            write_text(
+                os.path.join(ref_dir, "nesting.md"),
+                "# Nesting\n\nSee [deep](references/deep.md) for more.\n",
+            )
+            write_text(os.path.join(ref_dir, "deep.md"), "# Deep\n")
+            body = (
+                "# Skill\n\n"
+                "See [nesting](references/nesting.md) for details.\n"
+                "Also see [gone](references/gone.md) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/gone.md", broken_warns[0])
+        self.assertIn("SKILL.md", broken_warns[0])
+        nested_warns = [e for e in warn_errors if "nested references" in e]
+        self.assertEqual(len(nested_warns), 1)
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        ref_passes = [p for p in passes if "one level deep" in p]
+        self.assertEqual(ref_passes, [])
+
+    def test_ref_with_fragment_to_existing_file_no_warn(self) -> None:
+        """References with URL fragments to existing files don't trigger false WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            # Create the referenced file
+            write_text(
+                os.path.join(ref_dir, "guide.md"),
+                "# Guide\n\nSome content here.\n",
+            )
+            # Reference with fragment
+            body = "# Skill\n\nSee [guide](references/guide.md#section) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should NOT warn about "does not exist"
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+        # Should get "one level deep" pass since file exists and has no nested refs
         ref_passes = [p for p in passes if "one level deep" in p]
         self.assertEqual(len(ref_passes), 1)
+
+    def test_duplicate_fragment_refs_to_existing_file_checked_once(self) -> None:
+        """Multiple fragment refs to the same file produce a single nested-ref check."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            # Create a file that contains nested references
+            write_text(
+                os.path.join(ref_dir, "guide.md"),
+                "# Guide\n\nSee [deep](references/deep.md) for more.\n",
+            )
+            write_text(os.path.join(ref_dir, "deep.md"), "# Deep\n")
+            # Two links to the same file with different fragments
+            body = (
+                "# Skill\n\n"
+                "See [intro](references/guide.md#intro) for details.\n"
+                "See [setup](references/guide.md#setup) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should produce exactly one nested-ref WARN, not two
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(len(nested_warns), 1)
+
+    def test_duplicate_fragment_refs_to_missing_file_warned_once(self) -> None:
+        """Multiple fragment refs to the same missing file produce a single WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Two links to the same missing file with different fragments
+            body = (
+                "# Skill\n\n"
+                "See [intro](references/missing.md#intro) for details.\n"
+                "See [setup](references/missing.md#setup) for more.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should produce exactly one "does not exist" WARN, not two
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/missing.md", broken_warns[0])
 
     def test_body_with_no_refs_produces_no_ref_pass(self) -> None:
         """A body with no references produces no reference-related pass."""
@@ -435,6 +597,189 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(ref_passes, [])
         nested_warns = [e for e in errors if "nested" in e.lower()]
         self.assertEqual(nested_warns, [])
+
+    def test_directory_reference_returns_warn(self) -> None:
+        """A reference pointing to a directory produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Create a subdirectory at the referenced path
+            os.makedirs(os.path.join(tmpdir, "references", "subdir"))
+            body = "# Skill\n\nSee [refs](references/subdir) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        non_file_warns = [e for e in warn_errors if "non-file" in e]
+        self.assertEqual(len(non_file_warns), 1)
+        self.assertIn("references/subdir", non_file_warns[0])
+        self.assertIn("SKILL.md", non_file_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_path_traversal_returns_warn(self) -> None:
+        """A reference escaping the skill directory produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [escape](references/../../somewhere) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        escape_warns = [e for e in warn_errors if "escapes skill directory" in e]
+        self.assertEqual(len(escape_warns), 1)
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_markdown_link_title_handled(self) -> None:
+        """A markdown link with a title suffix resolves correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            write_text(
+                os.path.join(ref_dir, "foo.md"),
+                "# Foo\n\nSome content.\n",
+            )
+            # The regex captures the full (path "title") as the ref
+            body = '# Skill\n\nSee [foo](references/foo.md "Title") for details.\n'
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should NOT warn about "does not exist" — strip_fragment handles the title
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+
+    @unittest.skipIf(os.name == "nt", "Permission-denied behavior is not reliable on Windows")
+    def test_unreadable_ref_file_returns_warn(self) -> None:
+        """A reference to an unreadable file produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            ref_file = os.path.join(ref_dir, "locked.md")
+            write_text(ref_file, "# Locked\n")
+            # Remove read permission (POSIX only)
+            os.chmod(ref_file, 0o000)
+
+            # Guard: Skip if file is still readable (e.g., running as root)
+            try:
+                with open(ref_file, "r", encoding="utf-8") as f:
+                    f.read()
+                self.skipTest("File remains readable after chmod (running as root?)")
+            except PermissionError:
+                pass  # Expected, continue with test
+
+            body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
+            write_text(skill_md, body)
+            try:
+                errors, passes = validate_body(body, skill_md)
+            finally:
+                # Restore permissions for cleanup
+                os.chmod(ref_file, 0o644)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/locked.md", read_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    @unittest.skipIf(os.name == "nt", "Permission-denied behavior is not reliable on Windows")
+    def test_unreadable_ref_file_with_allow_nested_refs_returns_warn(self) -> None:
+        """Unreadable files are caught even with allow_nested_refs=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            ref_file = os.path.join(ref_dir, "locked.md")
+            write_text(ref_file, "# Locked\n")
+            os.chmod(ref_file, 0o000)
+
+            # Guard: Skip if file is still readable (e.g., running as root)
+            try:
+                with open(ref_file, "r", encoding="utf-8") as f:
+                    f.read()
+                self.skipTest("File remains readable after chmod (running as root?)")
+            except PermissionError:
+                pass  # Expected, continue with test
+
+            body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
+            write_text(skill_md, body)
+            try:
+                errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+            finally:
+                os.chmod(ref_file, 0o644)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/locked.md", read_warns[0])
+        # No "skipped" pass when ref is unreadable
+        skip_passes = [p for p in passes if "skipped" in p]
+        self.assertEqual(skip_passes, [])
+
+    def test_binary_ref_file_returns_warn(self) -> None:
+        """A reference to a binary file produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir, exist_ok=True)
+            ref_file = os.path.join(ref_dir, "image.png")
+            # Write raw bytes that are invalid UTF-8
+            with open(ref_file, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\xfd")
+            body = "# Skill\n\nSee [image](references/image.png) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/image.png", read_warns[0])
+        self.assertIn("UnicodeDecodeError", read_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_non_utf8_ref_file_returns_warn(self) -> None:
+        """A reference to a non-UTF8 text file produces a WARN, not a crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir, exist_ok=True)
+            ref_file = os.path.join(ref_dir, "latin1.md")
+            # Write Latin-1 encoded text with bytes invalid in UTF-8
+            with open(ref_file, "wb") as f:
+                f.write("# Résumé\n\nCafé crème à côté".encode("latin-1"))
+            body = "# Skill\n\nSee [latin1](references/latin1.md) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/latin1.md", read_warns[0])
+        self.assertIn("UnicodeDecodeError", read_warns[0])
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_path_traversal_via_references_dotdot_returns_warn(self) -> None:
+        """A reference using references/../.. to escape the skill dir produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [escape](references/../../../etc/passwd) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        escape_warns = [e for e in warn_errors if "escapes skill directory" in e]
+        self.assertEqual(len(escape_warns), 1)
+
+    def test_directory_ref_with_allow_nested_refs_returns_warn(self) -> None:
+        """Directory references are caught even with allow_nested_refs=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            os.makedirs(os.path.join(tmpdir, "references", "subdir"))
+            body = "# Skill\n\nSee [refs](references/subdir) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        non_file_warns = [e for e in warn_errors if "non-file" in e]
+        self.assertEqual(len(non_file_warns), 1)
 
 
 # ===================================================================
@@ -792,6 +1137,19 @@ class MainCLITests(unittest.TestCase):
             # No SKILL.md — should fail
             proc = _run([skill_dir], cwd=REPO_ROOT)
         self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+
+    def test_broken_reference_exits_zero(self) -> None:
+        """A skill with a broken reference exits with code 0 (WARN only)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [guide](references/missing.md) for details.",
+            )
+            proc = _run([skill_dir], cwd=REPO_ROOT)
+        # Broken refs are WARN, not FAIL — should exit 0
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertIn("does not exist", proc.stdout)
 
     def test_verbose_flag_prints_passes(self) -> None:
         """The --verbose flag causes passes to be printed."""
