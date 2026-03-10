@@ -144,18 +144,21 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             )
             continue
 
+        # Check file is readable regardless of allow_nested_refs
+        # (unreadable files should be reported even when nested check is skipped)
+        try:
+            with open(ref_path, "r", encoding="utf-8") as f:
+                ref_content = f.read()
+        except OSError as exc:
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} "
+                f"cannot be read ({exc.__class__.__name__}: {exc})"
+            )
+            continue
+
         # Nested reference check — only when flag is not set
         if not allow_nested_refs:
-            try:
-                with open(ref_path, "r", encoding="utf-8") as f:
-                    ref_content = f.read()
-            except OSError as exc:
-                broken_found = True
-                errors.append(
-                    f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} "
-                    f"cannot be read ({exc.__class__.__name__}: {exc})"
-                )
-                continue
             nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
             nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
             nested_refs = list(set(nested_refs + nested_backtick_refs))

@@ -618,6 +618,15 @@ class ValidateBodyTests(unittest.TestCase):
             write_text(ref_file, "# Locked\n")
             # Remove read permission (POSIX only)
             os.chmod(ref_file, 0o000)
+
+            # Guard: Skip if file is still readable (e.g., running as root)
+            try:
+                with open(ref_file, "r", encoding="utf-8") as f:
+                    f.read()
+                self.skipTest("File remains readable after chmod (running as root?)")
+            except PermissionError:
+                pass  # Expected, continue with test
+
             body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
             write_text(skill_md, body)
             try:
@@ -632,6 +641,38 @@ class ValidateBodyTests(unittest.TestCase):
         # No FAIL errors
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
+
+    @unittest.skipIf(os.name == "nt", "Permission-denied behavior is not reliable on Windows")
+    def test_unreadable_ref_file_with_allow_nested_refs_returns_warn(self) -> None:
+        """Unreadable files are caught even with allow_nested_refs=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            ref_file = os.path.join(ref_dir, "locked.md")
+            write_text(ref_file, "# Locked\n")
+            os.chmod(ref_file, 0o000)
+
+            # Guard: Skip if file is still readable (e.g., running as root)
+            try:
+                with open(ref_file, "r", encoding="utf-8") as f:
+                    f.read()
+                self.skipTest("File remains readable after chmod (running as root?)")
+            except PermissionError:
+                pass  # Expected, continue with test
+
+            body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
+            write_text(skill_md, body)
+            try:
+                errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+            finally:
+                os.chmod(ref_file, 0o644)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("references/locked.md", read_warns[0])
+        # No "skipped" pass when ref is unreadable
+        skip_passes = [p for p in passes if "skipped" in p]
+        self.assertEqual(skip_passes, [])
 
     def test_path_traversal_via_references_dotdot_returns_warn(self) -> None:
         """A reference using references/../.. to escape the skill dir produces a WARN."""
