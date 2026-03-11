@@ -90,11 +90,18 @@ jobs:
             exit 1
           fi
 
+          # Hash match check - enforce exactly one hash per file
           for file in $disk_files; do
             computed_hash=$(sha256sum ".github/scripts/$file" | awk '{print $1}')
-            approved_hashes=$(echo "$SCRIPT_HASHES" | jq -r ".[\"$file\"][]")
-            if ! echo "$approved_hashes" | grep -q "^${computed_hash}$"; then
-              echo "::error::Hash mismatch for $file. Computed: $computed_hash"
+            hash_count=$(echo "$SCRIPT_HASHES" | jq -r ".[\"$file\"] | length")
+            if [ "$hash_count" -ne 1 ]; then
+              echo "::error::Expected exactly one hash for $file, found $hash_count. Please ensure CODEX_SCRIPT_HASHES has exactly one hash per file."
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+            approved_hash=$(echo "$SCRIPT_HASHES" | jq -r ".[\"$file\"][0]")
+            if [ "$computed_hash" != "$approved_hash" ]; then
+              echo "::error::Hash mismatch for $file. Computed: $computed_hash, Approved: $approved_hash"
               echo "allowed=false" >> "$GITHUB_OUTPUT"
               exit 1
             fi
