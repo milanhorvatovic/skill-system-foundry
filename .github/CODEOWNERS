@@ -1,0 +1,7 @@
+# Require code owner approval for security-sensitive paths.
+# Works in combination with the "Require review from Code Owners"
+# branch protection rule on the default branch.
+
+/.github/instructions/ @milanhorvatovic
+/.github/scripts/      @milanhorvatovic
+/.github/workflows/    @milanhorvatovic

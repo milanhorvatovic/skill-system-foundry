@@ -1,0 +1,58 @@
+#!/bin/bash
+set -euo pipefail
+
+# Validate required environment variables
+: "${CODEX_REVIEW:?Environment variable CODEX_REVIEW is required}"
+: "${GITHUB_OUTPUT:?Environment variable GITHUB_OUTPUT is required}"
+
+# Validate and save Codex review output as guaranteed-valid JSON.
+# Also copies JavaScript files to .codex/scripts/ for transport.
+#
+# Environment variables:
+#   CODEX_REVIEW  — raw output from the Codex action
+#
+# Outputs:
+#   has-review=true             → written to $GITHUB_OUTPUT (on success)
+#   .codex/review-output.json   — valid JSON
+#   .codex/scripts/*.js         — copied for publish job
+
+mkdir -p .codex
+
+# Common success path — called once parsing succeeds.
+handle_success() {
+  mkdir -p .codex/scripts
+  cp .github/scripts/*.js .codex/scripts/
+  echo "has-review=true" >> "$GITHUB_OUTPUT"
+  exit 0
+}
+
+# Try parsing the raw output as JSON directly.
+if printf '%s' "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; then
+  handle_success
+fi
+
+# Strip the first markdown code fence and retry (case-insensitive json tag, optional leading
+# whitespace). Only the first fenced block is captured so multiple blocks don't get merged.
+stripped="$(printf '%s\n' "$CODEX_REVIEW" | awk '
+  /^[[:space:]]*```([Jj][Ss][Oo][Nn])?[[:space:]]*$/ {
+    if (!in_fence && !done) { in_fence = 1; next }
+    if (in_fence) { done = 1; exit }
+  }
+  in_fence { print }
+')"
+if [ -n "$stripped" ] && printf '%s' "$stripped" | jq . > .codex/review-output.json 2>/dev/null; then
+  handle_success
+fi
+
+# Third attempt: extract JSON using Perl (handles multibyte correctly)
+extracted=$(printf '%s' "$CODEX_REVIEW" | perl -0777 -ne 'if (/\{[\s\S]*\}/s) { print $& }' || true)
+if [ -n "$extracted" ] && printf '%s' "$extracted" | jq . > .codex/review-output.json 2>/dev/null; then
+  handle_success
+fi
+
+# All attempts failed — emit an error annotation but skip gracefully so the
+# review job succeeds and the publish job is simply not triggered.
+echo "::error::Could not parse Codex output as valid JSON."
+rm -f .codex/review-output.json
+echo "has-review=false" >> "$GITHUB_OUTPUT"
+exit 0
