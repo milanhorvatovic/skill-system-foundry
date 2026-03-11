@@ -24,7 +24,8 @@ fi
 
 if [ -z "${REVIEW_USERS_RAW:-}" ]; then
   echo "::error::CODEX_REVIEW_USERS repository variable is not set. Configure it in Settings → Actions → Variables."
-  exit 1
+  echo "allowed=false" >> "$GITHUB_OUTPUT"
+  exit 0
 fi
 
 allowed=false

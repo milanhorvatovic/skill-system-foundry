@@ -45,7 +45,9 @@ if [ -n "$extracted" ] && printf '%s' "$extracted" | jq . > .codex/review-output
   exit 0
 fi
 
-# All attempts failed — raise an error.
+# All attempts failed — emit an error annotation but skip gracefully so the
+# review job succeeds and the publish job is simply not triggered.
 echo "::error::Could not parse Codex output as valid JSON."
 rm -f .codex/review-output.json
-exit 1
+echo "has-review=false" >> "$GITHUB_OUTPUT"
+exit 0
