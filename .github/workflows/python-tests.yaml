@@ -17,8 +17,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.12"]
-    outputs:
-      coverage-total: ${{ steps.coverage-total.outputs.total }}
 
     steps:
       - name: Checkout
@@ -49,12 +47,18 @@ jobs:
       - name: Check coverage threshold
         run: python -m coverage report
 
-      - name: Extract coverage total
-        id: coverage-total
+      - name: Write coverage total
         if: matrix.os == 'ubuntu-latest'
         run: |
           TOTAL=$(python -m coverage report --format=total)
-          echo "total=${TOTAL%%.*}" >> $GITHUB_OUTPUT
+          echo "${TOTAL%%.*}" > coverage-total.txt
+
+      - name: Upload coverage total
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
+        with:
+          name: coverage-total
+          path: coverage-total.txt
 
   update-badge:
     needs: test
@@ -69,7 +73,13 @@ jobs:
         with:
           ref: main
 
+      - name: Download coverage total
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
+        with:
+          name: coverage-total
+
       - name: Update coverage badge
-        env:
-          TOTAL: ${{ needs.test.outputs.coverage-total }}
-        run: bash .github/scripts/update-coverage-badge.sh
+        run: |
+          TOTAL=$(cat coverage-total.txt)
+          export TOTAL
+          bash .github/scripts/update-coverage-badge.sh
