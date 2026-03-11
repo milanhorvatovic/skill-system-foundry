@@ -32,6 +32,24 @@ if [ -n "$stripped" ] && echo "$stripped" | jq . > .codex/review-output.json 2>/
   exit 0
 fi
 
-# Both attempts failed — skip review.
-echo "::warning::Could not parse Codex output as valid JSON. Skipping review."
+# Third attempt: extract JSON from first '{' to last '}'
+first_brace=$(echo "$CODEX_REVIEW" | grep -o '{' | head -1)
+last_brace=$(echo "$CODEX_REVIEW" | grep -o '}' | tail -1)
+if [ -n "$first_brace" ] && [ -n "$last_brace" ]; then
+  first_pos=$(echo "$CODEX_REVIEW" | grep -b -o '{' | head -1 | cut -d: -f1)
+  last_pos=$(echo "$CODEX_REVIEW" | grep -b -o '}' | tail -1 | cut -d: -f1)
+  if [ -n "$first_pos" ] && [ -n "$last_pos" ] && [ "$first_pos" -lt "$last_pos" ]; then
+    extracted="${CODEX_REVIEW:$first_pos:$((last_pos - first_pos + 1))}"
+    if echo "$extracted" | jq . > .codex/review-output.json 2>/dev/null; then
+      mkdir -p .codex/scripts
+      cp .github/scripts/*.js .codex/scripts/
+      echo "has-review=true" >> "$GITHUB_OUTPUT"
+      exit 0
+    fi
+  fi
+fi
+
+# All attempts failed — raise an error.
+echo "::error::Could not parse Codex output as valid JSON."
 rm -f .codex/review-output.json
+exit 1

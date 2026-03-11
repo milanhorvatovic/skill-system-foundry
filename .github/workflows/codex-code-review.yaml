@@ -61,37 +61,7 @@ jobs:
         id: verify
         env:
           SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
-        run: |
-          set -euo pipefail
-
-          # Parse the hashes JSON
-          hashes_json="$SCRIPT_HASHES"
-
-          # Get files on disk
-          disk_files=$(find .github/scripts -type f -exec basename {} \; | sort)
-
-          # Get files from JSON
-          json_files=$(echo "$hashes_json" | jq -r 'keys | .[]' | sort)
-
-          # Set match check
-          if [ "$disk_files" != "$json_files" ]; then
-            echo "::error::Script set mismatch. Disk: $disk_files, JSON: $json_files"
-            echo "allowed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          # Hash match check
-          for file in $disk_files; do
-            computed_hash=$(sha256sum ".github/scripts/$file" | awk '{print $1}')
-            approved_hashes=$(echo "$hashes_json" | jq -r ".[\"$file\"][]")
-            if ! echo "$approved_hashes" | grep -q "^${computed_hash}$"; then
-              echo "::error::Hash mismatch for $file. Computed: $computed_hash"
-              echo "allowed=false" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-          done
-
-          echo "::notice::Script integrity verified"
+        run: bash .github/scripts/verify-script-integrity.sh
 
       # This step gates all subsequent steps via the "allowed" output.
       # It checks the OPENAI_API_KEY secret, the CODEX_REVIEW_USERS variable,
@@ -203,7 +173,6 @@ jobs:
       MAX_FILES_IN_TABLE: '100'
       MAX_REVIEW_BODY_CHARS: '60000'
       GITHUB_MAX_BODY_CHARS: '65536'
-      MAX_FALLBACK_TEXT_CHARS: '12000'
 
     steps:
       - name: Download review artifacts
@@ -211,6 +180,19 @@ jobs:
         with:
           name: codex-review
           path: .codex
+
+      - name: Verify publish script integrity
+        env:
+          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
+        run: |
+          set -euo pipefail
+          hash=$(sha256sum .codex/scripts/publish-review.js | awk '{print $1}')
+          approved=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][]')
+          if ! echo "$approved" | grep -q "^${hash}$"; then
+            echo "::error::Hash mismatch for publish-review.js. Computed: $hash"
+            exit 1
+          fi
+          echo "::notice::publish-review.js integrity verified"
 
       - name: Publish PR review
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0

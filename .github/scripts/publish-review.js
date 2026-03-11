@@ -92,7 +92,6 @@ function normalizeFinding(finding) {
 module.exports = async function publish({ github, context, core, process }) {
   const maxInlineConversations = Number(process.env.MAX_INLINE_CONVERSATIONS);
   const githubMaxBodyChars = Number(process.env.GITHUB_MAX_BODY_CHARS);
-  const maxFallbackTextChars = Number(process.env.MAX_FALLBACK_TEXT_CHARS);
   const issue_number = context.payload.pull_request.number;
   const { owner, repo } = context.repo;
   const prHeadSha = context.payload.pull_request.head.sha;
@@ -224,14 +223,6 @@ module.exports = async function publish({ github, context, core, process }) {
   function buildSubsequentReviewBody(commentCount) {
     const reviewedLine = buildReviewedLine(commentCount);
     return `## Pull request overview\n\n${reviewedLine}`;
-  }
-
-  function buildFallbackBody() {
-    const fallbackText = codexReview.trim();
-    const fallbackTextLimited = fallbackText.length > maxFallbackTextChars ? `${fallbackText.slice(0, maxFallbackTextChars)}\n...(truncated)` : fallbackText;
-    return fallbackText
-      ? `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n\`\`\`\n${fallbackTextLimited}\n\`\`\``
-      : '## Pull request overview\n\nCodex returned an empty response.';
   }
 
   function buildMetadataSection(skippedLoc, skippedInc, error) {
