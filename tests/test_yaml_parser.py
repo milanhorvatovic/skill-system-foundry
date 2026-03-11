@@ -386,7 +386,7 @@ class ParseMappingBasicTests(unittest.TestCase):
 
 
 class ParseMappingFoldedBlockTests(unittest.TestCase):
-    """Tests for _parse_mapping with folded block scalars (>)."""
+    """Tests for _parse_mapping with folded block scalars (>, >-)."""
 
     def test_folded_block_joins_with_spaces(self) -> None:
         """Folded block scalar (>) joins continuation lines with spaces."""
@@ -445,16 +445,6 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
         self.assertEqual(result, {"desc": "", "next": "value"})
         self.assertEqual(end, 2)
 
-    def test_literal_block_no_continuation_lines(self) -> None:
-        """Literal block scalar with no continuation lines yields empty string."""
-        lines = [
-            (0, "script: |"),
-            (0, "next: value"),
-        ]
-        result, end = _parse_mapping(lines, 0, 0)
-        self.assertEqual(result, {"script": "", "next": "value"})
-        self.assertEqual(end, 2)
-
     def test_folded_block_chomp_no_continuation_lines(self) -> None:
         """Folded block with chomp (>-) and no continuation yields empty string."""
         lines = [
@@ -463,16 +453,6 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
         ]
         result, end = _parse_mapping(lines, 0, 0)
         self.assertEqual(result, {"desc": "", "next": "value"})
-        self.assertEqual(end, 2)
-
-    def test_literal_block_chomp_no_continuation_lines(self) -> None:
-        """Literal block with chomp (|-) and no continuation yields empty string."""
-        lines = [
-            (0, "script: |-"),
-            (0, "next: value"),
-        ]
-        result, end = _parse_mapping(lines, 0, 0)
-        self.assertEqual(result, {"script": "", "next": "value"})
         self.assertEqual(end, 2)
 
     def test_block_scalar_at_end_of_input(self) -> None:
@@ -535,6 +515,26 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
         result, end = _parse_mapping(lines, 0, 0)
         self.assertEqual(result, {"script": "echo hello", "next": "value"})
         self.assertEqual(end, 3)
+
+    def test_literal_block_no_continuation_lines(self) -> None:
+        """Literal block scalar with no continuation lines yields empty string."""
+        lines = [
+            (0, "script: |"),
+            (0, "next: value"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"script": "", "next": "value"})
+        self.assertEqual(end, 2)
+
+    def test_literal_block_chomp_no_continuation_lines(self) -> None:
+        """Literal block with chomp (|-) and no continuation yields empty string."""
+        lines = [
+            (0, "script: |-"),
+            (0, "next: value"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"script": "", "next": "value"})
+        self.assertEqual(end, 2)
 
 
 # ===================================================================
