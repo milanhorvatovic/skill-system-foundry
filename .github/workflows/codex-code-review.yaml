@@ -2,6 +2,11 @@ name: Codex code review
 
 # Security model:
 # - Workflow YAML is loaded from base branch (GitHub guarantee)
+# - The integrity check step is intentionally kept inline in this YAML rather than in a
+#   script file. Since the PR checkout contains code from the PR author, any file under
+#   .github/scripts/ could be tampered with by a malicious PR to bypass verification.
+#   Inline logic in this YAML is trusted because GitHub guarantees it is loaded from the
+#   base branch, not the PR branch.
 # - Scripts in .github/scripts/ are validated against CODEX_SCRIPT_HASHES repository variable
 #   before execution. The variable contains approved SHA-256 hashes for each script.
 # - Any script change requires admin to update the variable with the new hash.
@@ -59,11 +64,44 @@ jobs:
 
       - name: Verify script integrity
         id: verify
-        uses: ./.github/actions/verify-script-integrity
-        with:
-          script-hashes: ${{ vars.CODEX_SCRIPT_HASHES }}
-          scripts-path: .github/scripts
-          set-output: 'true'
+        env:
+          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SCRIPT_HASHES:-}" ]; then
+            echo "::error::CODEX_SCRIPT_HASHES repository variable is not set. Configure it in Settings → Actions → Variables."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if ! echo "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
+            echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          disk_files=$(find .github/scripts -type f -exec basename {} \; | sort)
+          json_files=$(echo "$SCRIPT_HASHES" | jq -r 'keys | .[]' | sort)
+
+          if [ "$disk_files" != "$json_files" ]; then
+            echo "::error::Script set mismatch. Disk: $disk_files, JSON: $json_files"
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          for file in $disk_files; do
+            computed_hash=$(sha256sum ".github/scripts/$file" | awk '{print $1}')
+            approved_hashes=$(echo "$SCRIPT_HASHES" | jq -r ".[\"$file\"][]")
+            if ! echo "$approved_hashes" | grep -q "^${computed_hash}$"; then
+              echo "::error::Hash mismatch for $file. Computed: $computed_hash"
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+          done
+
+          echo "::notice::Script integrity verified"
+          echo "allowed=true" >> "$GITHUB_OUTPUT"
 
       # This step gates all subsequent steps via the "allowed" output.
       # It checks the OPENAI_API_KEY secret, the CODEX_REVIEW_USERS variable,
@@ -183,12 +221,18 @@ jobs:
           name: codex-review
           path: .codex
 
-      - name: Verify script integrity
-        uses: ./.github/actions/verify-script-integrity
-        with:
-          script-hashes: ${{ vars.CODEX_SCRIPT_HASHES }}
-          scripts-path: .codex/scripts
-          set-output: 'false'
+      - name: Verify publish script integrity
+        env:
+          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
+        run: |
+          set -euo pipefail
+          hash=$(sha256sum .codex/scripts/publish-review.js | awk '{print $1}')
+          approved=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][]')
+          if ! echo "$approved" | grep -q "^${hash}$"; then
+            echo "::error::Hash mismatch for publish-review.js. Computed: $hash"
+            exit 1
+          fi
+          echo "::notice::publish-review.js integrity verified"
 
       - name: Publish PR review
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0

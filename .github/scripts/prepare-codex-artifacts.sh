@@ -22,9 +22,9 @@ if echo "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; then
   exit 0
 fi
 
-# Strip markdown code fences and retry.
+# Strip markdown code fences and retry (case-insensitive json tag, optional leading whitespace).
 # shellcheck disable=SC2016
-stripped="$(echo "$CODEX_REVIEW" | sed -n '/^```\(json\)\?[[:space:]]*$/,/^```[[:space:]]*$/{ /^```/d; p; }')"
+stripped="$(echo "$CODEX_REVIEW" | sed -n '/^[[:space:]]*```\([Jj][Ss][Oo][Nn]\)\?[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/{ /^[[:space:]]*```/d; p; }')"
 if [ -n "$stripped" ] && echo "$stripped" | jq . > .codex/review-output.json 2>/dev/null; then
   mkdir -p .codex/scripts
   cp .github/scripts/*.js .codex/scripts/
