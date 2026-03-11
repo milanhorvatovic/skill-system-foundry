@@ -219,6 +219,16 @@ class StripInlineCommentTests(unittest.TestCase):
         text = "value # trailing"
         self.assertEqual(_strip_inline_comment(text), "value")
 
+    def test_unclosed_double_quote_preserves_hash(self) -> None:
+        """An unclosed double quote treats the rest as quoted; hash is preserved."""
+        text = '"unclosed string # not a comment'
+        self.assertEqual(_strip_inline_comment(text), text)
+
+    def test_unclosed_single_quote_preserves_hash(self) -> None:
+        """An unclosed single quote treats the rest as quoted; hash is preserved."""
+        text = "'unclosed string # not a comment"
+        self.assertEqual(_strip_inline_comment(text), text)
+
 
 # ===================================================================
 # _unquote
@@ -424,6 +434,55 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
         result, end = _parse_mapping(lines, 0, 0)
         self.assertEqual(result, {"desc": "folded line", "next": "value"})
         self.assertEqual(end, 3)
+
+    def test_folded_block_no_continuation_lines(self) -> None:
+        """Folded block scalar with no continuation lines yields empty string."""
+        lines = [
+            (0, "desc: >"),
+            (0, "next: value"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"desc": "", "next": "value"})
+        self.assertEqual(end, 2)
+
+    def test_literal_block_no_continuation_lines(self) -> None:
+        """Literal block scalar with no continuation lines yields empty string."""
+        lines = [
+            (0, "script: |"),
+            (0, "next: value"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"script": "", "next": "value"})
+        self.assertEqual(end, 2)
+
+    def test_folded_block_chomp_no_continuation_lines(self) -> None:
+        """Folded block with chomp (>-) and no continuation yields empty string."""
+        lines = [
+            (0, "desc: >-"),
+            (0, "next: value"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"desc": "", "next": "value"})
+        self.assertEqual(end, 2)
+
+    def test_literal_block_chomp_no_continuation_lines(self) -> None:
+        """Literal block with chomp (|-) and no continuation yields empty string."""
+        lines = [
+            (0, "script: |-"),
+            (0, "next: value"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"script": "", "next": "value"})
+        self.assertEqual(end, 2)
+
+    def test_block_scalar_at_end_of_input(self) -> None:
+        """Block scalar indicator as the last line with no lines following."""
+        lines = [
+            (0, "desc: >"),
+        ]
+        result, end = _parse_mapping(lines, 0, 0)
+        self.assertEqual(result, {"desc": ""})
+        self.assertEqual(end, 1)
 
 
 # ===================================================================
@@ -752,6 +811,19 @@ class ParseListNestedTests(unittest.TestCase):
                     result,
                     [{"name": "test", "description": expected_val}],
                 )
+
+    def test_continuation_line_without_colon_breaks(self) -> None:
+        """A continuation line without a colon stops continuation collection."""
+        lines = [
+            (0, "- name: alpha"),
+            (2, "no-colon-here"),
+        ]
+        result, end = _parse_list(lines, 0, 0)
+        # The continuation loop breaks when sub_colon < 0, so only
+        # the first key from the '- ' line is captured.
+        self.assertEqual(result, [{"name": "alpha"}])
+        # The line without a colon is left unconsumed.
+        self.assertEqual(end, 1)
 
 
 # ===================================================================
