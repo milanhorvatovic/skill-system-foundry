@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Validate required environment variables
+: "${BASE_SHA:?Environment variable BASE_SHA is required}"
+: "${HEAD_SHA:?Environment variable HEAD_SHA is required}"
+: "${GITHUB_OUTPUT:?Environment variable GITHUB_OUTPUT is required}"
+
 # Build the PR diff for Codex review.
 #
 # Environment variables:

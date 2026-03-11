@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Validate required environment variables
+: "${HAS_OPENAI_API_KEY:?Environment variable HAS_OPENAI_API_KEY is required}"
+: "${PR_AUTHOR:?Environment variable PR_AUTHOR is required}"
+: "${GITHUB_OUTPUT:?Environment variable GITHUB_OUTPUT is required}"
+
 # Check prerequisites for Codex code review.
 #
 # Environment variables:
@@ -17,10 +22,9 @@ if [ "$HAS_OPENAI_API_KEY" != "true" ]; then
   exit 0
 fi
 
-if [ -z "$REVIEW_USERS_RAW" ]; then
-  echo "CODEX_REVIEW_USERS is not set. Skipping Codex review."
-  echo "allowed=false" >> "$GITHUB_OUTPUT"
-  exit 0
+if [ -z "${REVIEW_USERS_RAW:-}" ]; then
+  echo "::error::CODEX_REVIEW_USERS repository variable is not set. Configure it in Settings → Actions → Variables."
+  exit 1
 fi
 
 allowed=false

@@ -233,10 +233,29 @@ jobs:
           SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
         run: |
           set -euo pipefail
+
+          # Check if SCRIPT_HASHES is set
+          if [ -z "${SCRIPT_HASHES:-}" ]; then
+            echo "::error::CODEX_SCRIPT_HASHES repository variable is not set. Please configure it in Settings → Actions → Variables."
+            exit 1
+          fi
+
+          # Validate JSON format
+          if ! echo "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
+            echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
+            exit 1
+          fi
+
+          # Verify publish-review.js hash (enforce exactly one approved hash)
           hash=$(sha256sum .codex/scripts/publish-review.js | awk '{print $1}')
-          approved=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][]')
-          if ! echo "$approved" | grep -q "^${hash}$"; then
-            echo "::error::Hash mismatch for publish-review.js. Computed: $hash"
+          hash_count=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"] | length')
+          if [ "$hash_count" -ne 1 ]; then
+            echo "::error::Expected exactly one hash for publish-review.js, found $hash_count"
+            exit 1
+          fi
+          approved=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][0]')
+          if [ "$hash" != "$approved" ]; then
+            echo "::error::Hash mismatch for publish-review.js. Computed: $hash, Approved: $approved"
             exit 1
           fi
           echo "::notice::publish-review.js integrity verified"
