@@ -1,15 +1,21 @@
 name: Codex code review
 
 # Security model:
-# - Workflow YAML is loaded from base branch (GitHub guarantee)
+# - This workflow uses `on: pull_request`, so GitHub loads the workflow YAML from the base
+#   branch. A malicious PR cannot alter this file and have the altered version run against
+#   itself. However, this guarantee depends on the trigger type — switching to
+#   `pull_request_target` or `push` would change the trust boundary. Do not change the
+#   trigger without a security review.
+# - Protection against tampering with this workflow also relies on repository settings
+#   (branch protection, required reviews for changes to .github/workflows/) on the default
+#   branch. These settings are a critical complementary layer — without them, a merged PR
+#   could weaken the workflow for all subsequent PRs.
 # - The integrity check step is intentionally kept inline in this YAML rather than in a
 #   script file. Since the PR checkout contains code from the PR author, any file under
 #   .github/scripts/ could be tampered with by a malicious PR to bypass verification.
-#   Inline logic in this YAML is trusted because GitHub guarantees it is loaded from the
-#   base branch, not the PR branch.
-# - Scripts in .github/scripts/ are validated against CODEX_SCRIPT_HASHES repository variable
-#   before execution. The variable contains approved SHA-256 hashes for each script.
-# - Any script change requires admin to update the variable with the new hash.
+# - Scripts in .github/scripts/ are validated against the CODEX_SCRIPT_HASHES repository
+#   variable before execution. The variable contains approved SHA-256 hashes for each script.
+# - Any script change requires an admin to update the variable with the new hash.
 # - Bidirectional check: files on disk must match files in variable, and all hashes must match.
 # - Security boundaries are enforced by job permissions, not script provenance:
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
