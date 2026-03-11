@@ -50,8 +50,9 @@ jobs:
       - name: Write coverage total
         if: matrix.os == 'ubuntu-latest'
         run: |
-          TOTAL=$(python -m coverage report --format=total)
-          echo "${TOTAL%%.*}" > coverage-total.txt
+          TOTAL_RAW=$(python -m coverage report --format=total)
+          TOTAL_STRIPPED=${TOTAL_RAW%\%}
+          printf '%.0f\n' "$TOTAL_STRIPPED" > coverage-total.txt
 
       - name: Upload coverage total
         if: matrix.os == 'ubuntu-latest'
@@ -66,6 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: update-badge-main
+      cancel-in-progress: true
 
     steps:
       - name: Checkout
