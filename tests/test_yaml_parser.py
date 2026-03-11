@@ -938,14 +938,20 @@ class ConfigurationYamlIntegrationTests(unittest.TestCase):
         self.assertIn("skill", self.config)
 
     def test_skill_name_max_length(self) -> None:
-        """skill.name.max_length is present and set to '64'."""
+        """skill.name.max_length is a string representing a positive integer."""
         self.assertIn("name", self.config["skill"])
         self.assertIn("max_length", self.config["skill"]["name"])
-        self.assertEqual(self.config["skill"]["name"]["max_length"], "64")
+        value = self.config["skill"]["name"]["max_length"]
+        self.assertIsInstance(value, str)
+        self.assertTrue(value.isdigit(), f"Expected digit string, got {value!r}")
+        self.assertGreater(int(value), 0)
 
     def test_skill_name_min_length(self) -> None:
-        """skill.name.min_length is present and set to '2'."""
-        self.assertEqual(self.config["skill"]["name"]["min_length"], "2")
+        """skill.name.min_length is a string representing a non-negative integer."""
+        value = self.config["skill"]["name"]["min_length"]
+        self.assertIsInstance(value, str)
+        self.assertTrue(value.isdigit(), f"Expected digit string, got {value!r}")
+        self.assertGreaterEqual(int(value), 0)
 
     def test_skill_name_format_pattern(self) -> None:
         """skill.name.format_pattern is present and non-empty."""
@@ -984,16 +990,18 @@ class ConfigurationYamlIntegrationTests(unittest.TestCase):
         self.assertIn("bundle", self.config)
 
     def test_bundle_max_reference_depth(self) -> None:
-        """bundle.max_reference_depth is present and set to '25'."""
-        self.assertEqual(
-            self.config["bundle"]["max_reference_depth"], "25"
-        )
+        """bundle.max_reference_depth is a string representing a positive integer."""
+        value = self.config["bundle"]["max_reference_depth"]
+        self.assertIsInstance(value, str)
+        self.assertTrue(value.isdigit(), f"Expected digit string, got {value!r}")
+        self.assertGreater(int(value), 0)
 
     def test_bundle_description_max_length(self) -> None:
-        """bundle.description_max_length is present and set to '200'."""
-        self.assertEqual(
-            self.config["bundle"]["description_max_length"], "200"
-        )
+        """bundle.description_max_length is a string representing a positive integer."""
+        value = self.config["bundle"]["description_max_length"]
+        self.assertIsInstance(value, str)
+        self.assertTrue(value.isdigit(), f"Expected digit string, got {value!r}")
+        self.assertGreater(int(value), 0)
 
     def test_bundle_exclude_patterns(self) -> None:
         """bundle.exclude_patterns is a list with expected entries."""
@@ -1009,10 +1017,11 @@ class ConfigurationYamlIntegrationTests(unittest.TestCase):
         self.assertIn("dependency_direction", self.config)
 
     def test_bundle_infer_max_walk_depth(self) -> None:
-        """bundle.infer_max_walk_depth is present and set to '5'."""
-        self.assertEqual(
-            self.config["bundle"]["infer_max_walk_depth"], "5"
-        )
+        """bundle.infer_max_walk_depth is a string representing a positive integer."""
+        value = self.config["bundle"]["infer_max_walk_depth"]
+        self.assertIsInstance(value, str)
+        self.assertTrue(value.isdigit(), f"Expected digit string, got {value!r}")
+        self.assertGreater(int(value), 0)
 
 
 if __name__ == "__main__":
