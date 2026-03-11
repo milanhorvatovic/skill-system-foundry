@@ -18,31 +18,30 @@ set -euo pipefail
 
 mkdir -p .codex
 
-# Try parsing the raw output as JSON directly.
-if printf '%s' "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; then
+# Common success path — called once parsing succeeds.
+handle_success() {
   mkdir -p .codex/scripts
   cp .github/scripts/*.js .codex/scripts/
   echo "has-review=true" >> "$GITHUB_OUTPUT"
   exit 0
+}
+
+# Try parsing the raw output as JSON directly.
+if printf '%s' "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; then
+  handle_success
 fi
 
 # Strip markdown code fences and retry (case-insensitive json tag, optional leading whitespace).
 # shellcheck disable=SC2016
 stripped="$(printf '%s' "$CODEX_REVIEW" | sed -n '/^[[:space:]]*```\([Jj][Ss][Oo][Nn]\)\?[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/{ /^[[:space:]]*```/d; p; }')"
 if [ -n "$stripped" ] && printf '%s' "$stripped" | jq . > .codex/review-output.json 2>/dev/null; then
-  mkdir -p .codex/scripts
-  cp .github/scripts/*.js .codex/scripts/
-  echo "has-review=true" >> "$GITHUB_OUTPUT"
-  exit 0
+  handle_success
 fi
 
 # Third attempt: extract JSON using Perl (handles multibyte correctly)
 extracted=$(printf '%s' "$CODEX_REVIEW" | perl -0777 -ne 'if (/\{[\s\S]*\}/s) { print $& }' || true)
 if [ -n "$extracted" ] && printf '%s' "$extracted" | jq . > .codex/review-output.json 2>/dev/null; then
-  mkdir -p .codex/scripts
-  cp .github/scripts/*.js .codex/scripts/
-  echo "has-review=true" >> "$GITHUB_OUTPUT"
-  exit 0
+  handle_success
 fi
 
 # All attempts failed — emit an error annotation but skip gracefully so the
