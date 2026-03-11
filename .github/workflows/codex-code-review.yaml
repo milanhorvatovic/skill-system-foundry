@@ -59,9 +59,11 @@ jobs:
 
       - name: Verify script integrity
         id: verify
-        env:
-          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
-        run: bash .github/scripts/verify-script-integrity.sh
+        uses: ./.github/actions/verify-script-integrity
+        with:
+          script-hashes: ${{ vars.CODEX_SCRIPT_HASHES }}
+          scripts-path: .github/scripts
+          set-output: 'true'
 
       # This step gates all subsequent steps via the "allowed" output.
       # It checks the OPENAI_API_KEY secret, the CODEX_REVIEW_USERS variable,
@@ -181,18 +183,12 @@ jobs:
           name: codex-review
           path: .codex
 
-      - name: Verify publish script integrity
-        env:
-          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
-        run: |
-          set -euo pipefail
-          hash=$(sha256sum .codex/scripts/publish-review.js | awk '{print $1}')
-          approved=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][]')
-          if ! echo "$approved" | grep -q "^${hash}$"; then
-            echo "::error::Hash mismatch for publish-review.js. Computed: $hash"
-            exit 1
-          fi
-          echo "::notice::publish-review.js integrity verified"
+      - name: Verify script integrity
+        uses: ./.github/actions/verify-script-integrity
+        with:
+          script-hashes: ${{ vars.CODEX_SCRIPT_HASHES }}
+          scripts-path: .codex/scripts
+          set-output: 'false'
 
       - name: Publish PR review
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0

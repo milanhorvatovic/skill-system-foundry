@@ -1,0 +1,68 @@
+name: 'Verify Script Integrity'
+description: 'Verify scripts against CODEX_SCRIPT_HASHES repository variable'
+inputs:
+  script-hashes:
+    description: 'JSON object from CODEX_SCRIPT_HASHES variable'
+    required: true
+  scripts-path:
+    description: 'Path to scripts directory (e.g., .github/scripts or .codex/scripts)'
+    required: true
+  set-output:
+    description: 'Whether to set allowed output (true for review job, false for publish job)'
+    required: false
+    default: 'false'
+outputs:
+  allowed:
+    description: 'Whether verification passed (true/false)'
+    value: ${{ steps.verify.outputs.allowed }}
+runs:
+  using: "composite"
+  steps:
+    - id: verify
+      run: |
+        set -euo pipefail
+        
+        # Check if SCRIPT_HASHES is set
+        if [ -z '${{ inputs.script-hashes }}' ]; then
+          echo "::error::CODEX_SCRIPT_HASHES repository variable is not set. Please configure it in Settings → Actions → Variables."
+          echo "allowed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        
+        # Validate JSON format
+        if ! echo '${{ inputs.script-hashes }}' | jq -e . > /dev/null 2>&1; then
+          echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
+          echo "allowed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        
+        # Parse the hashes JSON
+        hashes_json='${{ inputs.script-hashes }}'
+        
+        # Get files on disk
+        disk_files=$(find ${{ inputs.scripts-path }} -type f -exec basename {} \; | sort)
+        
+        # Get files from JSON
+        json_files=$(echo "$hashes_json" | jq -r 'keys | .[]' | sort)
+        
+        # Set match check
+        if [ "$disk_files" != "$json_files" ]; then
+          echo "::error::Script set mismatch. Disk: $disk_files, JSON: $json_files"
+          echo "allowed=false" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        
+        # Hash match check
+        for file in $disk_files; do
+          computed_hash=$(sha256sum "${{ inputs.scripts-path }}/$file" | awk '{print $1}')
+          approved_hashes=$(echo "$hashes_json" | jq -r ".[\"$file\"][]")
+          if ! echo "$approved_hashes" | grep -q "^${computed_hash}$"; then
+            echo "::error::Hash mismatch for $file. Computed: $computed_hash"
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+        done
+        
+        echo "::notice::Script integrity verified"
+        echo "allowed=true" >> "$GITHUB_OUTPUT"
+      shell: bash
