@@ -72,28 +72,4 @@ jobs:
       - name: Update coverage badge
         env:
           TOTAL: ${{ needs.test.outputs.coverage-total }}
-        run: |
-          if [ -z "$TOTAL" ]; then
-            echo "Coverage total not available" >&2
-            exit 1
-          fi
-          if [ "$TOTAL" -ge 90 ]; then COLOR="brightgreen"
-          elif [ "$TOTAL" -ge 80 ]; then COLOR="green"
-          elif [ "$TOTAL" -ge 70 ]; then COLOR="yellowgreen"
-          elif [ "$TOTAL" -ge 60 ]; then COLOR="yellow"
-          else COLOR="red"; fi
-          grep -q "img.shields.io/badge/coverage-" README.md || {
-            echo "Coverage badge pattern not found in README.md" >&2
-            exit 1
-          }
-          sed -i "s|img.shields.io/badge/coverage-[0-9]*%25-[a-z]*|img.shields.io/badge/coverage-${TOTAL}%25-${COLOR}|" README.md
-          if git diff --quiet README.md; then
-            echo "Badge already up to date"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add README.md
-            git commit -m "Update coverage badge to ${TOTAL}% [skip ci]"
-            git pull --rebase origin main
-            git push
-          fi
+        run: bash .github/scripts/update-coverage-badge.sh
