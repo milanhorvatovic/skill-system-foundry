@@ -31,9 +31,15 @@ if printf '%s' "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; t
   handle_success
 fi
 
-# Strip markdown code fences and retry (case-insensitive json tag, optional leading whitespace).
-# shellcheck disable=SC2016
-stripped="$(printf '%s' "$CODEX_REVIEW" | sed -n '/^[[:space:]]*```\([Jj][Ss][Oo][Nn]\)\?[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/{ /^[[:space:]]*```/d; p; }')"
+# Strip the first markdown code fence and retry (case-insensitive json tag, optional leading
+# whitespace). Only the first fenced block is captured so multiple blocks don't get merged.
+stripped="$(printf '%s\n' "$CODEX_REVIEW" | awk '
+  /^[[:space:]]*```([Jj][Ss][Oo][Nn])?[[:space:]]*$/ {
+    if (!in_fence && !done) { in_fence = 1; next }
+    if (in_fence) { done = 1; exit }
+  }
+  in_fence { print }
+')"
 if [ -n "$stripped" ] && printf '%s' "$stripped" | jq . > .codex/review-output.json 2>/dev/null; then
   handle_success
 fi
