@@ -29,6 +29,10 @@ ENV/
 *.swo
 *~
 
+# Coverage artifacts
+.coverage
+htmlcov/
+
 # Environment variables
 .env
 .env.local
