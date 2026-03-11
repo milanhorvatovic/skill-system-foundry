@@ -75,14 +75,14 @@ jobs:
             exit 1
           fi
 
-          if ! echo "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
+          if ! printf '%s' "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
             echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
             echo "allowed=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
           disk_files=$(find .github/scripts -type f -exec basename {} \; | sort)
-          json_files=$(echo "$SCRIPT_HASHES" | jq -r 'keys | .[]' | sort)
+          json_files=$(printf '%s' "$SCRIPT_HASHES" | jq -r 'keys | .[]' | sort)
 
           if [ "$disk_files" != "$json_files" ]; then
             echo "::error::Script set mismatch. Disk: $disk_files, JSON: $json_files"
@@ -93,13 +93,13 @@ jobs:
           # Hash match check - enforce exactly one hash per file
           for file in $disk_files; do
             computed_hash=$(sha256sum ".github/scripts/$file" | awk '{print $1}')
-            hash_count=$(echo "$SCRIPT_HASHES" | jq -r ".[\"$file\"] | length")
+            hash_count=$(printf '%s' "$SCRIPT_HASHES" | jq -r ".[\"$file\"] | length")
             if [ "$hash_count" -ne 1 ]; then
               echo "::error::Expected exactly one hash for $file, found $hash_count. Please ensure CODEX_SCRIPT_HASHES has exactly one hash per file."
               echo "allowed=false" >> "$GITHUB_OUTPUT"
               exit 1
             fi
-            approved_hash=$(echo "$SCRIPT_HASHES" | jq -r ".[\"$file\"][0]")
+            approved_hash=$(printf '%s' "$SCRIPT_HASHES" | jq -r ".[\"$file\"][0]")
             if [ "$computed_hash" != "$approved_hash" ]; then
               echo "::error::Hash mismatch for $file. Computed: $computed_hash, Approved: $approved_hash"
               echo "allowed=false" >> "$GITHUB_OUTPUT"
@@ -241,19 +241,19 @@ jobs:
           fi
 
           # Validate JSON format
-          if ! echo "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
+          if ! printf '%s' "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
             echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
             exit 1
           fi
 
           # Verify publish-review.js hash (enforce exactly one approved hash)
           hash=$(sha256sum .codex/scripts/publish-review.js | awk '{print $1}')
-          hash_count=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"] | length')
+          hash_count=$(printf '%s' "$SCRIPT_HASHES" | jq -r '.["publish-review.js"] | length')
           if [ "$hash_count" -ne 1 ]; then
             echo "::error::Expected exactly one hash for publish-review.js, found $hash_count"
             exit 1
           fi
-          approved=$(echo "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][0]')
+          approved=$(printf '%s' "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][0]')
           if [ "$hash" != "$approved" ]; then
             echo "::error::Hash mismatch for publish-review.js. Computed: $hash, Approved: $approved"
             exit 1

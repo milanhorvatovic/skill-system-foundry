@@ -19,7 +19,7 @@ set -euo pipefail
 mkdir -p .codex
 
 # Try parsing the raw output as JSON directly.
-if echo "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; then
+if printf '%s' "$CODEX_REVIEW" | jq . > .codex/review-output.json 2>/dev/null; then
   mkdir -p .codex/scripts
   cp .github/scripts/*.js .codex/scripts/
   echo "has-review=true" >> "$GITHUB_OUTPUT"
@@ -28,8 +28,8 @@ fi
 
 # Strip markdown code fences and retry (case-insensitive json tag, optional leading whitespace).
 # shellcheck disable=SC2016
-stripped="$(echo "$CODEX_REVIEW" | sed -n '/^[[:space:]]*```\([Jj][Ss][Oo][Nn]\)\?[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/{ /^[[:space:]]*```/d; p; }')"
-if [ -n "$stripped" ] && echo "$stripped" | jq . > .codex/review-output.json 2>/dev/null; then
+stripped="$(printf '%s' "$CODEX_REVIEW" | sed -n '/^[[:space:]]*```\([Jj][Ss][Oo][Nn]\)\?[[:space:]]*$/,/^[[:space:]]*```[[:space:]]*$/{ /^[[:space:]]*```/d; p; }')"
+if [ -n "$stripped" ] && printf '%s' "$stripped" | jq . > .codex/review-output.json 2>/dev/null; then
   mkdir -p .codex/scripts
   cp .github/scripts/*.js .codex/scripts/
   echo "has-review=true" >> "$GITHUB_OUTPUT"
@@ -38,7 +38,7 @@ fi
 
 # Third attempt: extract JSON using Perl (handles multibyte correctly)
 extracted=$(printf '%s' "$CODEX_REVIEW" | perl -0777 -ne 'if (/\{[\s\S]*\}/s) { print $& }' || true)
-if [ -n "$extracted" ] && echo "$extracted" | jq . > .codex/review-output.json 2>/dev/null; then
+if [ -n "$extracted" ] && printf '%s' "$extracted" | jq . > .codex/review-output.json 2>/dev/null; then
   mkdir -p .codex/scripts
   cp .github/scripts/*.js .codex/scripts/
   echo "has-review=true" >> "$GITHUB_OUTPUT"
