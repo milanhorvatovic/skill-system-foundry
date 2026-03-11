@@ -11,13 +11,6 @@ name: Codex code review
 #   .github/scripts/) combined with the "Require review from Code Owners" branch
 #   protection rule. Without both, a merged PR could weaken the workflow for all
 #   subsequent PRs.
-# - The integrity check step is intentionally kept inline in this YAML rather than in a
-#   script file. Since the PR checkout contains code from the PR author, any file under
-#   .github/scripts/ could be tampered with by a malicious PR to bypass verification.
-# - Scripts in .github/scripts/ are validated against the CODEX_SCRIPT_HASHES repository
-#   variable before execution. The variable contains approved SHA-256 hashes for each script.
-# - Any script change requires an admin to update the variable with the new hash.
-# - Bidirectional check: files on disk must match files in variable, and all hashes must match.
 # - Security boundaries are enforced by job permissions, not script provenance:
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
 #   * publish job: pull-requests: write only — can only post PR comments
@@ -69,60 +62,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify script integrity
-        id: verify
-        env:
-          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${SCRIPT_HASHES:-}" ]; then
-            echo "::error::CODEX_SCRIPT_HASHES repository variable is not set. Configure it in Settings → Actions → Variables."
-            echo "verified=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          if ! printf '%s' "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
-            echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
-            echo "verified=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          disk_files=$(find .github/scripts -type f -exec basename {} \; | sort)
-          json_files=$(printf '%s' "$SCRIPT_HASHES" | jq -r 'keys | .[]' | sort)
-
-          if [ "$disk_files" != "$json_files" ]; then
-            echo "::error::Script set mismatch. Disk: $disk_files, JSON: $json_files"
-            echo "verified=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          # Hash match check - enforce exactly one hash per file
-          for file in $disk_files; do
-            computed_hash=$(sha256sum ".github/scripts/$file" | awk '{print $1}')
-            hash_count=$(printf '%s' "$SCRIPT_HASHES" | jq -r ".[\"$file\"] | length")
-            if [ "$hash_count" -ne 1 ]; then
-              echo "::error::Expected exactly one hash for $file, found $hash_count. Please ensure CODEX_SCRIPT_HASHES has exactly one hash per file."
-              echo "verified=false" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-            approved_hash=$(printf '%s' "$SCRIPT_HASHES" | jq -r ".[\"$file\"][0]")
-            if [ "$computed_hash" != "$approved_hash" ]; then
-              echo "::error::Hash mismatch for $file. Computed: $computed_hash, Approved: $approved_hash"
-              echo "verified=false" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-          done
-
-          echo "::notice::Script integrity verified"
-          echo "verified=true" >> "$GITHUB_OUTPUT"
-
       # This step gates all subsequent steps via the "allowed" output.
       # It checks the OPENAI_API_KEY secret, the CODEX_REVIEW_USERS variable,
       # and whether the PR author is in the allowlist.
       - name: Check prerequisites
         id: allowlist
-        if: ${{ steps.verify.outputs.verified == 'true' }}
         run: bash .github/scripts/check-allowlist.sh
 
       - name: Build PR diff
@@ -234,38 +178,6 @@ jobs:
         with:
           name: codex-review
           path: .codex
-
-      - name: Verify publish script integrity
-        env:
-          SCRIPT_HASHES: ${{ vars.CODEX_SCRIPT_HASHES }}
-        run: |
-          set -euo pipefail
-
-          # Check if SCRIPT_HASHES is set
-          if [ -z "${SCRIPT_HASHES:-}" ]; then
-            echo "::error::CODEX_SCRIPT_HASHES repository variable is not set. Please configure it in Settings → Actions → Variables."
-            exit 1
-          fi
-
-          # Validate JSON format
-          if ! printf '%s' "$SCRIPT_HASHES" | jq -e . > /dev/null 2>&1; then
-            echo "::error::CODEX_SCRIPT_HASHES is not valid JSON. Please check the variable format."
-            exit 1
-          fi
-
-          # Verify publish-review.js hash (enforce exactly one approved hash)
-          hash=$(sha256sum .codex/scripts/publish-review.js | awk '{print $1}')
-          hash_count=$(printf '%s' "$SCRIPT_HASHES" | jq -r '.["publish-review.js"] | length')
-          if [ "$hash_count" -ne 1 ]; then
-            echo "::error::Expected exactly one hash for publish-review.js, found $hash_count"
-            exit 1
-          fi
-          approved=$(printf '%s' "$SCRIPT_HASHES" | jq -r '.["publish-review.js"][0]')
-          if [ "$hash" != "$approved" ]; then
-            echo "::error::Hash mismatch for publish-review.js. Computed: $hash, Approved: $approved"
-            exit 1
-          fi
-          echo "::notice::publish-review.js integrity verified"
 
       - name: Publish PR review
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
