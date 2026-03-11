@@ -6,10 +6,11 @@ name: Codex code review
 #   itself. However, this guarantee depends on the trigger type — switching to
 #   `pull_request_target` or `push` would change the trust boundary. Do not change the
 #   trigger without a security review.
-# - Protection against tampering with this workflow also relies on repository settings
-#   (branch protection, required reviews for changes to .github/workflows/) on the default
-#   branch. These settings are a critical complementary layer — without them, a merged PR
-#   could weaken the workflow for all subsequent PRs.
+# - Protection against tampering with this workflow also relies on CODEOWNERS
+#   (.github/CODEOWNERS requires code-owner approval for .github/workflows/ and
+#   .github/scripts/) combined with the "Require review from Code Owners" branch
+#   protection rule. Without both, a merged PR could weaken the workflow for all
+#   subsequent PRs.
 # - The integrity check step is intentionally kept inline in this YAML rather than in a
 #   script file. Since the PR checkout contains code from the PR author, any file under
 #   .github/scripts/ could be tampered with by a malicious PR to bypass verification.
