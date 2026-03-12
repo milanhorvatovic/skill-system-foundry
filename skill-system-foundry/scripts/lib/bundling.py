@@ -13,7 +13,6 @@ from collections.abc import Mapping
 from typing import TypedDict
 
 from .constants import (
-    BUNDLE_TARGETS,
     DIR_CAPABILITIES,
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
@@ -75,7 +74,7 @@ def prevalidate(
     warnings: list[str] = []
 
     # Normalize and validate bundle_target
-    _valid_targets = BUNDLE_TARGETS
+    _valid_targets = {"claude", "gemini", "generic"}
     bundle_target = bundle_target.lower().strip()
     if bundle_target not in _valid_targets:
         errors.append(
