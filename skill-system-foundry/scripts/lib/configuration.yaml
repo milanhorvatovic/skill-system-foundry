@@ -60,6 +60,14 @@ bundle:
   # Max directory levels to walk up when inferring the system root
   # from the skill path.  Prevents scanning to the filesystem root.
   infer_max_walk_depth: 5
+  # Recognised consumer platform targets for bundling.
+  # 'claude' enforces the description_max_length as an error;
+  # other targets downgrade it to a warning.
+  valid_targets:
+    - claude
+    - gemini
+    - generic
+  default_target: claude
   # Filesystem patterns excluded from the bundle archive.
   exclude_patterns:
     - .git

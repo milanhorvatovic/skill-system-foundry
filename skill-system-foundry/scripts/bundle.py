@@ -11,6 +11,9 @@ Usage:
     python scripts/bundle.py <skill-path> --output /tmp/my-skill.zip
     python scripts/bundle.py <skill-path> --system-root .agents --output dist/
     python scripts/bundle.py <skill-path> --system-root .agents --inline-orchestrated-skills
+    python scripts/bundle.py <skill-path> --target claude   # default
+    python scripts/bundle.py <skill-path> --target gemini
+    python scripts/bundle.py <skill-path> --target generic
 """
 
 import argparse
@@ -31,6 +34,9 @@ from lib.bundling import (
     create_zip,
 )
 from lib.constants import (
+    BUNDLE_DEFAULT_TARGET,
+    BUNDLE_DESCRIPTION_MAX_LENGTH,
+    BUNDLE_VALID_TARGETS,
     DIR_SKILLS,
     FILE_MANIFEST,
     FILE_SKILL_MD,
@@ -150,8 +156,21 @@ def main() -> None:
         action="store_true",
         help="Print traceback details when unexpected errors occur.",
     )
+    parser.add_argument(
+        "--target",
+        choices=BUNDLE_VALID_TARGETS,
+        default=BUNDLE_DEFAULT_TARGET,
+        help=(
+            "Validation target that controls description length enforcement. "
+            f"Choices: claude (default, {BUNDLE_DESCRIPTION_MAX_LENGTH}-char "
+            "limit enforced as error), "
+            "gemini or generic (limit enforced as warning only)."
+        ),
+    )
 
     args = parser.parse_args()
+
+    bundle_target: str = args.target
     skill_path = os.path.abspath(args.skill_path)
 
     # Validate input
@@ -275,6 +294,7 @@ def main() -> None:
     errors, warnings, scan_result = prevalidate(
         skill_path, system_root,
         inline_orchestrated_skills=inline_skills,
+        bundle_target=bundle_target,
     )
 
     if errors:

@@ -117,6 +117,10 @@ BUNDLE_DESCRIPTION_MAX_LENGTH = int(_bundle["description_max_length"])
 BUNDLE_INFER_MAX_WALK_DEPTH = int(_bundle["infer_max_walk_depth"])
 BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
 
+# Valid bundle target identifiers and default (single source of truth)
+BUNDLE_VALID_TARGETS = tuple(_bundle["valid_targets"])
+BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
+
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs, _dep

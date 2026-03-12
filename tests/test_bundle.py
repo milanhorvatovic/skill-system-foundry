@@ -22,6 +22,7 @@ from lib.bundling import (
     postvalidate,
     prevalidate,
 )
+from lib.constants import BUNDLE_DESCRIPTION_MAX_LENGTH, LEVEL_FAIL, LEVEL_WARN
 from lib.references import compute_bundle_path
 
 
@@ -1050,6 +1051,68 @@ class InlinedBundleIntegrationTests(unittest.TestCase):
                 len(cap_errors), 1,
                 f"Expected error about missing capability.md. Errors: {errors}",
             )
+
+
+class PrevalidateTargetTests(unittest.TestCase):
+    """Unit tests for the bundle_target parameter in prevalidate()."""
+
+    def _make_skill(self, tmpdir: str, desc: str) -> tuple[str, str]:
+        """Create a minimal skill with the given description.
+
+        Returns (system_root, skill_path).
+        """
+        system_root = os.path.join(tmpdir, "root")
+        skill_dir = os.path.join(system_root, "skills", "demo-skill")
+        write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+        write_text(
+            os.path.join(skill_dir, "SKILL.md"),
+            f"---\nname: demo-skill\ndescription: {desc}\n---\n# Demo\n",
+        )
+        return system_root, skill_dir
+
+    def test_claude_target_long_desc_is_error(self) -> None:
+        """bundle_target='claude' turns a long description into a FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
+            errors, warnings, result = prevalidate(
+                skill_dir, system_root, bundle_target="claude"
+            )
+            self.assertTrue(any(e.startswith(LEVEL_FAIL) for e in errors))
+            self.assertIsNone(result)
+
+    def test_gemini_target_long_desc_is_warning(self) -> None:
+        """bundle_target='gemini' turns a long description into a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
+            errors, warnings, result = prevalidate(
+                skill_dir, system_root, bundle_target="gemini"
+            )
+            self.assertEqual(errors, [])
+            self.assertTrue(any(w.startswith(LEVEL_WARN) for w in warnings))
+            self.assertIsNotNone(result)
+
+    def test_generic_target_long_desc_is_warning(self) -> None:
+        """bundle_target='generic' turns a long description into a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
+            errors, warnings, result = prevalidate(
+                skill_dir, system_root, bundle_target="generic"
+            )
+            self.assertEqual(errors, [])
+            self.assertTrue(any(w.startswith(LEVEL_WARN) for w in warnings))
+            self.assertIsNotNone(result)
+
+    def test_default_target_is_claude(self) -> None:
+        """Default bundle_target is 'claude' (long desc is a FAIL)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
+            errors, warnings, result = prevalidate(skill_dir, system_root)
+            self.assertTrue(any(e.startswith(LEVEL_FAIL) for e in errors))
+            self.assertIsNone(result)
 
 
 if __name__ == "__main__":
