@@ -57,12 +57,18 @@ def prevalidate(
     system_root: str | None,
     *,
     inline_orchestrated_skills: bool = False,
+    bundle_target: str = "claude",
 ) -> tuple[list[str], list[str], ScanResult | None]:
     """Run all pre-validation checks.
 
     Returns (errors: list, warnings: list, scan_result: dict).
     *scan_result* is the output of ``scan_references()`` (contains
     external_files, reference_map, etc.).
+
+    *bundle_target* controls description-length enforcement.  When
+    ``"claude"`` (the default), descriptions exceeding the platform
+    limit are treated as errors.  For other targets (``"gemini"``,
+    ``"generic"``), the same condition is downgraded to a warning.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -90,16 +96,14 @@ def prevalidate(
             warnings.append(msg)
 
     # 2. Description length check
-    # Default target is Claude.ai to preserve existing behavior; callers
-    # can override via SKILL_BUNDLE_TARGET environment variable for other
-    # consumers (e.g., Gemini CLI, offline sharing).
+    # Default target is Claude.ai to preserve existing behavior.
+    # The CLI passes --target to control this.
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     frontmatter, _body = load_frontmatter(skill_md)
     if frontmatter and "description" in frontmatter:
         desc = str(frontmatter["description"])
-        target = os.environ.get("SKILL_BUNDLE_TARGET", "claude").lower()
         if len(desc) > BUNDLE_DESCRIPTION_MAX_LENGTH:
-            if target == "claude":
+            if bundle_target == "claude":
                 errors.append(
                     f"{LEVEL_FAIL}: Description is {len(desc)} characters "
                     f"(max {BUNDLE_DESCRIPTION_MAX_LENGTH} for Claude.ai). "

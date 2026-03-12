@@ -374,5 +374,119 @@ class InlineOrchestratedSkillsCLITests(unittest.TestCase):
             self.assertIn("Cross-skill reference", proc.stdout)
 
 
+class TargetFlagTests(unittest.TestCase):
+    """Tests for the --target CLI flag."""
+
+    def _make_skill_with_long_desc(self, skill_dir: str, desc: str) -> None:
+        """Write a SKILL.md with the given description."""
+        write_skill_md(skill_dir, description=desc)
+
+    def test_target_claude_long_desc_fails(self) -> None:
+        """--target claude (default) rejects descriptions > 200 chars."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "system")
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+            long_desc = "A" * 201
+            self._make_skill_with_long_desc(skill_dir, long_desc)
+
+            proc = subprocess.run(
+                [sys.executable, BUNDLE_SCRIPT, skill_dir, "--target", "claude"],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("Description is 201 characters", proc.stdout)
+
+    def test_target_gemini_long_desc_warns_not_fails(self) -> None:
+        """--target gemini downgrades the description length error to a warning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "system")
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+            long_desc = "A" * 201
+            self._make_skill_with_long_desc(skill_dir, long_desc)
+            output_path = os.path.join(tmpdir, "demo-skill.zip")
+
+            proc = subprocess.run(
+                [
+                    sys.executable, BUNDLE_SCRIPT, skill_dir,
+                    "--target", "gemini",
+                    "--output", output_path,
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("Description is 201 characters", proc.stdout)
+            self.assertTrue(os.path.exists(output_path))
+
+    def test_target_generic_long_desc_warns_not_fails(self) -> None:
+        """--target generic downgrades the description length error to a warning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "system")
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+            long_desc = "A" * 201
+            self._make_skill_with_long_desc(skill_dir, long_desc)
+            output_path = os.path.join(tmpdir, "demo-skill.zip")
+
+            proc = subprocess.run(
+                [
+                    sys.executable, BUNDLE_SCRIPT, skill_dir,
+                    "--target", "generic",
+                    "--output", output_path,
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("Description is 201 characters", proc.stdout)
+            self.assertTrue(os.path.exists(output_path))
+
+    def test_invalid_target_rejected_by_argparse(self) -> None:
+        """An unrecognized --target value is rejected by argparse."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "system")
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+            write_skill_md(skill_dir)
+
+            proc = subprocess.run(
+                [sys.executable, BUNDLE_SCRIPT, skill_dir, "--target", "unknown"],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 2)  # argparse error exit code
+            self.assertIn("invalid choice", proc.stderr)
+
+    def test_default_target_is_claude(self) -> None:
+        """Omitting --target defaults to claude (long desc fails)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "system")
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+            long_desc = "A" * 201
+            self._make_skill_with_long_desc(skill_dir, long_desc)
+
+            proc = subprocess.run(
+                [sys.executable, BUNDLE_SCRIPT, skill_dir],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("Description is 201 characters", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
