@@ -102,6 +102,23 @@ RE_BACKTICK_REF = re.compile(_body_refs["backtick"])
 # Skill compatibility constraints
 MAX_COMPATIBILITY_CHARS = int(_skill["compatibility"]["max_length"])
 
+# Known frontmatter keys (for unrecognized-key detection)
+KNOWN_FRONTMATTER_KEYS = frozenset(_skill["known_frontmatter_keys"])
+
+# Allowed-tools validation
+_allowed_tools = _skill["allowed_tools"]
+KNOWN_TOOLS = frozenset(_allowed_tools["known_tools"])
+MAX_ALLOWED_TOOLS = int(_allowed_tools["max_tools"])
+
+# Metadata sub-field validation
+_metadata = _skill["metadata"]
+RE_METADATA_VERSION = re.compile(_metadata["version"]["pattern"])
+KNOWN_SPEC_VERSIONS = frozenset(_metadata["spec"]["known_versions"])
+MAX_AUTHOR_LENGTH = int(_metadata["author"]["max_length"])
+
+# License validation
+KNOWN_SPDX_LICENSES = frozenset(_skill["license"]["known_spdx"])
+
 # Recognized skill subdirectories
 RECOGNIZED_DIRS = frozenset(_skill["recognized_subdirectories"])
 
@@ -123,5 +140,6 @@ BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
 
 # Clean up private names
 del _config_path, _f, _config
-del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs, _dep
-del _bundle
+del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
+del _allowed_tools, _metadata
+del _dep, _bundle
