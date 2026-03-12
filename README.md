@@ -1,5 +1,7 @@
 # Skill System Foundry
 
+![Coverage](https://img.shields.io/badge/coverage-70%25-yellowgreen)
+
 Meta-skill for building AI-agnostic skill systems with a two-layer architecture of skills and roles, templates, validation tools, and cross-platform authoring guidance based on the [Agent Skills specification](https://agentskills.io).
 
 ## What a Skill Looks Like

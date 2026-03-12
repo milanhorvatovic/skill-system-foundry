@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -24,7 +27,67 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Run unit tests
-        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests with coverage
+        run: python -m coverage run -m unittest discover -s tests -p "test_*.py" -v
         env:
           PYTHONUTF8: "1"
+
+      - name: Generate coverage HTML report
+        run: python -m coverage html
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
+        with:
+          name: coverage-report-${{ matrix.os }}
+          path: htmlcov/
+
+      - name: Write coverage total
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          TOTAL_RAW=$(python -m coverage report --format=total --fail-under=0)
+          TOTAL_STRIPPED=${TOTAL_RAW%\%}
+          printf '%.0f\n' "$TOTAL_STRIPPED" > coverage-total.txt
+
+      - name: Upload coverage total
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
+        with:
+          name: coverage-total
+          path: coverage-total.txt
+
+      - name: Check coverage threshold
+        run: python -m coverage report
+
+  update-badge:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: update-badge-main
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prepare main branch for badge update
+        run: git switch -C main
+
+      - name: Download coverage total
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
+        with:
+          name: coverage-total
+
+      - name: Update coverage badge
+        run: |
+          TOTAL=$(cat coverage-total.txt)
+          export TOTAL
+          bash .github/scripts/update-coverage-badge.sh
