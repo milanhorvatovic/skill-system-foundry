@@ -47,7 +47,7 @@ jobs:
       - name: Write coverage total
         if: matrix.os == 'ubuntu-latest'
         run: |
-          TOTAL_RAW=$(python -m coverage report --format=total)
+          TOTAL_RAW=$(python -m coverage report --format=total --fail-under=0)
           TOTAL_STRIPPED=${TOTAL_RAW%\%}
           printf '%.0f\n' "$TOTAL_STRIPPED" > coverage-total.txt
 
