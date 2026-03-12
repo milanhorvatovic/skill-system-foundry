@@ -44,9 +44,6 @@ jobs:
           name: coverage-report-${{ matrix.os }}
           path: htmlcov/
 
-      - name: Check coverage threshold
-        run: python -m coverage report
-
       - name: Write coverage total
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -60,6 +57,9 @@ jobs:
         with:
           name: coverage-total
           path: coverage-total.txt
+
+      - name: Check coverage threshold
+        run: python -m coverage report
 
   update-badge:
     needs: test
