@@ -25,9 +25,6 @@ on:
       - synchronize
       - ready_for_review
 
-env:
-  CODEX_MODEL: gpt-5.3-codex
-
 concurrency:
   group: codex-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -55,6 +52,12 @@ jobs:
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
     steps:
+      - name: Validate required variables
+        env:
+          CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+        run: |
+          : "${CODEX_REVIEW_MODEL:?CODEX_REVIEW_MODEL is not set. Configure it in Settings → Actions → Variables.}"
+
       - name: Checkout PR
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
@@ -84,7 +87,7 @@ jobs:
         uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          model: ${{ env.CODEX_MODEL }}
+          model: ${{ vars.CODEX_REVIEW_MODEL }}
           sandbox: read-only
           prompt: |
             You are reviewing a GitHub pull request for this repository.
