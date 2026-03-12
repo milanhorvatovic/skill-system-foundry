@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import TypedDict
 
 from .constants import (
+    BUNDLE_DEFAULT_TARGET,
     BUNDLE_VALID_TARGETS,
     DIR_CAPABILITIES,
     FILE_CAPABILITY_MD,
@@ -58,7 +59,7 @@ def prevalidate(
     system_root: str | None,
     *,
     inline_orchestrated_skills: bool = False,
-    bundle_target: str = "claude",
+    bundle_target: str = BUNDLE_DEFAULT_TARGET,
 ) -> tuple[list[str], list[str], ScanResult | None]:
     """Run all pre-validation checks.
 
