@@ -21,6 +21,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BUNDLE_SCRIPT = os.path.join(SCRIPTS_DIR, "bundle.py")
 
 import bundle
+from lib.constants import BUNDLE_DESCRIPTION_MAX_LENGTH
 
 
 class CLISmokeTests(unittest.TestCase):
@@ -382,12 +383,12 @@ class TargetFlagTests(unittest.TestCase):
         write_skill_md(skill_dir, description=desc)
 
     def test_target_claude_long_desc_fails(self) -> None:
-        """--target claude (default) rejects descriptions > 200 chars."""
+        """--target claude (default) rejects descriptions exceeding the limit."""
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "system")
             skill_dir = os.path.join(system_root, "skills", "demo-skill")
             write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
-            long_desc = "A" * 201
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
             self._make_skill_with_long_desc(skill_dir, long_desc)
 
             proc = subprocess.run(
@@ -398,7 +399,8 @@ class TargetFlagTests(unittest.TestCase):
             )
 
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Description is 201 characters", proc.stdout)
+            expected_len = BUNDLE_DESCRIPTION_MAX_LENGTH + 1
+            self.assertIn(f"Description is {expected_len} characters", proc.stdout)
 
     def test_target_gemini_long_desc_warns_not_fails(self) -> None:
         """--target gemini downgrades the description length error to a warning."""
@@ -406,7 +408,7 @@ class TargetFlagTests(unittest.TestCase):
             system_root = os.path.join(tmpdir, "system")
             skill_dir = os.path.join(system_root, "skills", "demo-skill")
             write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
-            long_desc = "A" * 201
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
             self._make_skill_with_long_desc(skill_dir, long_desc)
             output_path = os.path.join(tmpdir, "demo-skill.zip")
 
@@ -421,8 +423,9 @@ class TargetFlagTests(unittest.TestCase):
                 text=True,
             )
 
+            expected_len = BUNDLE_DESCRIPTION_MAX_LENGTH + 1
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
-            self.assertIn("Description is 201 characters", proc.stdout)
+            self.assertIn(f"Description is {expected_len} characters", proc.stdout)
             self.assertTrue(os.path.exists(output_path))
 
     def test_target_generic_long_desc_warns_not_fails(self) -> None:
@@ -431,7 +434,7 @@ class TargetFlagTests(unittest.TestCase):
             system_root = os.path.join(tmpdir, "system")
             skill_dir = os.path.join(system_root, "skills", "demo-skill")
             write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
-            long_desc = "A" * 201
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
             self._make_skill_with_long_desc(skill_dir, long_desc)
             output_path = os.path.join(tmpdir, "demo-skill.zip")
 
@@ -446,8 +449,9 @@ class TargetFlagTests(unittest.TestCase):
                 text=True,
             )
 
+            expected_len = BUNDLE_DESCRIPTION_MAX_LENGTH + 1
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
-            self.assertIn("Description is 201 characters", proc.stdout)
+            self.assertIn(f"Description is {expected_len} characters", proc.stdout)
             self.assertTrue(os.path.exists(output_path))
 
     def test_invalid_target_rejected_by_argparse(self) -> None:
@@ -474,7 +478,7 @@ class TargetFlagTests(unittest.TestCase):
             system_root = os.path.join(tmpdir, "system")
             skill_dir = os.path.join(system_root, "skills", "demo-skill")
             write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
-            long_desc = "A" * 201
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
             self._make_skill_with_long_desc(skill_dir, long_desc)
 
             proc = subprocess.run(
@@ -484,8 +488,9 @@ class TargetFlagTests(unittest.TestCase):
                 text=True,
             )
 
+            expected_len = BUNDLE_DESCRIPTION_MAX_LENGTH + 1
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("Description is 201 characters", proc.stdout)
+            self.assertIn(f"Description is {expected_len} characters", proc.stdout)
 
 
 if __name__ == "__main__":

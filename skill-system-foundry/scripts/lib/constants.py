@@ -117,6 +117,9 @@ BUNDLE_DESCRIPTION_MAX_LENGTH = int(_bundle["description_max_length"])
 BUNDLE_INFER_MAX_WALK_DEPTH = int(_bundle["infer_max_walk_depth"])
 BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
 
+# Valid bundle target identifiers (single source of truth for CLI and library)
+BUNDLE_VALID_TARGETS = ("claude", "gemini", "generic")
+
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs, _dep

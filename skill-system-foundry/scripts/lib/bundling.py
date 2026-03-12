@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import TypedDict
 
 from .constants import (
+    BUNDLE_VALID_TARGETS,
     DIR_CAPABILITIES,
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
@@ -74,12 +75,11 @@ def prevalidate(
     warnings: list[str] = []
 
     # Normalize and validate bundle_target
-    _valid_targets = {"claude", "gemini", "generic"}
     bundle_target = bundle_target.lower().strip()
-    if bundle_target not in _valid_targets:
+    if bundle_target not in BUNDLE_VALID_TARGETS:
         errors.append(
             f"{LEVEL_FAIL}: Invalid bundle_target '{bundle_target}'. "
-            f"Use one of: {', '.join(sorted(_valid_targets))}."
+            f"Use one of: {', '.join(BUNDLE_VALID_TARGETS)}."
         )
         return errors, warnings, None
 
@@ -126,8 +126,8 @@ def prevalidate(
                 warnings.append(
                     f"{LEVEL_WARN}: Description is {len(desc)} characters, which "
                     f"exceeds the bundler default of {BUNDLE_DESCRIPTION_MAX_LENGTH}. "
-                    f"This limit mirrors Claude.ai zip uploads; for generic targets, "
-                    f"ensure the consumer supports longer descriptions."
+                    f"This limit mirrors Claude.ai zip uploads; for non-claude "
+                    f"targets, ensure the consumer supports longer descriptions."
                 )
 
     # 3–7. Reference scanning

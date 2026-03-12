@@ -35,6 +35,7 @@ from lib.bundling import (
 )
 from lib.constants import (
     BUNDLE_DESCRIPTION_MAX_LENGTH,
+    BUNDLE_VALID_TARGETS,
     DIR_SKILLS,
     FILE_MANIFEST,
     FILE_SKILL_MD,
@@ -156,7 +157,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--target",
-        choices=["claude", "gemini", "generic"],
+        choices=BUNDLE_VALID_TARGETS,
         default="claude",
         help=(
             "Validation target that controls description length enforcement. "

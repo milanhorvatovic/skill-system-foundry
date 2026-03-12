@@ -22,7 +22,7 @@ from lib.bundling import (
     postvalidate,
     prevalidate,
 )
-from lib.constants import LEVEL_FAIL, LEVEL_WARN
+from lib.constants import BUNDLE_DESCRIPTION_MAX_LENGTH, LEVEL_FAIL, LEVEL_WARN
 from lib.references import compute_bundle_path
 
 
@@ -1073,7 +1073,8 @@ class PrevalidateTargetTests(unittest.TestCase):
     def test_claude_target_long_desc_is_error(self) -> None:
         """bundle_target='claude' turns a long description into a FAIL."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir = self._make_skill(tmpdir, "A" * 201)
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
             errors, warnings, result = prevalidate(
                 skill_dir, system_root, bundle_target="claude"
             )
@@ -1083,7 +1084,8 @@ class PrevalidateTargetTests(unittest.TestCase):
     def test_gemini_target_long_desc_is_warning(self) -> None:
         """bundle_target='gemini' turns a long description into a WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir = self._make_skill(tmpdir, "A" * 201)
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
             errors, warnings, result = prevalidate(
                 skill_dir, system_root, bundle_target="gemini"
             )
@@ -1094,7 +1096,8 @@ class PrevalidateTargetTests(unittest.TestCase):
     def test_generic_target_long_desc_is_warning(self) -> None:
         """bundle_target='generic' turns a long description into a WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir = self._make_skill(tmpdir, "A" * 201)
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
             errors, warnings, result = prevalidate(
                 skill_dir, system_root, bundle_target="generic"
             )
@@ -1105,7 +1108,8 @@ class PrevalidateTargetTests(unittest.TestCase):
     def test_default_target_is_claude(self) -> None:
         """Default bundle_target is 'claude' (long desc is a FAIL)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir = self._make_skill(tmpdir, "A" * 201)
+            long_desc = "A" * (BUNDLE_DESCRIPTION_MAX_LENGTH + 1)
+            system_root, skill_dir = self._make_skill(tmpdir, long_desc)
             errors, warnings, result = prevalidate(skill_dir, system_root)
             self.assertTrue(any(e.startswith(LEVEL_FAIL) for e in errors))
             self.assertIsNone(result)
