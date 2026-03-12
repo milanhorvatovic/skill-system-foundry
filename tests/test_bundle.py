@@ -22,6 +22,7 @@ from lib.bundling import (
     postvalidate,
     prevalidate,
 )
+from lib.constants import LEVEL_FAIL, LEVEL_WARN
 from lib.references import compute_bundle_path
 
 
@@ -1076,7 +1077,7 @@ class PrevalidateTargetTests(unittest.TestCase):
             errors, warnings, result = prevalidate(
                 skill_dir, system_root, bundle_target="claude"
             )
-            self.assertTrue(any("FAIL" in e for e in errors))
+            self.assertTrue(any(e.startswith(LEVEL_FAIL) for e in errors))
             self.assertIsNone(result)
 
     def test_gemini_target_long_desc_is_warning(self) -> None:
@@ -1087,7 +1088,7 @@ class PrevalidateTargetTests(unittest.TestCase):
                 skill_dir, system_root, bundle_target="gemini"
             )
             self.assertEqual(errors, [])
-            self.assertTrue(any("WARN" in w for w in warnings))
+            self.assertTrue(any(w.startswith(LEVEL_WARN) for w in warnings))
             self.assertIsNotNone(result)
 
     def test_generic_target_long_desc_is_warning(self) -> None:
@@ -1098,7 +1099,7 @@ class PrevalidateTargetTests(unittest.TestCase):
                 skill_dir, system_root, bundle_target="generic"
             )
             self.assertEqual(errors, [])
-            self.assertTrue(any("WARN" in w for w in warnings))
+            self.assertTrue(any(w.startswith(LEVEL_WARN) for w in warnings))
             self.assertIsNotNone(result)
 
     def test_default_target_is_claude(self) -> None:
@@ -1106,7 +1107,7 @@ class PrevalidateTargetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root, skill_dir = self._make_skill(tmpdir, "A" * 201)
             errors, warnings, result = prevalidate(skill_dir, system_root)
-            self.assertTrue(any("FAIL" in e for e in errors))
+            self.assertTrue(any(e.startswith(LEVEL_FAIL) for e in errors))
             self.assertIsNone(result)
 
 

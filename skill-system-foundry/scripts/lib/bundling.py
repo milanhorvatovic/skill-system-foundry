@@ -73,6 +73,16 @@ def prevalidate(
     errors: list[str] = []
     warnings: list[str] = []
 
+    # Normalize and validate bundle_target
+    _valid_targets = {"claude", "gemini", "generic"}
+    bundle_target = bundle_target.lower().strip()
+    if bundle_target not in _valid_targets:
+        errors.append(
+            f"{LEVEL_FAIL}: Invalid bundle_target '{bundle_target}'. "
+            f"Use one of: {', '.join(sorted(_valid_targets))}."
+        )
+        return errors, warnings, None
+
     # 1. Spec validation via validate_skill()
     # Lazy import: validate_skill lives as a sibling script, not inside
     # lib/.  Importing at call time avoids a module-level dependency on

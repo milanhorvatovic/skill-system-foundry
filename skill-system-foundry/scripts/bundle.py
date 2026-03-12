@@ -34,6 +34,7 @@ from lib.bundling import (
     create_zip,
 )
 from lib.constants import (
+    BUNDLE_DESCRIPTION_MAX_LENGTH,
     DIR_SKILLS,
     FILE_MANIFEST,
     FILE_SKILL_MD,
@@ -159,7 +160,8 @@ def main() -> None:
         default="claude",
         help=(
             "Validation target that controls description length enforcement. "
-            "Choices: claude (default, 200-char limit enforced as error), "
+            f"Choices: claude (default, {BUNDLE_DESCRIPTION_MAX_LENGTH}-char "
+            "limit enforced as error), "
             "gemini or generic (limit enforced as warning only)."
         ),
     )
