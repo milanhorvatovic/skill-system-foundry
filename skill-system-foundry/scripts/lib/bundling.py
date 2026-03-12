@@ -107,7 +107,7 @@ def prevalidate(
 
     # 2. Description length check
     # Default target is Claude.ai to preserve existing behavior.
-    # The CLI passes --target to control this.
+    # Callers can override bundle_target to relax or change this behavior.
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     frontmatter, _body = load_frontmatter(skill_md)
     if frontmatter and "description" in frontmatter:

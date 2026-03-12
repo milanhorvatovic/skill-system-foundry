@@ -157,18 +157,34 @@ def main() -> None:
     parser.add_argument(
         "--target",
         choices=["claude", "gemini", "generic"],
-        default="claude",
+        default=None,
         help=(
             "Validation target that controls description length enforcement. "
             f"Choices: claude (default, {BUNDLE_DESCRIPTION_MAX_LENGTH}-char "
             "limit enforced as error), "
-            "gemini or generic (limit enforced as warning only)."
+            "gemini or generic (limit enforced as warning only). "
+            "Falls back to SKILL_BUNDLE_TARGET env var if set."
         ),
     )
 
     args = parser.parse_args()
 
-    bundle_target: str = args.target
+    # Resolve target: explicit --target flag > SKILL_BUNDLE_TARGET env var > "claude"
+    if args.target is not None:
+        bundle_target: str = args.target
+    else:
+        _env_target = os.environ.get("SKILL_BUNDLE_TARGET", "").strip().lower()
+        if _env_target:
+            if _env_target not in {"claude", "gemini", "generic"}:
+                print_error_line(
+                    f"{LEVEL_FAIL}: Invalid SKILL_BUNDLE_TARGET "
+                    f"'{os.environ['SKILL_BUNDLE_TARGET']}'. "
+                    "Use one of: claude, gemini, generic."
+                )
+                sys.exit(1)
+            bundle_target = _env_target
+        else:
+            bundle_target = "claude"
     skill_path = os.path.abspath(args.skill_path)
 
     # Validate input
