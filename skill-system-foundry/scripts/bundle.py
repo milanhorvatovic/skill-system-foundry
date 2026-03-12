@@ -35,6 +35,7 @@ from lib.bundling import (
 )
 from lib.constants import (
     BUNDLE_DESCRIPTION_MAX_LENGTH,
+    BUNDLE_TARGETS,
     DIR_SKILLS,
     FILE_MANIFEST,
     FILE_SKILL_MD,
@@ -156,26 +157,28 @@ def main() -> None:
     )
     parser.add_argument(
         "--target",
-        choices=["claude", "gemini", "generic"],
+        choices=sorted(BUNDLE_TARGETS),
         default=None,
         help=(
             "Validation target that controls description length enforcement. "
             f"Choices: claude (default, {BUNDLE_DESCRIPTION_MAX_LENGTH}-char "
             "limit enforced as error), "
             "gemini or generic (limit enforced as warning only). "
-            "Falls back to SKILL_BUNDLE_TARGET env var if set."
+            "SKILL_BUNDLE_TARGET env var is supported for backward "
+            "compatibility but deprecated; prefer --target."
         ),
     )
 
     args = parser.parse_args()
 
-    # Resolve target: explicit --target flag > SKILL_BUNDLE_TARGET env var > "claude"
+    # Resolve target: explicit --target flag > SKILL_BUNDLE_TARGET env var
+    # (deprecated, kept for backward compatibility) > "claude" default
     if args.target is not None:
         bundle_target: str = args.target
     else:
         _env_target = os.environ.get("SKILL_BUNDLE_TARGET", "").strip().lower()
         if _env_target:
-            if _env_target not in {"claude", "gemini", "generic"}:
+            if _env_target not in BUNDLE_TARGETS:
                 print_error_line(
                     f"{LEVEL_FAIL}: Invalid SKILL_BUNDLE_TARGET "
                     f"'{os.environ['SKILL_BUNDLE_TARGET']}'. "

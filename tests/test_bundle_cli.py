@@ -517,7 +517,7 @@ class TargetFlagTests(unittest.TestCase):
             self.assertIn("Description is 201 characters", proc.stdout)
 
     def test_invalid_env_var_fails_fast(self) -> None:
-        """An invalid SKILL_BUNDLE_TARGET value causes a FAIL exit before parsing."""
+        """An invalid SKILL_BUNDLE_TARGET value fails fast before bundling begins."""
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "system")
             skill_dir = os.path.join(system_root, "skills", "demo-skill")
