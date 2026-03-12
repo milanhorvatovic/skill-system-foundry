@@ -40,5 +40,5 @@ else
   git add README.md
   git commit -m "Update coverage badge to ${TOTAL}% [skip ci]"
   git pull --rebase origin main
-  git push
+  git push origin HEAD:main
 fi
