@@ -22,7 +22,11 @@ AUDIT_SCRIPT = os.path.join(SCRIPTS_DIR, "audit_skill_system.py")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from audit_skill_system import check_upward_references, audit_skill_system
+from audit_skill_system import (
+    check_upward_references,
+    check_role_composition,
+    audit_skill_system,
+)
 from lib.constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -55,6 +59,32 @@ def _write_capability_md(
     else:
         content = body_text
     write_text(os.path.join(cap_dir, "capability.md"), content)
+
+
+def _write_role_md(
+    role_path: str,
+    *,
+    skills_used_body: str = "",
+) -> None:
+    """Write a role markdown file at *role_path*.
+
+    *skills_used_body* is inserted into the Skills Used section table.
+    """
+    content = (
+        "# Test Role\n\n"
+        "## Purpose\n\nTest role for auditing.\n\n"
+        "## Responsibilities\n\n- Test\n\n"
+        "## Allowed\n\n- Test\n\n"
+        "## Forbidden\n\n- Nothing\n\n"
+        "## Handoff\n\n- None\n\n"
+        "## Workflow\n\nDo things.\n\n"
+        "## Skills Used\n\n"
+        "| Skill / Capability | Purpose in Workflow |\n"
+        "|---|---|\n"
+        f"{skills_used_body}\n"
+        "## Interaction Pattern\n\nAsk questions.\n"
+    )
+    write_text(role_path, content)
 
 
 def _create_valid_system(system_root: str) -> None:
@@ -342,6 +372,200 @@ class AuditDependencyDirectionTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         roles_warns = [e for e in warn_errors if "roles" in e.lower()]
         self.assertGreaterEqual(len(roles_warns), 1)
+
+
+# ===================================================================
+# check_role_composition
+# ===================================================================
+
+
+class CheckRoleCompositionTests(unittest.TestCase):
+    """Tests for the check_role_composition function."""
+
+    def test_role_with_zero_skills_returns_warn(self) -> None:
+        """A role with 0 skill references returns a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "empty.md")
+            _write_role_md(role_path, skills_used_body="")
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 0)
+        self.assertEqual(len(issues), 1)
+        level, message = issues[0]
+        self.assertEqual(level, LEVEL_WARN)
+        self.assertIn("0", message)
+
+    def test_role_with_one_skill_returns_warn(self) -> None:
+        """A role with 1 skill reference returns a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "single.md")
+            _write_role_md(
+                role_path,
+                skills_used_body="| skills/alpha/SKILL.md | Alpha skill |\n",
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 1)
+        self.assertEqual(len(issues), 1)
+        level, message = issues[0]
+        self.assertEqual(level, LEVEL_WARN)
+        self.assertIn("1", message)
+
+    def test_role_with_two_skills_passes(self) -> None:
+        """A role with 2 skill references passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "two.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.md | Alpha skill |\n"
+                    "| skills/beta/SKILL.md | Beta skill |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 2)
+        self.assertEqual(issues, [])
+
+    def test_role_with_three_skills_passes(self) -> None:
+        """A role with 3 skill references passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "three.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.md | Alpha skill |\n"
+                    "| skills/beta/SKILL.md | Beta skill |\n"
+                    "| skills/gamma/SKILL.md | Gamma skill |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 3)
+        self.assertEqual(issues, [])
+
+    def test_role_with_capabilities_only_passes(self) -> None:
+        """A role referencing 2 capabilities (no skills) passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "caps.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/capabilities/cap-one/capability.md | Cap one |\n"
+                    "| skills/alpha/capabilities/cap-two/capability.md | Cap two |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 2)
+        self.assertEqual(issues, [])
+
+    def test_role_with_mix_of_skills_and_capabilities_passes(self) -> None:
+        """A role referencing 1 skill + 1 capability passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "mixed.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.md | Alpha skill |\n"
+                    "| skills/beta/capabilities/cap-one/capability.md | Cap one |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 2)
+        self.assertEqual(issues, [])
+
+    def test_role_with_duplicate_references_counts_unique(self) -> None:
+        """A role with duplicate references counts only unique entries."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "dupes.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.md | First use |\n"
+                    "| skills/alpha/SKILL.md | Second use |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        # Duplicate should count as 1 unique reference
+        self.assertEqual(ref_count, 1)
+        self.assertEqual(len(issues), 1)
+        level, _ = issues[0]
+        self.assertEqual(level, LEVEL_WARN)
+
+    def test_role_with_backtick_wrapped_refs(self) -> None:
+        """A role with backtick-wrapped skill paths is detected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "backtick.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| `skills/alpha/SKILL.md` | Alpha skill |\n"
+                    "| `skills/beta/SKILL.md` | Beta skill |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path, tmpdir)
+        self.assertEqual(ref_count, 2)
+        self.assertEqual(issues, [])
+
+
+# ===================================================================
+# audit_skill_system — Role Composition integration
+# ===================================================================
+
+
+class AuditRoleCompositionTests(unittest.TestCase):
+    """Tests for role composition checks in audit_skill_system."""
+
+    def test_role_with_insufficient_skills_returns_warn(self) -> None:
+        """A role composing fewer than the minimum returns a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_valid_system(tmpdir)
+            role_path = os.path.join(tmpdir, "roles", "test", "bad-role.md")
+            _write_role_md(
+                role_path,
+                skills_used_body="| skills/alpha/SKILL.md | Alpha skill |\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        composition_warns = [
+            e for e in warn_errors if "composes" in e.lower()
+        ]
+        self.assertGreaterEqual(len(composition_warns), 1)
+
+    def test_role_with_sufficient_skills_passes(self) -> None:
+        """A role composing 2+ skills/capabilities passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_valid_system(tmpdir)
+            role_path = os.path.join(tmpdir, "roles", "test", "good-role.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.md | Alpha skill |\n"
+                    "| skills/beta/SKILL.md | Beta skill |\n"
+                ),
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        composition_warns = [
+            e for e in warn_errors if "composes" in e.lower()
+        ]
+        self.assertEqual(composition_warns, [])
+
+    def test_verbose_output_includes_role_composition_section(self) -> None:
+        """Verbose output includes the Role Composition section header."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_valid_system(tmpdir)
+            role_path = os.path.join(tmpdir, "roles", "test", "good-role.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.md | Alpha skill |\n"
+                    "| skills/beta/SKILL.md | Beta skill |\n"
+                ),
+            )
+            write_text(
+                os.path.join(tmpdir, "manifest.yaml"),
+                "name: test-system\n",
+            )
+            proc = _run([tmpdir, "--verbose"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertIn("Role Composition", proc.stdout)
 
 
 class AuditNestingDepthTests(unittest.TestCase):

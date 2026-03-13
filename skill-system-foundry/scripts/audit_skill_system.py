@@ -2,12 +2,9 @@
 """
 Validate the entire skill system structure for consistency.
 
-Checks: spec compliance, dependency direction, manifest consistency,
-nesting depth, shared resource usage, capability entry naming,
-and structural rules.
-
-Manual-review scope: role composition (2+ skills/capabilities) is not
-currently enforced by this script.
+Checks: spec compliance, dependency direction, role composition,
+manifest consistency, nesting depth, shared resource usage,
+capability entry naming, and structural rules.
 
 Usage:
     python scripts/audit_skill_system.py <system-root> [--verbose]
@@ -60,6 +57,7 @@ from lib.constants import (
     FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
     RE_ROLES_REF, RE_SIBLING_CAP_REF,
+    RE_SKILL_REF, RE_CAPABILITY_REF, MIN_ROLE_SKILLS,
     SEPARATOR_WIDTH,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
@@ -89,6 +87,56 @@ def check_upward_references(content, component_type, allow_orchestration=False):
                 issues.append((LEVEL_FAIL, "references roles/ (skills must not reference roles)"))
 
     return issues
+
+
+def check_role_composition(
+    role_path: str,
+    system_root: str,
+) -> tuple[list[tuple[str, str]], int]:
+    """Check that a role composes enough unique skills/capabilities.
+
+    Parses the role file to extract skill and capability references
+    from the "Skills Used" section.
+
+    Returns a tuple of (issues, ref_count) where *issues* is a list
+    of ``(level, message)`` tuples and *ref_count* is the number of
+    unique skills/capabilities found.  Returns WARN if the role
+    references fewer than ``MIN_ROLE_SKILLS`` unique entries.
+
+    Note: this is a best-effort heuristic — it relies on regex
+    matching of canonical path patterns inside the "Skills Used"
+    table.  Non-standard reference formats may not be detected.
+    """
+    content = read_file(role_path)
+
+    # Extract the "Skills Used" section (from heading to next ## heading or EOF)
+    skills_section = ""
+    in_section = False
+    for line in content.splitlines():
+        if line.strip().startswith("## Skills Used"):
+            in_section = True
+            continue
+        if in_section and line.strip().startswith("## "):
+            break
+        if in_section:
+            skills_section += line + "\n"
+
+    # Collect unique skill/capability references from the section
+    refs: set[str] = set()
+    for match in RE_SKILL_REF.finditer(skills_section):
+        refs.add(match.group(0))
+    for match in RE_CAPABILITY_REF.finditer(skills_section):
+        refs.add(match.group(0))
+
+    issues: list[tuple[str, str]] = []
+    if len(refs) < MIN_ROLE_SKILLS:
+        issues.append((
+            LEVEL_WARN,
+            f"composes {len(refs)} skill(s)/capability(ies) "
+            f"(minimum {MIN_ROLE_SKILLS})",
+        ))
+
+    return issues, len(refs)
 
 
 def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
@@ -191,8 +239,19 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
         if not issues and verbose:
             print(f"  \u2713 {skill['name']}: no upward references")
 
-    # NOTE: Role composition (2+ skills) is a manual-review item
-    # (see workflows.md audit checklist)
+    # --- Role Composition ---
+    if verbose:
+        print("\n== Role Composition ==")
+
+    for role in roles:
+        issues, ref_count = check_role_composition(role["path"], system_root)
+        for level, issue in issues:
+            errors.append(f"{level}: {role['group']}/{role['name']} {issue}")
+        if not issues and verbose:
+            print(
+                f"  ✓ {role['group']}/{role['name']}: "
+                f"composes {ref_count} skills/capabilities"
+            )
 
     # --- Nesting Depth ---
     if verbose:
@@ -327,10 +386,6 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
                     )
             except Exception as e:
                 errors.append(f"{LEVEL_WARN}: Failed to parse {FILE_MANIFEST}: {e}")
-
-    if verbose:
-        print("\n== Manual-Only Checks ==")
-        print("  - role composition (2+ skills/capabilities) is not automated")
 
     return errors
 

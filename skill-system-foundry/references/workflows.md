@@ -329,9 +329,7 @@ python scripts/audit_skill_system.py /path/to/system
 
 > **Note:** Point this at the deployed system root — the directory containing a `skills/` subdirectory (e.g., `.agents/`). This is not the same as the distribution repository root. For single-skill validation, use `validate_skill.py` instead.
 
-The script checks: spec compliance (frontmatter fields, naming, line counts), dependency direction (no upward references), nesting depth, shared resource usage, and manifest presence. Path validity and orphan detection require manual review (see checklist below).
-
-> **Manual-only checks:** `audit_skill_system.py` does not currently enforce role composition (2+ skills/capabilities). Verify using the checklist below.
+The script checks: spec compliance (frontmatter fields, naming, line counts), dependency direction (no upward references), role composition (2+ skills/capabilities, best-effort heuristic), nesting depth, shared resource usage, and manifest presence. Path validity and orphan detection require manual review (see checklist below).
 
 ### Manual Checklist
 
