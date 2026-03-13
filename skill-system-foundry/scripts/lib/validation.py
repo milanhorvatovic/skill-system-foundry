@@ -131,8 +131,13 @@ def validate_metadata(metadata: dict | str) -> tuple[list[str], list[str]]:
         return errors, passes
 
     if "version" in metadata:
-        version = str(metadata["version"])
-        if RE_METADATA_VERSION.match(version):
+        version = metadata["version"]
+        if not isinstance(version, str):
+            errors.append(
+                f"{LEVEL_WARN}: 'metadata.version' should be a string, "
+                f"got {type(version).__name__}"
+            )
+        elif RE_METADATA_VERSION.match(version):
             passes.append(f"metadata.version: valid semver ({version})")
         else:
             errors.append(
@@ -141,8 +146,13 @@ def validate_metadata(metadata: dict | str) -> tuple[list[str], list[str]]:
             )
 
     if "spec" in metadata:
-        spec = str(metadata["spec"])
-        if spec in KNOWN_SPEC_VERSIONS:
+        spec = metadata["spec"]
+        if not isinstance(spec, str):
+            errors.append(
+                f"{LEVEL_WARN}: 'metadata.spec' should be a string, "
+                f"got {type(spec).__name__}"
+            )
+        elif spec in KNOWN_SPEC_VERSIONS:
             passes.append(f"metadata.spec: recognized version ({spec})")
         else:
             errors.append(
@@ -151,8 +161,13 @@ def validate_metadata(metadata: dict | str) -> tuple[list[str], list[str]]:
             )
 
     if "author" in metadata:
-        author = str(metadata["author"])
-        if not author.strip():
+        author = metadata["author"]
+        if not isinstance(author, str):
+            errors.append(
+                f"{LEVEL_WARN}: 'metadata.author' should be a string, "
+                f"got {type(author).__name__}"
+            )
+        elif not author.strip():
             errors.append(
                 f"{LEVEL_WARN}: 'metadata.author' is empty"
             )
