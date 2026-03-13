@@ -93,7 +93,7 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
     """Check that a role composes enough unique skills/capabilities.
 
     Parses the role file to extract skill and capability references
-    from the "Skills Used" section.
+    from the "Skills Used" section (everything between the heading and the next section).
 
     Returns a tuple of (issues, ref_count) where *issues* is a list
     of ``(level, message)`` tuples and *ref_count* is the number of
@@ -102,7 +102,7 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
 
     Note: this is a best-effort heuristic — it relies on regex
     matching of canonical path patterns inside the "Skills Used"
-    table.  Non-standard reference formats may not be detected.
+    section.  Non-standard reference formats may not be detected.
     """
     content = read_file(role_path)
 
