@@ -1,7 +1,8 @@
 """Tests for validate_skill.py.
 
 Covers validate_description, validate_body, validate_directories,
-validate_skill, and the main() CLI entry point.
+validate_skill, optional frontmatter field validation, and the
+main() CLI entry point.
 """
 
 import os
@@ -27,10 +28,21 @@ from validate_skill import (
     validate_directories,
     validate_skill,
 )
+from lib.validation import (
+    validate_allowed_tools,
+    validate_metadata,
+    validate_license,
+    validate_known_keys,
+)
 from lib.constants import (
+    KNOWN_FRONTMATTER_KEYS,
+    KNOWN_SPDX_LICENSES,
+    KNOWN_TOOLS,
     LEVEL_FAIL,
     LEVEL_INFO,
     LEVEL_WARN,
+    MAX_ALLOWED_TOOLS,
+    MAX_AUTHOR_LENGTH,
     MAX_BODY_LINES,
     MAX_COMPATIBILITY_CHARS,
     MAX_DESCRIPTION_CHARS,
@@ -1312,6 +1324,640 @@ class MainCLITests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+
+# ===================================================================
+# validate_allowed_tools
+# ===================================================================
+
+
+class ValidateAllowedToolsTests(unittest.TestCase):
+    """Tests for the validate_allowed_tools function."""
+
+    def test_valid_known_tools_pass(self) -> None:
+        """A space-separated list of known tools produces passes."""
+        errors, passes = validate_allowed_tools("bash git python")
+        self.assertEqual(errors, [])
+        tool_pass = [p for p in passes if "tools recognized" in p]
+        self.assertEqual(len(tool_pass), 1)
+        count_pass = [p for p in passes if "3 tools" in p]
+        self.assertEqual(len(count_pass), 1)
+
+    def test_single_known_tool_passes(self) -> None:
+        """A single known tool passes."""
+        errors, passes = validate_allowed_tools("bash")
+        self.assertEqual(errors, [])
+        self.assertTrue(len(passes) >= 2)
+
+    def test_unknown_tool_returns_info(self) -> None:
+        """An unrecognized tool produces an INFO warning."""
+        errors, passes = validate_allowed_tools("bash unknowntool git")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("unknowntool", info_errors[0])
+
+    def test_multiple_unknown_tools_listed(self) -> None:
+        """Multiple unrecognized tools are all listed in the INFO message."""
+        errors, passes = validate_allowed_tools("foo bar bash baz")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        for tool in ("bar", "baz", "foo"):
+            self.assertIn(tool, info_errors[0])
+
+    def test_duplicate_unknown_tools_deduplicated(self) -> None:
+        """Duplicate unrecognized tools appear only once in the INFO message."""
+        errors, passes = validate_allowed_tools("foo foo bash foo")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        # "foo" should appear exactly once in the comma-separated list
+        tools_part = info_errors[0].split("unrecognized tools: ")[1].split(" —")[0]
+        self.assertEqual(tools_part, "foo")
+
+    def test_empty_value_returns_warn(self) -> None:
+        """An empty allowed-tools value produces a WARN."""
+        errors, passes = validate_allowed_tools("")
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("empty", warn_errors[0])
+
+    def test_whitespace_only_returns_warn(self) -> None:
+        """A whitespace-only allowed-tools value produces a WARN."""
+        errors, passes = validate_allowed_tools("   ")
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+
+    def test_exceeding_max_tools_returns_warn(self) -> None:
+        """Exceeding MAX_ALLOWED_TOOLS produces a WARN."""
+        tools = " ".join(f"tool{i}" for i in range(MAX_ALLOWED_TOOLS + 1))
+        errors, passes = validate_allowed_tools(tools)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        count_warns = [e for e in warn_errors if "max" in e.lower()]
+        self.assertEqual(len(count_warns), 1)
+        self.assertIn(str(MAX_ALLOWED_TOOLS), count_warns[0])
+
+    def test_at_max_tools_passes(self) -> None:
+        """Exactly MAX_ALLOWED_TOOLS tools passes the count check."""
+        # Use known tools repeated to fill up to max, then pad with unknowns
+        tools = " ".join(f"tool{i}" for i in range(MAX_ALLOWED_TOOLS))
+        errors, passes = validate_allowed_tools(tools)
+        count_warns = [e for e in errors if "max" in e.lower() and e.startswith(LEVEL_WARN)]
+        self.assertEqual(count_warns, [])
+        count_pass = [p for p in passes if str(MAX_ALLOWED_TOOLS) in p]
+        self.assertEqual(len(count_pass), 1)
+
+    def test_all_known_tools_pass(self) -> None:
+        """All tools in KNOWN_TOOLS are recognized without INFO."""
+        # Test a representative subset to avoid exceeding max_tools
+        sample = list(KNOWN_TOOLS)[:MAX_ALLOWED_TOOLS]
+        errors, passes = validate_allowed_tools(" ".join(sample))
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
+    def test_list_value_returns_warn(self) -> None:
+        """A list value for allowed-tools produces a WARN about type."""
+        errors, passes = validate_allowed_tools(["bash", "python"])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("space-separated string", warn_errors[0])
+        self.assertIn("list", warn_errors[0])
+        self.assertEqual(passes, [])
+
+    def test_int_value_returns_warn(self) -> None:
+        """An integer value for allowed-tools produces a WARN about type."""
+        errors, passes = validate_allowed_tools(42)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("space-separated string", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+        self.assertEqual(passes, [])
+
+    def test_none_value_returns_warn(self) -> None:
+        """A None value for allowed-tools produces a WARN about type."""
+        errors, passes = validate_allowed_tools(None)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("space-separated string", warn_errors[0])
+        self.assertIn("NoneType", warn_errors[0])
+        self.assertEqual(passes, [])
+
+
+# ===================================================================
+# validate_metadata
+# ===================================================================
+
+
+class ValidateMetadataTests(unittest.TestCase):
+    """Tests for the validate_metadata function."""
+
+    def test_valid_version_passes(self) -> None:
+        """A valid semver version produces a pass."""
+        errors, passes = validate_metadata({"version": "1.2.3"})
+        self.assertEqual(errors, [])
+        version_pass = [p for p in passes if "version" in p]
+        self.assertEqual(len(version_pass), 1)
+        self.assertIn("1.2.3", version_pass[0])
+
+    def test_version_with_prerelease_passes(self) -> None:
+        """A semver version with pre-release suffix passes."""
+        errors, passes = validate_metadata({"version": "2.0.0-beta.1"})
+        self.assertEqual(errors, [])
+        version_pass = [p for p in passes if "version" in p]
+        self.assertEqual(len(version_pass), 1)
+
+    def test_invalid_version_returns_warn(self) -> None:
+        """An invalid version format produces a WARN."""
+        errors, passes = validate_metadata({"version": "1.2"})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("version", warn_errors[0])
+        self.assertIn("semver", warn_errors[0])
+
+    def test_version_with_v_prefix_returns_warn(self) -> None:
+        """A version with 'v' prefix does not match semver pattern."""
+        errors, passes = validate_metadata({"version": "v1.0.0"})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+
+    def test_known_spec_version_passes(self) -> None:
+        """A known spec version produces a pass."""
+        errors, passes = validate_metadata({"spec": "1.0"})
+        self.assertEqual(errors, [])
+        spec_pass = [p for p in passes if "spec" in p]
+        self.assertEqual(len(spec_pass), 1)
+
+    def test_unknown_spec_version_returns_info(self) -> None:
+        """An unknown spec version produces an INFO."""
+        errors, passes = validate_metadata({"spec": "2.0"})
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("spec", info_errors[0])
+        self.assertIn("2.0", info_errors[0])
+
+    def test_valid_author_passes(self) -> None:
+        """A valid author string produces a pass."""
+        errors, passes = validate_metadata({"author": "Jane Doe"})
+        self.assertEqual(errors, [])
+        author_pass = [p for p in passes if "author" in p]
+        self.assertEqual(len(author_pass), 1)
+
+    def test_empty_author_returns_warn(self) -> None:
+        """An empty author string produces a WARN."""
+        errors, passes = validate_metadata({"author": ""})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("author", warn_errors[0])
+        self.assertIn("empty", warn_errors[0])
+
+    def test_whitespace_only_author_returns_warn(self) -> None:
+        """A whitespace-only author produces a WARN."""
+        errors, passes = validate_metadata({"author": "   "})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("empty", warn_errors[0])
+
+    def test_author_exceeding_max_length_returns_warn(self) -> None:
+        """An author exceeding MAX_AUTHOR_LENGTH produces a WARN."""
+        long_author = "a" * (MAX_AUTHOR_LENGTH + 1)
+        errors, passes = validate_metadata({"author": long_author})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn(str(MAX_AUTHOR_LENGTH), warn_errors[0])
+
+    def test_author_at_max_length_passes(self) -> None:
+        """An author at exactly MAX_AUTHOR_LENGTH passes."""
+        exact_author = "a" * MAX_AUTHOR_LENGTH
+        errors, passes = validate_metadata({"author": exact_author})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+        author_pass = [p for p in passes if "author" in p]
+        self.assertEqual(len(author_pass), 1)
+
+    def test_non_dict_metadata_returns_warn(self) -> None:
+        """A non-dict metadata value produces a WARN."""
+        errors, passes = validate_metadata("not a dict")
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("key-value map", warn_errors[0])
+
+    def test_multiple_valid_fields_all_pass(self) -> None:
+        """Multiple valid metadata fields each produce a pass."""
+        metadata = {"version": "1.0.0", "spec": "1.0", "author": "Test Author"}
+        errors, passes = validate_metadata(metadata)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 3)
+
+    def test_empty_metadata_dict_passes(self) -> None:
+        """An empty metadata dict produces no errors or passes."""
+        errors, passes = validate_metadata({})
+        self.assertEqual(errors, [])
+        self.assertEqual(passes, [])
+
+    def test_non_string_version_returns_warn(self) -> None:
+        """A non-string version value produces a WARN about type."""
+        errors, passes = validate_metadata({"version": 123})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("version", warn_errors[0])
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+
+    def test_non_string_spec_returns_warn(self) -> None:
+        """A non-string spec value produces a WARN about type."""
+        errors, passes = validate_metadata({"spec": 1.0})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("spec", warn_errors[0])
+        self.assertIn("should be a string", warn_errors[0])
+
+    def test_non_string_author_returns_warn(self) -> None:
+        """A non-string author value produces a WARN about type."""
+        errors, passes = validate_metadata({"author": 42})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("author", warn_errors[0])
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+
+    def test_none_author_returns_warn(self) -> None:
+        """A None author value produces a WARN about type."""
+        errors, passes = validate_metadata({"author": None})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("author", warn_errors[0])
+        self.assertIn("NoneType", warn_errors[0])
+
+    def test_prefixed_spec_version_passes(self) -> None:
+        """A spec version with agentskills.io/ prefix is recognized."""
+        errors, passes = validate_metadata({"spec": "agentskills.io/1.0"})
+        self.assertEqual(errors, [])
+        spec_pass = [p for p in passes if "spec" in p]
+        self.assertEqual(len(spec_pass), 1)
+        self.assertIn("agentskills.io/1.0", spec_pass[0])
+
+    def test_prefixed_unknown_spec_version_returns_info(self) -> None:
+        """A prefixed spec version with unknown version still returns INFO."""
+        errors, passes = validate_metadata({"spec": "agentskills.io/9.9"})
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("agentskills.io/9.9", info_errors[0])
+
+    def test_list_metadata_returns_warn(self) -> None:
+        """A list value for metadata produces a WARN about type."""
+        errors, passes = validate_metadata(["version", "1.0.0"])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("key-value map", warn_errors[0])
+        self.assertIn("list", warn_errors[0])
+
+    def test_int_metadata_returns_warn(self) -> None:
+        """An integer value for metadata produces a WARN about type."""
+        errors, passes = validate_metadata(42)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("key-value map", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+
+
+# ===================================================================
+# validate_license
+# ===================================================================
+
+
+class ValidateLicenseTests(unittest.TestCase):
+    """Tests for the validate_license function."""
+
+    def test_known_spdx_license_passes(self) -> None:
+        """A known SPDX identifier produces a pass."""
+        errors, passes = validate_license("MIT")
+        self.assertEqual(errors, [])
+        license_pass = [p for p in passes if "SPDX" in p]
+        self.assertEqual(len(license_pass), 1)
+        self.assertIn("MIT", license_pass[0])
+
+    def test_apache_license_passes(self) -> None:
+        """Apache-2.0 is recognized as a known SPDX identifier."""
+        errors, passes = validate_license("Apache-2.0")
+        self.assertEqual(errors, [])
+        license_pass = [p for p in passes if "SPDX" in p]
+        self.assertEqual(len(license_pass), 1)
+
+    def test_unknown_license_returns_info(self) -> None:
+        """An unrecognized license produces an INFO."""
+        errors, passes = validate_license("CustomLicense-1.0")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("CustomLicense-1.0", info_errors[0])
+        self.assertIn("SPDX", info_errors[0])
+
+    def test_empty_license_returns_warn(self) -> None:
+        """An empty license value produces a WARN."""
+        errors, passes = validate_license("")
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("empty", warn_errors[0])
+
+    def test_whitespace_only_license_returns_warn(self) -> None:
+        """A whitespace-only license produces a WARN."""
+        errors, passes = validate_license("   ")
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+
+    def test_all_known_spdx_licenses_pass(self) -> None:
+        """Every license in KNOWN_SPDX_LICENSES is recognized."""
+        for lic in sorted(KNOWN_SPDX_LICENSES):
+            errors, passes = validate_license(lic)
+            with self.subTest(license=lic):
+                self.assertEqual(errors, [])
+                license_pass = [p for p in passes if "SPDX" in p]
+                self.assertEqual(len(license_pass), 1)
+
+    def test_int_value_returns_warn(self) -> None:
+        """An integer value for license produces a WARN about type."""
+        errors, passes = validate_license(42)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+        self.assertEqual(passes, [])
+
+    def test_list_value_returns_warn(self) -> None:
+        """A list value for license produces a WARN about type."""
+        errors, passes = validate_license(["MIT", "Apache-2.0"])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("list", warn_errors[0])
+        self.assertEqual(passes, [])
+
+    def test_none_value_returns_warn(self) -> None:
+        """A None value for license produces a WARN about type."""
+        errors, passes = validate_license(None)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("NoneType", warn_errors[0])
+        self.assertEqual(passes, [])
+
+    def test_bool_value_returns_warn(self) -> None:
+        """A boolean value for license produces a WARN about type."""
+        errors, passes = validate_license(True)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("bool", warn_errors[0])
+        self.assertEqual(passes, [])
+
+
+# ===================================================================
+# validate_known_keys
+# ===================================================================
+
+
+class ValidateKnownKeysTests(unittest.TestCase):
+    """Tests for the validate_known_keys function."""
+
+    def test_all_known_keys_pass(self) -> None:
+        """A frontmatter with only known keys produces a pass."""
+        fm = {k: "value" for k in KNOWN_FRONTMATTER_KEYS}
+        errors, passes = validate_known_keys(fm)
+        self.assertEqual(errors, [])
+        key_pass = [p for p in passes if "all keys recognized" in p]
+        self.assertEqual(len(key_pass), 1)
+
+    def test_misspelled_key_returns_info(self) -> None:
+        """A misspelled key like 'compatability' produces an INFO."""
+        fm = {"name": "test", "description": "Test.", "compatability": "Python 3.12"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("compatability", info_errors[0])
+
+    def test_multiple_unrecognized_keys_listed(self) -> None:
+        """Multiple unrecognized keys are all listed in the INFO message."""
+        fm = {"name": "test", "descrption": "oops", "namee": "typo"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("descrption", info_errors[0])
+        self.assertIn("namee", info_errors[0])
+
+    def test_empty_frontmatter_passes(self) -> None:
+        """An empty frontmatter dict produces a pass (no unknown keys)."""
+        errors, passes = validate_known_keys({})
+        self.assertEqual(errors, [])
+        key_pass = [p for p in passes if "all keys recognized" in p]
+        self.assertEqual(len(key_pass), 1)
+
+    def test_non_dict_returns_empty(self) -> None:
+        """A non-dict input returns empty errors and passes."""
+        errors, passes = validate_known_keys("not a dict")
+        self.assertEqual(errors, [])
+        self.assertEqual(passes, [])
+
+    def test_known_keys_listed_in_info_message(self) -> None:
+        """The INFO message includes the list of known keys."""
+        fm = {"typo-key": "value"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        # Verify at least some known keys are mentioned
+        for key in ("name", "description", "compatibility"):
+            self.assertIn(key, info_errors[0])
+
+
+# ===================================================================
+# validate_skill — optional frontmatter integration
+# ===================================================================
+
+
+class ValidateSkillOptionalFieldsTests(unittest.TestCase):
+    """Tests for optional frontmatter field validation in validate_skill."""
+
+    def test_allowed_tools_validated_in_skill(self) -> None:
+        """allowed-tools field is validated when present in frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "allowed-tools: bash git\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        tools_pass = [p for p in passes if "allowed-tools" in p]
+        self.assertGreaterEqual(len(tools_pass), 1)
+
+    def test_unknown_allowed_tool_returns_info(self) -> None:
+        """An unknown tool in allowed-tools produces an INFO in validate_skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "allowed-tools: bash unknowntool\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        tool_infos = [e for e in info_errors if "unknowntool" in e]
+        self.assertEqual(len(tool_infos), 1)
+
+    def test_metadata_validated_in_skill(self) -> None:
+        """metadata field is validated when present in frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "metadata:\n"
+                "  version: 1.0.0\n"
+                "  spec: \"1.0\"\n"
+                "  author: Test Author\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        meta_passes = [p for p in passes if "metadata" in p]
+        self.assertGreaterEqual(len(meta_passes), 1)
+
+    def test_invalid_metadata_version_returns_warn(self) -> None:
+        """An invalid metadata version produces a WARN in validate_skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "metadata:\n"
+                "  version: bad\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        version_warns = [e for e in warn_errors if "version" in e]
+        self.assertEqual(len(version_warns), 1)
+
+    def test_license_validated_in_skill(self) -> None:
+        """license field is validated when present in frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "license: MIT\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        license_pass = [p for p in passes if "license" in p]
+        self.assertEqual(len(license_pass), 1)
+
+    def test_unknown_license_returns_info_in_skill(self) -> None:
+        """An unrecognized license produces an INFO in validate_skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "license: Proprietary\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        license_infos = [e for e in info_errors if "Proprietary" in e]
+        self.assertEqual(len(license_infos), 1)
+
+    def test_unrecognized_key_returns_info_in_skill(self) -> None:
+        """An unrecognized frontmatter key produces an INFO in validate_skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "compatability: Python 3.12\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        key_infos = [e for e in info_errors if "compatability" in e]
+        self.assertEqual(len(key_infos), 1)
+
+    def test_valid_skill_with_all_optional_fields_passes(self) -> None:
+        """A skill with all optional fields correctly set produces no FAIL/WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "compatibility: Requires Python 3.12 or later.\n"
+                "allowed-tools: bash git python\n"
+                "license: MIT\n"
+                "metadata:\n"
+                "  version: 1.0.0\n"
+                "  spec: \"1.0\"\n"
+                "  author: Test Author\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(fail_errors, [])
+        self.assertEqual(warn_errors, [])
+
+    def test_known_keys_pass_reported_for_valid_skill(self) -> None:
+        """A valid skill reports 'all keys recognized' pass."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            errors, passes = validate_skill(skill_dir)
+        key_pass = [p for p in passes if "all keys recognized" in p]
+        self.assertEqual(len(key_pass), 1)
+
+    def test_prefixed_spec_version_passes_in_skill(self) -> None:
+        """A spec version with agentskills.io/ prefix passes in validate_skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "metadata:\n"
+                "  spec: agentskills.io/1.0\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        spec_pass = [p for p in passes if "spec" in p and "agentskills.io" in p]
+        self.assertEqual(len(spec_pass), 1)
+
+    def test_optional_fields_not_checked_for_capabilities(self) -> None:
+        """Capabilities skip optional frontmatter field validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap_dir = os.path.join(tmpdir, "my-cap")
+            _write_capability_md(
+                cap_dir,
+                frontmatter="name: my-cap\ntypo-field: oops",
+                body="# My Capability\n",
+            )
+            errors, passes = validate_skill(cap_dir, is_capability=True)
+        # Should only have the INFO about name in frontmatter, not about typo-field
+        key_infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO) and "typo-field" in e
+        ]
+        self.assertEqual(key_infos, [])
 
 
 if __name__ == "__main__":

@@ -20,7 +20,13 @@ if _scripts_dir not in sys.path:
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.references import is_within_directory, strip_fragment
 from lib.reporting import categorize_errors, print_error_line, print_summary
-from lib.validation import validate_name
+from lib.validation import (
+    validate_name,
+    validate_allowed_tools,
+    validate_metadata,
+    validate_license,
+    validate_known_keys,
+)
 from lib.constants import (
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
@@ -268,6 +274,30 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
             )
         else:
             passes.append(f"compatibility: {len(comp)} chars (max {MAX_COMPATIBILITY_CHARS})")
+
+    if "allowed-tools" in frontmatter:
+        tools_errors, tools_passes = validate_allowed_tools(
+            frontmatter["allowed-tools"]
+        )
+        errors.extend(tools_errors)
+        passes.extend(tools_passes)
+
+    if "metadata" in frontmatter:
+        meta_errors, meta_passes = validate_metadata(frontmatter["metadata"])
+        errors.extend(meta_errors)
+        passes.extend(meta_passes)
+
+    if "license" in frontmatter:
+        license_errors, license_passes = validate_license(
+            frontmatter["license"]
+        )
+        errors.extend(license_errors)
+        passes.extend(license_passes)
+
+    # Check for unrecognized frontmatter keys
+    key_errors, key_passes = validate_known_keys(frontmatter)
+    errors.extend(key_errors)
+    passes.extend(key_passes)
 
     # Validate body
     body_errors, body_passes = validate_body(body, skill_md, allow_nested_refs)

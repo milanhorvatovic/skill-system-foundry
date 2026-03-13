@@ -31,6 +31,90 @@ skill:
       backtick: "`((?:references|scripts|assets)/[^`]+)`"
   compatibility:
     max_length: 500
+
+  # Known frontmatter keys — used to detect misspelled or unrecognized keys.
+  # Keys not in this list trigger an INFO-level warning.
+  known_frontmatter_keys:
+    - name
+    - description
+    - compatibility
+    - allowed-tools
+    - license
+    - metadata
+
+  # allowed-tools validation (space-delimited tool names in frontmatter)
+  allowed_tools:
+    known_tools:
+      - Bash
+      - Read
+      - Edit
+      - Write
+      - Glob
+      - Grep
+      - WebFetch
+      - Task
+      - bash
+      - python
+      - gh
+      - git
+      - docker
+      - npm
+      - pip
+      - curl
+      - wget
+      - node
+      - make
+      - cargo
+      - go
+    # Upper bound on tool count — skills requesting too many tools
+    # likely need to be split.  Increase if justified.
+    max_tools: 20
+
+  # metadata sub-field validation
+  metadata:
+    version:
+      # Semver-like pattern: MAJOR.MINOR.PATCH with optional pre-release suffix
+      pattern: ^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+    spec:
+      known_versions:
+        - "1.0"
+        - "1.1"
+      # The agentskills.io/ prefix is stripped before comparison,
+      # so "agentskills.io/1.0" matches "1.0".
+      version_prefix: "agentskills.io/"
+    author:
+      # Reasonable upper bound for an author name or identifier
+      max_length: 128
+
+  # license validation — common SPDX identifiers
+  license:
+    known_spdx:
+      - MIT
+      - Apache-2.0
+      - GPL-2.0-only
+      - GPL-2.0-or-later
+      - GPL-3.0-only
+      - GPL-3.0-or-later
+      - BSD-2-Clause
+      - BSD-3-Clause
+      - ISC
+      - MPL-2.0
+      - LGPL-2.1-only
+      - LGPL-2.1-or-later
+      - LGPL-3.0-only
+      - LGPL-3.0-or-later
+      - AGPL-3.0-only
+      - AGPL-3.0-or-later
+      - Unlicense
+      - CC0-1.0
+      - CC-BY-4.0
+      - CC-BY-SA-4.0
+      - 0BSD
+      - Artistic-2.0
+      - Zlib
+      - BSL-1.0
+      - EUPL-1.2
+
   recognized_subdirectories:
     - scripts
     - references
