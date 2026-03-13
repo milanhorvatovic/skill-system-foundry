@@ -219,7 +219,7 @@ def validate_license(value: object) -> tuple[list[str], list[str]]:
     return errors, passes
 
 
-def validate_known_keys(frontmatter: dict) -> tuple[list[str], list[str]]:
+def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
     """Check frontmatter keys against the known key list.
 
     Unrecognized keys produce INFO-level warnings to help catch
