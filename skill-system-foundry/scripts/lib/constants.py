@@ -114,6 +114,7 @@ MAX_ALLOWED_TOOLS = int(_allowed_tools["max_tools"])
 _metadata = _skill["metadata"]
 RE_METADATA_VERSION = re.compile(_metadata["version"]["pattern"])
 KNOWN_SPEC_VERSIONS = frozenset(_metadata["spec"]["known_versions"])
+SPEC_VERSION_PREFIX = _metadata["spec"]["version_prefix"]
 MAX_AUTHOR_LENGTH = int(_metadata["author"]["max_length"])
 
 # License validation

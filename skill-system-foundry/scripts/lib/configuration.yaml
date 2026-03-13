@@ -79,6 +79,9 @@ skill:
       known_versions:
         - "1.0"
         - "1.1"
+      # The agentskills.io/ prefix is stripped before comparison,
+      # so "agentskills.io/1.0" matches "1.0".
+      version_prefix: "agentskills.io/"
     author:
       # Reasonable upper bound for an author name or identifier
       max_length: 128

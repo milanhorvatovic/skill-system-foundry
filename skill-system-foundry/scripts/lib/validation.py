@@ -4,8 +4,8 @@ from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
     RE_NAME_FORMAT, RESERVED_NAMES,
     KNOWN_FRONTMATTER_KEYS, KNOWN_TOOLS, MAX_ALLOWED_TOOLS,
-    RE_METADATA_VERSION, KNOWN_SPEC_VERSIONS, MAX_AUTHOR_LENGTH,
-    KNOWN_SPDX_LICENSES,
+    RE_METADATA_VERSION, KNOWN_SPEC_VERSIONS, SPEC_VERSION_PREFIX,
+    MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 
@@ -100,11 +100,11 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     else:
         passes.append(f"allowed-tools: {len(tools)} tools (max {MAX_ALLOWED_TOOLS})")
 
-    unknown = [t for t in tools if t not in KNOWN_TOOLS]
+    unknown = sorted(set(t for t in tools if t not in KNOWN_TOOLS))
     if unknown:
         errors.append(
             f"{LEVEL_INFO}: 'allowed-tools' contains unrecognized tools: "
-            f"{', '.join(sorted(unknown))} — verify spelling"
+            f"{', '.join(unknown)} — verify spelling"
         )
     else:
         passes.append("allowed-tools: all tools recognized")
@@ -112,7 +112,7 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     return errors, passes
 
 
-def validate_metadata(metadata: dict | str) -> tuple[list[str], list[str]]:
+def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
     """Validate the metadata frontmatter sub-fields.
 
     Checks version (semver pattern), spec (known versions), and
@@ -152,13 +152,18 @@ def validate_metadata(metadata: dict | str) -> tuple[list[str], list[str]]:
                 f"{LEVEL_WARN}: 'metadata.spec' should be a string, "
                 f"got {type(spec).__name__}"
             )
-        elif spec in KNOWN_SPEC_VERSIONS:
-            passes.append(f"metadata.spec: recognized version ({spec})")
         else:
-            errors.append(
-                f"{LEVEL_INFO}: 'metadata.spec' is not a recognized version: "
-                f"'{spec}' — known versions: {', '.join(sorted(KNOWN_SPEC_VERSIONS))}"
-            )
+            # Normalize optional prefix (e.g. "agentskills.io/1.0" -> "1.0")
+            normalized = spec
+            if SPEC_VERSION_PREFIX and spec.startswith(SPEC_VERSION_PREFIX):
+                normalized = spec[len(SPEC_VERSION_PREFIX):]
+            if normalized in KNOWN_SPEC_VERSIONS:
+                passes.append(f"metadata.spec: recognized version ({spec})")
+            else:
+                errors.append(
+                    f"{LEVEL_INFO}: 'metadata.spec' is not a recognized version: "
+                    f"'{spec}' — known versions: {', '.join(sorted(KNOWN_SPEC_VERSIONS))}"
+                )
 
     if "author" in metadata:
         author = metadata["author"]

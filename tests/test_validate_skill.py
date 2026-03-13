@@ -1364,6 +1364,15 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         for tool in ("bar", "baz", "foo"):
             self.assertIn(tool, info_errors[0])
 
+    def test_duplicate_unknown_tools_deduplicated(self) -> None:
+        """Duplicate unrecognized tools appear only once in the INFO message."""
+        errors, passes = validate_allowed_tools("foo foo bash foo")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        # "foo" should appear exactly once in the comma-separated list
+        tools_part = info_errors[0].split("unrecognized tools: ")[1].split(" —")[0]
+        self.assertEqual(tools_part, "foo")
+
     def test_empty_value_returns_warn(self) -> None:
         """An empty allowed-tools value produces a WARN."""
         errors, passes = validate_allowed_tools("")
@@ -1542,6 +1551,71 @@ class ValidateMetadataTests(unittest.TestCase):
         errors, passes = validate_metadata({})
         self.assertEqual(errors, [])
         self.assertEqual(passes, [])
+
+    def test_non_string_version_returns_warn(self) -> None:
+        """A non-string version value produces a WARN about type."""
+        errors, passes = validate_metadata({"version": 123})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("version", warn_errors[0])
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+
+    def test_non_string_spec_returns_warn(self) -> None:
+        """A non-string spec value produces a WARN about type."""
+        errors, passes = validate_metadata({"spec": 1.0})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("spec", warn_errors[0])
+        self.assertIn("should be a string", warn_errors[0])
+
+    def test_non_string_author_returns_warn(self) -> None:
+        """A non-string author value produces a WARN about type."""
+        errors, passes = validate_metadata({"author": 42})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("author", warn_errors[0])
+        self.assertIn("should be a string", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
+
+    def test_none_author_returns_warn(self) -> None:
+        """A None author value produces a WARN about type."""
+        errors, passes = validate_metadata({"author": None})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("author", warn_errors[0])
+        self.assertIn("NoneType", warn_errors[0])
+
+    def test_prefixed_spec_version_passes(self) -> None:
+        """A spec version with agentskills.io/ prefix is recognized."""
+        errors, passes = validate_metadata({"spec": "agentskills.io/1.0"})
+        self.assertEqual(errors, [])
+        spec_pass = [p for p in passes if "spec" in p]
+        self.assertEqual(len(spec_pass), 1)
+        self.assertIn("agentskills.io/1.0", spec_pass[0])
+
+    def test_prefixed_unknown_spec_version_returns_info(self) -> None:
+        """A prefixed spec version with unknown version still returns INFO."""
+        errors, passes = validate_metadata({"spec": "agentskills.io/9.9"})
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("agentskills.io/9.9", info_errors[0])
+
+    def test_list_metadata_returns_warn(self) -> None:
+        """A list value for metadata produces a WARN about type."""
+        errors, passes = validate_metadata(["version", "1.0.0"])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("key-value map", warn_errors[0])
+        self.assertIn("list", warn_errors[0])
+
+    def test_int_metadata_returns_warn(self) -> None:
+        """An integer value for metadata produces a WARN about type."""
+        errors, passes = validate_metadata(42)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("key-value map", warn_errors[0])
+        self.assertIn("int", warn_errors[0])
 
 
 # ===================================================================
@@ -1849,6 +1923,24 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
             errors, passes = validate_skill(skill_dir)
         key_pass = [p for p in passes if "all keys recognized" in p]
         self.assertEqual(len(key_pass), 1)
+
+    def test_prefixed_spec_version_passes_in_skill(self) -> None:
+        """A spec version with agentskills.io/ prefix passes in validate_skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n"
+                "description: Validates data files and generates reports.\n"
+                "metadata:\n"
+                "  spec: agentskills.io/1.0\n"
+                "---\n\n# Skill\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+        spec_pass = [p for p in passes if "spec" in p and "agentskills.io" in p]
+        self.assertEqual(len(spec_pass), 1)
 
     def test_optional_fields_not_checked_for_capabilities(self) -> None:
         """Capabilities skip optional frontmatter field validation."""
