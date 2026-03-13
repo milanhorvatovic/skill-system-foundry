@@ -387,7 +387,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             role_path = os.path.join(tmpdir, "roles", "test", "empty.md")
             _write_role_md(role_path, skills_used_body="")
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 0)
         self.assertEqual(len(issues), 1)
         level, message = issues[0]
@@ -402,7 +402,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                 role_path,
                 skills_used_body="| skills/alpha/SKILL.md | Alpha skill |\n",
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 1)
         self.assertEqual(len(issues), 1)
         level, message = issues[0]
@@ -420,7 +420,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                     "| skills/beta/SKILL.md | Beta skill |\n"
                 ),
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 2)
         self.assertEqual(issues, [])
 
@@ -436,7 +436,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                     "| skills/gamma/SKILL.md | Gamma skill |\n"
                 ),
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 3)
         self.assertEqual(issues, [])
 
@@ -451,7 +451,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                     "| skills/alpha/capabilities/cap-two/capability.md | Cap two |\n"
                 ),
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 2)
         self.assertEqual(issues, [])
 
@@ -466,7 +466,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                     "| skills/beta/capabilities/cap-one/capability.md | Cap one |\n"
                 ),
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 2)
         self.assertEqual(issues, [])
 
@@ -481,7 +481,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                     "| skills/alpha/SKILL.md | Second use |\n"
                 ),
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         # Duplicate should count as 1 unique reference
         self.assertEqual(ref_count, 1)
         self.assertEqual(len(issues), 1)
@@ -499,7 +499,7 @@ class CheckRoleCompositionTests(unittest.TestCase):
                     "| `skills/beta/SKILL.md` | Beta skill |\n"
                 ),
             )
-            issues, ref_count = check_role_composition(role_path, tmpdir)
+            issues, ref_count = check_role_composition(role_path)
         self.assertEqual(ref_count, 2)
         self.assertEqual(issues, [])
 

@@ -344,7 +344,7 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 - [ ] No capability registered in discovery layer
 - [ ] Shared resources used by 2+ capabilities
 - [ ] Max 2 levels deep (router → capability)
-- [ ] Roles compose 2+ skills or capabilities
+- [x] Roles compose 2+ skills or capabilities (automated — audit warns if < 2)
 - [ ] No capability references siblings
 
 **Dependencies:**

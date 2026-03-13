@@ -89,10 +89,7 @@ def check_upward_references(content, component_type, allow_orchestration=False):
     return issues
 
 
-def check_role_composition(
-    role_path: str,
-    system_root: str,
-) -> tuple[list[tuple[str, str]], int]:
+def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
     """Check that a role composes enough unique skills/capabilities.
 
     Parses the role file to extract skill and capability references
@@ -244,7 +241,7 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
         print("\n== Role Composition ==")
 
     for role in roles:
-        issues, ref_count = check_role_composition(role["path"], system_root)
+        issues, ref_count = check_role_composition(role["path"])
         for level, issue in issues:
             errors.append(f"{level}: {role['group']}/{role['name']} {issue}")
         if not issues and verbose:
