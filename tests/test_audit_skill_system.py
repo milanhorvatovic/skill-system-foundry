@@ -503,6 +503,25 @@ class CheckRoleCompositionTests(unittest.TestCase):
         self.assertEqual(ref_count, 2)
         self.assertEqual(issues, [])
 
+    def test_role_with_suffixed_filenames_not_counted(self) -> None:
+        """Suffixed filenames like SKILL.mdx or capability.md.bak are not counted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "suffixed.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/alpha/SKILL.mdx | Not a skill |\n"
+                    "| skills/beta/SKILL.md.bak | Not a skill |\n"
+                    "| skills/gamma/capabilities/cap/capability.md.bak"
+                    " | Not a cap |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path)
+        self.assertEqual(ref_count, 0)
+        self.assertEqual(len(issues), 1)
+        level, _ = issues[0]
+        self.assertEqual(level, LEVEL_WARN)
+
 
 # ===================================================================
 # audit_skill_system — Role Composition integration

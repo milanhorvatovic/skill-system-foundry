@@ -138,8 +138,8 @@ role_composition:
   min_skills: 2
   # Patterns that identify skill/capability references in role files.
   # Applied to the "Skills Used" section of role markdown.
-  skill_ref_pattern: \bskills/[^/]+/SKILL\.md\b
-  capability_ref_pattern: \bskills/[^/]+/capabilities/[^/]+/capability\.md\b
+  skill_ref_pattern: \bskills/[^/]+/SKILL\.md(?![.\w])
+  capability_ref_pattern: \bskills/[^/]+/capabilities/[^/]+/capability\.md(?![.\w])
 
 # ============================================================
 # Bundle Packaging
