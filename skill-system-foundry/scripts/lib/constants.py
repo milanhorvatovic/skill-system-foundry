@@ -128,6 +128,12 @@ _dep = _config["dependency_direction"]
 RE_ROLES_REF = re.compile(_dep["roles_ref_pattern"])
 RE_SIBLING_CAP_REF = re.compile(_dep["sibling_capability_ref_pattern"])
 
+# --- Role Composition ---
+_role = _config["role_composition"]
+MIN_ROLE_SKILLS = int(_role["min_skills"])
+RE_SKILL_REF = re.compile(_role["skill_ref_pattern"])
+RE_CAPABILITY_REF = re.compile(_role["capability_ref_pattern"])
+
 # --- Bundle Packaging ---
 _bundle = _config["bundle"]
 BUNDLE_MAX_REFERENCE_DEPTH = int(_bundle["max_reference_depth"])
@@ -143,4 +149,4 @@ BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _metadata
-del _dep, _bundle
+del _dep, _role, _bundle

@@ -130,6 +130,18 @@ dependency_direction:
   sibling_capability_ref_pattern: \.\./[a-z].*?/SKILL\.md
 
 # ============================================================
+# Role Composition
+# ============================================================
+role_composition:
+  # Minimum number of unique skills/capabilities a role must compose.
+  # Roles with fewer references are flagged as single-skill passthroughs.
+  min_skills: 2
+  # Patterns that identify skill/capability references in role files.
+  # Applied to the "Skills Used" section of role markdown.
+  skill_ref_pattern: \bskills/[a-z0-9-]+/SKILL\.md(?![.\w])
+  capability_ref_pattern: \bskills/[a-z0-9-]+/capabilities/[a-z0-9-]+/capability\.md(?![.\w])
+
+# ============================================================
 # Bundle Packaging
 # ============================================================
 bundle:
