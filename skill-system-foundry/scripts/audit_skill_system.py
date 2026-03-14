@@ -107,7 +107,7 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
     content = read_file(role_path)
 
     # Extract the "Skills Used" section (from heading to next ## heading or EOF)
-    skills_section = ""
+    section_lines: list[str] = []
     in_section = False
     for line in content.splitlines():
         if line.strip().startswith("## Skills Used"):
@@ -116,7 +116,15 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
         if in_section and line.strip().startswith("## "):
             break
         if in_section:
-            skills_section += line + "\n"
+            section_lines.append(line)
+    skills_section = "\n".join(section_lines)
+
+    # If no Skills Used section found, return a specific warning
+    if not in_section:
+        return [(
+            LEVEL_WARN,
+            "missing 'Skills Used' section; cannot determine composition",
+        )], 0
 
     # Collect unique skill/capability references from the section
     refs: set[str] = set()

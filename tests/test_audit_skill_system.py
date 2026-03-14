@@ -522,6 +522,39 @@ class CheckRoleCompositionTests(unittest.TestCase):
         level, _ = issues[0]
         self.assertEqual(level, LEVEL_WARN)
 
+    def test_role_without_skills_used_section_returns_warn(self) -> None:
+        """A role without a Skills Used section returns a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "no-section.md")
+            write_text(
+                role_path,
+                "# Test Role\n\n## Purpose\n\nTest role.\n",
+            )
+            issues, ref_count = check_role_composition(role_path)
+        self.assertEqual(ref_count, 0)
+        self.assertEqual(len(issues), 1)
+        level, message = issues[0]
+        self.assertEqual(level, LEVEL_WARN)
+        self.assertIn("Skills Used", message)
+
+    def test_template_placeholders_not_counted(self) -> None:
+        """Template placeholders like skills/<domain>/SKILL.md are not counted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            role_path = os.path.join(tmpdir, "roles", "test", "template.md")
+            _write_role_md(
+                role_path,
+                skills_used_body=(
+                    "| skills/<domain>/SKILL.md | Placeholder |\n"
+                    "| skills/<other>/capabilities/<cap>/capability.md"
+                    " | Placeholder |\n"
+                ),
+            )
+            issues, ref_count = check_role_composition(role_path)
+        self.assertEqual(ref_count, 0)
+        self.assertEqual(len(issues), 1)
+        level, _ = issues[0]
+        self.assertEqual(level, LEVEL_WARN)
+
 
 # ===================================================================
 # audit_skill_system — Role Composition integration
