@@ -23,6 +23,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from validate_skill import (
+    _build_parser,
     validate_body,
     validate_description,
     validate_directories,
@@ -1127,6 +1128,59 @@ class ValidateCapabilityTests(unittest.TestCase):
 # ===================================================================
 # main() CLI
 # ===================================================================
+
+
+class BuildParserTests(unittest.TestCase):
+    """Direct unit tests for the argparse parser builder."""
+
+    def test_parser_returns_argument_parser(self) -> None:
+        """_build_parser returns an ArgumentParser instance."""
+        import argparse
+
+        parser = _build_parser()
+        self.assertIsInstance(parser, argparse.ArgumentParser)
+
+    def test_parser_accepts_positional_skill_path(self) -> None:
+        """Parser accepts a single positional skill_path argument."""
+        parser = _build_parser()
+        args = parser.parse_args(["skills/demo"])
+        self.assertEqual(args.skill_path, "skills/demo")
+
+    def test_parser_defaults_are_false(self) -> None:
+        """All optional flags default to False."""
+        parser = _build_parser()
+        args = parser.parse_args(["skills/demo"])
+        self.assertFalse(args.capability)
+        self.assertFalse(args.verbose)
+        self.assertFalse(args.allow_nested_refs)
+        self.assertFalse(args.json_output)
+
+    def test_parser_accepts_all_flags(self) -> None:
+        """Parser accepts all optional flags together."""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "skills/demo",
+            "--capability",
+            "--verbose",
+            "--allow-nested-references",
+            "--json",
+        ])
+        self.assertTrue(args.capability)
+        self.assertTrue(args.verbose)
+        self.assertTrue(args.allow_nested_refs)
+        self.assertTrue(args.json_output)
+
+    def test_parser_rejects_unknown_flag(self) -> None:
+        """Parser exits on unrecognised flags."""
+        parser = _build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["skills/demo", "--bogus"])
+
+    def test_parser_rejects_missing_positional(self) -> None:
+        """Parser exits when no positional argument is provided."""
+        parser = _build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args([])
 
 
 class MainCLITests(unittest.TestCase):

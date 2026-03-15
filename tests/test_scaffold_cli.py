@@ -16,6 +16,36 @@ SCRIPTS_DIR = os.path.abspath(
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCAFFOLD_SCRIPT = os.path.join(SCRIPTS_DIR, "scaffold.py")
 
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
+from scaffold import (
+    validate_name,
+    read_template,
+    write_file,
+    create_dir_with_gitkeep,
+    scaffold_skill,
+    scaffold_capability,
+    scaffold_role,
+    _validate_flags,
+    _parse_optional_dirs,
+)
+from lib.constants import (
+    FILE_SKILL_MD,
+    FILE_CAPABILITY_MD,
+    FILE_GITKEEP,
+    DIR_SKILLS,
+    DIR_CAPABILITIES,
+    DIR_ROLES,
+    DIR_REFERENCES,
+    DIR_SCRIPTS,
+    DIR_ASSETS,
+    TEMPLATE_SKILL_STANDALONE,
+    TEMPLATE_SKILL_ROUTER,
+    TEMPLATE_CAPABILITY,
+    TEMPLATE_ROLE,
+)
+
 
 def _run(args, cwd):
     """Run scaffold.py with *args* in *cwd* and return the CompletedProcess."""
@@ -404,6 +434,248 @@ class UsageStringTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL", proc.stdout)
         self.assertIn("Unknown component type: bogus", proc.stdout)
+
+
+# ===================================================================
+# Direct import tests (exercises code paths that subprocess-based
+# tests cover functionally but that coverage cannot capture).
+# ===================================================================
+
+
+class ValidateNameUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.validate_name()."""
+
+    def test_valid_name_returns_true(self) -> None:
+        self.assertTrue(validate_name("my-skill"))
+
+    def test_invalid_name_returns_false(self) -> None:
+        self.assertFalse(validate_name("INVALID", json_output=True))
+
+    def test_json_mode_suppresses_print(self) -> None:
+        # Should not raise or print; just returns False.
+        self.assertFalse(validate_name("INVALID", json_output=True))
+
+
+class ReadTemplateUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.read_template()."""
+
+    def test_reads_standalone_skill_template(self) -> None:
+        content = read_template(TEMPLATE_SKILL_STANDALONE)
+        self.assertIsInstance(content, str)
+        self.assertGreater(len(content), 0)
+
+    def test_reads_router_skill_template(self) -> None:
+        content = read_template(TEMPLATE_SKILL_ROUTER)
+        self.assertIsInstance(content, str)
+        self.assertGreater(len(content), 0)
+
+    def test_reads_capability_template(self) -> None:
+        content = read_template(TEMPLATE_CAPABILITY)
+        self.assertIsInstance(content, str)
+
+    def test_reads_role_template(self) -> None:
+        content = read_template(TEMPLATE_ROLE)
+        self.assertIsInstance(content, str)
+
+
+class WriteFileUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.write_file()."""
+
+    def test_creates_file_and_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sub", "file.txt")
+            write_file(path, "hello", quiet=True)
+            self.assertTrue(os.path.exists(path))
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "hello")
+
+
+class CreateDirWithGitkeepUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.create_dir_with_gitkeep()."""
+
+    def test_creates_directory_with_gitkeep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "newdir")
+            create_dir_with_gitkeep(target)
+            self.assertTrue(os.path.isdir(target))
+            self.assertTrue(os.path.exists(os.path.join(target, FILE_GITKEEP)))
+
+
+class ValidateFlagsUnitTests(unittest.TestCase):
+    """Direct tests for scaffold._validate_flags()."""
+
+    def test_valid_skill_flags_pass(self) -> None:
+        # Should not raise.
+        _validate_flags(["--router", "--with-references"], "skill")
+
+    def test_unknown_flag_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _validate_flags(["--bogus"], "skill")
+
+    def test_unknown_flag_json_mode_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _validate_flags(["--bogus"], "skill", json_mode=True)
+
+
+class ParseOptionalDirsUnitTests(unittest.TestCase):
+    """Direct tests for scaffold._parse_optional_dirs()."""
+
+    def test_parses_references(self) -> None:
+        dirs = _parse_optional_dirs(["--with-references"])
+        self.assertIn(DIR_REFERENCES, dirs)
+
+    def test_parses_scripts(self) -> None:
+        dirs = _parse_optional_dirs(["--with-scripts"])
+        self.assertIn(DIR_SCRIPTS, dirs)
+
+    def test_parses_assets(self) -> None:
+        dirs = _parse_optional_dirs(["--with-assets"])
+        self.assertIn(DIR_ASSETS, dirs)
+
+    def test_ignores_non_with_flags(self) -> None:
+        dirs = _parse_optional_dirs(["--router"])
+        self.assertEqual(dirs, [])
+
+
+class ScaffoldSkillUnitTests(unittest.TestCase):
+    """Direct tests for scaffold_skill() with json_output=True."""
+
+    def test_standalone_skill_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("test-skill", root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["component"], "skill")
+        self.assertEqual(result["name"], "test-skill")
+        self.assertFalse(result["router"])
+        self.assertIn("created_paths", result)
+
+    def test_router_skill_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("test-router", router=True, root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertTrue(result["router"])
+
+    def test_skill_with_optional_dirs_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "test-skill",
+                root=tmpdir,
+                optional_dirs=[DIR_REFERENCES, DIR_SCRIPTS],
+                json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertGreater(len(result["created_paths"]), 1)
+
+    def test_invalid_name_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("INVALID", root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("error", result)
+
+    def test_duplicate_skill_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dup-skill", root=tmpdir, json_output=True)
+            result = scaffold_skill("dup-skill", root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("already exists", result["error"])
+
+
+class ScaffoldCapabilityUnitTests(unittest.TestCase):
+    """Direct tests for scaffold_capability() with json_output=True."""
+
+    def test_capability_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create router prerequisite.
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "my-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["component"], "capability")
+        self.assertIn("created_paths", result)
+
+    def test_invalid_domain_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_capability(
+                "BAD", "my-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_invalid_cap_name_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "BAD", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_missing_parent_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_capability(
+                "no-parent", "my-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("Parent skill not found", result["error"])
+
+    def test_duplicate_capability_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            scaffold_capability("my-domain", "dup-cap", root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "dup-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("already exists", result["error"])
+
+
+class ScaffoldRoleUnitTests(unittest.TestCase):
+    """Direct tests for scaffold_role() with json_output=True."""
+
+    def test_role_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "my-group", "my-role", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["component"], "role")
+        self.assertIn("created_paths", result)
+
+    def test_invalid_group_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "BAD", "my-role", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_invalid_role_name_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "my-group", "BAD", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_duplicate_role_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_role("my-group", "dup-role", root=tmpdir, json_output=True)
+            result = scaffold_role(
+                "my-group", "dup-role", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("already exists", result["error"])
 
 
 if __name__ == "__main__":
