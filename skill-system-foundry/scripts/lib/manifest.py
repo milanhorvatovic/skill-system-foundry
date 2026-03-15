@@ -16,11 +16,19 @@ from .constants import (
 )
 
 
+class ManifestParseError(Exception):
+    """Raised when a manifest file cannot be parsed."""
+
+
 def read_manifest(path: str) -> dict:
     """Read and parse a ``manifest.yaml`` file.
 
     Returns the parsed manifest as a dict.  Returns an empty dict
     when the file does not exist or is empty.
+
+    Raises:
+        ManifestParseError: When the file exists but contains
+            malformed YAML that cannot be parsed.
     """
     if not os.path.isfile(path):
         return {}
@@ -28,7 +36,12 @@ def read_manifest(path: str) -> dict:
         text = f.read()
     if not text.strip():
         return {}
-    return parse_yaml_subset(text)
+    try:
+        return parse_yaml_subset(text)
+    except ValueError as exc:
+        raise ManifestParseError(
+            f"Failed to parse {path}: {exc}"
+        ) from exc
 
 
 def has_skill_conflict(manifest: dict, name: str) -> bool:
@@ -84,7 +97,9 @@ def append_skill_entry(
         text += "\nskills:\n" + entry
     else:
         insert_pos = _find_section_end(lines, skills_idx)
-        lines.insert(insert_pos, entry.rstrip("\n"))
+        entry_parts = entry.rstrip("\n").split("\n")
+        for j, part in enumerate(entry_parts):
+            lines.insert(insert_pos + j, part)
         text = "\n".join(lines)
 
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -103,7 +118,7 @@ def append_role_entry(
     with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    entry_lines = (
+    entry_block = (
         f"    - name: {name}\n"
         f"      path: {DIR_ROLES}/{group}/{name}{EXT_MARKDOWN}"
     )
@@ -115,19 +130,23 @@ def append_role_entry(
         # No roles: section — append one at the end.
         if text and not text.endswith("\n"):
             text += "\n"
-        text += f"\nroles:\n  {group}:\n{entry_lines}\n"
+        text += f"\nroles:\n  {group}:\n{entry_block}\n"
     else:
         # Look for existing group within roles section.
         group_idx = _find_group_index(lines, roles_idx, group)
         if group_idx is not None:
             insert_pos = _find_group_end(lines, group_idx)
-            lines.insert(insert_pos, entry_lines)
+            entry_parts = entry_block.split("\n")
+            for j, part in enumerate(entry_parts):
+                lines.insert(insert_pos + j, part)
             text = "\n".join(lines)
         else:
             # Group does not exist — append at end of roles section.
             insert_pos = _find_section_end(lines, roles_idx)
-            group_block = f"  {group}:\n{entry_lines}"
-            lines.insert(insert_pos, group_block)
+            group_block = f"  {group}:\n{entry_block}"
+            group_parts = group_block.split("\n")
+            for j, part in enumerate(group_parts):
+                lines.insert(insert_pos + j, part)
             text = "\n".join(lines)
 
     with open(manifest_path, "w", encoding="utf-8") as f:
