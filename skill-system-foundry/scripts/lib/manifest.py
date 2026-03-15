@@ -2,7 +2,7 @@
 
 Provides functions to parse an existing ``manifest.yaml``, check for
 name conflicts, append new component entries, and scaffold a minimal
-empty manifest from the bundled template.
+empty manifest.
 """
 
 import os
@@ -181,7 +181,7 @@ def _find_section_index(lines: list[str], section: str) -> int | None:
     for i, line in enumerate(lines):
         stripped = line.strip()
         # Match only top-level keys (no leading whitespace).
-        if stripped == section and (not line or not line[0].isspace()):
+        if stripped == section and not line[0:1].isspace():
             return i
     return None
 

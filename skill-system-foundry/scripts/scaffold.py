@@ -777,7 +777,7 @@ def main() -> None:
                     "error": "Missing skill name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest]")
+                print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--json]")
             sys.exit(1)
         _validate_flags(flags, "skill", json_mode=json_output)
         name = positional[0]
@@ -816,7 +816,7 @@ def main() -> None:
                     "error": "Missing domain or capability name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest]")
+                print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--json]")
             sys.exit(1)
         _validate_flags(flags, "capability", json_mode=json_output)
         optional_dirs = _parse_optional_dirs(flags)
@@ -854,7 +854,7 @@ def main() -> None:
                     "error": "Missing group or role name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest]")
+                print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--json]")
             sys.exit(1)
         _validate_flags(flags, "role", json_mode=json_output)
         try:
