@@ -469,7 +469,7 @@ class TargetFlagTests(unittest.TestCase):
                 text=True,
             )
 
-            self.assertEqual(proc.returncode, 2)  # argparse error exit code
+            self.assertEqual(proc.returncode, 1)  # parser.error() overridden to exit 1
             self.assertIn("invalid choice", proc.stderr)
 
     def test_default_target_is_claude(self) -> None:

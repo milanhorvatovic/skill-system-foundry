@@ -153,7 +153,11 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
     return issues, len(refs)
 
 
-def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
+def audit_skill_system(
+    system_root: str,
+    verbose: bool = True,
+    allow_orchestration: bool = False,
+) -> tuple[list[str], dict[str, int]]:
     """Run all skill-system-level validations.
 
     Returns:

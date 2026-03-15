@@ -181,20 +181,25 @@ def main() -> None:
         ),
     )
 
-    # Pre-check for --json before argparse runs so that argument errors
-    # (e.g. missing required positional) are emitted as JSON, not plain
-    # text on stderr with exit-code 2.
+    # Override parser.error() so that:
+    # - In --json mode, parse failures emit a JSON blob (not stderr text).
+    # - In human mode, exit code is 1 (not argparse's default 2) to
+    #   match the repo convention used by all other CLI tools.
     json_mode = "--json" in sys.argv
-    if json_mode:
-        def _json_aware_error(message: str) -> None:
+
+    def _cli_aware_error(message: str) -> None:
+        if json_mode:
             print(to_json_output({
                 "tool": "bundle",
                 "success": False,
                 "error": message,
             }))
             sys.exit(1)
+        parser.print_usage(sys.stderr)
+        print(f"{parser.prog}: error: {message}", file=sys.stderr)
+        sys.exit(1)
 
-        parser.error = _json_aware_error  # type: ignore[assignment]
+    parser.error = _cli_aware_error  # type: ignore[assignment]
 
     args = parser.parse_args()
 

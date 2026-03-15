@@ -79,12 +79,11 @@ def validate_name(name: str, json_output: bool = False) -> bool:
     return not any(e.startswith(LEVEL_FAIL) for e in errors)
 
 
-def read_template(template_name):
+def read_template(template_name: str) -> str:
     """Read a template file from assets/."""
     template_path = os.path.join(ASSETS_DIR, template_name)
     if not os.path.exists(template_path):
-        print(f"{LEVEL_FAIL}: Template not found: {template_path}")
-        sys.exit(1)
+        raise FileNotFoundError(f"Template not found: {template_path}")
     with open(template_path, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -98,13 +97,18 @@ def write_file(path: str, content: str, *, quiet: bool = False) -> None:
         print(f"  Created: {path}")
 
 
-def create_dir_with_gitkeep(path):
-    """Create directory with .gitkeep so it tracks in git."""
+def create_dir_with_gitkeep(path: str) -> str:
+    """Create directory with .gitkeep so it tracks in git.
+
+    Returns:
+        The absolute path to the created ``.gitkeep`` file.
+    """
     os.makedirs(path, exist_ok=True)
     gitkeep = os.path.join(path, FILE_GITKEEP)
     if not os.path.exists(gitkeep):
         with open(gitkeep, "w", encoding="utf-8") as f:
             pass
+    return gitkeep
 
 
 def scaffold_skill(
@@ -158,7 +162,19 @@ def scaffold_skill(
     created_paths: list[str] = []
 
     if router:
-        template = read_template(TEMPLATE_SKILL_ROUTER)
+        try:
+            template = read_template(TEMPLATE_SKILL_ROUTER)
+        except FileNotFoundError as e:
+            if json_output:
+                return {
+                    "tool": "scaffold",
+                    "component": "skill",
+                    "name": name,
+                    "success": False,
+                    "error": str(e),
+                }
+            print(f"{LEVEL_FAIL}: {e}")
+            sys.exit(1)
         # Replace placeholders
         title = name.replace("-", " ").title()
         content = template.replace(PH_DOMAIN_NAME, name).replace(
@@ -166,19 +182,35 @@ def scaffold_skill(
         )
         write_file(os.path.join(skill_path, FILE_SKILL_MD), content, quiet=json_output)
         created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
-        create_dir_with_gitkeep(os.path.join(skill_path, DIR_CAPABILITIES))
-        created_paths.append(os.path.join(skill_path, DIR_CAPABILITIES))
+        caps_dir = os.path.join(skill_path, DIR_CAPABILITIES)
+        gitkeep = create_dir_with_gitkeep(caps_dir)
+        created_paths.append(caps_dir)
+        created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Created: {os.path.join(skill_path, DIR_CAPABILITIES)}")
+            print(f"  Created: {caps_dir}")
         for d in optional_dirs:
-            create_dir_with_gitkeep(os.path.join(skill_path, d))
-            created_paths.append(os.path.join(skill_path, d))
+            opt_dir = os.path.join(skill_path, d)
+            gitkeep = create_dir_with_gitkeep(opt_dir)
+            created_paths.append(opt_dir)
+            created_paths.append(gitkeep)
             if not json_output:
-                print(f"  Created: {os.path.join(skill_path, d)}")
+                print(f"  Created: {opt_dir}")
         if not json_output:
             print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
     else:
-        template = read_template(TEMPLATE_SKILL_STANDALONE)
+        try:
+            template = read_template(TEMPLATE_SKILL_STANDALONE)
+        except FileNotFoundError as e:
+            if json_output:
+                return {
+                    "tool": "scaffold",
+                    "component": "skill",
+                    "name": name,
+                    "success": False,
+                    "error": str(e),
+                }
+            print(f"{LEVEL_FAIL}: {e}")
+            sys.exit(1)
         title = name.replace("-", " ").title()
         content = template.replace(PH_SKILL_NAME, name).replace(
             PH_SKILL_TITLE, title
@@ -186,10 +218,12 @@ def scaffold_skill(
         write_file(os.path.join(skill_path, FILE_SKILL_MD), content, quiet=json_output)
         created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
         for d in optional_dirs:
-            create_dir_with_gitkeep(os.path.join(skill_path, d))
-            created_paths.append(os.path.join(skill_path, d))
+            opt_dir = os.path.join(skill_path, d)
+            gitkeep = create_dir_with_gitkeep(opt_dir)
+            created_paths.append(opt_dir)
+            created_paths.append(gitkeep)
             if not json_output:
-                print(f"  Created: {os.path.join(skill_path, d)}")
+                print(f"  Created: {opt_dir}")
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
@@ -287,7 +321,20 @@ def scaffold_capability(
     # Tracks all filesystem entries created (files *and* directories).
     created_paths: list[str] = []
 
-    template = read_template(TEMPLATE_CAPABILITY)
+    try:
+        template = read_template(TEMPLATE_CAPABILITY)
+    except FileNotFoundError as e:
+        if json_output:
+            return {
+                "tool": "scaffold",
+                "component": "capability",
+                "name": name,
+                "domain": domain,
+                "success": False,
+                "error": str(e),
+            }
+        print(f"{LEVEL_FAIL}: {e}")
+        sys.exit(1)
     title = name.replace("-", " ").title()
     content = template.replace(PH_CAPABILITY_NAME, name).replace(
         PH_CAPABILITY_TITLE, title
@@ -295,10 +342,12 @@ def scaffold_capability(
     write_file(os.path.join(cap_path, FILE_CAPABILITY_MD), content, quiet=json_output)
     created_paths.append(os.path.join(cap_path, FILE_CAPABILITY_MD))
     for d in optional_dirs:
-        create_dir_with_gitkeep(os.path.join(cap_path, d))
-        created_paths.append(os.path.join(cap_path, d))
+        opt_dir = os.path.join(cap_path, d)
+        gitkeep = create_dir_with_gitkeep(opt_dir)
+        created_paths.append(opt_dir)
+        created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Created: {os.path.join(cap_path, d)}")
+            print(f"  Created: {opt_dir}")
 
     if json_output:
         return {
@@ -378,7 +427,20 @@ def scaffold_role(
     # Tracks all filesystem entries created (files only for roles).
     created_paths: list[str] = []
 
-    template = read_template(TEMPLATE_ROLE)
+    try:
+        template = read_template(TEMPLATE_ROLE)
+    except FileNotFoundError as e:
+        if json_output:
+            return {
+                "tool": "scaffold",
+                "component": "role",
+                "name": name,
+                "group": group,
+                "success": False,
+                "error": str(e),
+            }
+        print(f"{LEVEL_FAIL}: {e}")
+        sys.exit(1)
     title = name.replace("-", " ").title()
     content = template.replace(PH_ROLE_TITLE, title)
     write_file(role_path, content, quiet=json_output)
@@ -536,7 +598,19 @@ def main():
         name = positional[0]
         router = "--router" in flags
         optional_dirs = _parse_optional_dirs(flags)
-        result = scaffold_skill(name, router, root, optional_dirs, json_output=json_output)
+        try:
+            result = scaffold_skill(name, router, root, optional_dirs, json_output=json_output)
+        except Exception as exc:
+            if json_output:
+                print(to_json_output({
+                    "tool": "scaffold",
+                    "component": "skill",
+                    "name": name,
+                    "success": False,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }))
+                sys.exit(1)
+            raise
         if json_output and result is not None:
             print(to_json_output(result))
             sys.exit(0 if result.get("success") else 1)
@@ -557,10 +631,23 @@ def main():
             sys.exit(1)
         _validate_flags(flags, "capability", json_mode=json_output)
         optional_dirs = _parse_optional_dirs(flags)
-        result = scaffold_capability(
-            positional[0], positional[1], root, optional_dirs,
-            json_output=json_output,
-        )
+        try:
+            result = scaffold_capability(
+                positional[0], positional[1], root, optional_dirs,
+                json_output=json_output,
+            )
+        except Exception as exc:
+            if json_output:
+                print(to_json_output({
+                    "tool": "scaffold",
+                    "component": "capability",
+                    "name": positional[1],
+                    "domain": positional[0],
+                    "success": False,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }))
+                sys.exit(1)
+            raise
         if json_output and result is not None:
             print(to_json_output(result))
             sys.exit(0 if result.get("success") else 1)
@@ -580,10 +667,23 @@ def main():
                 print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>]")
             sys.exit(1)
         _validate_flags(flags, "role", json_mode=json_output)
-        result = scaffold_role(
-            positional[0], positional[1], root,
-            json_output=json_output,
-        )
+        try:
+            result = scaffold_role(
+                positional[0], positional[1], root,
+                json_output=json_output,
+            )
+        except Exception as exc:
+            if json_output:
+                print(to_json_output({
+                    "tool": "scaffold",
+                    "component": "role",
+                    "name": positional[1],
+                    "group": positional[0],
+                    "success": False,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }))
+                sys.exit(1)
+            raise
         if json_output and result is not None:
             print(to_json_output(result))
             sys.exit(0 if result.get("success") else 1)
