@@ -8,8 +8,10 @@ Usage:
     python scripts/validate_skill.py skills/project-mgmt --verbose
     python scripts/validate_skill.py skills/project-mgmt/capabilities/gate-check --capability
     python scripts/validate_skill.py skills/meta-skill --allow-nested-references
+    python scripts/validate_skill.py skills/project-mgmt --json
 """
 
+import argparse
 import sys
 import os
 
@@ -19,7 +21,13 @@ if _scripts_dir not in sys.path:
 
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.references import is_within_directory, strip_fragment
-from lib.reporting import categorize_errors, print_error_line, print_summary
+from lib.reporting import (
+    categorize_errors,
+    categorize_errors_for_json,
+    print_error_line,
+    print_summary,
+    to_json_output,
+)
 from lib.validation import (
     validate_name,
     validate_allowed_tools,
@@ -312,26 +320,118 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
     return errors, passes
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for validate_skill."""
+    parser = argparse.ArgumentParser(
+        description="Validate a single skill directory against the Agent Skills specification.",
+        epilog=(
+            "Examples:\n"
+            "  python scripts/validate_skill.py skills/project-mgmt\n"
+            "  python scripts/validate_skill.py skills/project-mgmt --verbose\n"
+            "  python scripts/validate_skill.py skills/project-mgmt --json\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "skill_path",
+        help="Path to the skill directory to validate.",
+    )
+    parser.add_argument(
+        "--capability",
+        action="store_true",
+        help="Validate as a capability (uses capability.md instead of SKILL.md).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show detailed output including individual passed checks.",
+    )
+    parser.add_argument(
+        "--allow-nested-references",
+        action="store_true",
+        dest="allow_nested_refs",
+        help="Skip nested-reference depth checks.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output results as machine-readable JSON.",
+    )
+    return parser
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python validate_skill.py <skill-path> [--capability] [--verbose] [--allow-nested-references]")
-        print("Example: python validate_skill.py skills/project-mgmt")
+    # Pre-check for --json so parse errors can be reported as JSON.
+    _json_mode = "--json" in sys.argv
+
+    parser = _build_parser()
+
+    # Override parser.error() to emit JSON on parse failures when
+    # --json is present (argparse normally prints to stderr and exits).
+    _original_error = parser.error
+
+    def _json_aware_error(message: str) -> None:
+        if _json_mode:
+            print(to_json_output({
+                "tool": "validate_skill",
+                "success": False,
+                "error": message,
+            }))
+            sys.exit(1)
+        # Print usage and error to stderr, then exit with code 1
+        # (not argparse's default 2) to match the repo convention.
+        parser.print_usage(sys.stderr)
+        print(f"{parser.prog}: error: {message}", file=sys.stderr)
         sys.exit(1)
 
-    skill_path = sys.argv[1]
-    is_capability = "--capability" in sys.argv
-    verbose = "--verbose" in sys.argv
-    allow_nested_refs = "--allow-nested-references" in sys.argv
+    parser.error = _json_aware_error  # type: ignore[assignment]
+
+    args = parser.parse_args()
+
+    skill_path: str = args.skill_path
+    is_capability: bool = args.capability
+    verbose: bool = args.verbose
+    allow_nested_refs: bool = args.allow_nested_refs
+    json_output: bool = args.json_output
 
     if not os.path.isdir(skill_path):
-        print(f"Error: '{skill_path}' is not a directory")
+        if json_output:
+            print(to_json_output({
+                "tool": "validate_skill",
+                "path": skill_path,
+                "success": False,
+                "error": f"'{skill_path}' is not a directory",
+            }))
+        else:
+            print(f"Error: '{skill_path}' is not a directory")
         sys.exit(1)
+
+    errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
+
+    if json_output:
+        fails, warns, infos = categorize_errors(errors)
+        result = {
+            "tool": "validate_skill",
+            "path": os.path.abspath(skill_path),
+            "type": "capability" if is_capability else "registered skill",
+            "success": len(fails) == 0,
+            "summary": {
+                "failures": len(fails),
+                "warnings": len(warns),
+                "info": len(infos),
+                "passes": len(passes),
+            },
+            "errors": categorize_errors_for_json(errors),
+        }
+        if verbose:
+            result["passes"] = passes
+        print(to_json_output(result))
+        sys.exit(1 if fails else 0)
 
     print(f"Validating: {skill_path}")
     print(f"Type: {'capability' if is_capability else 'registered skill'}")
     print("-" * SEPARATOR_WIDTH)
-
-    errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 
     if verbose:
         for p in passes:

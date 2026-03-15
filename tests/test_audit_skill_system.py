@@ -974,7 +974,8 @@ class MainCLITests(unittest.TestCase):
         """Running without arguments prints usage and exits with code 1."""
         proc = _run([], cwd=REPO_ROOT)
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("Usage:", proc.stdout)
+        # argparse prints usage to stderr
+        self.assertIn("usage:", proc.stderr.lower())
 
     def test_non_directory_path_prints_error_and_exits_one(self) -> None:
         """A non-directory path prints an error and exits with code 1."""

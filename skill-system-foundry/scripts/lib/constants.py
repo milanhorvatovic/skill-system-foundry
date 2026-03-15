@@ -39,6 +39,9 @@ LEVEL_FAIL = "FAIL"
 LEVEL_WARN = "WARN"
 LEVEL_INFO = "INFO"
 
+# JSON Output
+JSON_SCHEMA_VERSION = 1
+
 # Error Symbols (for formatted output)
 ERROR_SYMBOLS = {
     LEVEL_FAIL: "\u2717",

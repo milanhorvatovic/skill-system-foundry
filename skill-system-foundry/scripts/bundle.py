@@ -14,6 +14,7 @@ Usage:
     python scripts/bundle.py <skill-path> --target claude   # default
     python scripts/bundle.py <skill-path> --target gemini
     python scripts/bundle.py <skill-path> --target generic
+    python scripts/bundle.py <skill-path> --json
 """
 
 import argparse
@@ -49,7 +50,13 @@ from lib.references import (
     infer_system_root,
     is_within_directory,
 )
-from lib.reporting import categorize_errors, print_error_line, print_summary
+from lib.reporting import (
+    categorize_errors,
+    categorize_errors_for_json,
+    print_error_line,
+    print_summary,
+    to_json_output,
+)
 
 
 # ===================================================================
@@ -157,6 +164,12 @@ def main() -> None:
         help="Print traceback details when unexpected errors occur.",
     )
     parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output results as machine-readable JSON.",
+    )
+    parser.add_argument(
         "--target",
         choices=BUNDLE_VALID_TARGETS,
         default=BUNDLE_DEFAULT_TARGET,
@@ -171,15 +184,33 @@ def main() -> None:
     args = parser.parse_args()
 
     bundle_target: str = args.target
+    json_output: bool = args.json_output
     skill_path = os.path.abspath(args.skill_path)
+
+    def _json_fail(error: str) -> None:
+        """Print a JSON failure blob and exit 1."""
+        print(to_json_output({
+            "tool": "bundle",
+            "path": skill_path,
+            "success": False,
+            "error": error,
+        }))
+        sys.exit(1)
 
     # Validate input
     if not os.path.isdir(skill_path):
+        if json_output:
+            _json_fail(f"'{args.skill_path}' is not a directory.")
         print_error_line(f"{LEVEL_FAIL}: '{args.skill_path}' is not a directory.")
         sys.exit(1)
 
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     if not os.path.exists(skill_md):
+        if json_output:
+            _json_fail(
+                f"No {FILE_SKILL_MD} found in '{args.skill_path}'. "
+                f"Only registered skills (not capabilities) can be bundled."
+            )
         print_error_line(
             f"{LEVEL_FAIL}: No {FILE_SKILL_MD} found in '{args.skill_path}'. "
             f"Only registered skills (not capabilities) can be bundled."
@@ -193,11 +224,18 @@ def main() -> None:
     if args.system_root:
         system_root = os.path.abspath(args.system_root)
         if not os.path.isdir(system_root):
+            if json_output:
+                _json_fail(f"System root '{args.system_root}' is not a directory.")
             print_error_line(
                 f"{LEVEL_FAIL}: System root '{args.system_root}' is not a directory."
             )
             sys.exit(1)
         if not is_within_directory(skill_path, system_root):
+            if json_output:
+                _json_fail(
+                    f"Skill directory '{skill_path}' is not within "
+                    f"the system root '{system_root}'."
+                )
             print_error_line(
                 f"{LEVEL_FAIL}: Skill directory '{skill_path}' is not within "
                 f"the system root '{system_root}'. Provide a "
@@ -215,11 +253,12 @@ def main() -> None:
             and not os.path.isdir(skills_dir)
         ):
             corrected = os.path.dirname(system_root)
-            print(
-                f"Note: '{args.system_root}' appears to be a "
-                f"'{DIR_SKILLS}/' directory, not the system root. "
-                f"Using parent '{corrected}' as system root."
-            )
+            if not json_output:
+                print(
+                    f"Note: '{args.system_root}' appears to be a "
+                    f"'{DIR_SKILLS}/' directory, not the system root. "
+                    f"Using parent '{corrected}' as system root."
+                )
             system_root = corrected
 
         # Validate the root has expected structure markers.
@@ -230,6 +269,11 @@ def main() -> None:
             os.path.join(system_root, DIR_SKILLS)
         )
         if not has_manifest and not has_skills_dir:
+            if json_output:
+                _json_fail(
+                    f"'{system_root}' does not look like a skill system root "
+                    f"(no '{FILE_MANIFEST}' and no '{DIR_SKILLS}/' directory)."
+                )
             print_error_line(
                 f"{LEVEL_FAIL}: '{system_root}' does not look like a skill "
                 f"system root (no '{FILE_MANIFEST}' and no "
@@ -244,14 +288,16 @@ def main() -> None:
     else:
         system_root = infer_system_root(skill_path)
         if system_root:
-            print(f"Inferred system root: {system_root}")
+            if not json_output:
+                print(f"Inferred system root: {system_root}")
         else:
-            print_error_line(
-                f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
-                f"if external references are detected, because safety "
-                f"boundaries cannot be enforced. Use --system-root to "
-                f"specify it explicitly."
-            )
+            if not json_output:
+                print_error_line(
+                    f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
+                    f"if external references are detected, because safety "
+                    f"boundaries cannot be enforced. Use --system-root to "
+                    f"specify it explicitly."
+                )
 
     # Resolve output path
     if args.output:
@@ -281,16 +327,18 @@ def main() -> None:
     if output_parent:
         os.makedirs(output_parent, exist_ok=True)
 
-    print(f"Bundling: {skill_path}")
-    print(f"Output:   {output_path}")
-    print("=" * SEPARATOR_WIDTH)
+    if not json_output:
+        print(f"Bundling: {skill_path}")
+        print(f"Output:   {output_path}")
+        print("=" * SEPARATOR_WIDTH)
 
     inline_skills = args.inline_orchestrated_skills
 
     # ---- Phase 1: Pre-validation ----
-    print("\nPhase 1: Pre-validation")
-    print("-" * SEPARATOR_WIDTH)
-    print("  Running pre-validation checks...")
+    if not json_output:
+        print("\nPhase 1: Pre-validation")
+        print("-" * SEPARATOR_WIDTH)
+        print("  Running pre-validation checks...")
     errors, warnings, scan_result = prevalidate(
         skill_path, system_root,
         inline_orchestrated_skills=inline_skills,
@@ -298,6 +346,16 @@ def main() -> None:
     )
 
     if errors:
+        if json_output:
+            all_issues = list(errors) + list(warnings)
+            print(to_json_output({
+                "tool": "bundle",
+                "path": skill_path,
+                "success": False,
+                "phase": "pre-validation",
+                "errors": categorize_errors_for_json(all_issues),
+            }))
+            sys.exit(1)
         _print_failure_block(
             "pre-validation errors",
             errors,
@@ -309,12 +367,17 @@ def main() -> None:
         )
         sys.exit(1)
 
-    if warnings:
+    if warnings and not json_output:
         print("\n  Notices:")
         for warn in warnings:
             print(f"    {warn}")
 
     if scan_result is None:
+        if json_output:
+            _json_fail(
+                "Internal error: pre-validation completed without "
+                "producing a scan result."
+            )
         print(
             f"{LEVEL_FAIL}: Internal error: pre-validation completed without "
             "producing a scan result. Check prevalidate() implementation "
@@ -323,12 +386,14 @@ def main() -> None:
         sys.exit(1)
 
     ext_count = len(scan_result["external_files"])
-    print(f"  Pre-validation passed. {ext_count} external file(s) to include.")
+    if not json_output:
+        print(f"  Pre-validation passed. {ext_count} external file(s) to include.")
 
     # ---- Phase 2: Bundle creation ----
-    print(f"\nPhase 2: Bundle creation")
-    print("-" * SEPARATOR_WIDTH)
-    print("  Assembling bundle...")
+    if not json_output:
+        print(f"\nPhase 2: Bundle creation")
+        print("-" * SEPARATOR_WIDTH)
+        print("  Assembling bundle...")
     bundle_base: str | None = None
     phase_name = "bundle creation"
     try:
@@ -338,34 +403,49 @@ def main() -> None:
             bundle_base=bundle_base,
             inline_orchestrated_skills=inline_skills,
         )
-        print(
-            f"  Assembled {stats['file_count']} files"
-            f" ({stats['external_count']} external)."
-        )
-        if stats["rewrite_count"] > 0:
+        if not json_output:
             print(
-                f"  Rewrote references in"
-                f" {stats['rewrite_count']} file(s)."
+                f"  Assembled {stats['file_count']} files"
+                f" ({stats['external_count']} external)."
             )
+            if stats["rewrite_count"] > 0:
+                print(
+                    f"  Rewrote references in"
+                    f" {stats['rewrite_count']} file(s)."
+                )
 
         # ---- Phase 3: Post-validation ----
         phase_name = "post-validation"
-        print(f"\nPhase 3: Post-validation")
-        print("-" * SEPARATOR_WIDTH)
+        if not json_output:
+            print(f"\nPhase 3: Post-validation")
+            print("-" * SEPARATOR_WIDTH)
         post_errors = postvalidate(bundle_dir)
 
         if post_errors:
+            if json_output:
+                print(to_json_output({
+                    "tool": "bundle",
+                    "path": skill_path,
+                    "success": False,
+                    "phase": "post-validation",
+                    "errors": categorize_errors_for_json(post_errors),
+                }))
+                sys.exit(1)
             _print_failure_block("post-validation errors", post_errors)
             sys.exit(1)
 
-        print("  Post-validation passed.")
+        if not json_output:
+            print("  Post-validation passed.")
 
         # ---- Create archive ----
         phase_name = "archive creation"
-        print(f"\nCreating archive...")
+        if not json_output:
+            print(f"\nCreating archive...")
         create_zip(bundle_dir, output_path)
 
     except ValueError as exc:
+        if json_output:
+            _json_fail(str(exc))
         _print_failure_block(
             f"{phase_name} error",
             [f"{LEVEL_FAIL}: {exc}"],
@@ -373,6 +453,11 @@ def main() -> None:
         sys.exit(1)
 
     except Exception as exc:
+        if json_output:
+            _json_fail(
+                f"Unexpected error during {phase_name}: "
+                f"{exc.__class__.__name__}: {exc}."
+            )
         failure = (
             f"{LEVEL_FAIL}: Unexpected error during {phase_name}: "
             f"{exc.__class__.__name__}: {exc}. "
@@ -390,6 +475,31 @@ def main() -> None:
 
     # ---- Summary ----
     zip_size = os.path.getsize(output_path)
+
+    if json_output:
+        result: dict = {
+            "tool": "bundle",
+            "path": skill_path,
+            "success": True,
+            "output": output_path,
+            "stats": {
+                "skill_name": stats["skill_name"],
+                "file_count": stats["file_count"],
+                "total_size": stats["total_size"],
+                "archive_size": zip_size,
+                "external_count": stats["external_count"],
+                "rewrite_count": stats["rewrite_count"],
+                "inlined_skill_count": stats["inlined_skill_count"],
+            },
+        }
+        if warnings:
+            result["warnings"] = [
+                w[len(LEVEL_WARN) + 2:] if w.startswith(LEVEL_WARN + ": ") else w
+                for w in warnings
+            ]
+        print(to_json_output(result))
+        sys.exit(0)
+
     print(f"\n{'=' * SEPARATOR_WIDTH}")
     print(f"\u2713 Bundle created: {output_path}")
     print(f"  Skill:          {stats['skill_name']}")
