@@ -1081,5 +1081,44 @@ class UpdateManifestRoleTests(unittest.TestCase):
             self.assertIn("manifest_warning", data)
 
 
+class UpdateManifestMalformedTests(unittest.TestCase):
+    """End-to-end tests for --update-manifest with malformed manifest content."""
+
+    def test_malformed_skills_list_warns_and_succeeds(self) -> None:
+        """Scaffold succeeds but warns when manifest has skills as a list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - item1\n  - item2\n")
+            proc = _run(
+                ["skill", "some-name", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("WARN", proc.stdout)
+            self.assertIn("skipping manifest update", proc.stdout)
+            # Skill directory should still be created.
+            skill_dir = os.path.join(tmpdir, "skills", "some-name")
+            self.assertTrue(os.path.isdir(skill_dir))
+
+    def test_malformed_skills_list_json_output(self) -> None:
+        """JSON output shows manifest_updated=false and manifest_warning."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - item1\n  - item2\n")
+            proc = _run(
+                ["skill", "some-name", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertFalse(data["manifest_updated"])
+            self.assertIn("manifest_warning", data)
+
+
 if __name__ == "__main__":
     unittest.main()

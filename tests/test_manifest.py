@@ -24,6 +24,8 @@ from lib.manifest import (
     append_skill_entry,
     append_role_entry,
     scaffold_empty_manifest,
+    update_manifest_for_skill,
+    update_manifest_for_role,
 )
 
 
@@ -362,6 +364,186 @@ class ManifestParseErrorTests(unittest.TestCase):
                 f.write(SAMPLE_MANIFEST)
             result = read_manifest(path)
         self.assertIsInstance(result, dict)
+
+    def test_skills_as_list_raises_manifest_parse_error(self) -> None:
+        """A manifest where skills is a list (not a mapping) raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - item1\n  - item2\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("'skills' must be a mapping", str(ctx.exception))
+
+    def test_roles_as_scalar_raises_manifest_parse_error(self) -> None:
+        """A manifest where roles is a scalar string raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n\nroles: not-a-mapping\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("'roles' must be a mapping", str(ctx.exception))
+
+    def test_top_level_not_mapping_raises_manifest_parse_error(self) -> None:
+        """A manifest where top-level is not a mapping raises."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  some: value\n")
+            with patch(
+                "lib.manifest.parse_yaml_subset",
+                return_value=["not", "a", "dict"],
+            ):
+                with self.assertRaises(ManifestParseError) as ctx:
+                    read_manifest(path)
+                self.assertIn(
+                    "top-level YAML must be a mapping", str(ctx.exception)
+                )
+
+    def test_skills_as_empty_list_raises_manifest_parse_error(self) -> None:
+        """A manifest where skills parses as a list rejects even if falsey."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - standalone-item\nroles:\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("'skills' must be a mapping", str(ctx.exception))
+
+
+class AppendSkillSectionOrderTests(unittest.TestCase):
+    """Test that append_skill_entry preserves canonical section order."""
+
+    def test_skills_inserted_before_roles_when_missing(self) -> None:
+        """When skills: is missing but roles: exists, skills: is inserted before roles:."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("roles:\n  dev:\n    - name: r\n      path: roles/dev/r.md\n")
+            append_skill_entry(path, "new-skill")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            skills_pos = text.index("skills:")
+            roles_pos = text.index("roles:")
+            self.assertLess(skills_pos, roles_pos)
+            result = read_manifest(path)
+            self.assertIn("new-skill", result["skills"])
+            # Roles should still be intact.
+            self.assertIn("dev", result["roles"])
+
+
+class UpdateManifestForSkillTests(unittest.TestCase):
+    """Test the update_manifest_for_skill library function."""
+
+    def test_creates_manifest_and_appends(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            updated, warning, created = update_manifest_for_skill(path, "my-skill")
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)
+            result = read_manifest(path)
+            self.assertIn("my-skill", result["skills"])
+
+    def test_appends_to_existing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            updated, warning, created = update_manifest_for_skill(path, "my-skill")
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertFalse(created)
+
+    def test_conflict_returns_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created = update_manifest_for_skill(
+                path, "existing-skill",
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("already exists", warning)
+            self.assertFalse(created)
+
+    def test_malformed_manifest_returns_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - item1\n  - item2\n")
+            updated, warning, created = update_manifest_for_skill(path, "x")
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("skipping manifest update", warning)
+            self.assertFalse(created)
+
+    def test_router_flag_passed_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            updated, warning, created = update_manifest_for_skill(
+                path, "my-router", router=True,
+            )
+            self.assertTrue(updated)
+            result = read_manifest(path)
+            self.assertEqual(result["skills"]["my-router"]["type"], "router")
+
+
+class UpdateManifestForRoleTests(unittest.TestCase):
+    """Test the update_manifest_for_role library function."""
+
+    def test_creates_manifest_and_appends(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            updated, warning, created = update_manifest_for_role(
+                path, "my-group", "my-role",
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)
+            result = read_manifest(path)
+            self.assertIn("my-group", result["roles"])
+
+    def test_appends_to_existing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            updated, warning, created = update_manifest_for_role(
+                path, "grp", "new-role",
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertFalse(created)
+
+    def test_conflict_returns_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created = update_manifest_for_role(
+                path, "dev-group", "existing-role",
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("already exists", warning)
+            self.assertFalse(created)
+
+    def test_malformed_manifest_returns_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("roles: not-a-mapping\n")
+            updated, warning, created = update_manifest_for_role(
+                path, "grp", "r",
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("skipping manifest update", warning)
+            self.assertFalse(created)
 
 
 if __name__ == "__main__":

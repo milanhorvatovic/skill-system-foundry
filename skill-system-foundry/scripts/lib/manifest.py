@@ -37,7 +37,22 @@ def read_manifest(path: str) -> dict:
     if not text.strip():
         return {}
     try:
-        return parse_yaml_subset(text)
+        manifest = parse_yaml_subset(text)
+        if not isinstance(manifest, dict):
+            raise ManifestParseError(
+                f"Failed to parse {path}: top-level YAML must be a mapping"
+            )
+        skills = manifest.get("skills")
+        if skills is not None and skills != "" and not isinstance(skills, dict):
+            raise ManifestParseError(
+                f"Failed to parse {path}: 'skills' must be a mapping"
+            )
+        roles = manifest.get("roles")
+        if roles is not None and roles != "" and not isinstance(roles, dict):
+            raise ManifestParseError(
+                f"Failed to parse {path}: 'roles' must be a mapping"
+            )
+        return manifest
     except ValueError as exc:
         raise ManifestParseError(
             f"Failed to parse {path}: {exc}"
@@ -91,10 +106,19 @@ def append_skill_entry(
     lines = text.split("\n")
     skills_idx = _find_section_index(lines, "skills:")
     if skills_idx is None:
-        # No skills: section — append one at the end.
-        if text and not text.endswith("\n"):
-            text += "\n"
-        text += "\nskills:\n" + entry
+        # No skills: section — insert before roles: to preserve
+        # canonical section order (skills before roles).
+        roles_idx = _find_section_index(lines, "roles:")
+        if roles_idx is not None:
+            entry_parts = ("skills:\n" + entry).rstrip("\n").split("\n")
+            for j, part in enumerate(entry_parts):
+                lines.insert(roles_idx + j, part)
+            text = "\n".join(lines)
+        else:
+            # No roles: section either — append at the end.
+            if text and not text.endswith("\n"):
+                text += "\n"
+            text += "\nskills:\n" + entry
     else:
         insert_pos = _find_section_end(lines, skills_idx)
         entry_parts = entry.rstrip("\n").split("\n")
@@ -151,6 +175,75 @@ def append_role_entry(
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+def update_manifest_for_skill(
+    manifest_path: str,
+    name: str,
+    *,
+    router: bool = False,
+) -> tuple[bool, str | None, bool]:
+    """Ensure *manifest_path* exists and append a skill entry.
+
+    Returns ``(updated, warning, created_manifest)`` where *updated*
+    is True when the manifest was modified, *warning* is a
+    human-readable message when a conflict prevented the update, and
+    *created_manifest* is True when a new manifest file was scaffolded.
+    """
+    created_manifest = False
+    if not os.path.isfile(manifest_path):
+        scaffold_empty_manifest(manifest_path)
+        created_manifest = True
+
+    try:
+        manifest = read_manifest(manifest_path)
+    except ManifestParseError as exc:
+        warning = f"{exc} — skipping manifest update"
+        return False, warning, created_manifest
+
+    if has_skill_conflict(manifest, name):
+        warning = (
+            f"Skill '{name}' already exists in "
+            f"{manifest_path} — skipping manifest update"
+        )
+        return False, warning, created_manifest
+
+    append_skill_entry(manifest_path, name, router=router)
+    return True, None, created_manifest
+
+
+def update_manifest_for_role(
+    manifest_path: str,
+    group: str,
+    name: str,
+) -> tuple[bool, str | None, bool]:
+    """Ensure *manifest_path* exists and append a role entry.
+
+    Returns ``(updated, warning, created_manifest)`` where *updated*
+    is True when the manifest was modified, *warning* is a
+    human-readable message when a conflict prevented the update, and
+    *created_manifest* is True when a new manifest file was scaffolded.
+    """
+    created_manifest = False
+    if not os.path.isfile(manifest_path):
+        scaffold_empty_manifest(manifest_path)
+        created_manifest = True
+
+    try:
+        manifest = read_manifest(manifest_path)
+    except ManifestParseError as exc:
+        warning = f"{exc} — skipping manifest update"
+        return False, warning, created_manifest
+
+    if has_role_conflict(manifest, group, name):
+        warning = (
+            f"Role '{name}' in group '{group}' already exists in "
+            f"{manifest_path} — skipping manifest update"
+        )
+        return False, warning, created_manifest
+
+    append_role_entry(manifest_path, group, name)
+    return True, None, created_manifest
 
 
 def scaffold_empty_manifest(manifest_path: str) -> None:

@@ -40,13 +40,8 @@ if _scripts_dir not in sys.path:
 from lib.reporting import to_json_output
 from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
-    ManifestParseError,
-    read_manifest,
-    has_skill_conflict,
-    has_role_conflict,
-    append_skill_entry,
-    append_role_entry,
-    scaffold_empty_manifest,
+    update_manifest_for_skill,
+    update_manifest_for_role,
 )
 from lib.constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
@@ -266,11 +261,17 @@ def scaffold_skill(
     manifest_warning: str | None = None
 
     if update_manifest:
-        manifest_updated, manifest_warning, created_manifest = _update_manifest_for_skill(
-            manifest_path, name, router=router, json_output=json_output,
+        manifest_updated, manifest_warning, created_manifest = update_manifest_for_skill(
+            manifest_path, name, router=router,
         )
+        if created_manifest and not json_output:
+            print(f"  Created: {manifest_path}")
         if created_manifest:
             created_paths.append(manifest_path)
+        if manifest_warning and not json_output:
+            print(f"  {LEVEL_WARN}: {manifest_warning}")
+        if manifest_updated and not json_output:
+            print(f"  Updated: {manifest_path}")
 
     if json_output:
         result_dict: dict = {
@@ -553,11 +554,17 @@ def scaffold_role(
     manifest_warning: str | None = None
 
     if update_manifest:
-        manifest_updated, manifest_warning, created_manifest = _update_manifest_for_role(
-            manifest_path, group, name, json_output=json_output,
+        manifest_updated, manifest_warning, created_manifest = update_manifest_for_role(
+            manifest_path, group, name,
         )
+        if created_manifest and not json_output:
+            print(f"  Created: {manifest_path}")
         if created_manifest:
             created_paths.append(manifest_path)
+        if manifest_warning and not json_output:
+            print(f"  {LEVEL_WARN}: {manifest_warning}")
+        if manifest_updated and not json_output:
+            print(f"  Updated: {manifest_path}")
 
     if json_output:
         result_dict: dict = {
@@ -580,88 +587,6 @@ def scaffold_role(
     if not update_manifest:
         print(f"  Next: update {manifest_path}")
     return None
-
-
-def _update_manifest_for_skill(
-    manifest_path: str,
-    name: str,
-    *,
-    router: bool = False,
-    json_output: bool = False,
-) -> tuple[bool, str | None, bool]:
-    """Ensure *manifest_path* exists and append a skill entry.
-
-    Returns ``(updated, warning, created_manifest)`` where *updated*
-    is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update, and
-    *created_manifest* is True when a new manifest file was scaffolded.
-    """
-    created_manifest = False
-    if not os.path.isfile(manifest_path):
-        scaffold_empty_manifest(manifest_path)
-        created_manifest = True
-        if not json_output:
-            print(f"  Created: {manifest_path}")
-
-    try:
-        manifest = read_manifest(manifest_path)
-    except ManifestParseError as exc:
-        warning = f"{exc} — skipping manifest update"
-        if not json_output:
-            print(f"  {LEVEL_WARN}: {warning}")
-        return False, warning, created_manifest
-
-    if has_skill_conflict(manifest, name):
-        warning = f"Skill '{name}' already exists in {manifest_path} — skipping manifest update"
-        if not json_output:
-            print(f"  {LEVEL_WARN}: {warning}")
-        return False, warning, created_manifest
-
-    append_skill_entry(manifest_path, name, router=router)
-    if not json_output:
-        print(f"  Updated: {manifest_path}")
-    return True, None, created_manifest
-
-
-def _update_manifest_for_role(
-    manifest_path: str,
-    group: str,
-    name: str,
-    *,
-    json_output: bool = False,
-) -> tuple[bool, str | None, bool]:
-    """Ensure *manifest_path* exists and append a role entry.
-
-    Returns ``(updated, warning, created_manifest)`` where *updated*
-    is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update, and
-    *created_manifest* is True when a new manifest file was scaffolded.
-    """
-    created_manifest = False
-    if not os.path.isfile(manifest_path):
-        scaffold_empty_manifest(manifest_path)
-        created_manifest = True
-        if not json_output:
-            print(f"  Created: {manifest_path}")
-
-    try:
-        manifest = read_manifest(manifest_path)
-    except ManifestParseError as exc:
-        warning = f"{exc} — skipping manifest update"
-        if not json_output:
-            print(f"  {LEVEL_WARN}: {warning}")
-        return False, warning, created_manifest
-
-    if has_role_conflict(manifest, group, name):
-        warning = f"Role '{name}' in group '{group}' already exists in {manifest_path} — skipping manifest update"
-        if not json_output:
-            print(f"  {LEVEL_WARN}: {warning}")
-        return False, warning, created_manifest
-
-    append_role_entry(manifest_path, group, name)
-    if not json_output:
-        print(f"  Updated: {manifest_path}")
-    return True, None, created_manifest
 
 
 # Maps --with-* CLI flags to directory constants.
