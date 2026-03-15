@@ -453,8 +453,14 @@ class ValidateNameUnitTests(unittest.TestCase):
         self.assertFalse(validate_name("INVALID", json_output=True))
 
     def test_json_mode_suppresses_print(self) -> None:
-        # Should not raise or print; just returns False.
-        self.assertFalse(validate_name("INVALID", json_output=True))
+        """json_output=True suppresses all stdout output."""
+        import io
+        from unittest.mock import patch as _patch
+
+        buf = io.StringIO()
+        with _patch("sys.stdout", buf):
+            validate_name("INVALID", json_output=True)
+        self.assertEqual(buf.getvalue(), "")
 
 
 class ReadTemplateUnitTests(unittest.TestCase):
@@ -576,6 +582,9 @@ class ScaffoldSkillUnitTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertFalse(result["success"])
         self.assertIn("error", result)
+        self.assertIn("details", result)
+        self.assertIsInstance(result["details"], list)
+        self.assertGreater(len(result["details"]), 0)
 
     def test_duplicate_skill_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

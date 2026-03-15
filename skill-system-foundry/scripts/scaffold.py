@@ -44,13 +44,27 @@ from lib.constants import (
     PH_DOMAIN_NAME, PH_DOMAIN_TITLE, PH_SKILL_NAME, PH_SKILL_TITLE,
     PH_CAPABILITY_NAME, PH_CAPABILITY_TITLE,
     PH_ROLE_TITLE,
-    LEVEL_FAIL, LEVEL_WARN,
+    LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 
 # Resolve paths relative to script location
 SCRIPT_DIR = _scripts_dir
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
+
+
+def _name_validation_details(name: str) -> list[str]:
+    """Return human-readable validation failure messages for *name*."""
+    errors, _ = _validate_name_detailed(name, name)
+    strip = {
+        LEVEL_FAIL: len(LEVEL_FAIL) + 2,
+        LEVEL_WARN: len(LEVEL_WARN) + 2,
+        LEVEL_INFO: len(LEVEL_INFO) + 2,
+    }
+    return [
+        e[strip.get(e.split(":")[0], 0):] if ":" in e else e
+        for e in errors
+    ]
 
 
 def validate_name(name: str, json_output: bool = False) -> bool:
@@ -143,6 +157,7 @@ def scaffold_skill(
                 "name": name,
                 "success": False,
                 "error": f"Invalid name: '{name}'",
+                "details": _name_validation_details(name),
             }
         sys.exit(1)
 
@@ -279,6 +294,7 @@ def scaffold_capability(
                 "domain": domain,
                 "success": False,
                 "error": f"Invalid domain name: '{domain}'",
+                "details": _name_validation_details(domain),
             }
         sys.exit(1)
     if not validate_name(name, json_output=json_output):
@@ -290,6 +306,7 @@ def scaffold_capability(
                 "domain": domain,
                 "success": False,
                 "error": f"Invalid name: '{name}'",
+                "details": _name_validation_details(name),
             }
         sys.exit(1)
 
@@ -400,6 +417,7 @@ def scaffold_role(
                 "group": group,
                 "success": False,
                 "error": f"Invalid group name: '{group}'",
+                "details": _name_validation_details(group),
             }
         sys.exit(1)
     if not validate_name(name, json_output=json_output):
@@ -411,6 +429,7 @@ def scaffold_role(
                 "group": group,
                 "success": False,
                 "error": f"Invalid name: '{name}'",
+                "details": _name_validation_details(name),
             }
         sys.exit(1)
 
