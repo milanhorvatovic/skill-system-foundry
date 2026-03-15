@@ -37,6 +37,20 @@ def read_manifest(path: str) -> dict:
     if not text.strip():
         return {}
     try:
+        # Pre-parse guard: detect top-level list syntax that the parser
+        # would coerce to an empty dict, which would hide malformed input.
+        first_content = next(
+            (
+                ln.lstrip()
+                for ln in text.splitlines()
+                if ln.strip() and not ln.lstrip().startswith("#")
+            ),
+            "",
+        )
+        if first_content.startswith("- "):
+            raise ManifestParseError(
+                f"Failed to parse {path}: top-level YAML must be a mapping"
+            )
         manifest = parse_yaml_subset(text)
         if not isinstance(manifest, dict):
             raise ManifestParseError(

@@ -403,6 +403,16 @@ class ManifestParseErrorTests(unittest.TestCase):
                     "top-level YAML must be a mapping", str(ctx.exception)
                 )
 
+    def test_top_level_list_raises_manifest_parse_error(self) -> None:
+        """A manifest that is a top-level list (not a mapping) raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("- item1\n- item2\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("top-level YAML must be a mapping", str(ctx.exception))
+
     def test_skills_as_empty_list_raises_manifest_parse_error(self) -> None:
         """A manifest where skills parses as a list rejects even if falsey."""
         with tempfile.TemporaryDirectory() as tmpdir:
