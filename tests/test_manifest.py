@@ -702,9 +702,9 @@ class IndentationInferenceTests(unittest.TestCase):
                 text = f.read()
             # The new skill key should be at 4-space indent.
             self.assertIn("    new-skill:", text)
-            # Its children should be at 6-space indent.
-            self.assertIn("      canonical:", text)
-            self.assertIn("      type:", text)
+            # Its children should be at 8-space indent (matching existing).
+            self.assertIn("        canonical:", text)
+            self.assertIn("        type:", text)
 
     def test_role_group_matches_existing_indent(self) -> None:
         """New role group uses the same indent as existing groups."""
@@ -754,6 +754,103 @@ class IndentationInferenceTests(unittest.TestCase):
             self.assertIn("existing", result["skills"])
             self.assertIn("added", result["skills"])
             self.assertEqual(result["skills"]["added"]["type"], "router")
+
+
+class SpaceBeforeColonTests(unittest.TestCase):
+    """Test that space-before-colon YAML syntax is handled correctly."""
+
+    def test_find_section_with_space_before_colon(self) -> None:
+        """Section headers with space before colon are recognized."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills :\n  existing:\n    canonical: skills/existing/SKILL.md\n    type: standalone\n")
+            append_skill_entry(path, "new-skill")
+            result = read_manifest(path)
+        self.assertIn("new-skill", result["skills"])
+
+    def test_find_group_with_space_before_colon(self) -> None:
+        """Group headers with space before colon are recognized."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "roles:\n"
+                    "  dev-group :\n"  # Space before colon
+                    "    - name: existing-role\n"
+                    "      path: roles/dev-group/existing-role.md\n"
+                )
+            append_role_entry(path, "dev-group", "new-role")
+            result = read_manifest(path)
+        # Should have only one dev-group
+        roles = result["roles"]["dev-group"]
+        names = [r["name"] for r in roles if isinstance(r, dict)]
+        self.assertIn("existing-role", names)
+        self.assertIn("new-role", names)
+
+
+class TopLevelCommentTests(unittest.TestCase):
+    """Test that top-level comments don't prematurely end section scanning."""
+
+    def test_section_end_with_top_level_comment(self) -> None:
+        """Top-level comments don't prematurely end section scanning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  existing-skill:\n"
+                    "    canonical: skills/existing-skill/SKILL.md\n"
+                    "    type: standalone\n"
+                    "# This is a comment\n"
+                    "roles:\n"
+                )
+            append_skill_entry(path, "new-skill")
+            result = read_manifest(path)
+        # Both skills should be present
+        self.assertIn("existing-skill", result["skills"])
+        self.assertIn("new-skill", result["skills"])
+
+    def test_find_group_with_top_level_comment(self) -> None:
+        """Top-level comments don't stop group scanning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "roles:\n"
+                    "  dev-group:\n"
+                    "    - name: existing-role\n"
+                    "      path: roles/dev-group/existing-role.md\n"
+                    "# This is a comment\n"
+                    "  ops-group:\n"
+                    "    - name: ops-role\n"
+                    "      path: roles/ops-group/ops-role.md\n"
+                )
+            append_role_entry(path, "ops-group", "new-role")
+            result = read_manifest(path)
+        # Should append to ops-group, not create duplicate
+        roles = result["roles"]["ops-group"]
+        names = [r["name"] for r in roles if isinstance(r, dict)]
+        self.assertIn("ops-role", names)
+        self.assertIn("new-role", names)
+
+    def test_append_skill_with_four_space_indent(self) -> None:
+        """Skill entries match 4-space indentation of existing entries."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "    existing-skill:\n"
+                    "        canonical: skills/existing-skill/SKILL.md\n"
+                    "        type: standalone\n"
+                )
+            append_skill_entry(path, "new-skill")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Verify new skill uses 4-space indent
+            self.assertIn("    new-skill:", text)
+            self.assertIn("        canonical: skills/new-skill/SKILL.md", text)
 
 
 class UpdateManifestForSkillTests(unittest.TestCase):

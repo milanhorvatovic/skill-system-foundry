@@ -155,8 +155,16 @@ def append_skill_entry(
     else:
         # Infer indentation from existing skill keys.
         key_indent = _infer_child_indent(lines, skills_idx, fallback=2)
+        # Find the first skill key to infer value indent from its children.
+        first_key_idx = _find_first_child_key(lines, skills_idx, key_indent)
+        if first_key_idx is not None:
+            val_indent = _infer_child_indent(
+                lines, first_key_idx, fallback=2,
+            )
+        else:
+            val_indent = key_indent + 2
         key_pad = " " * key_indent
-        val_pad = " " * (key_indent + 2)
+        val_pad = " " * val_indent
         entry = (
             f"{key_pad}{name}:\n"
             f"{val_pad}canonical: {DIR_SKILLS}/{name}/{FILE_SKILL_MD}\n"
@@ -341,13 +349,15 @@ def scaffold_empty_manifest(manifest_path: str) -> None:
 def _find_section_index(lines: list[str], section: str) -> int | None:
     """Return the line index of a top-level *section* key, or None."""
     for i, line in enumerate(lines):
-        # Match only top-level keys (no leading whitespace).
+        # Skip indented lines (not top-level)
         if line[0:1].isspace():
             continue
-        # Strip inline comments before comparing.
+        # Strip inline comments and get the key part
         head = line.split("#", 1)[0].rstrip()
-        if head == section:
-            return i
+        if ":" in head:
+            key = head.split(":", 1)[0].strip()
+            if key + ":" == section:
+                return i
     return None
 
 
@@ -365,6 +375,10 @@ def _find_section_end(lines: list[str], section_idx: int) -> int:
         if line.strip() == "":
             i += 1
             continue
+        # Skip top-level comments (they don't end the section)
+        if not line[0].isspace() and line.lstrip().startswith("#"):
+            i += 1
+            continue
         if line[0].isspace():
             last_content = i
             i += 1
@@ -377,7 +391,6 @@ def _find_group_index(
     lines: list[str], roles_idx: int, group: str,
 ) -> int | None:
     """Return the line index of a group key within the roles section."""
-    target_prefix = f"{group}:"
     i = roles_idx + 1
     group_indent: int | None = None
     while i < len(lines):
@@ -385,8 +398,12 @@ def _find_group_index(
         if line.strip() == "":
             i += 1
             continue
+        # Skip top-level comments (they don't end the section)
         if not line[0].isspace():
-            break
+            if line.lstrip().startswith("#"):
+                i += 1
+                continue
+            break  # Non-comment, non-indented line ends the section
 
         stripped = line.lstrip()
         indent = len(line) - len(stripped)
@@ -395,8 +412,11 @@ def _find_group_index(
         if group_indent is None:
             group_indent = indent
 
-        if indent == group_indent and stripped.startswith(target_prefix):
-            return i
+        # Check for group header with space-before-colon support
+        if indent == group_indent:
+            head = stripped.split("#", 1)[0].rstrip()
+            if ":" in head and head.split(":", 1)[0].strip() == group:
+                return i
         i += 1
     return None
 
@@ -418,6 +438,28 @@ def _infer_child_indent(lines: list[str], parent_idx: int, fallback: int = 2) ->
             break
         return indent
     return parent_indent + fallback
+
+
+def _find_first_child_key(
+    lines: list[str], parent_idx: int, child_indent: int,
+) -> int | None:
+    """Return the index of the first child key at *child_indent* under *parent_idx*.
+
+    Scans forward from *parent_idx* + 1 looking for a non-blank line
+    at exactly *child_indent* indentation.  Returns ``None`` when no
+    such line exists before the section ends.
+    """
+    parent_indent = len(lines[parent_idx]) - len(lines[parent_idx].lstrip())
+    for i in range(parent_idx + 1, len(lines)):
+        line = lines[i]
+        if line.strip() == "":
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= parent_indent:
+            break
+        if indent == child_indent:
+            return i
+    return None
 
 
 def _find_group_end(lines: list[str], group_idx: int) -> int:
