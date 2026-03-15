@@ -670,6 +670,92 @@ class InlineCommentTests(unittest.TestCase):
             self.assertIn("already exists", warning)
 
 
+class IndentationInferenceTests(unittest.TestCase):
+    """Test that appended entries match the indentation of existing entries."""
+
+    MANIFEST_4SPACE_SKILLS = (
+        "skills:\n"
+        "    existing:\n"
+        "        canonical: skills/existing/SKILL.md\n"
+        "        type: standalone\n"
+        "\n"
+        "roles:\n"
+    )
+
+    MANIFEST_4SPACE_ROLES = (
+        "skills:\n"
+        "\n"
+        "roles:\n"
+        "    dev-group:\n"
+        "        - name: existing-role\n"
+        "            path: roles/dev-group/existing-role.md\n"
+    )
+
+    def test_skill_entry_matches_existing_indent(self) -> None:
+        """New skill key uses the same indent as existing skill keys."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_4SPACE_SKILLS)
+            append_skill_entry(path, "new-skill")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # The new skill key should be at 4-space indent.
+            self.assertIn("    new-skill:", text)
+            # Its children should be at 6-space indent.
+            self.assertIn("      canonical:", text)
+            self.assertIn("      type:", text)
+
+    def test_role_group_matches_existing_indent(self) -> None:
+        """New role group uses the same indent as existing groups."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_4SPACE_ROLES)
+            append_role_entry(path, "ops-group", "ops-role")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # New group should be at 4-space indent (matching dev-group).
+            self.assertIn("    ops-group:", text)
+
+    def test_role_entry_in_existing_group_matches_indent(self) -> None:
+        """New role entry in existing group uses the same indent as siblings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_4SPACE_ROLES)
+            append_role_entry(path, "dev-group", "new-role")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Entry should be at 8-space indent (matching existing entries).
+            self.assertIn("        - name: new-role", text)
+
+    def test_default_indent_when_section_empty(self) -> None:
+        """Falls back to 2-space indent when section has no existing children."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            append_skill_entry(path, "first-skill")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Default 2-space indent for skill key.
+            self.assertIn("  first-skill:", text)
+            result = read_manifest(path)
+            self.assertIn("first-skill", result["skills"])
+
+    def test_roundtrip_with_nonstandard_indent(self) -> None:
+        """Full roundtrip: write 4-space manifest, append, read back."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_4SPACE_SKILLS)
+            append_skill_entry(path, "added", router=True)
+            result = read_manifest(path)
+            self.assertIn("existing", result["skills"])
+            self.assertIn("added", result["skills"])
+            self.assertEqual(result["skills"]["added"]["type"], "router")
+
+
 class UpdateManifestForSkillTests(unittest.TestCase):
     """Test the update_manifest_for_skill library function."""
 

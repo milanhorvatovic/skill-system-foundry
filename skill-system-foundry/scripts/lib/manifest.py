@@ -129,17 +129,18 @@ def append_skill_entry(
         text = f.read()
 
     skill_type = "router" if router else "standalone"
-    entry = (
-        f"  {name}:\n"
-        f"    canonical: {DIR_SKILLS}/{name}/{FILE_SKILL_MD}\n"
-        f"    type: {skill_type}\n"
-    )
 
     lines = text.split("\n")
     skills_idx = _find_section_index(lines, "skills:")
     if skills_idx is None:
         # No skills: section — insert before roles: to preserve
         # canonical section order (skills before roles).
+        # Use default 2-space indent since there's nothing to infer from.
+        entry = (
+            f"  {name}:\n"
+            f"    canonical: {DIR_SKILLS}/{name}/{FILE_SKILL_MD}\n"
+            f"    type: {skill_type}\n"
+        )
         roles_idx = _find_section_index(lines, "roles:")
         if roles_idx is not None:
             entry_parts = ("skills:\n" + entry).rstrip("\n").split("\n")
@@ -152,6 +153,15 @@ def append_skill_entry(
                 text += "\n"
             text += "\nskills:\n" + entry
     else:
+        # Infer indentation from existing skill keys.
+        key_indent = _infer_child_indent(lines, skills_idx, fallback=2)
+        key_pad = " " * key_indent
+        val_pad = " " * (key_indent + 2)
+        entry = (
+            f"{key_pad}{name}:\n"
+            f"{val_pad}canonical: {DIR_SKILLS}/{name}/{FILE_SKILL_MD}\n"
+            f"{val_pad}type: {skill_type}\n"
+        )
         insert_pos = _find_section_end(lines, skills_idx)
         entry_parts = entry.rstrip("\n").split("\n")
         for j, part in enumerate(entry_parts):
@@ -174,16 +184,16 @@ def append_role_entry(
     with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    entry_block = (
-        f"    - name: {name}\n"
-        f"      path: {DIR_ROLES}/{group}/{name}{EXT_MARKDOWN}"
-    )
-
     lines = text.split("\n")
     roles_idx = _find_section_index(lines, "roles:")
 
     if roles_idx is None:
         # No roles: section — append one at the end.
+        # Use default indentation since there's nothing to infer from.
+        entry_block = (
+            f"    - name: {name}\n"
+            f"      path: {DIR_ROLES}/{group}/{name}{EXT_MARKDOWN}"
+        )
         if text and not text.endswith("\n"):
             text += "\n"
         text += f"\nroles:\n  {group}:\n{entry_block}\n"
@@ -192,7 +202,7 @@ def append_role_entry(
         group_idx = _find_group_index(lines, roles_idx, group)
         if group_idx is not None:
             # Infer entry indentation from existing children.
-            entry_indent = _infer_entry_indent(lines, group_idx)
+            entry_indent = _infer_child_indent(lines, group_idx, fallback=4)
             item_pad = " " * entry_indent
             attr_pad = " " * (entry_indent + 2)
             entry_block = (
@@ -205,9 +215,18 @@ def append_role_entry(
                 lines.insert(insert_pos + j, part)
             text = "\n".join(lines)
         else:
-            # Group does not exist — append at end of roles section.
+            # Group does not exist — infer indent from existing groups
+            # and append at end of roles section.
+            group_indent = _infer_child_indent(lines, roles_idx, fallback=2)
+            grp_pad = " " * group_indent
+            item_pad = " " * (group_indent + 2)
+            attr_pad = " " * (group_indent + 4)
+            entry_block = (
+                f"{item_pad}- name: {name}\n"
+                f"{attr_pad}path: {DIR_ROLES}/{group}/{name}{EXT_MARKDOWN}"
+            )
             insert_pos = _find_section_end(lines, roles_idx)
-            group_block = f"  {group}:\n{entry_block}"
+            group_block = f"{grp_pad}{group}:\n{entry_block}"
             group_parts = group_block.split("\n")
             for j, part in enumerate(group_parts):
                 lines.insert(insert_pos + j, part)
@@ -382,23 +401,23 @@ def _find_group_index(
     return None
 
 
-def _infer_entry_indent(lines: list[str], group_idx: int) -> int:
-    """Return the indentation level used by entries under a group.
+def _infer_child_indent(lines: list[str], parent_idx: int, fallback: int = 2) -> int:
+    """Return the indentation level used by children under a parent key.
 
-    Scans forward from *group_idx* to find the first non-blank child
-    line and returns its indentation.  Falls back to group indent + 4
-    when the group has no existing children.
+    Scans forward from *parent_idx* to find the first non-blank child
+    line and returns its indentation.  Falls back to parent indent +
+    *fallback* when the parent has no existing children.
     """
-    group_indent = len(lines[group_idx]) - len(lines[group_idx].lstrip())
-    for i in range(group_idx + 1, len(lines)):
+    parent_indent = len(lines[parent_idx]) - len(lines[parent_idx].lstrip())
+    for i in range(parent_idx + 1, len(lines)):
         line = lines[i]
         if line.strip() == "":
             continue
         indent = len(line) - len(line.lstrip())
-        if indent <= group_indent:
+        if indent <= parent_indent:
             break
         return indent
-    return group_indent + 4
+    return parent_indent + fallback
 
 
 def _find_group_end(lines: list[str], group_idx: int) -> int:
