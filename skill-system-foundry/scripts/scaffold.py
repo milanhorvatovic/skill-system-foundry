@@ -671,8 +671,9 @@ _WITH_FLAG_MAP = {
     "--with-assets": DIR_ASSETS,
 }
 
-# All flags recognised per component type (excluding --root and --json,
-# which are stripped before component dispatch).
+# All flags recognised per component type.  --root, --json, and
+# --update-manifest are stripped before component dispatch but are
+# included here so they appear in "Allowed:" error messages.
 _KNOWN_FLAGS = {
     "skill": {"--router", "--with-references", "--with-scripts", "--with-assets", "--update-manifest"},
     "capability": {"--with-references", "--update-manifest"},
@@ -776,7 +777,7 @@ def main() -> None:
                     "error": "Missing skill name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets]")
+                print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest]")
             sys.exit(1)
         _validate_flags(flags, "skill", json_mode=json_output)
         name = positional[0]
@@ -815,7 +816,7 @@ def main() -> None:
                     "error": "Missing domain or capability name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references]")
+                print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest]")
             sys.exit(1)
         _validate_flags(flags, "capability", json_mode=json_output)
         optional_dirs = _parse_optional_dirs(flags)
@@ -853,7 +854,7 @@ def main() -> None:
                     "error": "Missing group or role name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>]")
+                print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest]")
             sys.exit(1)
         _validate_flags(flags, "role", json_mode=json_output)
         try:

@@ -902,6 +902,39 @@ class UpdateManifestSkillTests(unittest.TestCase):
             self.assertIn("manifest_updated", data)
             self.assertTrue(data["manifest_updated"])
 
+    def test_json_created_includes_manifest_when_scaffolded(self) -> None:
+        """--update-manifest includes manifest.yaml in created list when newly scaffolded."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "created-test", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            manifest_abs = os.path.abspath(os.path.join(tmpdir, "manifest.yaml"))
+            self.assertIn(manifest_abs, data["created"])
+
+    def test_json_created_excludes_manifest_when_preexisting(self) -> None:
+        """--update-manifest does not add manifest.yaml to created if it already exists."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write("# Manifest\n\nskills:\n\nroles:\n")
+            proc = _run(
+                ["skill", "existing-mf", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            manifest_abs = os.path.abspath(manifest_path)
+            self.assertNotIn(manifest_abs, data["created"])
+
     def test_json_conflict_includes_manifest_warning(self) -> None:
         """--update-manifest with --json includes manifest_warning on conflict."""
         import json
@@ -1007,6 +1040,21 @@ class UpdateManifestRoleTests(unittest.TestCase):
             self.assertTrue(data["success"])
             self.assertIn("manifest_updated", data)
             self.assertTrue(data["manifest_updated"])
+
+    def test_role_json_created_includes_manifest_when_scaffolded(self) -> None:
+        """--update-manifest includes manifest.yaml in created list for roles."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["role", "my-group", "cr-role", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            manifest_abs = os.path.abspath(os.path.join(tmpdir, "manifest.yaml"))
+            self.assertIn(manifest_abs, data["created"])
 
     def test_role_conflict_warns(self) -> None:
         """--update-manifest for role warns on name conflict."""

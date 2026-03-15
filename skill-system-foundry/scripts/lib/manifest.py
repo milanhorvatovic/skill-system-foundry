@@ -230,15 +230,15 @@ def _find_group_index(
 def _find_group_end(lines: list[str], group_idx: int) -> int:
     """Return the insert position after the last entry in a group."""
     last_content = group_idx
+    group_indent = len(lines[group_idx]) - len(lines[group_idx].lstrip())
     i = group_idx + 1
     while i < len(lines):
         line = lines[i]
         if line.strip() == "":
             i += 1
             continue
-        # Group entries are indented more than the group key (2 spaces).
+        # Group entries are indented more than the group key.
         indent = len(line) - len(line.lstrip())
-        group_indent = len(lines[group_idx]) - len(lines[group_idx].lstrip())
         if indent <= group_indent:
             break
         last_content = i
