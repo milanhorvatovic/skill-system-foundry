@@ -200,6 +200,31 @@ class AppendRoleEntryTests(unittest.TestCase):
         self.assertIn("existing-role", names)
         self.assertIn("new-role", names)
 
+    def test_append_role_to_group_with_inline_comment(self) -> None:
+        """Group headers with inline comments are recognized and not duplicated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "roles:\n"
+                    "  dev-group:  # development roles\n"
+                    "    - name: existing-role\n"
+                    "      path: roles/dev-group/existing-role.md\n"
+                )
+            append_role_entry(path, "dev-group", "new-role")
+            result = read_manifest(path)
+            # Should have only one dev-group, not a duplicate
+            roles = result["roles"]["dev-group"]
+            names = [r["name"] for r in roles if isinstance(r, dict)]
+            self.assertIn("existing-role", names)
+            self.assertIn("new-role", names)
+            # Verify no duplicate group was created
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Count occurrences of "dev-group:" - should be exactly 1
+            group_count = text.count("dev-group:")
+            self.assertEqual(group_count, 1, "Group header should not be duplicated")
+
     def test_append_role_to_empty_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")

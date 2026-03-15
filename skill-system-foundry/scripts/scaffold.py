@@ -596,9 +596,9 @@ _WITH_FLAG_MAP = {
     "--with-assets": DIR_ASSETS,
 }
 
-# All flags recognised per component type.  --root, --json, and
-# --update-manifest are stripped before component dispatch but are
-# included here so they appear in "Allowed:" error messages.
+# All flags recognised per component type.  --root and --json are
+# stripped before component dispatch and are not included here.
+# --update-manifest is included so it appears in "Allowed:" error messages.
 _KNOWN_FLAGS = {
     "skill": {"--router", "--with-references", "--with-scripts", "--with-assets", "--update-manifest"},
     "capability": {"--with-references", "--update-manifest"},

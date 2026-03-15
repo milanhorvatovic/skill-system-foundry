@@ -328,7 +328,7 @@ def _find_group_index(
     lines: list[str], roles_idx: int, group: str,
 ) -> int | None:
     """Return the line index of a group key within the roles section."""
-    target = f"  {group}:"
+    target_prefix = f"{group}:"
     i = roles_idx + 1
     while i < len(lines):
         line = lines[i]
@@ -337,8 +337,14 @@ def _find_group_index(
             continue
         if not line[0].isspace():
             break
-        if line.rstrip() == target:
-            return i
+        # Check for group header with exact 2-space indent,
+        # allowing trailing whitespace/comments.
+        stripped = line.lstrip()
+        if stripped.startswith(target_prefix):
+            # Verify exact indentation (2 spaces for group level)
+            indent = len(line) - len(stripped)
+            if indent == 2:
+                return i
         i += 1
     return None
 
