@@ -234,7 +234,7 @@ def scaffold_skill(
             "name": name,
             "success": True,
             "path": os.path.abspath(skill_path),
-            "created_paths": [os.path.abspath(p) for p in created_paths],
+            "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
         }
 
@@ -357,7 +357,7 @@ def scaffold_capability(
             "domain": domain,
             "success": True,
             "path": os.path.abspath(cap_path),
-            "created_paths": [os.path.abspath(p) for p in created_paths],
+            "created": [os.path.abspath(p) for p in created_paths],
         }
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
@@ -475,7 +475,7 @@ def scaffold_role(
             "group": group,
             "success": True,
             "path": os.path.abspath(role_path),
-            "created_paths": [os.path.abspath(p) for p in created_paths],
+            "created": [os.path.abspath(p) for p in created_paths],
         }
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST

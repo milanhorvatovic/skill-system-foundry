@@ -549,7 +549,7 @@ class ScaffoldSkillUnitTests(unittest.TestCase):
         self.assertEqual(result["component"], "skill")
         self.assertEqual(result["name"], "test-skill")
         self.assertFalse(result["router"])
-        self.assertIn("created_paths", result)
+        self.assertIn("created", result)
 
     def test_router_skill_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -568,7 +568,7 @@ class ScaffoldSkillUnitTests(unittest.TestCase):
             )
         self.assertIsNotNone(result)
         self.assertTrue(result["success"])
-        self.assertGreater(len(result["created_paths"]), 1)
+        self.assertGreater(len(result["created"]), 1)
 
     def test_invalid_name_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -610,7 +610,7 @@ class ScaffoldCapabilityUnitTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(result["success"])
         self.assertEqual(result["component"], "capability")
-        self.assertIn("created_paths", result)
+        self.assertIn("created", result)
 
     def test_invalid_domain_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -678,7 +678,7 @@ class ScaffoldRoleUnitTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(result["success"])
         self.assertEqual(result["component"], "role")
-        self.assertIn("created_paths", result)
+        self.assertIn("created", result)
 
     def test_invalid_group_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -718,16 +718,16 @@ class ScaffoldRoleUnitTests(unittest.TestCase):
             self.assertIn("Template not found", result["error"])
 
 
-class CreatedPathsGitkeepTests(unittest.TestCase):
-    """Verify created_paths includes .gitkeep files for directories."""
+class CreatedGitkeepTests(unittest.TestCase):
+    """Verify created includes .gitkeep files for directories."""
 
-    def test_router_skill_includes_gitkeep_in_created_paths(self) -> None:
+    def test_router_skill_includes_gitkeep_in_created(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = scaffold_skill(
                 "test-router", router=True, root=tmpdir, json_output=True,
             )
         self.assertIsNotNone(result)
-        gitkeep_paths = [p for p in result["created_paths"] if p.endswith(FILE_GITKEEP)]
+        gitkeep_paths = [p for p in result["created"] if p.endswith(FILE_GITKEEP)]
         # At least one .gitkeep for the capabilities/ directory
         self.assertGreater(len(gitkeep_paths), 0)
 
@@ -739,7 +739,7 @@ class CreatedPathsGitkeepTests(unittest.TestCase):
                 json_output=True,
             )
         self.assertIsNotNone(result)
-        gitkeep_paths = [p for p in result["created_paths"] if p.endswith(FILE_GITKEEP)]
+        gitkeep_paths = [p for p in result["created"] if p.endswith(FILE_GITKEEP)]
         self.assertEqual(len(gitkeep_paths), 1)
 
     def test_capability_with_optional_dirs_includes_gitkeeps(self) -> None:
@@ -751,7 +751,7 @@ class CreatedPathsGitkeepTests(unittest.TestCase):
                 json_output=True,
             )
         self.assertIsNotNone(result)
-        gitkeep_paths = [p for p in result["created_paths"] if p.endswith(FILE_GITKEEP)]
+        gitkeep_paths = [p for p in result["created"] if p.endswith(FILE_GITKEEP)]
         self.assertEqual(len(gitkeep_paths), 1)
 
 

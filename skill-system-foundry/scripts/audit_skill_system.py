@@ -157,15 +157,14 @@ def audit_skill_system(
     system_root: str,
     verbose: bool = True,
     allow_orchestration: bool = False,
-) -> tuple[list[str], dict[str, int]]:
+) -> list[str]:
     """Run all skill-system-level validations.
 
     Returns:
-        A tuple of ``(errors, counts)`` where *errors* is a list of
-        error strings and *counts* is a dict with ``"skills"``,
-        ``"capabilities"``, and ``"roles"`` integer values.
+        A list of error strings. Each string is prefixed with a level
+        (``FAIL``, ``WARN``, or ``INFO``).
     """
-    errors = []
+    errors: list[str] = []
     system_root = os.path.abspath(system_root)
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
@@ -177,12 +176,6 @@ def audit_skill_system(
 
     registered_skills = [s for s in skills if s["type"] == "registered"]
     capabilities = [s for s in skills if s["type"] == "capability"]
-
-    counts = {
-        "skills": len(registered_skills),
-        "capabilities": len(capabilities),
-        "roles": len(roles),
-    }
 
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
@@ -417,7 +410,7 @@ def audit_skill_system(
             except Exception as e:
                 errors.append(f"{LEVEL_WARN}: Failed to parse {FILE_MANIFEST}: {e}")
 
-    return errors, counts
+    return errors
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -527,12 +520,22 @@ def main():
         if verbose:
             print("=" * SEPARATOR_WIDTH)
 
-    errors, counts = audit_skill_system(
+    errors = audit_skill_system(
         system_root, verbose=effective_verbose,
         allow_orchestration=allow_orchestration,
     )
 
     if json_output:
+        # Compute component counts directly for JSON output (the
+        # public API intentionally returns only errors for backward
+        # compatibility).
+        skills = find_skill_dirs(system_root)
+        roles = find_roles(system_root)
+        counts = {
+            "skills": len([s for s in skills if s["type"] == "registered"]),
+            "capabilities": len([s for s in skills if s["type"] == "capability"]),
+            "roles": len(roles),
+        }
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "audit_skill_system",

@@ -193,7 +193,7 @@ class AuditSkillSystemEmptyTests(unittest.TestCase):
     def test_no_skills_directory_returns_partial_audit_warning(self) -> None:
         """A system root without skills/ returns a partial audit WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         partial_warns = [e for e in warn_errors if "partial audit" in e]
         self.assertGreaterEqual(len(partial_warns), 1)
@@ -202,7 +202,7 @@ class AuditSkillSystemEmptyTests(unittest.TestCase):
         """A system root with an empty skills/ directory passes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "skills"))
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         # Only expected issue: missing manifest.yaml
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
@@ -215,7 +215,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
         """A valid skill system with one skill passes all checks."""
         with tempfile.TemporaryDirectory() as tmpdir:
             _create_valid_system(tmpdir)
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
 
@@ -227,7 +227,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
                 os.path.join(skill_dir, "SKILL.md"),
                 "# Demo Skill\n\nNo frontmatter here.\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         fm_fails = [e for e in fail_errors if "frontmatter" in e]
         self.assertGreaterEqual(len(fm_fails), 1)
@@ -240,7 +240,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
                 os.path.join(skill_dir, "SKILL.md"),
                 "---\ndescription: Validates data files.\n---\n\n# Skill\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         name_fails = [e for e in fail_errors if "name" in e.lower()]
         self.assertGreaterEqual(len(name_fails), 1)
@@ -250,7 +250,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skills", "actual-dir")
             write_skill_md(skill_dir, name="different-name")
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         mismatch_fails = [e for e in fail_errors if "match" in e.lower()]
         self.assertGreaterEqual(len(mismatch_fails), 1)
@@ -263,7 +263,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
                 os.path.join(skill_dir, "SKILL.md"),
                 "---\nname: demo-skill\n---\n\n# Skill\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         desc_fails = [e for e in fail_errors if "description" in e.lower()]
         self.assertGreaterEqual(len(desc_fails), 1)
@@ -274,7 +274,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
             skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
             long_desc = "x" * (MAX_DESCRIPTION_CHARS + 1)
             write_skill_md(skill_dir, description=long_desc)
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         desc_fails = [e for e in fail_errors if "description" in e.lower()]
         self.assertGreaterEqual(len(desc_fails), 1)
@@ -288,7 +288,7 @@ class AuditSpecComplianceTests(unittest.TestCase):
                 f"Line {i}" for i in range(MAX_BODY_LINES + 10)
             )
             write_skill_md(skill_dir, body=long_body)
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         body_warns = [e for e in warn_errors if "body" in e.lower() or "lines" in e.lower()]
         self.assertGreaterEqual(len(body_warns), 1)
@@ -307,7 +307,7 @@ class AuditCapabilityIsolationTests(unittest.TestCase):
                 cap_dir,
                 frontmatter="name: my-cap\ndescription: A capability.",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         isolation_infos = [e for e in info_errors if "frontmatter" in e.lower()]
         self.assertGreaterEqual(len(isolation_infos), 1)
@@ -319,7 +319,7 @@ class AuditCapabilityIsolationTests(unittest.TestCase):
             write_skill_md(skill_dir)
             cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
             _write_capability_md(cap_dir, body="# My Capability\n")
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         isolation_infos = [e for e in info_errors if "frontmatter" in e.lower()]
         self.assertEqual(isolation_infos, [])
@@ -338,7 +338,7 @@ class AuditDependencyDirectionTests(unittest.TestCase):
                 cap_dir,
                 body="# My Capability\n\nSee roles/reviewer.md for details.\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         roles_fails = [e for e in fail_errors if "roles" in e.lower()]
         self.assertGreaterEqual(len(roles_fails), 1)
@@ -351,7 +351,7 @@ class AuditDependencyDirectionTests(unittest.TestCase):
                 skill_dir,
                 body="# Demo Skill\n\nSee roles/reviewer.md for details.\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         roles_fails = [e for e in fail_errors if "roles" in e.lower()]
         self.assertGreaterEqual(len(roles_fails), 1)
@@ -364,7 +364,7 @@ class AuditDependencyDirectionTests(unittest.TestCase):
                 skill_dir,
                 body="# Demo Skill\n\nSee roles/reviewer.md for details.\n",
             )
-            errors, _counts = audit_skill_system(
+            errors = audit_skill_system(
                 tmpdir, verbose=False, allow_orchestration=True,
             )
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
@@ -574,7 +574,7 @@ class AuditRoleCompositionTests(unittest.TestCase):
                 role_path,
                 skills_used_body="| skills/alpha/SKILL.md | Alpha skill |\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         composition_warns = [
             e for e in warn_errors if "composes" in e.lower()
@@ -593,7 +593,7 @@ class AuditRoleCompositionTests(unittest.TestCase):
                     "| skills/beta/SKILL.md | Beta skill |\n"
                 ),
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         composition_warns = [
             e for e in warn_errors if "composes" in e.lower()
@@ -634,7 +634,7 @@ class AuditNestingDepthTests(unittest.TestCase):
             # Create nested capabilities/ inside the capability
             nested_cap = os.path.join(cap_dir, "capabilities", "sub-cap")
             os.makedirs(nested_cap)
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         nesting_fails = [e for e in fail_errors if "nested" in e.lower()]
         self.assertGreaterEqual(len(nesting_fails), 1)
@@ -646,7 +646,7 @@ class AuditNestingDepthTests(unittest.TestCase):
             write_skill_md(skill_dir)
             cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
             _write_capability_md(cap_dir, body="# My Capability\n")
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         nesting_fails = [e for e in fail_errors if "nested" in e.lower()]
         self.assertEqual(nesting_fails, [])
@@ -662,7 +662,7 @@ class AuditSharedResourcesTests(unittest.TestCase):
             write_skill_md(skill_dir)
             shared_dir = os.path.join(skill_dir, "shared")
             write_text(os.path.join(shared_dir, "data.txt"), "shared data")
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         shared_warns = [
             e for e in warn_errors
@@ -689,7 +689,7 @@ class AuditSharedResourcesTests(unittest.TestCase):
                 cap2_dir,
                 body="# Cap Two\n\nDoes not use shared resources.\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         shared_warns = [
             e for e in warn_errors
@@ -716,7 +716,7 @@ class AuditSharedResourcesTests(unittest.TestCase):
                 cap2_dir,
                 body="# Cap Two\n\nAlso uses shared/data.txt here.\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         shared_warns = [
             e for e in warn_errors
@@ -737,7 +737,7 @@ class AuditSharedResourcesTests(unittest.TestCase):
                 cap_dir,
                 body="# My Capability\n\nNo shared references.\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         shared_warns = [
             e for e in warn_errors
@@ -761,7 +761,7 @@ class AuditCapabilityEntryNamingTests(unittest.TestCase):
                 os.path.join(cap_dir, "SKILL.md"),
                 "# My Capability\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         naming_fails = [
             e for e in fail_errors
@@ -778,7 +778,7 @@ class AuditCapabilityEntryNamingTests(unittest.TestCase):
             os.makedirs(cap_dir)
             # Write some other file, but not capability.md or SKILL.md
             write_text(os.path.join(cap_dir, "notes.md"), "# Notes\n")
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         naming_warns = [
             e for e in warn_errors
@@ -793,7 +793,7 @@ class AuditCapabilityEntryNamingTests(unittest.TestCase):
             write_skill_md(skill_dir)
             cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
             _write_capability_md(cap_dir, body="# My Capability\n")
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         naming_fails = [
             e for e in fail_errors
@@ -810,7 +810,7 @@ class AuditManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _create_valid_system(tmpdir)
             # No manifest.yaml created
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         manifest_warns = [e for e in warn_errors if "manifest" in e.lower()]
         self.assertGreaterEqual(len(manifest_warns), 1)
@@ -822,7 +822,7 @@ class AuditManifestTests(unittest.TestCase):
                 tmpdir,
                 "skills:\n  nonexistent-skill:\n    capabilities:\n      - cap-one\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         skill_warns = [
             e for e in warn_errors
@@ -837,7 +837,7 @@ class AuditManifestTests(unittest.TestCase):
                 tmpdir,
                 "skills:\n  demo-skill:\n    capabilities:\n      - nonexistent-cap\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         cap_warns = [
             e for e in warn_errors
@@ -859,7 +859,7 @@ class AuditManifestTests(unittest.TestCase):
                 "audit_skill_system.parse_yaml_subset",
                 side_effect=ValueError("mock parse error"),
             ):
-                errors, _counts = audit_skill_system(tmpdir, verbose=False)
+                errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         parse_warns = [
             e for e in warn_errors
@@ -874,7 +874,7 @@ class AuditManifestTests(unittest.TestCase):
                 tmpdir,
                 "skills:\n  demo-skill:\n    capabilities:\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         manifest_warns = [e for e in warn_errors if "manifest" in e.lower()]
         self.assertEqual(manifest_warns, [])
@@ -887,7 +887,7 @@ class AuditManifestTests(unittest.TestCase):
                 os.path.join(tmpdir, "manifest.yaml"),
                 "skills:\n  nonexistent:\n",
             )
-            errors, _counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         # Should have partial audit warning but no manifest-specific warnings
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         manifest_warns = [
@@ -948,8 +948,8 @@ class BuildParserTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parser.parse_args([])
 
-    def test_audit_returns_counts(self) -> None:
-        """audit_skill_system returns (errors, counts) tuple."""
+    def test_audit_returns_errors_list(self) -> None:
+        """audit_skill_system returns a list of error strings."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
             write_skill_md(skill_dir)
@@ -957,15 +957,8 @@ class BuildParserTests(unittest.TestCase):
                 os.path.join(tmpdir, "manifest.yaml"),
                 "name: test-system\n",
             )
-            errors, counts = audit_skill_system(tmpdir, verbose=False)
+            errors = audit_skill_system(tmpdir, verbose=False)
         self.assertIsInstance(errors, list)
-        self.assertIsInstance(counts, dict)
-        self.assertIn("skills", counts)
-        self.assertIn("capabilities", counts)
-        self.assertIn("roles", counts)
-        self.assertEqual(counts["skills"], 1)
-        self.assertEqual(counts["capabilities"], 0)
-        self.assertEqual(counts["roles"], 0)
 
 
 class MainCLITests(unittest.TestCase):

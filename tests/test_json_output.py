@@ -440,9 +440,9 @@ class ScaffoldJsonTests(unittest.TestCase):
         self.assertEqual(data["name"], "my-skill")
         self.assertTrue(data["success"])
         self.assertIn("path", data)
-        self.assertIn("created_paths", data)
-        self.assertIsInstance(data["created_paths"], list)
-        self.assertGreater(len(data["created_paths"]), 0)
+        self.assertIn("created", data)
+        self.assertIsInstance(data["created"], list)
+        self.assertGreater(len(data["created"]), 0)
 
     def test_router_skill_json_output(self) -> None:
         """Scaffolding a router skill with --json includes router=true."""
