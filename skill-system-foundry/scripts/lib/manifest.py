@@ -191,6 +191,14 @@ def append_role_entry(
         # Look for existing group within roles section.
         group_idx = _find_group_index(lines, roles_idx, group)
         if group_idx is not None:
+            # Infer entry indentation from existing children.
+            entry_indent = _infer_entry_indent(lines, group_idx)
+            item_pad = " " * entry_indent
+            attr_pad = " " * (entry_indent + 2)
+            entry_block = (
+                f"{item_pad}- name: {name}\n"
+                f"{attr_pad}path: {DIR_ROLES}/{group}/{name}{EXT_MARKDOWN}"
+            )
             insert_pos = _find_group_end(lines, group_idx)
             entry_parts = entry_block.split("\n")
             for j, part in enumerate(entry_parts):
@@ -223,7 +231,12 @@ def update_manifest_for_skill(
     *created_manifest* is True when a new manifest file was scaffolded.
     """
     created_manifest = False
-    if not os.path.isfile(manifest_path):
+    # Treat non-existent or empty/whitespace-only files as missing.
+    needs_scaffold = not os.path.isfile(manifest_path)
+    if not needs_scaffold:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            needs_scaffold = not fh.read().strip()
+    if needs_scaffold:
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
@@ -257,7 +270,12 @@ def update_manifest_for_role(
     *created_manifest* is True when a new manifest file was scaffolded.
     """
     created_manifest = False
-    if not os.path.isfile(manifest_path):
+    # Treat non-existent or empty/whitespace-only files as missing.
+    needs_scaffold = not os.path.isfile(manifest_path)
+    if not needs_scaffold:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            needs_scaffold = not fh.read().strip()
+    if needs_scaffold:
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
@@ -342,6 +360,7 @@ def _find_group_index(
     """Return the line index of a group key within the roles section."""
     target_prefix = f"{group}:"
     i = roles_idx + 1
+    group_indent: int | None = None
     while i < len(lines):
         line = lines[i]
         if line.strip() == "":
@@ -349,16 +368,37 @@ def _find_group_index(
             continue
         if not line[0].isspace():
             break
-        # Check for group header with exact 2-space indent,
-        # allowing trailing whitespace/comments.
+
         stripped = line.lstrip()
-        if stripped.startswith(target_prefix):
-            # Verify exact indentation (2 spaces for group level)
-            indent = len(line) - len(stripped)
-            if indent == 2:
-                return i
+        indent = len(line) - len(stripped)
+
+        # Infer the indentation used for group headers under roles:.
+        if group_indent is None:
+            group_indent = indent
+
+        if indent == group_indent and stripped.startswith(target_prefix):
+            return i
         i += 1
     return None
+
+
+def _infer_entry_indent(lines: list[str], group_idx: int) -> int:
+    """Return the indentation level used by entries under a group.
+
+    Scans forward from *group_idx* to find the first non-blank child
+    line and returns its indentation.  Falls back to group indent + 4
+    when the group has no existing children.
+    """
+    group_indent = len(lines[group_idx]) - len(lines[group_idx].lstrip())
+    for i in range(group_idx + 1, len(lines)):
+        line = lines[i]
+        if line.strip() == "":
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= group_indent:
+            break
+        return indent
+    return group_indent + 4
 
 
 def _find_group_end(lines: list[str], group_idx: int) -> int:

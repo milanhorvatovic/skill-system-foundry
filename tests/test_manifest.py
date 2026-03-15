@@ -225,6 +225,25 @@ class AppendRoleEntryTests(unittest.TestCase):
             group_count = text.count("dev-group:")
             self.assertEqual(group_count, 1, "Group header should not be duplicated")
 
+    def test_find_group_with_four_space_indent(self) -> None:
+        """Group headers with 4-space indentation are recognized."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "roles:\n"
+                    "    dev-group:\n"
+                    "        - name: existing-role\n"
+                    "          path: roles/dev-group/existing-role.md\n"
+                )
+            append_role_entry(path, "dev-group", "new-role")
+            result = read_manifest(path)
+        # Should have only one dev-group, not a duplicate
+        roles = result["roles"]["dev-group"]
+        names = [r["name"] for r in roles if isinstance(r, dict)]
+        self.assertIn("existing-role", names)
+        self.assertIn("new-role", names)
+
     def test_append_role_to_empty_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
@@ -708,6 +727,24 @@ class UpdateManifestForSkillTests(unittest.TestCase):
             result = read_manifest(path)
             self.assertEqual(result["skills"]["my-router"]["type"], "router")
 
+    def test_update_manifest_for_skill_empty_file(self) -> None:
+        """Empty manifest files are treated as missing and scaffolded."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            # Create empty file
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+            updated, warning, created = update_manifest_for_skill(path, "my-skill")
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)  # Should report created_manifest=True
+            # Verify it has the standard structure
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn("# Skill System Manifest", text)
+            self.assertIn("skills:", text)
+            self.assertIn("roles:", text)
+
 
 class UpdateManifestForRoleTests(unittest.TestCase):
     """Test the update_manifest_for_role library function."""
@@ -774,6 +811,24 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             self.assertIsNotNone(warning)
             self.assertIn("skipping manifest update", warning)
             self.assertFalse(created)
+
+    def test_update_manifest_for_role_empty_file(self) -> None:
+        """Empty manifest files are treated as missing and scaffolded."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            # Create empty file
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+            updated, warning, created = update_manifest_for_role(path, "my-group", "my-role")
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)  # Should report created_manifest=True
+            # Verify it has the standard structure
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn("# Skill System Manifest", text)
+            self.assertIn("skills:", text)
+            self.assertIn("roles:", text)
 
 
 if __name__ == "__main__":
