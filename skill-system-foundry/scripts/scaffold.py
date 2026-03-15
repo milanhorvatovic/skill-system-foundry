@@ -545,7 +545,7 @@ def _parse_optional_dirs(flags):
     return [_WITH_FLAG_MAP[f] for f in with_flags]
 
 
-def main():
+def main() -> None:
     args = sys.argv[:]
 
     # Parse --json flag first so that all subsequent error paths can

@@ -461,7 +461,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main():
+def main() -> None:
     # Pre-check for --json so parse errors can be reported as JSON.
     _json_mode = "--json" in sys.argv
 
