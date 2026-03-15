@@ -3,9 +3,9 @@
 Scaffold new skill system components from templates.
 
 Usage:
-    python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--json]
-    python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--json]
-    python scripts/scaffold.py role <group> <name> [--root <path>] [--json]
+    python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--json]
+    python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--json]
+    python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--json]
 
 Options:
     --root <path>        Base directory for output (default: current working
@@ -14,6 +14,9 @@ Options:
     --with-references    Also create a references/ directory (with .gitkeep)
     --with-scripts       Also create a scripts/ directory (with .gitkeep)
     --with-assets        Also create an assets/ directory (with .gitkeep)
+    --update-manifest    Validate and update manifest.yaml after scaffolding.
+                         Creates a minimal manifest if none exists. Detects
+                         name conflicts and warns without overwriting.
     --json               Output results as machine-readable JSON.
 
 Examples:
@@ -21,6 +24,7 @@ Examples:
     python scripts/scaffold.py skill my-skill --root .agents
     python scripts/scaffold.py skill my-skill --with-references --with-scripts
     python scripts/scaffold.py skill my-domain --router
+    python scripts/scaffold.py skill my-skill --update-manifest
     python scripts/scaffold.py capability my-domain my-capability
     python scripts/scaffold.py role my-group my-role
     python scripts/scaffold.py skill my-skill --json
@@ -35,6 +39,14 @@ if _scripts_dir not in sys.path:
 
 from lib.reporting import to_json_output
 from lib.validation import validate_name as _validate_name_detailed
+from lib.manifest import (
+    read_manifest,
+    has_skill_conflict,
+    has_role_conflict,
+    append_skill_entry,
+    append_role_entry,
+    scaffold_empty_manifest,
+)
 from lib.constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
     DIR_REFERENCES, DIR_SCRIPTS, DIR_ASSETS,
@@ -132,6 +144,7 @@ def scaffold_skill(
     root: str = "",
     optional_dirs: list[str] | None = None,
     json_output: bool = False,
+    update_manifest: bool = False,
 ) -> dict | None:
     """Create a new skill directory.
 
@@ -143,6 +156,8 @@ def scaffold_skill(
             references/, scripts/, assets/). Empty by default.
         json_output: If True, suppress terminal output and return a
             result dict instead.
+        update_manifest: If True, validate and update manifest.yaml
+            after scaffolding.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -245,8 +260,17 @@ def scaffold_skill(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Manifest update ---
+    manifest_updated = False
+    manifest_warning: str | None = None
+
+    if update_manifest:
+        manifest_updated, manifest_warning = _update_manifest_for_skill(
+            manifest_path, name, router=router, json_output=json_output,
+        )
+
     if json_output:
-        return {
+        result_dict: dict = {
             "tool": "scaffold",
             "component": "skill",
             "name": name,
@@ -255,10 +279,18 @@ def scaffold_skill(
             "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
         }
+        if update_manifest:
+            result_dict["manifest_updated"] = manifest_updated
+            if manifest_warning:
+                result_dict["manifest_warning"] = manifest_warning
+        return result_dict
 
     print(f"\n\u2713 Skill '{name}' scaffolded at {skill_path}")
     skill_md_path = os.path.join(skill_path, FILE_SKILL_MD)
-    print(f"  Next: edit {skill_md_path} and update {manifest_path}")
+    if not update_manifest:
+        print(f"  Next: edit {skill_md_path} and update {manifest_path}")
+    else:
+        print(f"  Next: edit {skill_md_path}")
     return None
 
 
@@ -268,6 +300,7 @@ def scaffold_capability(
     root: str = "",
     optional_dirs: list[str] | None = None,
     json_output: bool = False,
+    update_manifest: bool = False,
 ) -> dict | None:
     """Create a new capability under an existing router skill.
 
@@ -279,6 +312,8 @@ def scaffold_capability(
             references/). Empty by default.
         json_output: If True, suppress terminal output and return a
             result dict instead.
+        update_manifest: If True, print a message that capabilities
+            should be added to the parent skill's manifest entry.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -370,8 +405,17 @@ def scaffold_capability(
         if not json_output:
             print(f"  Created: {opt_dir}")
 
+    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
+
+    # Capabilities are not added to the manifest directly — they
+    # belong under their parent skill's ``capabilities:`` list.
+    cap_manifest_msg = (
+        f"Capabilities are not added to manifest.yaml directly. "
+        f"Add '{name}' to the capabilities list of '{domain}' in {manifest_path}."
+    )
+
     if json_output:
-        return {
+        result_dict: dict = {
             "tool": "scaffold",
             "component": "capability",
             "name": name,
@@ -380,13 +424,19 @@ def scaffold_capability(
             "path": os.path.abspath(cap_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
+        if update_manifest:
+            result_dict["manifest_updated"] = False
+            result_dict["manifest_warning"] = cap_manifest_msg
+        return result_dict
 
-    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Capability '{name}' scaffolded at {cap_path}")
     cap_md_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
     print(f"  Next: edit {cap_md_path}")
     print(f"  Next: add capability to {router_skill} routing table")
-    print(f"  Next: update {manifest_path}")
+    if update_manifest:
+        print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
+    else:
+        print(f"  Next: update {manifest_path}")
     return None
 
 
@@ -395,6 +445,7 @@ def scaffold_role(
     name: str,
     root: str = "",
     json_output: bool = False,
+    update_manifest: bool = False,
 ) -> dict | None:
     """Create a new role file.
 
@@ -404,6 +455,8 @@ def scaffold_role(
         root: Base directory for output.
         json_output: If True, suppress terminal output and return a
             result dict instead.
+        update_manifest: If True, validate and update manifest.yaml
+            after scaffolding.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -490,8 +543,19 @@ def scaffold_role(
         )
         created_paths.append(readme_path)
 
+    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
+
+    # --- Manifest update ---
+    manifest_updated = False
+    manifest_warning: str | None = None
+
+    if update_manifest:
+        manifest_updated, manifest_warning = _update_manifest_for_role(
+            manifest_path, group, name, json_output=json_output,
+        )
+
     if json_output:
-        return {
+        result_dict: dict = {
             "tool": "scaffold",
             "component": "role",
             "name": name,
@@ -500,12 +564,79 @@ def scaffold_role(
             "path": os.path.abspath(role_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
+        if update_manifest:
+            result_dict["manifest_updated"] = manifest_updated
+            if manifest_warning:
+                result_dict["manifest_warning"] = manifest_warning
+        return result_dict
 
-    manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
     print(f"\n\u2713 Role '{name}' scaffolded at {role_path}")
     print(f"  Next: edit {role_path}")
-    print(f"  Next: update {manifest_path}")
+    if not update_manifest:
+        print(f"  Next: update {manifest_path}")
     return None
+
+
+def _update_manifest_for_skill(
+    manifest_path: str,
+    name: str,
+    *,
+    router: bool = False,
+    json_output: bool = False,
+) -> tuple[bool, str | None]:
+    """Ensure *manifest_path* exists and append a skill entry.
+
+    Returns ``(updated, warning)`` where *updated* is True when the
+    manifest was modified and *warning* is a human-readable message
+    when a conflict prevented the update.
+    """
+    if not os.path.isfile(manifest_path):
+        scaffold_empty_manifest(manifest_path)
+        if not json_output:
+            print(f"  Created: {manifest_path}")
+
+    manifest = read_manifest(manifest_path)
+    if has_skill_conflict(manifest, name):
+        warning = f"Skill '{name}' already exists in {manifest_path} — skipping manifest update"
+        if not json_output:
+            print(f"  {LEVEL_WARN}: {warning}")
+        return False, warning
+
+    append_skill_entry(manifest_path, name, router=router)
+    if not json_output:
+        print(f"  Updated: {manifest_path}")
+    return True, None
+
+
+def _update_manifest_for_role(
+    manifest_path: str,
+    group: str,
+    name: str,
+    *,
+    json_output: bool = False,
+) -> tuple[bool, str | None]:
+    """Ensure *manifest_path* exists and append a role entry.
+
+    Returns ``(updated, warning)`` where *updated* is True when the
+    manifest was modified and *warning* is a human-readable message
+    when a conflict prevented the update.
+    """
+    if not os.path.isfile(manifest_path):
+        scaffold_empty_manifest(manifest_path)
+        if not json_output:
+            print(f"  Created: {manifest_path}")
+
+    manifest = read_manifest(manifest_path)
+    if has_role_conflict(manifest, group, name):
+        warning = f"Role '{name}' in group '{group}' already exists in {manifest_path} — skipping manifest update"
+        if not json_output:
+            print(f"  {LEVEL_WARN}: {warning}")
+        return False, warning
+
+    append_role_entry(manifest_path, group, name)
+    if not json_output:
+        print(f"  Updated: {manifest_path}")
+    return True, None
 
 
 # Maps --with-* CLI flags to directory constants.
@@ -518,9 +649,9 @@ _WITH_FLAG_MAP = {
 # All flags recognised per component type (excluding --root and --json,
 # which are stripped before component dispatch).
 _KNOWN_FLAGS = {
-    "skill": {"--router", "--with-references", "--with-scripts", "--with-assets"},
-    "capability": {"--with-references"},
-    "role": set(),
+    "skill": {"--router", "--with-references", "--with-scripts", "--with-assets", "--update-manifest"},
+    "capability": {"--with-references", "--update-manifest"},
+    "role": {"--update-manifest"},
 }
 
 
@@ -573,6 +704,11 @@ def main() -> None:
     if json_output:
         args = [a for a in args if a != "--json"]
 
+    # Parse --update-manifest flag
+    update_manifest = "--update-manifest" in args
+    if update_manifest:
+        args = [a for a in args if a != "--update-manifest"]
+
     # Parse --root option
     root = ""
     if "--root" in args:
@@ -622,7 +758,11 @@ def main() -> None:
         router = "--router" in flags
         optional_dirs = _parse_optional_dirs(flags)
         try:
-            result = scaffold_skill(name, router, root, optional_dirs, json_output=json_output)
+            result = scaffold_skill(
+                name, router, root, optional_dirs,
+                json_output=json_output,
+                update_manifest=update_manifest,
+            )
         except Exception as exc:
             if json_output:
                 print(to_json_output({
@@ -658,6 +798,7 @@ def main() -> None:
             result = scaffold_capability(
                 positional[0], positional[1], root, optional_dirs,
                 json_output=json_output,
+                update_manifest=update_manifest,
             )
         except Exception as exc:
             if json_output:
@@ -694,6 +835,7 @@ def main() -> None:
             result = scaffold_role(
                 positional[0], positional[1], root,
                 json_output=json_output,
+                update_manifest=update_manifest,
             )
         except Exception as exc:
             if json_output:

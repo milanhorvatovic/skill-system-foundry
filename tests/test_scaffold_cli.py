@@ -305,15 +305,15 @@ class RoleTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 1)
             self.assertIn("Unknown flag(s) for 'role'", proc.stdout)
 
-    def test_role_allowed_for_role_shows_none(self):
-        """Error message for role should show '(none)' as allowed flags."""
+    def test_role_allowed_for_role_shows_update_manifest(self):
+        """Error message for role should list --update-manifest as allowed."""
         with tempfile.TemporaryDirectory() as tmpdir:
             proc = _run(
                 ["role", "my-group", "my-role", "--with-references", "--root", tmpdir],
                 cwd=REPO_ROOT,
             )
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("(none)", proc.stdout)
+            self.assertIn("--update-manifest", proc.stdout)
 
 
 # ---------------------------------------------------------------------------
@@ -813,6 +813,224 @@ class BundleParseErrorExitCodeTests(unittest.TestCase):
         data = json.loads(proc.stdout)
         self.assertFalse(data["success"])
         self.assertIn("error", data)
+
+
+# ---------------------------------------------------------------------------
+# --update-manifest integration tests
+# ---------------------------------------------------------------------------
+
+class UpdateManifestSkillTests(unittest.TestCase):
+    """Test --update-manifest flag for skill scaffolding."""
+
+    def test_creates_manifest_if_missing(self) -> None:
+        """--update-manifest creates manifest.yaml when it does not exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "new-skill", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            self.assertTrue(os.path.isfile(manifest_path))
+
+    def test_appends_skill_to_existing_manifest(self) -> None:
+        """--update-manifest appends a skill entry to an existing manifest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a minimal manifest first.
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write("# Manifest\n\nskills:\n\nroles:\n")
+            proc = _run(
+                ["skill", "my-new-skill", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn("my-new-skill:", text)
+            self.assertIn("type: standalone", text)
+
+    def test_detects_name_conflict_and_warns(self) -> None:
+        """--update-manifest warns on name conflict and skips update."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  conflict-skill:\n"
+                    "    canonical: skills/conflict-skill/SKILL.md\n"
+                    "    type: standalone\n"
+                    "\nroles:\n"
+                )
+            proc = _run(
+                ["skill", "conflict-skill", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            # Scaffolding itself should fail because directory already exists
+            # OR succeed if dir doesn't exist but manifest has the name.
+            # The skill dir won't exist, so scaffold succeeds but manifest warns.
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("WARN", proc.stdout)
+            self.assertIn("already exists", proc.stdout)
+
+    def test_router_skill_creates_correct_entry(self) -> None:
+        """--update-manifest with --router creates a router type entry."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "my-router", "--router", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn("my-router:", text)
+            self.assertIn("type: router", text)
+
+    def test_json_includes_manifest_updated(self) -> None:
+        """--update-manifest with --json includes manifest_updated key."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "json-skill", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertIn("manifest_updated", data)
+            self.assertTrue(data["manifest_updated"])
+
+    def test_json_conflict_includes_manifest_warning(self) -> None:
+        """--update-manifest with --json includes manifest_warning on conflict."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  dup-skill:\n"
+                    "    canonical: skills/dup-skill/SKILL.md\n"
+                    "    type: standalone\n"
+                    "\nroles:\n"
+                )
+            proc = _run(
+                ["skill", "dup-skill", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertFalse(data["manifest_updated"])
+            self.assertIn("manifest_warning", data)
+            self.assertIn("already exists", data["manifest_warning"])
+
+
+class UpdateManifestCapabilityTests(unittest.TestCase):
+    """Test --update-manifest flag for capability scaffolding."""
+
+    def _create_router(self, tmpdir: str) -> None:
+        proc = _run(
+            ["skill", "my-domain", "--router", "--root", tmpdir],
+            cwd=REPO_ROOT,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Router prerequisite failed:\n{proc.stdout}{proc.stderr}"
+            )
+
+    def test_capability_warns_no_manifest_update(self) -> None:
+        """--update-manifest for capability prints info message."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            proc = _run(
+                [
+                    "capability", "my-domain", "my-cap",
+                    "--update-manifest", "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("not added to manifest.yaml directly", proc.stdout)
+
+    def test_capability_json_manifest_updated_false(self) -> None:
+        """--update-manifest for capability in JSON mode sets manifest_updated=false."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            proc = _run(
+                [
+                    "capability", "my-domain", "my-cap",
+                    "--update-manifest", "--json", "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertFalse(data["manifest_updated"])
+            self.assertIn("manifest_warning", data)
+
+
+class UpdateManifestRoleTests(unittest.TestCase):
+    """Test --update-manifest flag for role scaffolding."""
+
+    def test_creates_manifest_and_adds_role(self) -> None:
+        """--update-manifest creates manifest and adds role entry."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["role", "my-group", "my-role", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            self.assertTrue(os.path.isfile(manifest_path))
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn("my-role", text)
+            self.assertIn("my-group", text)
+
+    def test_role_json_includes_manifest_updated(self) -> None:
+        """--update-manifest with --json includes manifest_updated for roles."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["role", "my-group", "my-role", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertIn("manifest_updated", data)
+            self.assertTrue(data["manifest_updated"])
+
+    def test_role_conflict_warns(self) -> None:
+        """--update-manifest for role warns on name conflict."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "\nroles:\n"
+                    "  my-group:\n"
+                    "    - name: dup-role\n"
+                    "      path: roles/my-group/dup-role.md\n"
+                )
+            proc = _run(
+                ["role", "my-group", "dup-role", "--update-manifest", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertFalse(data["manifest_updated"])
+            self.assertIn("manifest_warning", data)
 
 
 if __name__ == "__main__":

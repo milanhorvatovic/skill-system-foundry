@@ -1,0 +1,242 @@
+"""Unit tests for lib/manifest.py.
+
+Tests cover manifest reading, conflict detection, entry appending,
+and scaffolding an empty manifest.
+"""
+
+import os
+import sys
+import tempfile
+import unittest
+
+SCRIPTS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
+)
+
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
+from lib.manifest import (
+    read_manifest,
+    has_skill_conflict,
+    has_role_conflict,
+    append_skill_entry,
+    append_role_entry,
+    scaffold_empty_manifest,
+)
+
+
+SAMPLE_MANIFEST = """\
+# Skill System Manifest
+
+skills:
+  existing-skill:
+    canonical: skills/existing-skill/SKILL.md
+    type: standalone
+
+roles:
+  dev-group:
+    - name: existing-role
+      path: roles/dev-group/existing-role.md
+"""
+
+
+class ReadManifestTests(unittest.TestCase):
+    """Test reading and parsing a manifest file."""
+
+    def test_read_existing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            result = read_manifest(path)
+        self.assertIsInstance(result, dict)
+        self.assertIn("skills", result)
+        self.assertIn("roles", result)
+
+    def test_read_nonexistent_returns_empty(self) -> None:
+        result = read_manifest("/nonexistent/path/manifest.yaml")
+        self.assertEqual(result, {})
+
+    def test_read_empty_file_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+            result = read_manifest(path)
+        self.assertEqual(result, {})
+
+    def test_parsed_skill_has_expected_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            result = read_manifest(path)
+        skills = result["skills"]
+        self.assertIn("existing-skill", skills)
+        self.assertEqual(skills["existing-skill"]["type"], "standalone")
+
+
+class ConflictDetectionTests(unittest.TestCase):
+    """Test name conflict detection for skills and roles."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmpdir, "manifest.yaml")
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(SAMPLE_MANIFEST)
+        self.manifest = read_manifest(self.path)
+
+    def tearDown(self) -> None:
+        import shutil
+        shutil.rmtree(self.tmpdir)
+
+    def test_skill_conflict_detected(self) -> None:
+        self.assertTrue(has_skill_conflict(self.manifest, "existing-skill"))
+
+    def test_no_skill_conflict_for_new_name(self) -> None:
+        self.assertFalse(has_skill_conflict(self.manifest, "new-skill"))
+
+    def test_skill_conflict_empty_manifest(self) -> None:
+        self.assertFalse(has_skill_conflict({}, "any-name"))
+
+    def test_role_conflict_detected(self) -> None:
+        self.assertTrue(has_role_conflict(self.manifest, "dev-group", "existing-role"))
+
+    def test_no_role_conflict_for_new_name(self) -> None:
+        self.assertFalse(has_role_conflict(self.manifest, "dev-group", "new-role"))
+
+    def test_no_role_conflict_for_new_group(self) -> None:
+        self.assertFalse(has_role_conflict(self.manifest, "other-group", "existing-role"))
+
+    def test_role_conflict_empty_manifest(self) -> None:
+        self.assertFalse(has_role_conflict({}, "any-group", "any-name"))
+
+
+class AppendSkillEntryTests(unittest.TestCase):
+    """Test appending skill entries to a manifest."""
+
+    def test_append_standalone_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            append_skill_entry(path, "new-skill")
+            result = read_manifest(path)
+        self.assertIn("new-skill", result["skills"])
+        self.assertEqual(result["skills"]["new-skill"]["type"], "standalone")
+        self.assertEqual(
+            result["skills"]["new-skill"]["canonical"],
+            "skills/new-skill/SKILL.md",
+        )
+
+    def test_append_router_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            append_skill_entry(path, "my-router", router=True)
+            result = read_manifest(path)
+        self.assertIn("my-router", result["skills"])
+        self.assertEqual(result["skills"]["my-router"]["type"], "router")
+
+    def test_append_to_empty_skills_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            append_skill_entry(path, "first-skill")
+            result = read_manifest(path)
+        self.assertIn("first-skill", result["skills"])
+
+    def test_append_preserves_existing_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            append_skill_entry(path, "new-skill")
+            result = read_manifest(path)
+        self.assertIn("existing-skill", result["skills"])
+        self.assertIn("new-skill", result["skills"])
+
+
+class AppendRoleEntryTests(unittest.TestCase):
+    """Test appending role entries to a manifest."""
+
+    def test_append_role_to_existing_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            append_role_entry(path, "dev-group", "new-role")
+            result = read_manifest(path)
+        roles = result["roles"]["dev-group"]
+        names = [r["name"] for r in roles if isinstance(r, dict)]
+        self.assertIn("new-role", names)
+
+    def test_append_role_to_new_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            append_role_entry(path, "ops-group", "ops-role")
+            result = read_manifest(path)
+        self.assertIn("ops-group", result["roles"])
+        roles = result["roles"]["ops-group"]
+        names = [r["name"] for r in roles if isinstance(r, dict)]
+        self.assertIn("ops-role", names)
+
+    def test_append_role_preserves_existing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            append_role_entry(path, "dev-group", "new-role")
+            result = read_manifest(path)
+        roles = result["roles"]["dev-group"]
+        names = [r["name"] for r in roles if isinstance(r, dict)]
+        self.assertIn("existing-role", names)
+        self.assertIn("new-role", names)
+
+    def test_append_role_to_empty_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            append_role_entry(path, "my-group", "my-role")
+            result = read_manifest(path)
+        self.assertIn("my-group", result["roles"])
+
+
+class ScaffoldEmptyManifestTests(unittest.TestCase):
+    """Test scaffolding a new empty manifest."""
+
+    def test_creates_manifest_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            self.assertTrue(os.path.isfile(path))
+
+    def test_manifest_has_skills_and_roles_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        self.assertIn("skills:", text)
+        self.assertIn("roles:", text)
+
+    def test_manifest_is_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            result = read_manifest(path)
+        self.assertIsInstance(result, dict)
+
+    def test_creates_parent_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sub", "dir", "manifest.yaml")
+            scaffold_empty_manifest(path)
+            self.assertTrue(os.path.isfile(path))
+
+
+if __name__ == "__main__":
+    unittest.main()
