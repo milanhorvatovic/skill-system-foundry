@@ -423,6 +423,49 @@ class ManifestParseErrorTests(unittest.TestCase):
                 read_manifest(path)
             self.assertIn("'skills' must be a mapping", str(ctx.exception))
 
+    def test_role_group_as_scalar_raises_manifest_parse_error(self) -> None:
+        """A manifest where a role group is a scalar (not a list) raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n\nroles:\n  my-group: not-a-list\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("role group 'my-group' must be a list", str(ctx.exception))
+
+    def test_role_group_as_mapping_raises_manifest_parse_error(self) -> None:
+        """A manifest where a role group is a mapping (not a list) raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n\n"
+                    "roles:\n"
+                    "  bad-group:\n"
+                    "    nested-key: value\n"
+                )
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("role group 'bad-group' must be a list", str(ctx.exception))
+
+    def test_valid_role_group_does_not_raise(self) -> None:
+        """A manifest where role groups are lists passes validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            result = read_manifest(path)
+        self.assertIsInstance(result["roles"]["dev-group"], list)
+
+    def test_empty_role_group_does_not_raise(self) -> None:
+        """A manifest where a role group is empty (None/empty string) passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n\nroles:\n  empty-group:\n")
+            result = read_manifest(path)
+        self.assertIsInstance(result, dict)
+
 
 class AppendSkillSectionOrderTests(unittest.TestCase):
     """Test that append_skill_entry preserves canonical section order."""
@@ -549,6 +592,20 @@ class UpdateManifestForRoleTests(unittest.TestCase):
                 f.write("roles: not-a-mapping\n")
             updated, warning, created = update_manifest_for_role(
                 path, "grp", "r",
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("skipping manifest update", warning)
+            self.assertFalse(created)
+
+    def test_non_list_role_group_returns_warning(self) -> None:
+        """A role group that is a scalar triggers a warning and skips update."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n\nroles:\n  my-group: not-a-list\n")
+            updated, warning, created = update_manifest_for_role(
+                path, "my-group", "new-role",
             )
             self.assertFalse(updated)
             self.assertIsNotNone(warning)

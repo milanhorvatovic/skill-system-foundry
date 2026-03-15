@@ -66,6 +66,15 @@ def read_manifest(path: str) -> dict:
             raise ManifestParseError(
                 f"Failed to parse {path}: 'roles' must be a mapping"
             )
+        # Validate each role group value is a list so that append
+        # operations don't silently corrupt incompatible structures.
+        if isinstance(roles, dict):
+            for group_name, group_val in roles.items():
+                if group_val is not None and group_val != "" and not isinstance(group_val, list):
+                    raise ManifestParseError(
+                        f"Failed to parse {path}: "
+                        f"role group '{group_name}' must be a list"
+                    )
         return manifest
     except ValueError as exc:
         raise ManifestParseError(

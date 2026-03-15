@@ -866,9 +866,8 @@ class UpdateManifestSkillTests(unittest.TestCase):
                 ["skill", "conflict-skill", "--update-manifest", "--root", tmpdir],
                 cwd=REPO_ROOT,
             )
-            # Scaffolding itself should fail because directory already exists
-            # OR succeed if dir doesn't exist but manifest has the name.
-            # The skill dir won't exist, so scaffold succeeds but manifest warns.
+            # The skill directory doesn't exist, so scaffolding succeeds.
+            # The manifest already has the name, so the manifest update warns.
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             self.assertIn("WARN", proc.stdout)
             self.assertIn("already exists", proc.stdout)
