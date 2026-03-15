@@ -501,7 +501,7 @@ def main():
         if json_output:
             print(to_json_output({
                 "tool": "audit_skill_system",
-                "path": system_root,
+                "path": os.path.abspath(system_root),
                 "success": False,
                 "error": f"'{system_root}' is not a directory",
             }))

@@ -101,7 +101,8 @@ def create_dir_with_gitkeep(path: str) -> str:
     """Create directory with .gitkeep so it tracks in git.
 
     Returns:
-        The absolute path to the created ``.gitkeep`` file.
+        The path to the ``.gitkeep`` file (relative or absolute,
+        matching the input *path*).
     """
     os.makedirs(path, exist_ok=True)
     gitkeep = os.path.join(path, FILE_GITKEEP)
@@ -158,7 +159,9 @@ def scaffold_skill(
         print(f"{LEVEL_FAIL}: Directory already exists: {skill_path}")
         sys.exit(1)
 
-    # Tracks all filesystem entries created (files *and* directories).
+    # Tracks created filesystem entries: content files (e.g. SKILL.md),
+    # optional directories, and their .gitkeep sentinel files.
+    # Exposed as the ``"created"`` list in JSON output.
     created_paths: list[str] = []
 
     if router:
@@ -318,7 +321,8 @@ def scaffold_capability(
         print(f"{LEVEL_FAIL}: Parent skill not found: {router_skill}")
         sys.exit(1)
 
-    # Tracks all filesystem entries created (files *and* directories).
+    # Tracks created filesystem entries: content files (e.g.
+    # capability.md), optional directories, and their .gitkeep files.
     created_paths: list[str] = []
 
     try:

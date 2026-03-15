@@ -402,7 +402,7 @@ def main():
         if json_output:
             print(to_json_output({
                 "tool": "validate_skill",
-                "path": skill_path,
+                "path": os.path.abspath(skill_path),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
             }))

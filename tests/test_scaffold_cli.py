@@ -766,7 +766,7 @@ class ScaffoldInternalErrorJsonTests(unittest.TestCase):
             # Place a regular file where skills/ directory should be
             # created, causing os.makedirs inside write_file to fail.
             blocker = os.path.join(tmpdir, "skills")
-            with open(blocker, "w") as f:
+            with open(blocker, "w", encoding="utf-8") as f:
                 f.write("blocker")
             proc = _run(
                 ["skill", "test-skill", "--root", tmpdir, "--json"],
