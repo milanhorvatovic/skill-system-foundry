@@ -555,7 +555,7 @@ def _validate_flags(flags: list[str], component: str, *, json_mode: bool = False
         sys.exit(1)
 
 
-def _parse_optional_dirs(flags):
+def _parse_optional_dirs(flags: list[str]) -> list[str]:
     """Return deduplicated list of optional directory constants from *flags*.
 
     Call *_validate_flags* first to ensure all flags are recognised.
