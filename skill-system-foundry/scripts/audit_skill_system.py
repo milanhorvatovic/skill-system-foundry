@@ -154,7 +154,13 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
 
 
 def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
-    """Run all skill-system-level validations."""
+    """Run all skill-system-level validations.
+
+    Returns:
+        A tuple of ``(errors, counts)`` where *errors* is a list of
+        error strings and *counts* is a dict with ``"skills"``,
+        ``"capabilities"``, and ``"roles"`` integer values.
+    """
     errors = []
     system_root = os.path.abspath(system_root)
 
@@ -167,6 +173,12 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
 
     registered_skills = [s for s in skills if s["type"] == "registered"]
     capabilities = [s for s in skills if s["type"] == "capability"]
+
+    counts = {
+        "skills": len(registered_skills),
+        "capabilities": len(capabilities),
+        "roles": len(roles),
+    }
 
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
@@ -401,7 +413,7 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
             except Exception as e:
                 errors.append(f"{LEVEL_WARN}: Failed to parse {FILE_MANIFEST}: {e}")
 
-    return errors
+    return errors, counts
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -456,12 +468,17 @@ def main():
     # Pre-check for --json so parse errors can be reported as JSON.
     _json_mode = "--json" in sys.argv
 
+    # Fast-path: no arguments at all → print module docstring (matches
+    # the convention used by bundle.py and scaffold.py).
+    if len(sys.argv) == 1:
+        print(__doc__)
+        sys.exit(1)
+
     parser = _build_parser()
 
     # Override parser.error() to emit JSON on parse failures when
-    # --json is present (argparse normally prints to stderr and exits).
-    _original_error = parser.error
-
+    # --json is present and to always exit with code 1 (not
+    # argparse's default 2) to match the repo convention.
     def _json_aware_error(message: str) -> None:
         if _json_mode:
             print(to_json_output({
@@ -470,8 +487,6 @@ def main():
                 "error": message,
             }))
             sys.exit(1)
-        # Print usage and error to stderr, then exit with code 1
-        # (not argparse's default 2) to match the repo convention.
         parser.print_usage(sys.stderr)
         print(f"{parser.prog}: error: {message}", file=sys.stderr)
         sys.exit(1)
@@ -508,31 +523,18 @@ def main():
         if verbose:
             print("=" * SEPARATOR_WIDTH)
 
-    errors = audit_skill_system(
+    errors, counts = audit_skill_system(
         system_root, verbose=effective_verbose,
         allow_orchestration=allow_orchestration,
     )
 
     if json_output:
-        # Discover component counts for the JSON summary.
-        # This duplicates the discovery inside audit_skill_system() but
-        # avoids changing that function's return type.
-        abs_root = os.path.abspath(system_root)
-        all_skills = find_skill_dirs(abs_root)
-        all_roles = find_roles(abs_root)
-        registered = [s for s in all_skills if s["type"] == "registered"]
-        caps = [s for s in all_skills if s["type"] == "capability"]
-
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "audit_skill_system",
-            "path": abs_root,
+            "path": os.path.abspath(system_root),
             "success": len(fails) == 0,
-            "counts": {
-                "skills": len(registered),
-                "capabilities": len(caps),
-                "roles": len(all_roles),
-            },
+            "counts": counts,
             "summary": {
                 "failures": len(fails),
                 "warnings": len(warns),

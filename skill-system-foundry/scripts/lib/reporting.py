@@ -55,10 +55,11 @@ def print_summary(fails: list[str], warns: list[str], infos: list[str]) -> None:
 
 
 def to_json_output(data: dict) -> str:
-    """Serialize *data* to a compact, deterministic JSON string.
+    """Serialize *data* to a pretty-printed, deterministic JSON string.
 
-    Keys are sorted for reproducible output.  The result is intended
-    for machine consumption — no trailing newline is added.
+    Keys are sorted for reproducible output.  The result uses
+    ``indent=2`` for readability and is intended for machine
+    consumption — no trailing newline is added.
 
     When *data* contains a ``"tool"`` key (indicating a tool result
     rather than a raw data structure), a ``"version"`` key is

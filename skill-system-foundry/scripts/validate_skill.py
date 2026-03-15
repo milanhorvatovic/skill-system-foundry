@@ -365,12 +365,17 @@ def main():
     # Pre-check for --json so parse errors can be reported as JSON.
     _json_mode = "--json" in sys.argv
 
+    # Fast-path: no arguments at all → print module docstring (matches
+    # the convention used by bundle.py and scaffold.py).
+    if len(sys.argv) == 1:
+        print(__doc__)
+        sys.exit(1)
+
     parser = _build_parser()
 
     # Override parser.error() to emit JSON on parse failures when
-    # --json is present (argparse normally prints to stderr and exits).
-    _original_error = parser.error
-
+    # --json is present and to always exit with code 1 (not
+    # argparse's default 2) to match the repo convention.
     def _json_aware_error(message: str) -> None:
         if _json_mode:
             print(to_json_output({
@@ -379,8 +384,6 @@ def main():
                 "error": message,
             }))
             sys.exit(1)
-        # Print usage and error to stderr, then exit with code 1
-        # (not argparse's default 2) to match the repo convention.
         parser.print_usage(sys.stderr)
         print(f"{parser.prog}: error: {message}", file=sys.stderr)
         sys.exit(1)

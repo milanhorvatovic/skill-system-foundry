@@ -56,7 +56,7 @@ ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
 def validate_name(name: str, json_output: bool = False) -> bool:
     """Validate name follows Agent Skills spec conventions.
 
-    Delegates to validate_skill.validate_name for the actual rules,
+    Delegates to lib.validation.validate_name for the actual rules,
     adapting the output to scaffold's print-and-return-bool interface.
     When *json_output* is True, messages are suppressed (the caller
     handles error reporting).
@@ -154,7 +154,8 @@ def scaffold_skill(
         print(f"{LEVEL_FAIL}: Directory already exists: {skill_path}")
         sys.exit(1)
 
-    created_files: list[str] = []
+    # Tracks all filesystem entries created (files *and* directories).
+    created_paths: list[str] = []
 
     if router:
         template = read_template(TEMPLATE_SKILL_ROUTER)
@@ -164,14 +165,14 @@ def scaffold_skill(
             PH_DOMAIN_TITLE, title
         )
         write_file(os.path.join(skill_path, FILE_SKILL_MD), content, quiet=json_output)
-        created_files.append(os.path.join(skill_path, FILE_SKILL_MD))
+        created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
         create_dir_with_gitkeep(os.path.join(skill_path, DIR_CAPABILITIES))
-        created_files.append(os.path.join(skill_path, DIR_CAPABILITIES))
+        created_paths.append(os.path.join(skill_path, DIR_CAPABILITIES))
         if not json_output:
             print(f"  Created: {os.path.join(skill_path, DIR_CAPABILITIES)}")
         for d in optional_dirs:
             create_dir_with_gitkeep(os.path.join(skill_path, d))
-            created_files.append(os.path.join(skill_path, d))
+            created_paths.append(os.path.join(skill_path, d))
             if not json_output:
                 print(f"  Created: {os.path.join(skill_path, d)}")
         if not json_output:
@@ -183,10 +184,10 @@ def scaffold_skill(
             PH_SKILL_TITLE, title
         )
         write_file(os.path.join(skill_path, FILE_SKILL_MD), content, quiet=json_output)
-        created_files.append(os.path.join(skill_path, FILE_SKILL_MD))
+        created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
         for d in optional_dirs:
             create_dir_with_gitkeep(os.path.join(skill_path, d))
-            created_files.append(os.path.join(skill_path, d))
+            created_paths.append(os.path.join(skill_path, d))
             if not json_output:
                 print(f"  Created: {os.path.join(skill_path, d)}")
 
@@ -199,7 +200,7 @@ def scaffold_skill(
             "name": name,
             "success": True,
             "path": os.path.abspath(skill_path),
-            "created": [os.path.abspath(f) for f in created_files],
+            "created_paths": [os.path.abspath(p) for p in created_paths],
             "router": router,
         }
 
@@ -283,7 +284,8 @@ def scaffold_capability(
         print(f"{LEVEL_FAIL}: Parent skill not found: {router_skill}")
         sys.exit(1)
 
-    created_files: list[str] = []
+    # Tracks all filesystem entries created (files *and* directories).
+    created_paths: list[str] = []
 
     template = read_template(TEMPLATE_CAPABILITY)
     title = name.replace("-", " ").title()
@@ -291,10 +293,10 @@ def scaffold_capability(
         PH_CAPABILITY_TITLE, title
     )
     write_file(os.path.join(cap_path, FILE_CAPABILITY_MD), content, quiet=json_output)
-    created_files.append(os.path.join(cap_path, FILE_CAPABILITY_MD))
+    created_paths.append(os.path.join(cap_path, FILE_CAPABILITY_MD))
     for d in optional_dirs:
         create_dir_with_gitkeep(os.path.join(cap_path, d))
-        created_files.append(os.path.join(cap_path, d))
+        created_paths.append(os.path.join(cap_path, d))
         if not json_output:
             print(f"  Created: {os.path.join(cap_path, d)}")
 
@@ -306,7 +308,7 @@ def scaffold_capability(
             "domain": domain,
             "success": True,
             "path": os.path.abspath(cap_path),
-            "created": [os.path.abspath(f) for f in created_files],
+            "created_paths": [os.path.abspath(p) for p in created_paths],
         }
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
@@ -373,13 +375,14 @@ def scaffold_role(
         print(f"{LEVEL_FAIL}: File already exists: {role_path}")
         sys.exit(1)
 
-    created_files: list[str] = []
+    # Tracks all filesystem entries created (files only for roles).
+    created_paths: list[str] = []
 
     template = read_template(TEMPLATE_ROLE)
     title = name.replace("-", " ").title()
     content = template.replace(PH_ROLE_TITLE, title)
     write_file(role_path, content, quiet=json_output)
-    created_files.append(role_path)
+    created_paths.append(role_path)
 
     # Create top-level roles README if it doesn't exist
     roles_readme = os.path.join(root, DIR_ROLES, FILE_README) if root else os.path.join(DIR_ROLES, FILE_README)
@@ -390,7 +393,7 @@ def scaffold_role(
             "See subdirectories for role groups.\n",
             quiet=json_output,
         )
-        created_files.append(roles_readme)
+        created_paths.append(roles_readme)
 
     # Create group-level README if it doesn't exist
     readme_path = os.path.join(root, DIR_ROLES, group, FILE_README) if root else os.path.join(DIR_ROLES, group, FILE_README)
@@ -400,7 +403,7 @@ def scaffold_role(
             f"# {group.replace('-', ' ').title()}\n\nRoles:\n- {name}\n",
             quiet=json_output,
         )
-        created_files.append(readme_path)
+        created_paths.append(readme_path)
 
     if json_output:
         return {
@@ -410,7 +413,7 @@ def scaffold_role(
             "group": group,
             "success": True,
             "path": os.path.abspath(role_path),
-            "created": [os.path.abspath(f) for f in created_files],
+            "created_paths": [os.path.abspath(p) for p in created_paths],
         }
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
@@ -479,20 +482,28 @@ def _parse_optional_dirs(flags):
 def main():
     args = sys.argv[:]
 
+    # Parse --json flag first so that all subsequent error paths can
+    # emit machine-readable output when requested.
+    json_output = "--json" in args
+    if json_output:
+        args = [a for a in args if a != "--json"]
+
     # Parse --root option
     root = ""
     if "--root" in args:
         idx = args.index("--root")
-        if idx + 1 >= len(args):
-            print(f"{LEVEL_FAIL}: --root requires a path argument")
+        if idx + 1 >= len(args) or args[idx + 1].startswith("--"):
+            if json_output:
+                print(to_json_output({
+                    "tool": "scaffold",
+                    "success": False,
+                    "error": "--root requires a path argument",
+                }))
+            else:
+                print(f"{LEVEL_FAIL}: --root requires a path argument")
             sys.exit(1)
         root = args[idx + 1]
         del args[idx : idx + 2]
-
-    # Parse --json flag (strip before component dispatch)
-    json_output = "--json" in args
-    if json_output:
-        args = [a for a in args if a != "--json"]
 
     if len(args) < 3:
         if json_output:

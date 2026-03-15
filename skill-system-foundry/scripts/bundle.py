@@ -181,11 +181,30 @@ def main() -> None:
         ),
     )
 
+    # Pre-check for --json before argparse runs so that argument errors
+    # (e.g. missing required positional) are emitted as JSON, not plain
+    # text on stderr with exit-code 2.
+    json_mode = "--json" in sys.argv
+    if json_mode:
+        def _json_aware_error(message: str) -> None:
+            print(to_json_output({
+                "tool": "bundle",
+                "success": False,
+                "error": message,
+            }))
+            sys.exit(1)
+
+        parser.error = _json_aware_error  # type: ignore[assignment]
+
     args = parser.parse_args()
 
     bundle_target: str = args.target
     json_output: bool = args.json_output
     skill_path = os.path.abspath(args.skill_path)
+
+    # Collect warnings that occur before prevalidation (e.g. missing
+    # system root) so they can be included in JSON output.
+    early_warnings: list[str] = []
 
     def _json_fail(error: str) -> None:
         """Print a JSON failure blob and exit 1."""
@@ -291,13 +310,18 @@ def main() -> None:
             if not json_output:
                 print(f"Inferred system root: {system_root}")
         else:
+            _no_root_warn = (
+                f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
+                f"if external references are detected, because safety "
+                f"boundaries cannot be enforced. Use --system-root to "
+                f"specify it explicitly."
+            )
+            early_warnings.append(_no_root_warn)
+            # Print immediately in human mode only; the merged
+            # warnings list is used exclusively for JSON output to
+            # avoid duplicating this message in notices/failure blocks.
             if not json_output:
-                print_error_line(
-                    f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
-                    f"if external references are detected, because safety "
-                    f"boundaries cannot be enforced. Use --system-root to "
-                    f"specify it explicitly."
-                )
+                print_error_line(_no_root_warn)
 
     # Resolve output path
     if args.output:
@@ -339,11 +363,19 @@ def main() -> None:
         print("\nPhase 1: Pre-validation")
         print("-" * SEPARATOR_WIDTH)
         print("  Running pre-validation checks...")
-    errors, warnings, scan_result = prevalidate(
+    errors, prevalidate_warnings, scan_result = prevalidate(
         skill_path, system_root,
         inline_orchestrated_skills=inline_skills,
         bundle_target=bundle_target,
     )
+    # In JSON mode, merge early warnings (e.g. missing system root)
+    # with prevalidation warnings so they appear in the JSON output.
+    # In human mode, early warnings were already printed inline, so
+    # only include prevalidation warnings to avoid duplication.
+    if json_output:
+        warnings = early_warnings + list(prevalidate_warnings)
+    else:
+        warnings = list(prevalidate_warnings)
 
     if errors:
         if json_output:

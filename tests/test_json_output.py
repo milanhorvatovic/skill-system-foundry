@@ -42,11 +42,11 @@ def _run(script: str, args: list[str], cwd: str) -> subprocess.CompletedProcess[
 
 
 def _parse_json(stdout: str) -> dict:
-    """Parse JSON from stdout, stripping any non-JSON lines.
+    """Parse stdout as a single JSON object.
 
-    The ``write_file`` helper in scaffold.py prints "Created: ..."
-    lines even in JSON mode (they come from the file-writing helper).
-    This function finds the JSON object in the output.
+    All CLI tools emit pure JSON to stdout in ``--json`` mode (human-
+    readable output is suppressed).  This helper simply deserializes
+    the output; it will raise on any non-JSON content.
     """
     return json.loads(stdout)
 
@@ -440,9 +440,9 @@ class ScaffoldJsonTests(unittest.TestCase):
         self.assertEqual(data["name"], "my-skill")
         self.assertTrue(data["success"])
         self.assertIn("path", data)
-        self.assertIn("created", data)
-        self.assertIsInstance(data["created"], list)
-        self.assertGreater(len(data["created"]), 0)
+        self.assertIn("created_paths", data)
+        self.assertIsInstance(data["created_paths"], list)
+        self.assertGreater(len(data["created_paths"]), 0)
 
     def test_router_skill_json_output(self) -> None:
         """Scaffolding a router skill with --json includes router=true."""
@@ -545,6 +545,42 @@ class ScaffoldJsonTests(unittest.TestCase):
         self.assertFalse(data["success"])
         self.assertIn("Unknown component type", data["error"])
 
+    def test_json_missing_root_path_produces_json_error(self) -> None:
+        """--json with --root but no path argument produces JSON error."""
+        proc = _run(
+            SCAFFOLD_SCRIPT,
+            ["skill", "demo", "--root", "--json"],
+            cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1)
+        data = _parse_json(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("--root requires a path argument", data["error"])
+
+    def test_json_root_at_end_without_value(self) -> None:
+        """--json with --root as last arg (no value) produces JSON error."""
+        proc = _run(
+            SCAFFOLD_SCRIPT,
+            ["--json", "skill", "demo", "--root"],
+            cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1)
+        data = _parse_json(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("--root requires a path argument", data["error"])
+
+    def test_json_root_flag_as_value_produces_json_error(self) -> None:
+        """--root with another flag as value (e.g. --root --verbose) is rejected."""
+        proc = _run(
+            SCAFFOLD_SCRIPT,
+            ["skill", "demo", "--root", "--with-references", "--json"],
+            cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1)
+        data = _parse_json(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("--root requires a path argument", data["error"])
+
 
 # ===================================================================
 # bundle.py --json
@@ -635,6 +671,48 @@ class BundleJsonTests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
         json.loads(proc.stdout)
+
+    def test_json_no_args_produces_json_error(self) -> None:
+        """--json with no skill path produces JSON error (via argparse)."""
+        proc = _run(BUNDLE_SCRIPT, ["--json"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1)
+        data = _parse_json(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("error", data)
+
+    def test_json_invalid_target_produces_json_error(self) -> None:
+        """--json with invalid --target choice produces JSON error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            os.makedirs(skill_dir)
+            write_text(os.path.join(skill_dir, "SKILL.md"), "# Demo\n")
+            proc = _run(
+                BUNDLE_SCRIPT,
+                [skill_dir, "--target", "invalid", "--json"],
+                cwd=REPO_ROOT,
+            )
+        self.assertEqual(proc.returncode, 1)
+        data = _parse_json(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("error", data)
+        self.assertIn("invalid choice", data["error"])
+
+    def test_json_unrecognized_argument_produces_json_error(self) -> None:
+        """--json with unrecognized argument produces JSON error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            os.makedirs(skill_dir)
+            write_text(os.path.join(skill_dir, "SKILL.md"), "# Demo\n")
+            proc = _run(
+                BUNDLE_SCRIPT,
+                [skill_dir, "--bogus-flag", "--json"],
+                cwd=REPO_ROOT,
+            )
+        self.assertEqual(proc.returncode, 1)
+        data = _parse_json(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("error", data)
+        self.assertIn("unrecognized arguments", data["error"])
 
 
 if __name__ == "__main__":
