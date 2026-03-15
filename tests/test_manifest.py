@@ -533,6 +533,124 @@ class AppendSkillSectionOrderTests(unittest.TestCase):
             self.assertIn("dev", result["roles"])
 
 
+class InlineCommentTests(unittest.TestCase):
+    """Test that inline comments on section/group headers don't cause duplicates."""
+
+    MANIFEST_WITH_COMMENTS = (
+        "# Manifest\n"
+        "\n"
+        "skills: # all skills\n"
+        "  existing:\n"
+        "    canonical: skills/existing/SKILL.md\n"
+        "    type: standalone\n"
+        "\n"
+        "roles: # all roles\n"
+        "  dev-group: # developers\n"
+        "    - name: existing-role\n"
+        "      path: roles/dev-group/existing-role.md\n"
+    )
+
+    def test_skill_appended_to_section_with_inline_comment(self) -> None:
+        """append_skill_entry finds skills: even with an inline comment."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            append_skill_entry(path, "new-skill")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Must NOT have a duplicate skills: section.
+            self.assertEqual(text.count("skills:"), 1)
+            result = read_manifest(path)
+            self.assertIn("existing", result["skills"])
+            self.assertIn("new-skill", result["skills"])
+
+    def test_role_appended_to_section_with_inline_comment(self) -> None:
+        """append_role_entry finds roles: even with an inline comment."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            append_role_entry(path, "ops-group", "ops-role")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Must NOT have a duplicate roles: section.
+            self.assertEqual(text.count("roles:"), 1)
+            result = read_manifest(path)
+            self.assertIn("dev-group", result["roles"])
+            self.assertIn("ops-group", result["roles"])
+
+    def test_role_appended_to_group_with_inline_comment(self) -> None:
+        """append_role_entry finds existing group even with an inline comment."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            append_role_entry(path, "dev-group", "new-role")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Must NOT have a duplicate dev-group: key.
+            self.assertEqual(text.count("dev-group:"), 1)
+            result = read_manifest(path)
+            roles = result["roles"]["dev-group"]
+            names = [r["name"] for r in roles if isinstance(r, dict)]
+            self.assertIn("existing-role", names)
+            self.assertIn("new-role", names)
+
+    def test_skill_section_order_preserved_with_inline_comments(self) -> None:
+        """When skills: has inline comment, new skill still goes into correct section."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            append_skill_entry(path, "second-skill")
+            append_skill_entry(path, "third-skill", router=True)
+            result = read_manifest(path)
+            self.assertIn("existing", result["skills"])
+            self.assertIn("second-skill", result["skills"])
+            self.assertIn("third-skill", result["skills"])
+            self.assertEqual(result["skills"]["third-skill"]["type"], "router")
+
+    def test_update_manifest_for_skill_with_inline_comments(self) -> None:
+        """End-to-end: update_manifest_for_skill works on manifest with inline comments."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            updated, warning, created = update_manifest_for_skill(path, "added")
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertFalse(created)
+            result = read_manifest(path)
+            self.assertIn("added", result["skills"])
+
+    def test_update_manifest_for_role_with_inline_comments(self) -> None:
+        """End-to-end: update_manifest_for_role works on manifest with inline comments."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            updated, warning, created = update_manifest_for_role(
+                path, "dev-group", "added-role",
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertFalse(created)
+            result = read_manifest(path)
+            names = [r["name"] for r in result["roles"]["dev-group"] if isinstance(r, dict)]
+            self.assertIn("added-role", names)
+
+    def test_conflict_detected_with_inline_comments(self) -> None:
+        """Conflict detection works when sections have inline comments."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.MANIFEST_WITH_COMMENTS)
+            updated, warning, _ = update_manifest_for_skill(path, "existing")
+            self.assertFalse(updated)
+            self.assertIn("already exists", warning)
+
+
 class UpdateManifestForSkillTests(unittest.TestCase):
     """Test the update_manifest_for_skill library function."""
 

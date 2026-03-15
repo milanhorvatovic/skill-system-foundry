@@ -304,9 +304,12 @@ def scaffold_empty_manifest(manifest_path: str) -> None:
 def _find_section_index(lines: list[str], section: str) -> int | None:
     """Return the line index of a top-level *section* key, or None."""
     for i, line in enumerate(lines):
-        stripped = line.strip()
         # Match only top-level keys (no leading whitespace).
-        if stripped == section and not line[0:1].isspace():
+        if line[0:1].isspace():
+            continue
+        # Strip inline comments before comparing.
+        head = line.split("#", 1)[0].rstrip()
+        if head == section:
             return i
     return None
 
