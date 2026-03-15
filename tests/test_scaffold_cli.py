@@ -9,12 +9,43 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
 )
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCAFFOLD_SCRIPT = os.path.join(SCRIPTS_DIR, "scaffold.py")
+
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
+from scaffold import (
+    validate_name,
+    read_template,
+    write_file,
+    create_dir_with_gitkeep,
+    scaffold_skill,
+    scaffold_capability,
+    scaffold_role,
+    _validate_flags,
+    _parse_optional_dirs,
+)
+from lib.constants import (
+    FILE_SKILL_MD,
+    FILE_CAPABILITY_MD,
+    FILE_GITKEEP,
+    DIR_SKILLS,
+    DIR_CAPABILITIES,
+    DIR_ROLES,
+    DIR_REFERENCES,
+    DIR_SCRIPTS,
+    DIR_ASSETS,
+    TEMPLATE_SKILL_STANDALONE,
+    TEMPLATE_SKILL_ROUTER,
+    TEMPLATE_CAPABILITY,
+    TEMPLATE_ROLE,
+)
 
 
 def _run(args, cwd):
@@ -404,6 +435,384 @@ class UsageStringTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL", proc.stdout)
         self.assertIn("Unknown component type: bogus", proc.stdout)
+
+
+# ===================================================================
+# Direct import tests (exercises code paths that subprocess-based
+# tests cover functionally but that coverage cannot capture).
+# ===================================================================
+
+
+class ValidateNameUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.validate_name()."""
+
+    def test_valid_name_returns_true(self) -> None:
+        self.assertTrue(validate_name("my-skill"))
+
+    def test_invalid_name_returns_false(self) -> None:
+        self.assertFalse(validate_name("INVALID", json_output=True))
+
+    def test_json_mode_suppresses_print(self) -> None:
+        """json_output=True suppresses all stdout output."""
+        import io
+        from unittest.mock import patch as _patch
+
+        buf = io.StringIO()
+        with _patch("sys.stdout", buf):
+            validate_name("INVALID", json_output=True)
+        self.assertEqual(buf.getvalue(), "")
+
+
+class ReadTemplateUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.read_template()."""
+
+    def test_reads_standalone_skill_template(self) -> None:
+        content = read_template(TEMPLATE_SKILL_STANDALONE)
+        self.assertIsInstance(content, str)
+        self.assertGreater(len(content), 0)
+
+    def test_reads_router_skill_template(self) -> None:
+        content = read_template(TEMPLATE_SKILL_ROUTER)
+        self.assertIsInstance(content, str)
+        self.assertGreater(len(content), 0)
+
+    def test_reads_capability_template(self) -> None:
+        content = read_template(TEMPLATE_CAPABILITY)
+        self.assertIsInstance(content, str)
+
+    def test_reads_role_template(self) -> None:
+        content = read_template(TEMPLATE_ROLE)
+        self.assertIsInstance(content, str)
+
+
+class WriteFileUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.write_file()."""
+
+    def test_creates_file_and_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sub", "file.txt")
+            write_file(path, "hello", quiet=True)
+            self.assertTrue(os.path.exists(path))
+            with open(path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "hello")
+
+
+class CreateDirWithGitkeepUnitTests(unittest.TestCase):
+    """Direct tests for scaffold.create_dir_with_gitkeep()."""
+
+    def test_creates_directory_with_gitkeep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "newdir")
+            create_dir_with_gitkeep(target)
+            self.assertTrue(os.path.isdir(target))
+            self.assertTrue(os.path.exists(os.path.join(target, FILE_GITKEEP)))
+
+
+class ValidateFlagsUnitTests(unittest.TestCase):
+    """Direct tests for scaffold._validate_flags()."""
+
+    def test_valid_skill_flags_pass(self) -> None:
+        # Should not raise.
+        _validate_flags(["--router", "--with-references"], "skill")
+
+    def test_unknown_flag_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _validate_flags(["--bogus"], "skill")
+
+    def test_unknown_flag_json_mode_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            _validate_flags(["--bogus"], "skill", json_mode=True)
+
+
+class ParseOptionalDirsUnitTests(unittest.TestCase):
+    """Direct tests for scaffold._parse_optional_dirs()."""
+
+    def test_parses_references(self) -> None:
+        dirs = _parse_optional_dirs(["--with-references"])
+        self.assertIn(DIR_REFERENCES, dirs)
+
+    def test_parses_scripts(self) -> None:
+        dirs = _parse_optional_dirs(["--with-scripts"])
+        self.assertIn(DIR_SCRIPTS, dirs)
+
+    def test_parses_assets(self) -> None:
+        dirs = _parse_optional_dirs(["--with-assets"])
+        self.assertIn(DIR_ASSETS, dirs)
+
+    def test_ignores_non_with_flags(self) -> None:
+        dirs = _parse_optional_dirs(["--router"])
+        self.assertEqual(dirs, [])
+
+
+class ScaffoldSkillUnitTests(unittest.TestCase):
+    """Direct tests for scaffold_skill() with json_output=True."""
+
+    def test_standalone_skill_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("test-skill", root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["component"], "skill")
+        self.assertEqual(result["name"], "test-skill")
+        self.assertFalse(result["router"])
+        self.assertIn("created", result)
+
+    def test_router_skill_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("test-router", router=True, root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertTrue(result["router"])
+
+    def test_skill_with_optional_dirs_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "test-skill",
+                root=tmpdir,
+                optional_dirs=[DIR_REFERENCES, DIR_SCRIPTS],
+                json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertGreater(len(result["created"]), 1)
+
+    def test_invalid_name_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("INVALID", root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("error", result)
+        self.assertIn("details", result)
+        self.assertIsInstance(result["details"], list)
+        self.assertGreater(len(result["details"]), 0)
+
+    def test_duplicate_skill_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dup-skill", root=tmpdir, json_output=True)
+            result = scaffold_skill("dup-skill", root=tmpdir, json_output=True)
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("already exists", result["error"])
+
+    def test_scaffold_skill_json_template_not_found(self) -> None:
+        """Missing template in JSON mode returns JSON error dict."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("scaffold.read_template") as mock_read:
+                mock_read.side_effect = FileNotFoundError("Template not found: /fake/path.md")
+                result = scaffold_skill("test-skill", router=False, root=tmpdir, json_output=True)
+            self.assertIsNotNone(result)
+            self.assertFalse(result["success"])
+            self.assertIn("error", result)
+            self.assertIn("Template not found", result["error"])
+
+
+class ScaffoldCapabilityUnitTests(unittest.TestCase):
+    """Direct tests for scaffold_capability() with json_output=True."""
+
+    def test_capability_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create router prerequisite.
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "my-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["component"], "capability")
+        self.assertIn("created", result)
+
+    def test_invalid_domain_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_capability(
+                "BAD", "my-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_invalid_cap_name_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "BAD", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_missing_parent_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_capability(
+                "no-parent", "my-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("Parent skill not found", result["error"])
+
+    def test_duplicate_capability_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            scaffold_capability("my-domain", "dup-cap", root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "dup-cap", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("already exists", result["error"])
+
+    def test_scaffold_capability_json_template_not_found(self) -> None:
+        """Missing template in JSON mode returns JSON error dict."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create router skill first
+            skill_dir = os.path.join(tmpdir, "skills", "test-domain")
+            os.makedirs(skill_dir)
+            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("# Test Domain\n")
+
+            with patch("scaffold.read_template") as mock_read:
+                mock_read.side_effect = FileNotFoundError("Template not found: /fake/path.md")
+                result = scaffold_capability("test-domain", "test-cap", root=tmpdir, json_output=True)
+            self.assertIsNotNone(result)
+            self.assertFalse(result["success"])
+            self.assertIn("error", result)
+            self.assertIn("Template not found", result["error"])
+
+
+class ScaffoldRoleUnitTests(unittest.TestCase):
+    """Direct tests for scaffold_role() with json_output=True."""
+
+    def test_role_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "my-group", "my-role", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["component"], "role")
+        self.assertIn("created", result)
+
+    def test_invalid_group_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "BAD", "my-role", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_invalid_role_name_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "my-group", "BAD", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+
+    def test_duplicate_role_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_role("my-group", "dup-role", root=tmpdir, json_output=True)
+            result = scaffold_role(
+                "my-group", "dup-role", root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn("already exists", result["error"])
+
+    def test_scaffold_role_json_template_not_found(self) -> None:
+        """Missing template in JSON mode returns JSON error dict."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("scaffold.read_template") as mock_read:
+                mock_read.side_effect = FileNotFoundError("Template not found: /fake/path.md")
+                result = scaffold_role("test-group", "test-role", root=tmpdir, json_output=True)
+            self.assertIsNotNone(result)
+            self.assertFalse(result["success"])
+            self.assertIn("error", result)
+            self.assertIn("Template not found", result["error"])
+
+
+class CreatedGitkeepTests(unittest.TestCase):
+    """Verify created includes .gitkeep files for directories."""
+
+    def test_router_skill_includes_gitkeep_in_created(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "test-router", router=True, root=tmpdir, json_output=True,
+            )
+        self.assertIsNotNone(result)
+        gitkeep_paths = [p for p in result["created"] if p.endswith(FILE_GITKEEP)]
+        # At least one .gitkeep for the capabilities/ directory
+        self.assertGreater(len(gitkeep_paths), 0)
+
+    def test_skill_with_optional_dirs_includes_gitkeeps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "test-skill", root=tmpdir,
+                optional_dirs=[DIR_REFERENCES],
+                json_output=True,
+            )
+        self.assertIsNotNone(result)
+        gitkeep_paths = [p for p in result["created"] if p.endswith(FILE_GITKEEP)]
+        self.assertEqual(len(gitkeep_paths), 1)
+
+    def test_capability_with_optional_dirs_includes_gitkeeps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "my-domain", "my-cap", root=tmpdir,
+                optional_dirs=[DIR_REFERENCES],
+                json_output=True,
+            )
+        self.assertIsNotNone(result)
+        gitkeep_paths = [p for p in result["created"] if p.endswith(FILE_GITKEEP)]
+        self.assertEqual(len(gitkeep_paths), 1)
+
+
+class ScaffoldInternalErrorJsonTests(unittest.TestCase):
+    """Verify JSON output on internal scaffold failures (OSError etc.)."""
+
+    def test_filesystem_error_produces_json_via_main(self) -> None:
+        """A filesystem error during scaffolding produces JSON via main()."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Place a regular file where skills/ directory should be
+            # created, causing os.makedirs inside write_file to fail.
+            blocker = os.path.join(tmpdir, "skills")
+            with open(blocker, "w", encoding="utf-8") as f:
+                f.write("blocker")
+            proc = _run(
+                ["skill", "test-skill", "--root", tmpdir, "--json"],
+                cwd=REPO_ROOT,
+            )
+        self.assertEqual(proc.returncode, 1)
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("error", data)
+
+
+class BundleParseErrorExitCodeTests(unittest.TestCase):
+    """Verify bundle.py parse errors use exit code 1 in all modes."""
+
+    def test_human_mode_missing_args_exits_one(self) -> None:
+        """Missing positional arg in human mode exits with code 1."""
+        proc = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS_DIR, "bundle.py"), "--verbose"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+
+    def test_json_mode_missing_args_exits_one(self) -> None:
+        """Missing positional arg in --json mode exits with code 1."""
+        proc = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS_DIR, "bundle.py"), "--json"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        import json
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("error", data)
 
 
 if __name__ == "__main__":

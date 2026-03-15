@@ -23,6 +23,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from audit_skill_system import (
+    _build_parser,
     check_upward_references,
     check_role_composition,
     audit_skill_system,
@@ -899,6 +900,65 @@ class AuditManifestTests(unittest.TestCase):
 # ===================================================================
 # main() CLI
 # ===================================================================
+
+
+class BuildParserTests(unittest.TestCase):
+    """Direct unit tests for the argparse parser builder."""
+
+    def test_parser_returns_argument_parser(self) -> None:
+        """_build_parser returns an ArgumentParser instance."""
+        import argparse
+
+        parser = _build_parser()
+        self.assertIsInstance(parser, argparse.ArgumentParser)
+
+    def test_parser_accepts_positional_system_root(self) -> None:
+        """Parser accepts a single positional system_root argument."""
+        parser = _build_parser()
+        args = parser.parse_args(["/path/to/system"])
+        self.assertEqual(args.system_root, "/path/to/system")
+
+    def test_parser_defaults_are_false(self) -> None:
+        """All optional flags default to False."""
+        parser = _build_parser()
+        args = parser.parse_args(["/path"])
+        self.assertFalse(args.verbose)
+        self.assertFalse(args.allow_orchestration)
+        self.assertFalse(args.json_output)
+
+    def test_parser_accepts_all_flags(self) -> None:
+        """Parser accepts all optional flags together."""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "/path", "--verbose", "--allow-orchestration", "--json",
+        ])
+        self.assertTrue(args.verbose)
+        self.assertTrue(args.allow_orchestration)
+        self.assertTrue(args.json_output)
+
+    def test_parser_rejects_unknown_flag(self) -> None:
+        """Parser exits on unrecognised flags."""
+        parser = _build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["/path", "--bogus"])
+
+    def test_parser_rejects_missing_positional(self) -> None:
+        """Parser exits when no positional argument is provided."""
+        parser = _build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args([])
+
+    def test_audit_returns_errors_list(self) -> None:
+        """audit_skill_system returns a list of error strings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(tmpdir, "manifest.yaml"),
+                "name: test-system\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        self.assertIsInstance(errors, list)
 
 
 class MainCLITests(unittest.TestCase):

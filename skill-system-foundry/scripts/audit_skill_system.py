@@ -8,7 +8,7 @@ capability entry naming, and structural rules.
 
 Usage:
     python scripts/audit_skill_system.py <system-root> [--verbose]
-        [--allow-orchestration]
+        [--allow-orchestration] [--json]
 
 Options:
     --verbose        Show detailed output for each check.
@@ -17,6 +17,7 @@ Options:
                      Use when orchestration skills (both paths in
                      architecture-patterns.md) intentionally reference
                      roles.
+    --json           Output results as machine-readable JSON.
 
 The <system-root> should contain a skills/ directory with skill
 subdirectories. This is the deployed system layout (e.g.,
@@ -34,8 +35,10 @@ distribution repository root.
 Examples:
     python scripts/audit_skill_system.py /path/to/project/.agents
     python scripts/audit_skill_system.py /path/to/system --verbose
+    python scripts/audit_skill_system.py /path/to/system --json
 """
 
+import argparse
 import sys
 import os
 
@@ -45,7 +48,13 @@ if _scripts_dir not in sys.path:
 
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.yaml_parser import parse_yaml_subset
-from lib.reporting import categorize_errors, print_error_line, print_summary
+from lib.reporting import (
+    categorize_errors,
+    categorize_errors_for_json,
+    print_error_line,
+    print_summary,
+    to_json_output,
+)
 from lib.discovery import (
     find_skill_dirs,
     find_roles,
@@ -144,9 +153,18 @@ def check_role_composition(role_path: str) -> tuple[list[tuple[str, str]], int]:
     return issues, len(refs)
 
 
-def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
-    """Run all skill-system-level validations."""
-    errors = []
+def audit_skill_system(
+    system_root: str,
+    verbose: bool = True,
+    allow_orchestration: bool = False,
+) -> list[str]:
+    """Run all skill-system-level validations.
+
+    Returns:
+        A list of error strings. Each string is prefixed with a level
+        (``FAIL``, ``WARN``, or ``INFO``).
+    """
+    errors: list[str] = []
     system_root = os.path.abspath(system_root)
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
@@ -395,31 +413,144 @@ def audit_skill_system(system_root, verbose=True, allow_orchestration=False):
     return errors
 
 
-def main():
-    verbose = "--verbose" in sys.argv
-    allow_orchestration = "--allow-orchestration" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--verbose", "--allow-orchestration")]
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for audit_skill_system."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Validate the entire skill system structure for consistency. "
+            "Checks spec compliance, dependency direction, role composition, "
+            "manifest consistency, nesting depth, shared resource usage, "
+            "capability entry naming, and structural rules."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  python scripts/audit_skill_system.py /path/to/project/.agents\n"
+            "  python scripts/audit_skill_system.py /path/to/system --verbose\n"
+            "  python scripts/audit_skill_system.py /path/to/system --json\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "system_root",
+        help=(
+            "Path to the skill system root (contains skills/, roles/). "
+            "This is the deployed system layout, not the distribution "
+            "repository root."
+        ),
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show detailed output for each check.",
+    )
+    parser.add_argument(
+        "--allow-orchestration",
+        action="store_true",
+        dest="allow_orchestration",
+        help=(
+            "Downgrade skill→role references from FAIL to WARN. "
+            "Use when orchestration skills intentionally reference roles."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output results as machine-readable JSON.",
+    )
+    return parser
 
-    if not args:
+
+def main() -> None:
+    # Pre-check for --json so parse errors can be reported as JSON.
+    _json_mode = "--json" in sys.argv
+
+    # Fast-path: no arguments at all → print module docstring (matches
+    # the convention used by bundle.py and scaffold.py).
+    if len(sys.argv) == 1:
         print(__doc__)
         sys.exit(1)
 
-    system_root = args[0]
+    parser = _build_parser()
 
-    if not os.path.isdir(system_root):
-        print(f"Error: '{system_root}' is not a directory")
+    # Override parser.error() to emit JSON on parse failures when
+    # --json is present and to always exit with code 1 (not
+    # argparse's default 2) to match the repo convention.
+    def _json_aware_error(message: str) -> None:
+        if _json_mode:
+            print(to_json_output({
+                "tool": "audit_skill_system",
+                "success": False,
+                "error": message,
+            }))
+            sys.exit(1)
+        parser.print_usage(sys.stderr)
+        print(f"{parser.prog}: error: {message}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Auditing skill system: {system_root}")
-    if allow_orchestration:
-        print("Orchestration mode: skill\u2192role references downgraded to WARN")
-    if verbose:
-        print("=" * SEPARATOR_WIDTH)
+    parser.error = _json_aware_error  # type: ignore[assignment]
+
+    args = parser.parse_args()
+
+    system_root: str = args.system_root
+    verbose: bool = args.verbose
+    allow_orchestration: bool = args.allow_orchestration
+    json_output: bool = args.json_output
+
+    if not os.path.isdir(system_root):
+        if json_output:
+            print(to_json_output({
+                "tool": "audit_skill_system",
+                "path": os.path.abspath(system_root),
+                "success": False,
+                "error": f"'{system_root}' is not a directory",
+            }))
+        else:
+            print(f"Error: '{system_root}' is not a directory")
+        sys.exit(1)
+
+    # When --json is active, suppress verbose terminal output from
+    # audit_skill_system so only the JSON blob is printed.
+    effective_verbose = verbose and not json_output
+
+    if not json_output:
+        print(f"Auditing skill system: {system_root}")
+        if allow_orchestration:
+            print("Orchestration mode: skill\u2192role references downgraded to WARN")
+        if verbose:
+            print("=" * SEPARATOR_WIDTH)
 
     errors = audit_skill_system(
-        system_root, verbose=verbose,
+        system_root, verbose=effective_verbose,
         allow_orchestration=allow_orchestration,
     )
+
+    if json_output:
+        # Compute component counts directly for JSON output (the
+        # public API intentionally returns only errors for backward
+        # compatibility).
+        skills = find_skill_dirs(system_root)
+        roles = find_roles(system_root)
+        counts = {
+            "skills": len([s for s in skills if s["type"] == "registered"]),
+            "capabilities": len([s for s in skills if s["type"] == "capability"]),
+            "roles": len(roles),
+        }
+        fails, warns, infos = categorize_errors(errors)
+        result = {
+            "tool": "audit_skill_system",
+            "path": os.path.abspath(system_root),
+            "success": len(fails) == 0,
+            "counts": counts,
+            "summary": {
+                "failures": len(fails),
+                "warnings": len(warns),
+                "info": len(infos),
+            },
+            "errors": categorize_errors_for_json(errors),
+        }
+        print(to_json_output(result))
+        sys.exit(1 if fails else 0)
 
     if verbose:
         print("\n" + "=" * SEPARATOR_WIDTH)
