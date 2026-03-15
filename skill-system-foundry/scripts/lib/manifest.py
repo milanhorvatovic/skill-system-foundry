@@ -37,25 +37,34 @@ def read_manifest(path: str) -> dict:
     if not text.strip():
         return {}
     try:
+        # Collect all top-level content lines for validation
+        top_level_lines = [
+            ln.lstrip()
+            for ln in text.splitlines()
+            if ln.strip()
+            and not ln.lstrip().startswith("#")
+            and not ln[0:1].isspace()  # Top-level only (no leading whitespace)
+        ]
+
         # Pre-parse guard: detect top-level list syntax that the parser
         # would coerce to an empty dict, which would hide malformed input.
-        first_content = next(
-            (
-                ln.lstrip()
-                for ln in text.splitlines()
-                if ln.strip() and not ln.lstrip().startswith("#")
-            ),
-            "",
-        )
-        if first_content.startswith("- "):
+        if any(ln.startswith("- ") for ln in top_level_lines):
             raise ManifestParseError(
                 f"Failed to parse {path}: top-level YAML must be a mapping"
             )
+
         manifest = parse_yaml_subset(text)
         if not isinstance(manifest, dict):
             raise ManifestParseError(
                 f"Failed to parse {path}: top-level YAML must be a mapping"
             )
+
+        # Reject malformed manifests that parse to empty dict despite having content
+        if manifest == {} and top_level_lines:
+            raise ManifestParseError(
+                f"Failed to parse {path}: malformed YAML content"
+            )
+
         skills = manifest.get("skills")
         if skills is not None and skills != "" and not isinstance(skills, dict):
             raise ManifestParseError(

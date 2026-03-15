@@ -491,6 +491,26 @@ class ManifestParseErrorTests(unittest.TestCase):
             result = read_manifest(path)
         self.assertIsInstance(result, dict)
 
+    def test_top_level_list_after_section_raises_error(self) -> None:
+        """Top-level list items after a valid section are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  some: value\n- item\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("top-level YAML must be a mapping", str(ctx.exception))
+
+    def test_malformed_content_parsing_to_empty_dict_raises(self) -> None:
+        """Malformed content that parses to empty dict is rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("not_a_valid_yaml_structure\n")
+            with self.assertRaises(ManifestParseError) as ctx:
+                read_manifest(path)
+            self.assertIn("malformed YAML content", str(ctx.exception))
+
 
 class AppendSkillSectionOrderTests(unittest.TestCase):
     """Test that append_skill_entry preserves canonical section order."""
