@@ -4,65 +4,70 @@ from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
     RE_NAME_FORMAT, RESERVED_NAMES,
     KNOWN_FRONTMATTER_KEYS, KNOWN_TOOLS, MAX_ALLOWED_TOOLS,
-    RE_METADATA_VERSION, KNOWN_SPEC_VERSIONS, SPEC_VERSION_PREFIX,
+    RE_METADATA_VERSION,
     MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 
 
-def validate_name(name, dir_name):
-    """Validate the name field against spec rules."""
-    errors = []
-    passes = []
+def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
+    """Validate the name field.
+
+    Checks spec rules (format, length, directory match), platform
+    restrictions (Anthropic reserved words), and foundry conventions
+    (minimum name length advisory).
+    """
+    errors: list[str] = []
+    passes: list[str] = []
 
     if not name:
-        errors.append(f"{LEVEL_FAIL}: 'name' field is empty")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'name' field is empty")
         return errors, passes
 
     if len(name) > MAX_NAME_CHARS:
-        errors.append(f"{LEVEL_FAIL}: 'name' exceeds {MAX_NAME_CHARS} characters ({len(name)} chars)")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'name' exceeds {MAX_NAME_CHARS} characters ({len(name)} chars)")
     else:
         passes.append(f"name: {len(name)} chars (max {MAX_NAME_CHARS})")
 
     if name != name.lower():
-        errors.append(f"{LEVEL_FAIL}: 'name' contains uppercase characters: '{name}'")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'name' contains uppercase characters: '{name}'")
 
     if not RE_NAME_FORMAT.match(name):
         errors.append(
-            f"{LEVEL_FAIL}: 'name' has invalid format: '{name}' "
+            f"{LEVEL_FAIL}: [spec] 'name' has invalid format: '{name}' "
             "(must be lowercase alphanumeric + hyphens, no leading/trailing hyphens)"
         )
     else:
         passes.append("name: valid format")
 
     if "--" in name:
-        errors.append(f"{LEVEL_FAIL}: 'name' contains consecutive hyphens: '{name}'")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'name' contains consecutive hyphens: '{name}'")
 
     if "_" in name:
-        errors.append(f"{LEVEL_FAIL}: 'name' contains underscores: '{name}'")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'name' contains underscores: '{name}'")
 
     if " " in name:
-        errors.append(f"{LEVEL_FAIL}: 'name' contains spaces: '{name}'")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'name' contains spaces: '{name}'")
 
     if name != dir_name:
         errors.append(
-            f"{LEVEL_FAIL}: 'name' ({name}) does not match directory name ({dir_name})"
+            f"{LEVEL_FAIL}: [spec] 'name' ({name}) does not match directory name ({dir_name})"
         )
     else:
         passes.append("name: matches directory")
 
-    # Anthropic-specific restrictions
+    # Platform restriction (Anthropic): reserved words
     for reserved in RESERVED_NAMES:
         if reserved in name:
             errors.append(
-                f"{LEVEL_FAIL}: 'name' contains reserved word '{reserved}' "
-                "(not allowed on Anthropic platforms)"
+                f"{LEVEL_WARN}: [platform: Anthropic] 'name' contains reserved word "
+                f"'{reserved}' — not allowed on Anthropic platforms"
             )
 
     if len(name) < MIN_NAME_CHARS:
         errors.append(
-            f"{LEVEL_WARN}: 'name' is only {len(name)} character(s) — "
-            "consider a more descriptive name"
+            f"{LEVEL_INFO}: [foundry] 'name' is only {len(name)} character(s) — "
+            "consider a more descriptive name (spec minimum is 1)"
         )
 
     return errors, passes
@@ -82,19 +87,19 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
 
     if not isinstance(value, str):
         errors.append(
-            f"{LEVEL_WARN}: 'allowed-tools' should be a space-separated string, "
+            f"{LEVEL_WARN}: [spec] 'allowed-tools' should be a space-separated string, "
             f"got {type(value).__name__}"
         )
         return errors, passes
 
     if not value.strip():
-        errors.append(f"{LEVEL_WARN}: 'allowed-tools' is empty")
+        errors.append(f"{LEVEL_WARN}: [spec] 'allowed-tools' is empty")
         return errors, passes
 
     tools = value.split()
     if len(tools) > MAX_ALLOWED_TOOLS:
         errors.append(
-            f"{LEVEL_WARN}: 'allowed-tools' lists {len(tools)} tools "
+            f"{LEVEL_WARN}: [foundry] 'allowed-tools' lists {len(tools)} tools "
             f"(max {MAX_ALLOWED_TOOLS}) — consider splitting the skill"
         )
     else:
@@ -103,7 +108,7 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     unknown = sorted(set(t for t in tools if t not in KNOWN_TOOLS))
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: 'allowed-tools' contains unrecognized tools: "
+            f"{LEVEL_INFO}: [foundry] 'allowed-tools' contains unrecognized tools: "
             f"{', '.join(unknown)} — verify spelling"
         )
     else:
@@ -115,8 +120,9 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
 def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
     """Validate the metadata frontmatter sub-fields.
 
-    Checks version (semver pattern), spec (known versions), and
-    author (non-empty string within length limit) when present.
+    The spec defines metadata as an arbitrary key-value mapping.
+    Checks here are foundry conventions (semver recommendation,
+    author limits) not spec requirements.
 
     Returns (errors, passes) tuple.
     """
@@ -125,7 +131,7 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
 
     if not isinstance(metadata, dict):
         errors.append(
-            f"{LEVEL_WARN}: 'metadata' should be a key-value map, "
+            f"{LEVEL_WARN}: [spec] 'metadata' should be a key-value map, "
             f"got {type(metadata).__name__}"
         )
         return errors, passes
@@ -134,52 +140,43 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
         version = metadata["version"]
         if not isinstance(version, str):
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.version' should be a string, "
+                f"{LEVEL_WARN}: [foundry] 'metadata.version' should be a string, "
                 f"got {type(version).__name__}"
             )
         elif RE_METADATA_VERSION.match(version):
             passes.append(f"metadata.version: valid semver ({version})")
         else:
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.version' does not match semver pattern: "
-                f"'{version}' — expected MAJOR.MINOR.PATCH"
+                f"{LEVEL_INFO}: [foundry] 'metadata.version' does not follow "
+                f"recommended semver pattern: '{version}' — consider "
+                "MAJOR.MINOR.PATCH (spec allows any string)"
             )
 
     if "spec" in metadata:
         spec = metadata["spec"]
         if not isinstance(spec, str):
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.spec' should be a string, "
+                f"{LEVEL_WARN}: [foundry] 'metadata.spec' should be a string, "
                 f"got {type(spec).__name__}"
             )
         else:
-            # Normalize optional prefix (e.g. "agentskills.io/1.0" -> "1.0")
-            normalized = spec
-            if SPEC_VERSION_PREFIX and spec.startswith(SPEC_VERSION_PREFIX):
-                normalized = spec[len(SPEC_VERSION_PREFIX):]
-            if normalized in KNOWN_SPEC_VERSIONS:
-                passes.append(f"metadata.spec: recognized version ({spec})")
-            else:
-                errors.append(
-                    f"{LEVEL_INFO}: 'metadata.spec' is not a recognized version: "
-                    f"'{spec}' — known versions: {', '.join(sorted(KNOWN_SPEC_VERSIONS))}"
-                )
+            passes.append(f"metadata.spec: valid string ({spec})")
 
     if "author" in metadata:
         author = metadata["author"]
         if not isinstance(author, str):
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.author' should be a string, "
+                f"{LEVEL_WARN}: [foundry] 'metadata.author' should be a string, "
                 f"got {type(author).__name__}"
             )
         elif not author.strip():
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.author' is empty"
+                f"{LEVEL_WARN}: [foundry] 'metadata.author' is empty"
             )
         elif len(author) > MAX_AUTHOR_LENGTH:
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.author' exceeds {MAX_AUTHOR_LENGTH} "
-                f"characters ({len(author)} chars)"
+                f"{LEVEL_WARN}: [foundry] 'metadata.author' exceeds "
+                f"{MAX_AUTHOR_LENGTH} characters ({len(author)} chars)"
             )
         else:
             passes.append(f"metadata.author: {len(author)} chars (max {MAX_AUTHOR_LENGTH})")
@@ -198,13 +195,13 @@ def validate_license(value: object) -> tuple[list[str], list[str]]:
 
     if not isinstance(value, str):
         errors.append(
-            f"{LEVEL_WARN}: 'license' should be a string, "
+            f"{LEVEL_WARN}: [spec] 'license' should be a string, "
             f"got {type(value).__name__}"
         )
         return errors, passes
 
     if not value.strip():
-        errors.append(f"{LEVEL_WARN}: 'license' is empty")
+        errors.append(f"{LEVEL_WARN}: [spec] 'license' is empty")
         return errors, passes
 
     license_str = value.strip()
@@ -212,7 +209,7 @@ def validate_license(value: object) -> tuple[list[str], list[str]]:
         passes.append(f"license: recognized SPDX identifier ({license_str})")
     else:
         errors.append(
-            f"{LEVEL_INFO}: 'license' value '{license_str}' is not a recognized "
+            f"{LEVEL_INFO}: [foundry] 'license' value '{license_str}' is not a recognized "
             "SPDX identifier — verify spelling or use a standard SPDX ID"
         )
 
@@ -238,7 +235,7 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
     )
     if unknown_keys:
         errors.append(
-            f"{LEVEL_INFO}: unrecognized frontmatter keys: "
+            f"{LEVEL_INFO}: [foundry] unrecognized frontmatter keys: "
             f"{', '.join(unknown_keys)} — check for typos. "
             f"Known keys: {', '.join(sorted(KNOWN_FRONTMATTER_KEYS))}"
         )

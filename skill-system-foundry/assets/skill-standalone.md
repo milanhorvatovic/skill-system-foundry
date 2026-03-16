@@ -1,16 +1,17 @@
 ---
 name: <skill-name>
 description: >
-  <Third-person description of what this skill does and when to trigger it.
+  <Description of what this skill does and when to trigger it.
   Max 1024 characters. Be specific about contexts, keywords, and use cases.
   Include trigger phrases. Be slightly pushy to avoid under-triggering.
+  Third-person voice recommended (foundry convention).
   Optionally include "Don't use when..." for disambiguation.>
 allowed-tools: <optional, space-delimited pre-approved tools — experimental>
 compatibility: <optional, e.g., Requires git and network access>
 license: <optional, e.g., MIT>
 metadata:
   author: <optional>
-  version: <optional, e.g., "1.0">
+  version: <optional, e.g., "1.0.0">
 # Claude Code extensions (see references/claude-code-extensions.md)
 # disable-model-invocation: <optional, true prevents auto-loading by model>
 # user-invocable: <optional, false hides from /menu>
@@ -22,9 +23,9 @@ metadata:
 ---
 <!-- TEMPLATE GUIDE: Replace all <placeholder> values with your content.
      - name: lowercase + hyphens only, must match parent directory name
-     - description: third-person voice ("Processes..." not "I process..."),
-       include trigger phrases and contexts, be slightly pushy to avoid
-       under-triggering. Max 1024 characters.
+     - description: third-person voice recommended ("Processes..." not
+       "I process..."), include trigger phrases and contexts, be slightly
+       pushy to avoid under-triggering. Max 1024 characters.
      - Body: recommended max 500 lines. Only add context the model doesn't already have.
      Remove this comment block in your final skill. -->
 

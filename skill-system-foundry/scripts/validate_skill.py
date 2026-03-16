@@ -35,6 +35,7 @@ from lib.validation import (
     validate_license,
     validate_known_keys,
 )
+from lib.codex_config import validate_codex_config
 from lib.constants import (
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
@@ -47,27 +48,35 @@ from lib.constants import (
 )
 
 
-def validate_description(description):
-    """Validate the description field against spec rules."""
-    errors = []
-    passes = []
+def validate_description(description: str) -> tuple[list[str], list[str]]:
+    """Validate the description field.
+
+    Checks spec rules (length, non-empty), platform constraints
+    (Anthropic XML-tag restriction), and foundry conventions
+    (third-person voice recommendation).
+    """
+    errors: list[str] = []
+    passes: list[str] = []
 
     if not description:
-        errors.append(f"{LEVEL_FAIL}: 'description' field is empty")
+        errors.append(f"{LEVEL_FAIL}: [spec] 'description' field is empty")
         return errors, passes
 
     if len(description) > MAX_DESCRIPTION_CHARS:
         errors.append(
-            f"{LEVEL_FAIL}: 'description' exceeds {MAX_DESCRIPTION_CHARS} characters ({len(description)} chars)"
+            f"{LEVEL_FAIL}: [spec] 'description' exceeds {MAX_DESCRIPTION_CHARS} characters ({len(description)} chars)"
         )
     else:
         passes.append(f"description: {len(description)} chars (max {MAX_DESCRIPTION_CHARS})")
 
-    # Check for XML tags
+    # Platform restriction (Anthropic): XML tags not allowed in description
     if RE_XML_TAG.search(description):
-        errors.append(f"{LEVEL_WARN}: 'description' may contain XML tags (not allowed)")
+        errors.append(
+            f"{LEVEL_WARN}: [platform: Anthropic] 'description' contains XML tags "
+            "— not allowed on Anthropic platforms"
+        )
 
-    # Check for first/second person
+    # Foundry convention: third-person voice recommended
     first_person = RE_FIRST_PERSON.search(description)
     first_person_plural = RE_FIRST_PERSON_PLURAL.search(description)
     second_person = RE_SECOND_PERSON.search(description)
@@ -76,20 +85,23 @@ def validate_description(description):
     imperative_start = RE_IMPERATIVE_START.match(description)
     if first_person:
         errors.append(
-            f"{LEVEL_WARN}: 'description' uses first person — should be third person"
+            f"{LEVEL_INFO}: [foundry] 'description' uses first person — "
+            "third-person voice recommended"
         )
     elif first_person_plural:
         errors.append(
-            f"{LEVEL_WARN}: 'description' uses first-person plural — should be third person"
+            f"{LEVEL_INFO}: [foundry] 'description' uses first-person plural — "
+            "third-person voice recommended"
         )
     elif second_person:
         errors.append(
-            f"{LEVEL_WARN}: 'description' uses second person — should be third person"
+            f"{LEVEL_INFO}: [foundry] 'description' uses second person — "
+            "third-person voice recommended"
         )
     elif imperative_start:
         errors.append(
-            f"{LEVEL_WARN}: 'description' may use imperative voice — prefer third person "
-            "(e.g., 'Processes data' not 'Process data'). "
+            f"{LEVEL_INFO}: [foundry] 'description' may use imperative voice — "
+            "third-person recommended (e.g., 'Processes data' not 'Process data'). "
             "Note: this is a best-effort heuristic check."
         )
     else:
@@ -98,16 +110,18 @@ def validate_description(description):
     return errors, passes
 
 
-def validate_body(body, skill_md_path, allow_nested_refs=False):
+def validate_body(
+    body: str, skill_md_path: str, allow_nested_refs: bool = False,
+) -> tuple[list[str], list[str]]:
     """Validate skill or capability entry point body."""
-    errors = []
-    passes = []
+    errors: list[str] = []
+    passes: list[str] = []
     entry_filename = os.path.basename(skill_md_path)
 
     line_count = count_body_lines(body)
     if line_count > MAX_BODY_LINES:
         errors.append(
-            f"{LEVEL_WARN}: {entry_filename} body is {line_count} lines (recommended max: {MAX_BODY_LINES})"
+            f"{LEVEL_WARN}: [foundry] {entry_filename} body is {line_count} lines (recommended max: {MAX_BODY_LINES})"
         )
     else:
         passes.append(f"body: {line_count} lines (max {MAX_BODY_LINES})")
@@ -123,6 +137,8 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     # Always check for broken references regardless of allow_nested_refs
     broken_found = False
     nested_found = False
+    external_found = False
+    internal_checked = 0
 
     skill_dir = os.path.dirname(skill_md_path)
     seen_paths: set[str] = set()
@@ -141,18 +157,29 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             continue
         seen_paths.add(ref_path)
 
-        # Reject references that escape the skill directory
-        if not is_within_directory(ref_path, skill_dir):
-            broken_found = True
+        # Note: references escaping the skill directory are allowed by the
+        # spec and used by the foundry's shared-resource architecture
+        # (e.g., ../../shared/references/).  Report as INFO for awareness.
+        # All filesystem checks (existence, readability, nesting) are
+        # skipped for external refs to avoid acting as an existence oracle.
+        is_external = not is_within_directory(ref_path, skill_dir)
+        if is_external:
+            external_found = True
             errors.append(
-                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} escapes skill directory"
+                f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {entry_filename} "
+                "resolves outside skill directory — acceptable for shared "
+                "resources but verify the path is intentional"
             )
+            # Skip all filesystem checks for external refs to avoid acting
+            # as a filesystem existence oracle in CI environments.
             continue
+
+        internal_checked += 1
 
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} does not exist"
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {entry_filename} does not exist"
             )
             continue
 
@@ -160,19 +187,18 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         if not os.path.isfile(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} resolves to a non-file path"
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {entry_filename} resolves to a non-file path"
             )
             continue
 
-        # Check file is readable regardless of allow_nested_refs
-        # (unreadable files should be reported even when nested check is skipped)
+        # Check file is readable
         try:
             with open(ref_path, "r", encoding="utf-8") as f:
                 ref_content = f.read()
         except (OSError, UnicodeError) as exc:
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} "
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {entry_filename} "
                 f"cannot be read ({exc.__class__.__name__}: {exc})"
             )
             continue
@@ -187,28 +213,46 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             if nested_refs:
                 nested_found = True
                 errors.append(
-                    f"{LEVEL_WARN}: '{ref}' contains nested references: {nested_refs}. "
+                    f"{LEVEL_WARN}: [spec] '{ref}' contains nested references: {nested_refs}. "
                     f"Keep references one level deep from {entry_filename}."
                 )
 
     if allow_nested_refs and refs and not broken_found:
         passes.append("references: nested-reference check skipped (--allow-nested-references)")
-    elif refs and not nested_found and not broken_found:
-        passes.append("references: one level deep, no nested refs")
+    elif internal_checked > 0 and not nested_found and not broken_found:
+        if external_found:
+            passes.append(
+                "references: internal refs one level deep, no nested refs "
+                "(external refs excluded from nesting checks)"
+            )
+        else:
+            passes.append("references: one level deep, no nested refs")
+
+    if external_found and internal_checked == 0 and refs:
+        passes.append(
+            "references: all references resolve outside skill directory "
+            "(external refs excluded from nesting checks)"
+        )
 
     return errors, passes
 
 
-def validate_directories(skill_path):
-    """Check for recognized optional directories."""
-    warnings = []
-    passes = []
+def validate_directories(skill_path: str) -> tuple[list[str], list[str]]:
+    """Check for recognized optional directories.
+
+    The spec explicitly allows any additional files/directories.
+    This check is a foundry convention to flag non-standard directories
+    for awareness, not as an error.
+    """
+    warnings: list[str] = []
+    passes: list[str] = []
 
     for item in os.listdir(skill_path):
         item_path = os.path.join(skill_path, item)
         if os.path.isdir(item_path) and item not in RECOGNIZED_DIRS:
             warnings.append(
-                f"{LEVEL_INFO}: Non-standard directory '{item}/' found. "
+                f"{LEVEL_INFO}: [foundry] Non-standard directory '{item}/' found "
+                "(the spec allows arbitrary directories). "
                 f"Recognized directories: {', '.join(sorted(RECOGNIZED_DIRS))}"
             )
 
@@ -218,10 +262,12 @@ def validate_directories(skill_path):
     return warnings, passes
 
 
-def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
+def validate_skill(
+    skill_path: str, is_capability: bool = False, allow_nested_refs: bool = False,
+) -> tuple[list[str], list[str]]:
     """Run all validations on a skill directory."""
-    errors = []
-    passes = []
+    errors: list[str] = []
+    passes: list[str] = []
     skill_path = os.path.abspath(skill_path)
     dir_name = os.path.basename(skill_path)
 
@@ -229,25 +275,25 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
     entry_filename = FILE_CAPABILITY_MD if is_capability else FILE_SKILL_MD
     skill_md = os.path.join(skill_path, entry_filename)
     if not os.path.exists(skill_md):
-        errors.append(f"{LEVEL_FAIL}: No {entry_filename} found in {skill_path}")
+        errors.append(f"{LEVEL_FAIL}: [spec] No {entry_filename} found in {skill_path}")
         return errors, passes
 
     # Parse frontmatter
     frontmatter, body = load_frontmatter(skill_md)
 
     if frontmatter is None and not is_capability:
-        errors.append(f"{LEVEL_FAIL}: No YAML frontmatter found (must start with ---)")
+        errors.append(f"{LEVEL_FAIL}: [spec] No YAML frontmatter found (must start with ---)")
         return errors, passes
 
     if frontmatter and "_parse_error" in frontmatter:
-        errors.append(f"{LEVEL_FAIL}: YAML parse error: {frontmatter['_parse_error']}")
+        errors.append(f"{LEVEL_FAIL}: [spec] YAML parse error: {frontmatter['_parse_error']}")
         return errors, passes
 
     if is_capability:
         # Capabilities don't require frontmatter
         if frontmatter and "name" in frontmatter:
             errors.append(
-                f"{LEVEL_INFO}: Capability has 'name' in frontmatter — this is fine for "
+                f"{LEVEL_INFO}: [foundry] Capability has 'name' in frontmatter — this is fine for "
                 "documentation but won't be used for discovery"
             )
         body_errors, body_passes = validate_body(body, skill_md, allow_nested_refs)
@@ -260,14 +306,14 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
         frontmatter = {}
 
     if "name" not in frontmatter:
-        errors.append(f"{LEVEL_FAIL}: Missing required 'name' field in frontmatter")
+        errors.append(f"{LEVEL_FAIL}: [spec] Missing required 'name' field in frontmatter")
     else:
         name_errors, name_passes = validate_name(frontmatter["name"], dir_name)
         errors.extend(name_errors)
         passes.extend(name_passes)
 
     if "description" not in frontmatter:
-        errors.append(f"{LEVEL_FAIL}: Missing required 'description' field in frontmatter")
+        errors.append(f"{LEVEL_FAIL}: [spec] Missing required 'description' field in frontmatter")
     else:
         desc_errors, desc_passes = validate_description(str(frontmatter["description"]))
         errors.extend(desc_errors)
@@ -278,7 +324,7 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
         comp = str(frontmatter["compatibility"])
         if len(comp) > MAX_COMPATIBILITY_CHARS:
             errors.append(
-                f"{LEVEL_FAIL}: 'compatibility' exceeds {MAX_COMPATIBILITY_CHARS} characters ({len(comp)} chars)"
+                f"{LEVEL_FAIL}: [spec] 'compatibility' exceeds {MAX_COMPATIBILITY_CHARS} characters ({len(comp)} chars)"
             )
         else:
             passes.append(f"compatibility: {len(comp)} chars (max {MAX_COMPATIBILITY_CHARS})")
@@ -316,6 +362,11 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
     dir_errors, dir_passes = validate_directories(skill_path)
     errors.extend(dir_errors)
     passes.extend(dir_passes)
+
+    # Validate Codex configuration (agents/openai.yaml) when present
+    codex_errors, codex_passes = validate_codex_config(skill_path)
+    errors.extend(codex_errors)
+    passes.extend(codex_passes)
 
     return errors, passes
 

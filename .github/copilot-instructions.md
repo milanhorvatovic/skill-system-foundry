@@ -16,8 +16,8 @@ Skill System Foundry is a meta-skill that teaches AI agents how to create, valid
 ## Agent Skills Format Compliance
 
 - Every registered skill directory must contain a `SKILL.md` with YAML frontmatter
-- `name`: lowercase letters, numbers, and hyphens only, max 64 characters, must match the parent directory name exactly, no leading/trailing/consecutive hyphens, must not contain "anthropic" or "claude"
-- `description`: max 1024 characters, written in third person, must state what the skill does and when to trigger it, no XML tags
+- `name`: lowercase letters, numbers, and hyphens only, max 64 characters, must match the parent directory name exactly, no leading/trailing/consecutive hyphens. Note: "anthropic" and "claude" are reserved on Anthropic platforms (produces WARN, not FAIL)
+- `description`: max 1024 characters, third person recommended (foundry convention), must state what the skill does and when to trigger it, no XML tags [platform: Anthropic]
 - Optional frontmatter fields: `allowed-tools` (space-delimited tool names), `compatibility` (max 500 chars, environment requirements), `license` (license name or reference), `metadata` (arbitrary key-value map)
 - Progressive disclosure must be preserved: metadata (Level 1) → instructions (Level 2) → resources (Level 3)
 - `SKILL.md` body should stay under ~5k tokens; move deep dives into `references/`

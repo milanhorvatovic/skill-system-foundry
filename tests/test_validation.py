@@ -19,6 +19,7 @@ if SCRIPTS_DIR not in sys.path:
 from lib.validation import validate_name
 from lib.constants import (
     LEVEL_FAIL,
+    LEVEL_INFO,
     LEVEL_WARN,
     MAX_NAME_CHARS,
     MIN_NAME_CHARS,
@@ -87,31 +88,32 @@ class ValidateNameLengthTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL) and "exceeds" in e]
         self.assertEqual(len(fail_errors), 1)
 
-    def test_short_name_returns_warn(self) -> None:
-        """A name shorter than MIN_NAME_CHARS produces a WARN."""
-        # Use a single character — valid format but too short
+    def test_short_name_returns_info(self) -> None:
+        """A name shorter than MIN_NAME_CHARS produces an INFO (foundry convention)."""
+        # Use a single character — valid format but short by foundry standards
         name = "a"
         errors, passes = validate_name(name, name)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        short_warns = [e for e in warn_errors if "character" in e]
-        self.assertEqual(len(short_warns), 1)
-        self.assertIn(str(len(name)), short_warns[0])
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        short_infos = [e for e in info_errors if "character" in e]
+        self.assertEqual(len(short_infos), 1)
+        self.assertIn(str(len(name)), short_infos[0])
+        self.assertIn("[foundry]", short_infos[0])
 
-    def test_name_at_min_length_no_warn(self) -> None:
-        """A name at exactly MIN_NAME_CHARS does not produce a WARN."""
+    def test_name_at_min_length_no_info(self) -> None:
+        """A name at exactly MIN_NAME_CHARS does not produce an INFO."""
         name = "a" * MIN_NAME_CHARS
         errors, passes = validate_name(name, name)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        short_warns = [e for e in warn_errors if "character" in e]
-        self.assertEqual(short_warns, [])
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        short_infos = [e for e in info_errors if "character" in e]
+        self.assertEqual(short_infos, [])
 
-    def test_name_one_below_min_length_returns_warn(self) -> None:
-        """A name one character below MIN_NAME_CHARS produces a WARN."""
+    def test_name_one_below_min_length_returns_info(self) -> None:
+        """A name one character below MIN_NAME_CHARS produces an INFO."""
         name = "a" * (MIN_NAME_CHARS - 1)
         errors, passes = validate_name(name, name)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        short_warns = [e for e in warn_errors if "character" in e]
-        self.assertEqual(len(short_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        short_infos = [e for e in info_errors if "character" in e]
+        self.assertEqual(len(short_infos), 1)
 
 
 # ===================================================================
@@ -394,62 +396,63 @@ class ValidateNameDirectoryMatchTests(unittest.TestCase):
 
 
 class ValidateNameReservedWordsTests(unittest.TestCase):
-    """Tests for the reserved words rule (Anthropic-specific)."""
+    """Tests for the reserved words rule (platform: Anthropic)."""
 
-    def test_each_reserved_word_returns_fail(self) -> None:
-        """Each reserved word in the name produces a FAIL."""
+    def test_each_reserved_word_returns_warn(self) -> None:
+        """Each reserved word in the name produces a WARN (platform: Anthropic)."""
         for reserved in RESERVED_NAMES:
             name = f"my-{reserved}-skill"
             with self.subTest(reserved=reserved):
                 errors, passes = validate_name(name, name)
-                fail_errors = [
+                warn_errors = [
                     e for e in errors
-                    if e.startswith(LEVEL_FAIL) and "reserved" in e
+                    if e.startswith(LEVEL_WARN) and "reserved" in e
                 ]
                 self.assertGreaterEqual(
-                    len(fail_errors), 1,
-                    f"Expected reserved word FAIL for '{reserved}', "
+                    len(warn_errors), 1,
+                    f"Expected reserved word WARN for '{reserved}', "
                     f"got errors={errors}",
                 )
-                self.assertIn(reserved, fail_errors[0])
+                self.assertIn(reserved, warn_errors[0])
+                self.assertIn("platform: Anthropic", warn_errors[0])
 
-    def test_reserved_word_as_exact_name_returns_fail(self) -> None:
-        """A name that is exactly a reserved word produces a FAIL."""
+    def test_reserved_word_as_exact_name_returns_warn(self) -> None:
+        """A name that is exactly a reserved word produces a WARN."""
         for reserved in RESERVED_NAMES:
             with self.subTest(reserved=reserved):
                 errors, passes = validate_name(reserved, reserved)
-                fail_errors = [
+                warn_errors = [
                     e for e in errors
-                    if e.startswith(LEVEL_FAIL) and "reserved" in e
+                    if e.startswith(LEVEL_WARN) and "reserved" in e
                 ]
-                self.assertGreaterEqual(len(fail_errors), 1)
+                self.assertGreaterEqual(len(warn_errors), 1)
 
-    def test_reserved_word_as_substring_returns_fail(self) -> None:
-        """A reserved word appearing as a substring produces a FAIL."""
+    def test_reserved_word_as_substring_returns_warn(self) -> None:
+        """A reserved word appearing as a substring produces a WARN."""
         for reserved in RESERVED_NAMES:
             # Embed the reserved word without hyphens
             name = f"my{reserved}tool"
             with self.subTest(reserved=reserved, name=name):
                 errors, passes = validate_name(name, name)
-                fail_errors = [
+                warn_errors = [
                     e for e in errors
-                    if e.startswith(LEVEL_FAIL) and "reserved" in e
+                    if e.startswith(LEVEL_WARN) and "reserved" in e
                 ]
                 self.assertGreaterEqual(
-                    len(fail_errors), 1,
-                    f"Expected reserved word FAIL for substring '{reserved}' "
+                    len(warn_errors), 1,
+                    f"Expected reserved word WARN for substring '{reserved}' "
                     f"in '{name}', got errors={errors}",
                 )
 
     def test_no_reserved_words_no_error(self) -> None:
-        """A name without reserved words does not produce a reserved FAIL."""
+        """A name without reserved words does not produce a reserved WARN."""
         name = "demo-skill"
         errors, passes = validate_name(name, name)
-        fail_errors = [
+        warn_errors = [
             e for e in errors
-            if e.startswith(LEVEL_FAIL) and "reserved" in e
+            if e.startswith(LEVEL_WARN) and "reserved" in e
         ]
-        self.assertEqual(fail_errors, [])
+        self.assertEqual(warn_errors, [])
 
 
 # ===================================================================
@@ -534,18 +537,18 @@ class ValidateNameMultipleErrorsTests(unittest.TestCase):
         self.assertEqual(len(underscore_fails), 1)
 
     def test_directory_mismatch_with_reserved_word(self) -> None:
-        """A name with a reserved word and directory mismatch produces both FAILs."""
+        """A name with a reserved word produces WARN and directory mismatch produces FAIL."""
         name = "my-claude-tool"
         errors, passes = validate_name(name, "different-dir")
-        reserved_fails = [
+        reserved_warns = [
             e for e in errors
-            if e.startswith(LEVEL_FAIL) and "reserved" in e
+            if e.startswith(LEVEL_WARN) and "reserved" in e
         ]
         mismatch_fails = [
             e for e in errors
             if e.startswith(LEVEL_FAIL) and "match" in e.lower()
         ]
-        self.assertGreaterEqual(len(reserved_fails), 1)
+        self.assertGreaterEqual(len(reserved_warns), 1)
         self.assertEqual(len(mismatch_fails), 1)
 
     def test_over_max_length_and_uppercase(self) -> None:

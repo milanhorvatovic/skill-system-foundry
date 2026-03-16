@@ -16,7 +16,7 @@ license: MIT
 metadata:
   author: Milan Horvatovič
   version: 1.0.0
-  spec: agentskills.io/1.0
+  spec: agentskills.io
 ---
 
 # Skill System Foundry
@@ -85,7 +85,7 @@ Each layer has a clear responsibility:
 
 ### 1. Agent Skills Specification Compliance
 
-All skills must conform to the Agent Skills specification (agentskills.io). Every registered skill directory contains a `SKILL.md` with valid YAML frontmatter. The `name` field matches the parent directory name, lowercase + hyphens only, max 64 chars. The `description` field is max 1024 chars, third-person, and describes both what the skill does and when to trigger it.
+All skills must conform to the Agent Skills specification (agentskills.io). Every registered skill directory contains a `SKILL.md` with valid YAML frontmatter. The `name` field matches the parent directory name, lowercase + hyphens only, max 64 chars. The `description` field is max 1024 chars and describes both what the skill does and when to trigger it. Third-person voice is a foundry convention, not a spec requirement.
 
 Note: capabilities are discovery-internal sub-skills. Their entry point is `capability.md`. Capability frontmatter is optional (use it when portability/promotion to standalone is likely).
 
