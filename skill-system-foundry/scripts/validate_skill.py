@@ -35,6 +35,7 @@ from lib.validation import (
     validate_license,
     validate_known_keys,
 )
+from lib.codex_config import validate_codex_config
 from lib.constants import (
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
@@ -63,11 +64,14 @@ def validate_description(description):
     else:
         passes.append(f"description: {len(description)} chars (max {MAX_DESCRIPTION_CHARS})")
 
-    # Check for XML tags
+    # Platform restriction (Anthropic): XML tags not allowed in description
     if RE_XML_TAG.search(description):
-        errors.append(f"{LEVEL_WARN}: 'description' may contain XML tags (not allowed)")
+        errors.append(
+            f"{LEVEL_WARN}: [platform: Anthropic] 'description' may contain XML tags "
+            "— not allowed on Anthropic platforms"
+        )
 
-    # Check for first/second person
+    # Foundry convention: third-person voice recommended
     first_person = RE_FIRST_PERSON.search(description)
     first_person_plural = RE_FIRST_PERSON_PLURAL.search(description)
     second_person = RE_SECOND_PERSON.search(description)
@@ -76,20 +80,23 @@ def validate_description(description):
     imperative_start = RE_IMPERATIVE_START.match(description)
     if first_person:
         errors.append(
-            f"{LEVEL_WARN}: 'description' uses first person — should be third person"
+            f"{LEVEL_INFO}: [foundry] 'description' uses first person — "
+            "third-person voice recommended"
         )
     elif first_person_plural:
         errors.append(
-            f"{LEVEL_WARN}: 'description' uses first-person plural — should be third person"
+            f"{LEVEL_INFO}: [foundry] 'description' uses first-person plural — "
+            "third-person voice recommended"
         )
     elif second_person:
         errors.append(
-            f"{LEVEL_WARN}: 'description' uses second person — should be third person"
+            f"{LEVEL_INFO}: [foundry] 'description' uses second person — "
+            "third-person voice recommended"
         )
     elif imperative_start:
         errors.append(
-            f"{LEVEL_WARN}: 'description' may use imperative voice — prefer third person "
-            "(e.g., 'Processes data' not 'Process data'). "
+            f"{LEVEL_INFO}: [foundry] 'description' may use imperative voice — "
+            "third-person recommended (e.g., 'Processes data' not 'Process data'). "
             "Note: this is a best-effort heuristic check."
         )
     else:
@@ -141,11 +148,14 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             continue
         seen_paths.add(ref_path)
 
-        # Reject references that escape the skill directory
+        # Note: references escaping the skill directory are allowed by the
+        # spec and used by the foundry's shared-resource architecture
+        # (e.g., ../../shared/references/).  Report as INFO for awareness.
         if not is_within_directory(ref_path, skill_dir):
-            broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} escapes skill directory"
+                f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {entry_filename} "
+                "resolves outside skill directory — acceptable for shared "
+                "resources but verify the path is intentional"
             )
             continue
 
@@ -200,7 +210,12 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
 
 
 def validate_directories(skill_path):
-    """Check for recognized optional directories."""
+    """Check for recognized optional directories.
+
+    The spec explicitly allows any additional files/directories.
+    This check is a foundry convention to flag non-standard directories
+    for awareness, not as an error.
+    """
     warnings = []
     passes = []
 
@@ -208,7 +223,8 @@ def validate_directories(skill_path):
         item_path = os.path.join(skill_path, item)
         if os.path.isdir(item_path) and item not in RECOGNIZED_DIRS:
             warnings.append(
-                f"{LEVEL_INFO}: Non-standard directory '{item}/' found. "
+                f"{LEVEL_INFO}: [foundry] Non-standard directory '{item}/' found "
+                "(the spec allows arbitrary directories). "
                 f"Recognized directories: {', '.join(sorted(RECOGNIZED_DIRS))}"
             )
 
@@ -316,6 +332,11 @@ def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
     dir_errors, dir_passes = validate_directories(skill_path)
     errors.extend(dir_errors)
     passes.extend(dir_passes)
+
+    # Validate Codex configuration (agents/openai.yaml) when present
+    codex_errors, codex_passes = validate_codex_config(skill_path)
+    errors.extend(codex_errors)
+    passes.extend(codex_passes)
 
     return errors, passes
 

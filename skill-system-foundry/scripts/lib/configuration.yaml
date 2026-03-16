@@ -70,20 +70,14 @@ skill:
     # likely need to be split.  Increase if justified.
     max_tools: 20
 
-  # metadata sub-field validation
+  # metadata sub-field validation (foundry conventions — spec allows arbitrary values)
   metadata:
     version:
-      # Semver-like pattern: MAJOR.MINOR.PATCH with optional pre-release suffix
+      # Semver-like pattern: MAJOR.MINOR.PATCH with optional pre-release suffix.
+      # Foundry recommendation only — the spec allows any string value.
       pattern: ^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?$
-    spec:
-      known_versions:
-        - "1.0"
-        - "1.1"
-      # The agentskills.io/ prefix is stripped before comparison,
-      # so "agentskills.io/1.0" matches "1.0".
-      version_prefix: "agentskills.io/"
     author:
-      # Reasonable upper bound for an author name or identifier
+      # Reasonable upper bound for an author name or identifier (foundry convention)
       max_length: 128
 
   # license validation — common SPDX identifiers
@@ -121,6 +115,21 @@ skill:
     - assets
     - shared
     - capabilities
+    - agents
+
+# ============================================================
+# Codex Configuration (agents/openai.yaml)
+# ============================================================
+codex_config:
+  interface:
+    max_display_name_length: 64
+    max_short_description_length: 200
+    hex_color_pattern: ^#[0-9A-Fa-f]{6}$
+  dependencies:
+    known_tool_types:
+      - mcp
+    known_transports:
+      - streamable_http
 
 # ============================================================
 # Dependency Direction

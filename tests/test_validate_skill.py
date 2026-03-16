@@ -124,52 +124,57 @@ class ValidateDescriptionTests(unittest.TestCase):
         self.assertEqual(len(char_pass), 1)
 
     def test_description_with_xml_tags_returns_warn(self) -> None:
-        """A description containing XML tags produces a WARN."""
+        """A description containing XML tags produces a WARN (platform: Anthropic)."""
         desc = "Provides <tool>data</tool> processing capabilities."
         errors, passes = validate_description(desc)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         xml_warns = [e for e in warn_errors if "XML" in e]
         self.assertEqual(len(xml_warns), 1)
+        self.assertIn("platform: Anthropic", xml_warns[0])
 
-    def test_description_with_first_person_returns_warn(self) -> None:
-        """A description using first person (I can, I will, etc.) produces a WARN."""
+    def test_description_with_first_person_returns_info(self) -> None:
+        """A description using first person (I can, I will, etc.) produces an INFO (foundry)."""
         desc = "I can process data files and generate reports."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        first_person_warns = [e for e in warn_errors if "first person" in e]
-        self.assertEqual(len(first_person_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        first_person_infos = [e for e in info_errors if "first person" in e]
+        self.assertEqual(len(first_person_infos), 1)
+        self.assertIn("[foundry]", first_person_infos[0])
 
-    def test_description_with_first_person_plural_returns_warn(self) -> None:
-        """A description using first-person plural (we, our) produces a WARN."""
+    def test_description_with_first_person_plural_returns_info(self) -> None:
+        """A description using first-person plural (we, our) produces an INFO (foundry)."""
         desc = "We can help with data processing tasks."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        plural_warns = [e for e in warn_errors if "first-person plural" in e]
-        self.assertEqual(len(plural_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        plural_infos = [e for e in info_errors if "first-person plural" in e]
+        self.assertEqual(len(plural_infos), 1)
+        self.assertIn("[foundry]", plural_infos[0])
 
-    def test_description_with_second_person_returns_warn(self) -> None:
-        """A description using second person (you, your) produces a WARN."""
+    def test_description_with_second_person_returns_info(self) -> None:
+        """A description using second person (you, your) produces an INFO (foundry)."""
         desc = "You can use this to process your data files."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        second_person_warns = [e for e in warn_errors if "second person" in e]
-        self.assertEqual(len(second_person_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        second_person_infos = [e for e in info_errors if "second person" in e]
+        self.assertEqual(len(second_person_infos), 1)
+        self.assertIn("[foundry]", second_person_infos[0])
 
-    def test_description_with_imperative_start_returns_warn(self) -> None:
-        """A description starting with an imperative verb produces a WARN."""
+    def test_description_with_imperative_start_returns_info(self) -> None:
+        """A description starting with an imperative verb produces an INFO (foundry)."""
         desc = "Process data files and generate summary reports."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        imperative_warns = [e for e in warn_errors if "imperative" in e]
-        self.assertEqual(len(imperative_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        imperative_infos = [e for e in info_errors if "imperative" in e]
+        self.assertEqual(len(imperative_infos), 1)
+        self.assertIn("[foundry]", imperative_infos[0])
 
-    def test_imperative_multi_word_set_up_returns_warn(self) -> None:
+    def test_imperative_multi_word_set_up_returns_info(self) -> None:
         """The multi-word imperative verb 'Set up' is detected."""
         desc = "Set up CI pipelines for containerized deployments."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        imperative_warns = [e for e in warn_errors if "imperative" in e]
-        self.assertEqual(len(imperative_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        imperative_infos = [e for e in info_errors if "imperative" in e]
+        self.assertEqual(len(imperative_infos), 1)
 
     def test_imperative_verbs_representative_sample(self) -> None:
         """A representative sample of imperative verbs are all detected."""
@@ -180,14 +185,14 @@ class ValidateDescriptionTests(unittest.TestCase):
         for verb in verbs:
             desc = f"{verb} robust infrastructure for the project."
             errors, passes = validate_description(desc)
-            imperative_warns = [
+            imperative_infos = [
                 e for e in errors
-                if e.startswith(LEVEL_WARN) and "imperative" in e
+                if e.startswith(LEVEL_INFO) and "imperative" in e
             ]
             with self.subTest(verb=verb):
                 self.assertEqual(
-                    len(imperative_warns), 1,
-                    f"Expected imperative WARN for verb '{verb}', "
+                    len(imperative_infos), 1,
+                    f"Expected imperative INFO for verb '{verb}', "
                     f"got errors={errors}, passes={passes}",
                 )
 
@@ -198,12 +203,12 @@ class ValidateDescriptionTests(unittest.TestCase):
             "CREATE robust infrastructure for the project.",
         ]:
             errors, passes = validate_description(desc)
-            imperative_warns = [
+            imperative_infos = [
                 e for e in errors
-                if e.startswith(LEVEL_WARN) and "imperative" in e
+                if e.startswith(LEVEL_INFO) and "imperative" in e
             ]
             with self.subTest(desc=desc):
-                self.assertEqual(len(imperative_warns), 1)
+                self.assertEqual(len(imperative_infos), 1)
 
     def test_first_person_all_variants_detected(self) -> None:
         """All first-person singular variants (I can, I will, I help, I am) are detected."""
@@ -211,47 +216,46 @@ class ValidateDescriptionTests(unittest.TestCase):
         for phrase in phrases:
             desc = f"Sometimes {phrase}"
             errors, passes = validate_description(desc)
-            first_warns = [
+            first_infos = [
                 e for e in errors
-                if e.startswith(LEVEL_WARN) and "first person" in e
+                if e.startswith(LEVEL_INFO) and "first person" in e
             ]
             with self.subTest(phrase=phrase):
                 self.assertEqual(
-                    len(first_warns), 1,
-                    f"Expected first-person WARN for '{phrase}', got errors={errors}",
+                    len(first_infos), 1,
+                    f"Expected first-person INFO for '{phrase}', got errors={errors}",
                 )
 
     def test_voice_cascade_first_person_takes_priority(self) -> None:
         """When both first-person and second-person are present, only first-person fires."""
         desc = "I can help you manage your data files effectively."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        first_warns = [e for e in warn_errors if "first person" in e]
-        second_warns = [e for e in warn_errors if "second person" in e]
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        first_infos = [e for e in info_errors if "first person" in e]
+        second_infos = [e for e in info_errors if "second person" in e]
         # Only first-person should fire due to elif chain
-        self.assertEqual(len(first_warns), 1)
-        self.assertEqual(len(second_warns), 0)
+        self.assertEqual(len(first_infos), 1)
+        self.assertEqual(len(second_infos), 0)
 
     def test_voice_cascade_first_plural_before_second(self) -> None:
         """When first-person plural and second-person are present, only plural fires."""
         desc = "We can help you manage your data files effectively."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        plural_warns = [e for e in warn_errors if "first-person plural" in e]
-        second_warns = [e for e in warn_errors if "second person" in e]
-        self.assertEqual(len(plural_warns), 1)
-        self.assertEqual(len(second_warns), 0)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        plural_infos = [e for e in info_errors if "first-person plural" in e]
+        second_infos = [e for e in info_errors if "second person" in e]
+        self.assertEqual(len(plural_infos), 1)
+        self.assertEqual(len(second_infos), 0)
 
     def test_description_third_person_no_voice_warnings(self) -> None:
         """A proper third-person description produces no voice warnings."""
         desc = "Manages project timelines and tracks milestones."
         errors, passes = validate_description(desc)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        voice_warns = [
-            e for e in warn_errors
+        voice_msgs = [
+            e for e in errors
             if "person" in e or "imperative" in e
         ]
-        self.assertEqual(voice_warns, [])
+        self.assertEqual(voice_msgs, [])
         voice_pass = [p for p in passes if "third-person" in p]
         self.assertEqual(len(voice_pass), 1)
 
@@ -629,16 +633,17 @@ class ValidateBodyTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
 
-    def test_path_traversal_returns_warn(self) -> None:
-        """A reference escaping the skill directory produces a WARN."""
+    def test_path_traversal_returns_info(self) -> None:
+        """A reference escaping the skill directory produces an INFO."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [escape](references/../../somewhere) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        escape_warns = [e for e in warn_errors if "escapes skill directory" in e]
-        self.assertEqual(len(escape_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        escape_infos = [e for e in info_errors if "outside skill directory" in e]
+        self.assertEqual(len(escape_infos), 1)
+        self.assertIn("[foundry]", escape_infos[0])
         # No FAIL errors
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
@@ -771,16 +776,16 @@ class ValidateBodyTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
 
-    def test_path_traversal_via_references_dotdot_returns_warn(self) -> None:
-        """A reference using references/../.. to escape the skill dir produces a WARN."""
+    def test_path_traversal_via_references_dotdot_returns_info(self) -> None:
+        """A reference using references/../.. to escape the skill dir produces an INFO."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [escape](references/../../../etc/passwd) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        escape_warns = [e for e in warn_errors if "escapes skill directory" in e]
-        self.assertEqual(len(escape_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        escape_infos = [e for e in info_errors if "outside skill directory" in e]
+        self.assertEqual(len(escape_infos), 1)
 
     def test_directory_ref_with_allow_nested_refs_returns_warn(self) -> None:
         """Directory references are caught even with allow_nested_refs=True."""
@@ -814,13 +819,15 @@ class ValidateDirectoriesTests(unittest.TestCase):
         self.assertEqual(len(dir_pass), 1)
 
     def test_non_standard_directory_returns_info(self) -> None:
-        """A non-standard directory produces an INFO warning."""
+        """A non-standard directory produces an INFO warning with foundry attribution."""
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "custom-dir"))
             warnings, passes = validate_directories(tmpdir)
         self.assertEqual(len(warnings), 1)
         self.assertIn(LEVEL_INFO, warnings[0])
+        self.assertIn("[foundry]", warnings[0])
         self.assertIn("custom-dir", warnings[0])
+        self.assertIn("spec allows arbitrary directories", warnings[0])
         # Should list recognized dirs
         for d in sorted(RECOGNIZED_DIRS):
             self.assertIn(d, warnings[0])
@@ -951,8 +958,8 @@ class ValidateSkillTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertGreater(len(fail_errors), 0)
 
-    def test_invalid_description_returns_warn(self) -> None:
-        """A SKILL.md with an imperative description produces a WARN."""
+    def test_imperative_description_returns_info(self) -> None:
+        """A SKILL.md with an imperative description produces an INFO (foundry)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
             write_skill_md(
@@ -960,9 +967,9 @@ class ValidateSkillTests(unittest.TestCase):
                 description="Process data files and generate reports.",
             )
             errors, passes = validate_skill(skill_dir)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        imperative_warns = [e for e in warn_errors if "imperative" in e]
-        self.assertGreaterEqual(len(imperative_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        imperative_infos = [e for e in info_errors if "imperative" in e]
+        self.assertGreaterEqual(len(imperative_infos), 1)
 
     def test_compatibility_exceeding_limit_returns_fail(self) -> None:
         """A compatibility field exceeding MAX_COMPATIBILITY_CHARS produces a FAIL."""
@@ -1273,17 +1280,17 @@ class MainCLITests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("not a directory", proc.stdout.lower())
 
-    def test_warns_only_exits_zero(self) -> None:
-        """A skill with only WARN errors (no FAIL) exits with code 0."""
+    def test_info_only_exits_zero(self) -> None:
+        """A skill with only INFO errors (no FAIL/WARN) exits with code 0."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
-            # Imperative description triggers WARN, not FAIL
+            # Imperative description triggers INFO (foundry convention), not FAIL
             write_skill_md(
                 skill_dir,
                 description="Process data files and generate reports.",
             )
             proc = _run([skill_dir], cwd=REPO_ROOT)
-        # WARN-only should exit 0 (only FAIL causes exit 1)
+        # INFO-only should exit 0 (only FAIL causes exit 1)
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
     def test_type_label_for_registered_skill(self) -> None:
@@ -1302,25 +1309,25 @@ class MainCLITests(unittest.TestCase):
             proc = _run([cap_dir, "--capability"], cwd=REPO_ROOT)
         self.assertIn("capability", proc.stdout)
 
-    def test_verbose_with_warnings_prints_passes_and_errors(self) -> None:
-        """--verbose with warnings still prints both passes and error lines."""
+    def test_verbose_with_info_prints_passes_and_errors(self) -> None:
+        """--verbose with INFO messages still prints both passes and error lines."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
-            # Imperative description triggers WARN but not FAIL
+            # Imperative description triggers INFO (foundry convention)
             write_skill_md(
                 skill_dir,
                 description="Process data files and generate reports.",
             )
             proc = _run([skill_dir, "--verbose"], cwd=REPO_ROOT)
-        # Should exit 0 (WARN only)
+        # Should exit 0 (INFO only)
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
         # Verbose output includes pass marks
         self.assertIn("\u2713", proc.stdout)
-        # Should include the warning symbol
-        self.assertIn("\u26a0", proc.stdout)
+        # Should include the info symbol
+        self.assertIn("\u2139", proc.stdout)
         # Should include summary line
         self.assertIn("Results:", proc.stdout)
-        self.assertIn("warnings", proc.stdout.lower())
+        self.assertIn("info", proc.stdout.lower())
 
     def test_verbose_with_fails_prints_passes_and_errors(self) -> None:
         """--verbose with FAIL errors prints both passes and error lines."""
@@ -1518,34 +1525,36 @@ class ValidateMetadataTests(unittest.TestCase):
         version_pass = [p for p in passes if "version" in p]
         self.assertEqual(len(version_pass), 1)
 
-    def test_invalid_version_returns_warn(self) -> None:
-        """An invalid version format produces a WARN."""
+    def test_invalid_version_returns_info(self) -> None:
+        """An invalid version format produces an INFO (foundry recommendation)."""
         errors, passes = validate_metadata({"version": "1.2"})
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        self.assertEqual(len(warn_errors), 1)
-        self.assertIn("version", warn_errors[0])
-        self.assertIn("semver", warn_errors[0])
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("version", info_errors[0])
+        self.assertIn("semver", info_errors[0])
+        self.assertIn("[foundry]", info_errors[0])
 
-    def test_version_with_v_prefix_returns_warn(self) -> None:
-        """A version with 'v' prefix does not match semver pattern."""
+    def test_version_with_v_prefix_returns_info(self) -> None:
+        """A version with 'v' prefix does not match recommended semver pattern."""
         errors, passes = validate_metadata({"version": "v1.0.0"})
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        self.assertEqual(len(warn_errors), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("[foundry]", info_errors[0])
 
-    def test_known_spec_version_passes(self) -> None:
-        """A known spec version produces a pass."""
+    def test_spec_string_passes(self) -> None:
+        """Any string spec value produces a pass (spec allows arbitrary metadata)."""
         errors, passes = validate_metadata({"spec": "1.0"})
         self.assertEqual(errors, [])
         spec_pass = [p for p in passes if "spec" in p]
         self.assertEqual(len(spec_pass), 1)
 
-    def test_unknown_spec_version_returns_info(self) -> None:
-        """An unknown spec version produces an INFO."""
+    def test_spec_arbitrary_string_passes(self) -> None:
+        """Any arbitrary string spec value passes (no version list enforced)."""
         errors, passes = validate_metadata({"spec": "2.0"})
-        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        self.assertEqual(len(info_errors), 1)
-        self.assertIn("spec", info_errors[0])
-        self.assertIn("2.0", info_errors[0])
+        self.assertEqual(errors, [])
+        spec_pass = [p for p in passes if "spec" in p]
+        self.assertEqual(len(spec_pass), 1)
+        self.assertIn("2.0", spec_pass[0])
 
     def test_valid_author_passes(self) -> None:
         """A valid author string produces a pass."""
@@ -1641,19 +1650,20 @@ class ValidateMetadataTests(unittest.TestCase):
         self.assertIn("NoneType", warn_errors[0])
 
     def test_prefixed_spec_version_passes(self) -> None:
-        """A spec version with agentskills.io/ prefix is recognized."""
+        """A spec value with agentskills.io/ prefix passes as a valid string."""
         errors, passes = validate_metadata({"spec": "agentskills.io/1.0"})
         self.assertEqual(errors, [])
         spec_pass = [p for p in passes if "spec" in p]
         self.assertEqual(len(spec_pass), 1)
         self.assertIn("agentskills.io/1.0", spec_pass[0])
 
-    def test_prefixed_unknown_spec_version_returns_info(self) -> None:
-        """A prefixed spec version with unknown version still returns INFO."""
+    def test_prefixed_spec_any_version_passes(self) -> None:
+        """Any prefixed spec value passes (no version list enforced)."""
         errors, passes = validate_metadata({"spec": "agentskills.io/9.9"})
-        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        self.assertEqual(len(info_errors), 1)
-        self.assertIn("agentskills.io/9.9", info_errors[0])
+        self.assertEqual(errors, [])
+        spec_pass = [p for p in passes if "spec" in p]
+        self.assertEqual(len(spec_pass), 1)
+        self.assertIn("agentskills.io/9.9", spec_pass[0])
 
     def test_list_metadata_returns_warn(self) -> None:
         """A list value for metadata produces a WARN about type."""
@@ -1880,8 +1890,8 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
         meta_passes = [p for p in passes if "metadata" in p]
         self.assertGreaterEqual(len(meta_passes), 1)
 
-    def test_invalid_metadata_version_returns_warn(self) -> None:
-        """An invalid metadata version produces a WARN in validate_skill."""
+    def test_invalid_metadata_version_returns_info(self) -> None:
+        """An invalid metadata version produces an INFO in validate_skill (foundry)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
             write_text(
@@ -1893,9 +1903,9 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
                 "---\n\n# Skill\n",
             )
             errors, passes = validate_skill(skill_dir)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        version_warns = [e for e in warn_errors if "version" in e]
-        self.assertEqual(len(version_warns), 1)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        version_infos = [e for e in info_errors if "version" in e]
+        self.assertEqual(len(version_infos), 1)
 
     def test_license_validated_in_skill(self) -> None:
         """license field is validated when present in frontmatter."""
@@ -1978,8 +1988,8 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
         key_pass = [p for p in passes if "all keys recognized" in p]
         self.assertEqual(len(key_pass), 1)
 
-    def test_prefixed_spec_version_passes_in_skill(self) -> None:
-        """A spec version with agentskills.io/ prefix passes in validate_skill."""
+    def test_spec_string_passes_in_skill(self) -> None:
+        """Any spec string value passes in validate_skill (arbitrary metadata)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
             write_text(
@@ -1987,7 +1997,7 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
                 "---\nname: demo-skill\n"
                 "description: Validates data files and generates reports.\n"
                 "metadata:\n"
-                "  spec: agentskills.io/1.0\n"
+                "  spec: agentskills.io\n"
                 "---\n\n# Skill\n",
             )
             errors, passes = validate_skill(skill_dir)

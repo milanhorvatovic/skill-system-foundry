@@ -69,7 +69,7 @@ The `description` field is the primary discovery mechanism. The model uses it to
 
 ### Rules
 
-- **Always write in third person.** Descriptions are injected into the system prompt. Inconsistent POV causes discovery problems.
+- **Write in third person (foundry convention).** Descriptions are injected into the system prompt. Consistent POV improves discovery. Note: the spec does not mandate a specific voice, but third person is strongly recommended.
   - Good: "Processes data files and generates reports"
   - Bad: "I can help you process data files"
   - Bad: "You can use this to process data files"

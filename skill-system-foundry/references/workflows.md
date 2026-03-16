@@ -31,7 +31,7 @@ Step-by-step procedures for common skill system operations.
    - Router: copy `assets/skill-router.md` → `skills/<name>/SKILL.md`
 
 4. **Write the SKILL.md** following [authoring-principles.md](authoring-principles.md):
-   - Third-person description, max 1024 chars, with triggers
+   - Description max 1024 chars, with triggers (third-person voice recommended)
    - Body recommended max 500 lines, only context the model doesn't already have
    - `name` matches directory, lowercase + hyphens, max 64 chars
 
@@ -336,7 +336,7 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 **Spec Compliance:**
 - [ ] Every registered skill has `name` + `description` in frontmatter
 - [ ] All names match directories, lowercase + hyphens, max 64 chars
-- [ ] All descriptions: third-person, max 1024 chars, with triggers
+- [ ] All descriptions: max 1024 chars, with triggers (third-person recommended)
 - [ ] No SKILL.md exceeds 500 lines
 - [ ] File references: relative paths, one level deep
 

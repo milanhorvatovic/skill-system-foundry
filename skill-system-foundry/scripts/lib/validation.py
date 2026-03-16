@@ -4,7 +4,7 @@ from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
     RE_NAME_FORMAT, RESERVED_NAMES,
     KNOWN_FRONTMATTER_KEYS, KNOWN_TOOLS, MAX_ALLOWED_TOOLS,
-    RE_METADATA_VERSION, KNOWN_SPEC_VERSIONS, SPEC_VERSION_PREFIX,
+    RE_METADATA_VERSION,
     MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
@@ -51,18 +51,18 @@ def validate_name(name, dir_name):
     else:
         passes.append("name: matches directory")
 
-    # Anthropic-specific restrictions
+    # Platform restriction (Anthropic): reserved words
     for reserved in RESERVED_NAMES:
         if reserved in name:
             errors.append(
-                f"{LEVEL_FAIL}: 'name' contains reserved word '{reserved}' "
-                "(not allowed on Anthropic platforms)"
+                f"{LEVEL_WARN}: [platform: Anthropic] 'name' contains reserved word "
+                f"'{reserved}' — not allowed on Anthropic platforms"
             )
 
     if len(name) < MIN_NAME_CHARS:
         errors.append(
-            f"{LEVEL_WARN}: 'name' is only {len(name)} character(s) — "
-            "consider a more descriptive name"
+            f"{LEVEL_INFO}: [foundry] 'name' is only {len(name)} character(s) — "
+            "consider a more descriptive name (spec minimum is 1)"
         )
 
     return errors, passes
@@ -94,7 +94,7 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     tools = value.split()
     if len(tools) > MAX_ALLOWED_TOOLS:
         errors.append(
-            f"{LEVEL_WARN}: 'allowed-tools' lists {len(tools)} tools "
+            f"{LEVEL_WARN}: [foundry] 'allowed-tools' lists {len(tools)} tools "
             f"(max {MAX_ALLOWED_TOOLS}) — consider splitting the skill"
         )
     else:
@@ -103,7 +103,7 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     unknown = sorted(set(t for t in tools if t not in KNOWN_TOOLS))
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: 'allowed-tools' contains unrecognized tools: "
+            f"{LEVEL_INFO}: [foundry] 'allowed-tools' contains unrecognized tools: "
             f"{', '.join(unknown)} — verify spelling"
         )
     else:
@@ -115,8 +115,9 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
 def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
     """Validate the metadata frontmatter sub-fields.
 
-    Checks version (semver pattern), spec (known versions), and
-    author (non-empty string within length limit) when present.
+    The spec defines metadata as an arbitrary key-value mapping.
+    Checks here are foundry conventions (semver recommendation,
+    author limits) not spec requirements.
 
     Returns (errors, passes) tuple.
     """
@@ -141,8 +142,9 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
             passes.append(f"metadata.version: valid semver ({version})")
         else:
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.version' does not match semver pattern: "
-                f"'{version}' — expected MAJOR.MINOR.PATCH"
+                f"{LEVEL_INFO}: [foundry] 'metadata.version' does not follow "
+                f"recommended semver pattern: '{version}' — consider "
+                "MAJOR.MINOR.PATCH (spec allows any string)"
             )
 
     if "spec" in metadata:
@@ -153,17 +155,7 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
                 f"got {type(spec).__name__}"
             )
         else:
-            # Normalize optional prefix (e.g. "agentskills.io/1.0" -> "1.0")
-            normalized = spec
-            if SPEC_VERSION_PREFIX and spec.startswith(SPEC_VERSION_PREFIX):
-                normalized = spec[len(SPEC_VERSION_PREFIX):]
-            if normalized in KNOWN_SPEC_VERSIONS:
-                passes.append(f"metadata.spec: recognized version ({spec})")
-            else:
-                errors.append(
-                    f"{LEVEL_INFO}: 'metadata.spec' is not a recognized version: "
-                    f"'{spec}' — known versions: {', '.join(sorted(KNOWN_SPEC_VERSIONS))}"
-                )
+            passes.append(f"metadata.spec: valid string ({spec})")
 
     if "author" in metadata:
         author = metadata["author"]
@@ -178,8 +170,8 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
             )
         elif len(author) > MAX_AUTHOR_LENGTH:
             errors.append(
-                f"{LEVEL_WARN}: 'metadata.author' exceeds {MAX_AUTHOR_LENGTH} "
-                f"characters ({len(author)} chars)"
+                f"{LEVEL_WARN}: [foundry] 'metadata.author' exceeds "
+                f"{MAX_AUTHOR_LENGTH} characters ({len(author)} chars)"
             )
         else:
             passes.append(f"metadata.author: {len(author)} chars (max {MAX_AUTHOR_LENGTH})")
@@ -238,7 +230,7 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
     )
     if unknown_keys:
         errors.append(
-            f"{LEVEL_INFO}: unrecognized frontmatter keys: "
+            f"{LEVEL_INFO}: [foundry] unrecognized frontmatter keys: "
             f"{', '.join(unknown_keys)} — check for typos. "
             f"Known keys: {', '.join(sorted(KNOWN_FRONTMATTER_KEYS))}"
         )

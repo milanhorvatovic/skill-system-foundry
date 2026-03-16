@@ -1,14 +1,15 @@
 ---
 name: <capability-name>
 description: >
-  <Third-person description of what this capability does and when to use it.
-  Max 1024 characters. Be specific about contexts, keywords, and use cases.>
+  <Description of what this capability does and when to use it.
+  Max 1024 characters. Be specific about contexts, keywords, and use cases.
+  Third-person voice recommended (foundry convention).>
 allowed-tools: <optional, space-delimited pre-approved tools — experimental>
 compatibility: <optional, e.g., Requires git and network access>
 license: <optional, e.g., MIT>
 metadata:
   author: <optional>
-  version: <optional, e.g., "1.0">
+  version: <optional, e.g., "1.0.0">
 ---
 # <Capability Name>
 <!-- TEMPLATE GUIDE: Save this file as `capability.md` inside the capability

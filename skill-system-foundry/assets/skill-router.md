@@ -1,8 +1,9 @@
 ---
 name: <domain-name>
 description: >
-  <Third-person description covering all major capabilities and their
-  trigger contexts. Max 1024 characters. Be slightly pushy.>
+  <Description covering all major capabilities and their trigger contexts.
+  Max 1024 characters. Be slightly pushy. Third-person voice recommended
+  (foundry convention).>
 allowed-tools: <optional, space-delimited pre-approved tools — experimental>
 compatibility: <optional, e.g., Requires git and network access>
 license: <optional, e.g., MIT>
@@ -21,7 +22,7 @@ metadata:
 <!-- TEMPLATE GUIDE: Replace all <placeholder> values with your content.
      - name: lowercase + hyphens only, must match parent directory name
      - description: cover ALL major capabilities and their triggers in a
-       single dense paragraph. Third-person voice. Max 1024 characters.
+       single dense paragraph. Third-person voice recommended. Max 1024 characters.
      - Capabilities are optional — only add when 3+ distinct operations justify it.
      Remove this comment block in your final skill. -->
 

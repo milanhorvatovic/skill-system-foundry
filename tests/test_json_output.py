@@ -168,8 +168,8 @@ class ValidateSkillJsonTests(unittest.TestCase):
         self.assertGreater(data["summary"]["failures"], 0)
         self.assertGreater(len(data["errors"]["failures"]), 0)
 
-    def test_warn_only_json_exits_zero(self) -> None:
-        """A skill with only WARN errors exits 0 with success=true."""
+    def test_info_only_json_exits_zero(self) -> None:
+        """A skill with only INFO errors exits 0 with success=true."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
             write_skill_md(
@@ -180,7 +180,7 @@ class ValidateSkillJsonTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
         data = _parse_json(proc.stdout)
         self.assertTrue(data["success"])
-        self.assertGreater(data["summary"]["warnings"], 0)
+        self.assertGreater(data["summary"]["info"], 0)
 
     def test_json_verbose_includes_passes(self) -> None:
         """--json --verbose includes the passes list."""

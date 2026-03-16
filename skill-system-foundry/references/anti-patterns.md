@@ -58,7 +58,7 @@ Use an "old patterns" section for deprecated approaches.
 Keep references one level deep from SKILL.md. The model may partially read files referenced from other referenced files.
 
 ### First/Second Person Descriptions
-Always third person. "Processes files" not "I can help you process files."
+Third person recommended (foundry convention). "Processes files" not "I can help you process files."
 
 ### Magic Numbers in Scripts
 Document why: `REQUEST_TIMEOUT = 30  # HTTP requests typically complete within 30 seconds`.

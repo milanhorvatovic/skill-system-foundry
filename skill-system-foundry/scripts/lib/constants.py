@@ -31,6 +31,7 @@ FILE_SKILL_MD = "SKILL.md"
 FILE_CAPABILITY_MD = "capability.md"
 FILE_README = "README.md"
 FILE_MANIFEST = "manifest.yaml"
+FILE_CODEX_CONFIG = "agents/openai.yaml"
 FILE_GITKEEP = ".gitkeep"
 EXT_MARKDOWN = ".md"
 
@@ -113,11 +114,9 @@ _allowed_tools = _skill["allowed_tools"]
 KNOWN_TOOLS = frozenset(_allowed_tools["known_tools"])
 MAX_ALLOWED_TOOLS = int(_allowed_tools["max_tools"])
 
-# Metadata sub-field validation
+# Metadata sub-field validation (foundry conventions — spec allows arbitrary values)
 _metadata = _skill["metadata"]
 RE_METADATA_VERSION = re.compile(_metadata["version"]["pattern"])
-KNOWN_SPEC_VERSIONS = frozenset(_metadata["spec"]["known_versions"])
-SPEC_VERSION_PREFIX = _metadata["spec"]["version_prefix"]
 MAX_AUTHOR_LENGTH = int(_metadata["author"]["max_length"])
 
 # License validation
@@ -148,8 +147,19 @@ BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
 BUNDLE_VALID_TARGETS = tuple(_bundle["valid_targets"])
 BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
 
+# --- Codex Configuration (agents/openai.yaml) ---
+_codex = _config["codex_config"]
+_codex_iface = _codex["interface"]
+CODEX_MAX_DISPLAY_NAME_LENGTH = int(_codex_iface["max_display_name_length"])
+CODEX_MAX_SHORT_DESCRIPTION_LENGTH = int(_codex_iface["max_short_description_length"])
+RE_HEX_COLOR = re.compile(_codex_iface["hex_color_pattern"])
+_codex_deps = _codex["dependencies"]
+CODEX_KNOWN_TOOL_TYPES = frozenset(_codex_deps["known_tool_types"])
+CODEX_KNOWN_TRANSPORTS = frozenset(_codex_deps["known_transports"])
+
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _metadata
 del _dep, _role, _bundle
+del _codex, _codex_iface, _codex_deps
