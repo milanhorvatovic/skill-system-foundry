@@ -666,26 +666,19 @@ class ValidateBodyTests(unittest.TestCase):
         # Should have the external-only pass instead
         external_passes = [p for p in passes if "external" in p.lower()]
         self.assertEqual(len(external_passes), 1)
-        # External refs that don't exist still get a broken-ref warning with [foundry] tag
+        # External refs skip all filesystem checks (no existence oracle)
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e
         ]
-        self.assertGreaterEqual(len(broken_warns), 1)
-        self.assertIn("[foundry]", broken_warns[0])
+        self.assertEqual(broken_warns, [])
 
-    def test_external_ref_existence_checked(self) -> None:
-        """External refs still get existence checks even though nesting is skipped."""
+    def test_external_ref_skips_filesystem_checks(self) -> None:
+        """External refs skip all filesystem checks to avoid existence oracle."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create skill in a subdirectory so we can place shared files above it
-            skill_dir = os.path.join(tmpdir, "skills", "my-skill")
-            os.makedirs(skill_dir, exist_ok=True)
-            skill_md = os.path.join(skill_dir, "SKILL.md")
-            # Create the shared file at the resolved path:
-            # skill_dir/references/../../shared/a.md → tmpdir/skills/shared/a.md
-            shared_dir = os.path.join(tmpdir, "skills", "shared")
-            os.makedirs(shared_dir, exist_ok=True)
-            write_text(os.path.join(shared_dir, "a.md"), "# Shared\n")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # External ref to a nonexistent path — should NOT produce
+            # any broken-ref warning (no filesystem oracle)
             body = (
                 "# Skill\n\n"
                 "See [a](references/../../shared/a.md) for details.\n"
@@ -695,7 +688,7 @@ class ValidateBodyTests(unittest.TestCase):
         # Should have the INFO for external ref
         info_errors = [e for e in errors if "outside skill directory" in e]
         self.assertEqual(len(info_errors), 1)
-        # Should NOT have a broken-ref warning since the file exists
+        # Should NOT have any broken-ref warning
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e

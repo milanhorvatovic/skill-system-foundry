@@ -21,39 +21,15 @@ from .constants import (
     RE_HEX_COLOR,
     CODEX_KNOWN_TOOL_TYPES,
     CODEX_KNOWN_TRANSPORTS,
+    CODEX_KNOWN_TOP_KEYS,
+    CODEX_KNOWN_INTERFACE_KEYS,
+    CODEX_KNOWN_POLICY_KEYS,
+    CODEX_KNOWN_DEPENDENCIES_KEYS,
+    CODEX_KNOWN_TOOL_KEYS,
     LEVEL_FAIL,
     LEVEL_WARN,
     LEVEL_INFO,
 )
-
-
-# Top-level keys recognised in agents/openai.yaml.
-_KNOWN_TOP_KEYS = frozenset({"interface", "policy", "dependencies"})
-
-# Keys recognised under the ``interface`` section.
-_KNOWN_INTERFACE_KEYS = frozenset({
-    "display_name",
-    "short_description",
-    "icon_small",
-    "icon_large",
-    "brand_color",
-    "default_prompt",
-})
-
-# Keys recognised under the ``policy`` section.
-_KNOWN_POLICY_KEYS = frozenset({"allow_implicit_invocation"})
-
-# Keys recognised under the ``dependencies`` section.
-_KNOWN_DEPENDENCIES_KEYS = frozenset({"tools"})
-
-# Keys recognised on each tool entry.
-_KNOWN_TOOL_KEYS = frozenset({
-    "type",
-    "value",
-    "description",
-    "transport",
-    "url",
-})
 
 
 def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
@@ -135,7 +111,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
         return errors, passes
 
     # Check for unrecognized top-level keys.
-    unknown_top = sorted(k for k in config if k not in _KNOWN_TOP_KEYS)
+    unknown_top = sorted(k for k in config if k not in CODEX_KNOWN_TOP_KEYS)
     if unknown_top:
         errors.append(
             f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} has unrecognized top-level "
@@ -182,8 +158,8 @@ def _validate_interface(
         )
         return errors, passes
 
-    # Unrecognised keys
-    unknown = sorted(k for k in interface if k not in _KNOWN_INTERFACE_KEYS)
+    # Unrecognized keys
+    unknown = sorted(k for k in interface if k not in CODEX_KNOWN_INTERFACE_KEYS)
     if unknown:
         errors.append(
             f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'interface' has unrecognized "
@@ -308,8 +284,8 @@ def _validate_policy(
         )
         return errors, passes
 
-    # Unrecognised keys
-    unknown = sorted(k for k in policy if k not in _KNOWN_POLICY_KEYS)
+    # Unrecognized keys
+    unknown = sorted(k for k in policy if k not in CODEX_KNOWN_POLICY_KEYS)
     if unknown:
         errors.append(
             f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'policy' has unrecognized "
@@ -351,9 +327,9 @@ def _validate_dependencies(
         )
         return errors, passes
 
-    # Unrecognised keys
+    # Unrecognized keys
     unknown = sorted(
-        k for k in dependencies if k not in _KNOWN_DEPENDENCIES_KEYS
+        k for k in dependencies if k not in CODEX_KNOWN_DEPENDENCIES_KEYS
     )
     if unknown:
         errors.append(
@@ -402,8 +378,8 @@ def _validate_tool_entry(
         )
         return errors, passes
 
-    # Unrecognised keys
-    unknown = sorted(k for k in tool if k not in _KNOWN_TOOL_KEYS)
+    # Unrecognized keys
+    unknown = sorted(k for k in tool if k not in CODEX_KNOWN_TOOL_KEYS)
     if unknown:
         errors.append(
             f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}' has unrecognized keys: "
@@ -426,7 +402,7 @@ def _validate_tool_entry(
             )
         elif tool_type not in CODEX_KNOWN_TOOL_TYPES:
             errors.append(
-                f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.type' is not a recognised tool "
+                f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.type' is not a recognized tool "
                 f"type: '{tool_type}' — known types: "
                 f"{', '.join(sorted(CODEX_KNOWN_TOOL_TYPES))}"
             )
@@ -461,7 +437,7 @@ def _validate_tool_entry(
             )
         elif transport not in CODEX_KNOWN_TRANSPORTS:
             errors.append(
-                f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.transport' is not a recognised "
+                f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.transport' is not a recognized "
                 f"transport: '{transport}' — known transports: "
                 f"{', '.join(sorted(CODEX_KNOWN_TRANSPORTS))}"
             )

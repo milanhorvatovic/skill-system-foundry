@@ -49,7 +49,12 @@ from lib.constants import (
 
 
 def validate_description(description):
-    """Validate the description field against spec rules."""
+    """Validate the description field.
+
+    Checks spec rules (length, non-empty), platform constraints
+    (Anthropic XML-tag restriction), and foundry conventions
+    (third-person voice recommendation).
+    """
     errors = []
     passes = []
 
@@ -164,12 +169,8 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
                 "resolves outside skill directory — acceptable for shared "
                 "resources but verify the path is intentional"
             )
-            # Only check existence for external refs — do NOT read content
-            if not os.path.exists(ref_path):
-                broken_found = True
-                errors.append(
-                    f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {entry_filename} does not exist"
-                )
+            # Skip all filesystem checks for external refs to avoid acting
+            # as a filesystem existence oracle in CI environments.
             continue
 
         internal_checked += 1

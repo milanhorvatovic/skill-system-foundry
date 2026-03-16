@@ -121,6 +121,29 @@ skill:
 # Codex Configuration (agents/openai.yaml)
 # ============================================================
 codex_config:
+  # Known schema keys for agents/openai.yaml validation.
+  # Keys not in these lists trigger INFO-level unrecognized-key warnings.
+  known_top_level_keys:
+    - interface
+    - policy
+    - dependencies
+  known_interface_keys:
+    - display_name
+    - short_description
+    - icon_small
+    - icon_large
+    - brand_color
+    - default_prompt
+  known_policy_keys:
+    - allow_implicit_invocation
+  known_dependencies_keys:
+    - tools
+  known_tool_keys:
+    - type
+    - value
+    - description
+    - transport
+    - url
   interface:
     max_display_name_length: 64
     max_short_description_length: 200
@@ -165,7 +188,7 @@ bundle:
   # Max directory levels to walk up when inferring the system root
   # from the skill path.  Prevents scanning to the filesystem root.
   infer_max_walk_depth: 5
-  # Recognised consumer platform targets for bundling.
+  # Recognized consumer platform targets for bundling.
   # 'claude' enforces the description_max_length as an error;
   # other targets downgrade it to a warning.
   valid_targets:

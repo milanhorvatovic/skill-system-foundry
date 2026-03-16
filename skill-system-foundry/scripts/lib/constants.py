@@ -157,6 +157,13 @@ _codex_deps = _codex["dependencies"]
 CODEX_KNOWN_TOOL_TYPES = frozenset(_codex_deps["known_tool_types"])
 CODEX_KNOWN_TRANSPORTS = frozenset(_codex_deps["known_transports"])
 
+# Schema key sets for agents/openai.yaml structure validation
+CODEX_KNOWN_TOP_KEYS = frozenset(_codex["known_top_level_keys"])
+CODEX_KNOWN_INTERFACE_KEYS = frozenset(_codex["known_interface_keys"])
+CODEX_KNOWN_POLICY_KEYS = frozenset(_codex["known_policy_keys"])
+CODEX_KNOWN_DEPENDENCIES_KEYS = frozenset(_codex["known_dependencies_keys"])
+CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
+
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
