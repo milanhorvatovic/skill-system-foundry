@@ -670,6 +670,50 @@ class InlineCommentTests(unittest.TestCase):
             self.assertIn("already exists", warning)
 
 
+class CommentIndentInferenceTests(unittest.TestCase):
+    """Test that indented comments don't corrupt indent inference."""
+
+    def test_group_found_after_indented_comment(self) -> None:
+        """Indented comment before group header doesn't prevent finding the group."""
+        manifest = (
+            "roles:\n"
+            "  # a comment\n"
+            "    dev-group:\n"
+            "        - name: existing\n"
+            "            path: roles/dev-group/existing.md\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(manifest)
+            append_role_entry(path, "dev-group", "new-role")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # Must NOT have a duplicate dev-group: key.
+            self.assertEqual(text.count("dev-group:"), 1)
+
+    def test_skill_indent_inferred_past_comment(self) -> None:
+        """Indented comment under skills: doesn't drive indent inference."""
+        manifest = (
+            "skills:\n"
+            "  # skill section comment\n"
+            "    existing:\n"
+            "        canonical: skills/existing/SKILL.md\n"
+            "        type: standalone\n"
+            "\n"
+            "roles:\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(manifest)
+            append_skill_entry(path, "new-skill")
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            # New skill key should be at 4-space indent (matching existing), not 2-space.
+            self.assertIn("    new-skill:", text)
+
+
 class IndentationInferenceTests(unittest.TestCase):
     """Test that appended entries match the indentation of existing entries."""
 

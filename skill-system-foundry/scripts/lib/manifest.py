@@ -406,6 +406,13 @@ def _find_group_index(
             break  # Non-comment, non-indented line ends the section
 
         stripped = line.lstrip()
+
+        # Skip indented comment-only lines so they don't influence
+        # indent inference or group matching.
+        if stripped.startswith("#"):
+            i += 1
+            continue
+
         indent = len(line) - len(stripped)
 
         # Infer the indentation used for group headers under roles:.
@@ -432,6 +439,9 @@ def _infer_child_indent(lines: list[str], parent_idx: int, fallback: int = 2) ->
     for i in range(parent_idx + 1, len(lines)):
         line = lines[i]
         if line.strip() == "":
+            continue
+        # Skip comment-only lines so they don't drive indent inference.
+        if line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip())
         if indent <= parent_indent:
