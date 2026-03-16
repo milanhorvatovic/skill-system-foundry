@@ -14,9 +14,11 @@ Options:
     --with-references    Also create a references/ directory (with .gitkeep)
     --with-scripts       Also create a scripts/ directory (with .gitkeep)
     --with-assets        Also create an assets/ directory (with .gitkeep)
-    --update-manifest    Validate and update manifest.yaml after scaffolding.
-                         Creates a minimal manifest if none exists. Detects
-                         name conflicts and warns without overwriting.
+    --update-manifest    For skills and roles: validate and append to manifest.yaml.
+                         For capabilities: print guidance (capabilities are added
+                         to the parent skill's capabilities list, not directly
+                         to manifest.yaml). Creates a minimal manifest if none
+                         exists. Detects name conflicts and warns without overwriting.
     --json               Output results as machine-readable JSON.
 
 Examples:
