@@ -135,7 +135,7 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
         version = metadata["version"]
         if not isinstance(version, str):
             errors.append(
-                f"{LEVEL_WARN}: [spec] 'metadata.version' should be a string, "
+                f"{LEVEL_WARN}: [foundry] 'metadata.version' should be a string, "
                 f"got {type(version).__name__}"
             )
         elif RE_METADATA_VERSION.match(version):
@@ -151,7 +151,7 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
         spec = metadata["spec"]
         if not isinstance(spec, str):
             errors.append(
-                f"{LEVEL_WARN}: [spec] 'metadata.spec' should be a string, "
+                f"{LEVEL_WARN}: [foundry] 'metadata.spec' should be a string, "
                 f"got {type(spec).__name__}"
             )
         else:
@@ -161,7 +161,7 @@ def validate_metadata(metadata: object) -> tuple[list[str], list[str]]:
         author = metadata["author"]
         if not isinstance(author, str):
             errors.append(
-                f"{LEVEL_WARN}: [spec] 'metadata.author' should be a string, "
+                f"{LEVEL_WARN}: [foundry] 'metadata.author' should be a string, "
                 f"got {type(author).__name__}"
             )
         elif not author.strip():

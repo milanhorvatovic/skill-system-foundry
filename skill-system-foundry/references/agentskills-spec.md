@@ -90,7 +90,7 @@ skill-name/
 See [the reference guide](references/REFERENCE.md) for details.
 ```
 
-**[foundry]** The foundry's shared-resource architecture uses paths that resolve outside the skill directory (e.g., `../../shared/references/file.md`). The validator reports these as INFO for awareness and still checks existence, but skips nesting checks for external paths.
+**[foundry]** The foundry's shared-resource architecture uses paths that resolve outside the skill directory (e.g., `../../shared/references/file.md`). The validator reports these as INFO for awareness but skips all filesystem checks (existence, readability, nesting) for external paths to avoid acting as an existence oracle.
 
 ### Best Practices [foundry]
 

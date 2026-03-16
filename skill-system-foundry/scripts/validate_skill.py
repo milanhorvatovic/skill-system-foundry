@@ -48,15 +48,15 @@ from lib.constants import (
 )
 
 
-def validate_description(description):
+def validate_description(description: str) -> tuple[list[str], list[str]]:
     """Validate the description field.
 
     Checks spec rules (length, non-empty), platform constraints
     (Anthropic XML-tag restriction), and foundry conventions
     (third-person voice recommendation).
     """
-    errors = []
-    passes = []
+    errors: list[str] = []
+    passes: list[str] = []
 
     if not description:
         errors.append(f"{LEVEL_FAIL}: [spec] 'description' field is empty")
@@ -110,10 +110,12 @@ def validate_description(description):
     return errors, passes
 
 
-def validate_body(body, skill_md_path, allow_nested_refs=False):
+def validate_body(
+    body: str, skill_md_path: str, allow_nested_refs: bool = False,
+) -> tuple[list[str], list[str]]:
     """Validate skill or capability entry point body."""
-    errors = []
-    passes = []
+    errors: list[str] = []
+    passes: list[str] = []
     entry_filename = os.path.basename(skill_md_path)
 
     line_count = count_body_lines(body)
@@ -158,9 +160,8 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         # Note: references escaping the skill directory are allowed by the
         # spec and used by the foundry's shared-resource architecture
         # (e.g., ../../shared/references/).  Report as INFO for awareness.
-        # External refs get existence checks but NOT content reads (to
-        # prevent the validator from reading arbitrary files outside the
-        # skill directory).  Nesting checks are also skipped for external refs.
+        # All filesystem checks (existence, readability, nesting) are
+        # skipped for external refs to avoid acting as an existence oracle.
         is_external = not is_within_directory(ref_path, skill_dir)
         if is_external:
             external_found = True
@@ -230,15 +231,15 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     return errors, passes
 
 
-def validate_directories(skill_path):
+def validate_directories(skill_path: str) -> tuple[list[str], list[str]]:
     """Check for recognized optional directories.
 
     The spec explicitly allows any additional files/directories.
     This check is a foundry convention to flag non-standard directories
     for awareness, not as an error.
     """
-    warnings = []
-    passes = []
+    warnings: list[str] = []
+    passes: list[str] = []
 
     for item in os.listdir(skill_path):
         item_path = os.path.join(skill_path, item)
@@ -255,10 +256,12 @@ def validate_directories(skill_path):
     return warnings, passes
 
 
-def validate_skill(skill_path, is_capability=False, allow_nested_refs=False):
+def validate_skill(
+    skill_path: str, is_capability: bool = False, allow_nested_refs: bool = False,
+) -> tuple[list[str], list[str]]:
     """Run all validations on a skill directory."""
-    errors = []
-    passes = []
+    errors: list[str] = []
+    passes: list[str] = []
     skill_path = os.path.abspath(skill_path)
     dir_name = os.path.basename(skill_path)
 
