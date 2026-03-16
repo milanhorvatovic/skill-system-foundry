@@ -666,6 +666,40 @@ class ValidateBodyTests(unittest.TestCase):
         # Should have the external-only pass instead
         external_passes = [p for p in passes if "external" in p.lower()]
         self.assertEqual(len(external_passes), 1)
+        # External refs that don't exist still get a broken-ref warning
+        broken_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        self.assertGreaterEqual(len(broken_warns), 1)
+
+    def test_external_ref_existence_checked(self) -> None:
+        """External refs still get existence checks even though nesting is skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create skill in a subdirectory so we can place shared files above it
+            skill_dir = os.path.join(tmpdir, "skills", "my-skill")
+            os.makedirs(skill_dir, exist_ok=True)
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            # Create the shared file at the resolved path:
+            # skill_dir/references/../../shared/a.md → tmpdir/skills/shared/a.md
+            shared_dir = os.path.join(tmpdir, "skills", "shared")
+            os.makedirs(shared_dir, exist_ok=True)
+            write_text(os.path.join(shared_dir, "a.md"), "# Shared\n")
+            body = (
+                "# Skill\n\n"
+                "See [a](references/../../shared/a.md) for details.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should have the INFO for external ref
+        info_errors = [e for e in errors if "outside skill directory" in e]
+        self.assertEqual(len(info_errors), 1)
+        # Should NOT have a broken-ref warning since the file exists
+        broken_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        self.assertEqual(broken_warns, [])
 
     def test_markdown_link_title_handled(self) -> None:
         """A markdown link with a title suffix resolves correctly."""

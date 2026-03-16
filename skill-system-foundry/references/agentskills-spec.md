@@ -4,8 +4,18 @@ Reference for the Agent Skills specification (agentskills.io) plus platform-spec
 
 Each rule in this document is tagged with its origin:
 - **[spec]** — From the Agent Skills specification (agentskills.io)
-- **[platform]** — From specific tools (e.g., Anthropic/Claude Code, OpenAI/Codex)
+- **[platform: Anthropic]** / **[platform: OpenAI]** — From specific platform tools
 - **[foundry]** — Skill System Foundry opinionated best practice / recommendation
+
+## Contents
+
+- [SKILL.md Format](#skillmd-format)
+- [Directory Structure](#directory-structure)
+- [Progressive Disclosure](#progressive-disclosure)
+- [File References](#file-references)
+- [Validation](#validation)
+- [Foundry Conventions](#foundry-conventions)
+- [Skill-System-Specific Notes](#skill-system-specific-notes)
 
 ## SKILL.md Format
 
@@ -31,11 +41,11 @@ Each rule in this document is tagged with its origin:
 
 Each tool has restrictions and extensions beyond the core spec. See the linked references for full details.
 
-**[platform] Anthropic (Claude Code):** `name` cannot contain "anthropic" or "claude". No XML tags in `name` or `description`. Extends frontmatter with subagent execution, dynamic context, and string substitutions. See [claude-code-extensions.md](claude-code-extensions.md).
+**[platform: Anthropic]** `name` cannot contain "anthropic" or "claude". No XML tags in `name` or `description`. Extends frontmatter with subagent execution, dynamic context, and string substitutions. See [claude-code-extensions.md](claude-code-extensions.md).
 
-**[platform] OpenAI (Codex):** Only `name` and `description` read for triggering. Supports optional `agents/openai.yaml` for UI metadata, discovery hierarchy, and tool dependencies. See [codex-extensions.md](codex-extensions.md).
+**[platform: OpenAI]** Only `name` and `description` read for triggering. Supports optional `agents/openai.yaml` for UI metadata, discovery hierarchy, and tool dependencies. See [codex-extensions.md](codex-extensions.md).
 
-**[platform] Cursor:** Cross-vendor discovery, rules migration, and AGENTS.md integration. See [cursor-extensions.md](cursor-extensions.md).
+**[platform: Cursor]** Cross-vendor discovery, rules migration, and AGENTS.md integration. See [cursor-extensions.md](cursor-extensions.md).
 
 ### Name Validation
 
@@ -43,7 +53,7 @@ Each tool has restrictions and extensions beyond the core spec. See the linked r
 
 **[spec]** Invalid: `My-Domain` (uppercase), `-my-domain` (leading hyphen), `my--domain` (consecutive), `my_domain` (underscores)
 
-**[platform]** Invalid on Anthropic: `claude-helper` (reserved word)
+**[platform: Anthropic]** Invalid on Anthropic: `claude-helper` (reserved word)
 
 ## Directory Structure
 
@@ -74,7 +84,13 @@ skill-name/
 
 ## File References
 
-**[spec]** Use relative paths from the skill root. Keep file references one level deep from SKILL.md — meaning SKILL.md references files directly, but those files should avoid referencing further files (no chained references). This does not restrict filesystem path depth (e.g., `../../shared/references/file.md` is valid).
+**[spec]** When referencing other files in your skill, use relative paths from the skill root. Keep file references one level deep from `SKILL.md`. Avoid deeply nested reference chains.
+
+```markdown
+See [the reference guide](references/REFERENCE.md) for details.
+```
+
+**[foundry]** The foundry's shared-resource architecture uses paths that resolve outside the skill directory (e.g., `../../shared/references/file.md`). The validator reports these as INFO for awareness and still checks existence, but skips nesting checks for external paths.
 
 ### Best Practices [foundry]
 

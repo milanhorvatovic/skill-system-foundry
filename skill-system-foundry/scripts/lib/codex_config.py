@@ -467,15 +467,18 @@ def _validate_tool_entry(
 def _is_valid_relative_path(path: str) -> bool:
     """Return True if *path* looks like a valid relative file path.
 
-    Rejects empty strings, absolute paths, and paths containing
+    Rejects empty strings, absolute paths (including Windows UNC
+    paths like ``\\\\server\\share``), and paths containing
     path-traversal sequences (``..``).
     """
     if not path or not path.strip():
         return False
-    if os.path.isabs(path):
-        return False
-    # Normalize backslashes to catch Windows-style traversal attempts
+    # Normalize backslashes first so that Windows-style absolute and
+    # UNC paths (e.g., \\server\share\icon.svg → //server/share/icon.svg)
+    # are detected consistently on all platforms.
     normalized = path.replace("\\", "/")
+    if os.path.isabs(normalized) or normalized.startswith("//"):
+        return False
     if ".." in normalized.split("/"):
         return False
     return True

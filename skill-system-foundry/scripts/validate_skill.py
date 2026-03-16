@@ -153,17 +153,18 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         # Note: references escaping the skill directory are allowed by the
         # spec and used by the foundry's shared-resource architecture
         # (e.g., ../../shared/references/).  Report as INFO for awareness.
-        # These refs are excluded from nested/broken checks.
-        if not is_within_directory(ref_path, skill_dir):
+        # External refs still get existence/readability checks but are
+        # excluded from nested-reference depth checks.
+        is_external = not is_within_directory(ref_path, skill_dir)
+        if is_external:
             external_found = True
             errors.append(
                 f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {entry_filename} "
                 "resolves outside skill directory — acceptable for shared "
                 "resources but verify the path is intentional"
             )
-            continue
-
-        internal_checked += 1
+        else:
+            internal_checked += 1
 
         if not os.path.exists(ref_path):
             broken_found = True
@@ -193,8 +194,8 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             )
             continue
 
-        # Nested reference check — only when flag is not set
-        if not allow_nested_refs:
+        # Nested reference check — only for internal refs and when flag is not set
+        if not is_external and not allow_nested_refs:
             nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
             nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
             nested_refs = list(set(nested_refs + nested_backtick_refs))
