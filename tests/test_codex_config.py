@@ -150,17 +150,16 @@ class CodexConfigValidTests(unittest.TestCase):
 class CodexConfigInterfaceTests(unittest.TestCase):
     """Tests for interface section validation."""
 
-    def test_display_name_exceeding_max_returns_fail(self) -> None:
-        """A display_name exceeding the max length produces a FAIL."""
+    def test_display_name_exceeding_max_returns_warn(self) -> None:
+        """A display_name exceeding the max length produces a WARN (platform)."""
         long_name = "x" * (CODEX_MAX_DISPLAY_NAME_LENGTH + 1)
         config = f"interface:\n  display_name: \"{long_name}\"\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("display_name", fail_errors[0])
-        self.assertIn("exceeds", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "display_name" in e]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("exceeds", warn_errors[0])
 
     def test_display_name_at_max_passes(self) -> None:
         """A display_name at exactly the max length passes."""
@@ -174,16 +173,16 @@ class CodexConfigInterfaceTests(unittest.TestCase):
         display_pass = [p for p in passes if "display_name" in p]
         self.assertEqual(len(display_pass), 1)
 
-    def test_short_description_exceeding_max_returns_fail(self) -> None:
-        """A short_description exceeding the max length produces a FAIL."""
+    def test_short_description_exceeding_max_returns_warn(self) -> None:
+        """A short_description exceeding the max length produces a WARN (platform)."""
         long_desc = "x" * (CODEX_MAX_SHORT_DESCRIPTION_LENGTH + 1)
         config = f"interface:\n  short_description: \"{long_desc}\"\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("short_description", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "short_description" in e]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("exceeds", warn_errors[0])
 
     def test_short_description_at_max_passes(self) -> None:
         """A short_description at exactly the max length passes."""
@@ -410,8 +409,8 @@ class CodexConfigDependenciesTests(unittest.TestCase):
         tools_pass = [p for p in passes if "tools" in p]
         self.assertGreaterEqual(len(tools_pass), 1)
 
-    def test_missing_type_returns_fail(self) -> None:
-        """A tool entry without 'type' produces a FAIL."""
+    def test_missing_type_returns_warn(self) -> None:
+        """A tool entry without 'type' produces a WARN (platform)."""
         config = (
             "dependencies:\n"
             "  tools:\n"
@@ -420,12 +419,11 @@ class CodexConfigDependenciesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        type_fails = [e for e in fail_errors if "type" in e]
-        self.assertEqual(len(type_fails), 1)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "type" in e]
+        self.assertEqual(len(warn_errors), 1)
 
-    def test_missing_value_returns_fail(self) -> None:
-        """A tool entry without 'value' produces a FAIL."""
+    def test_missing_value_returns_warn(self) -> None:
+        """A tool entry without 'value' produces a WARN (platform)."""
         config = (
             "dependencies:\n"
             "  tools:\n"
@@ -434,12 +432,11 @@ class CodexConfigDependenciesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        value_fails = [e for e in fail_errors if "value" in e]
-        self.assertEqual(len(value_fails), 1)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "value" in e]
+        self.assertEqual(len(warn_errors), 1)
 
-    def test_empty_type_returns_fail(self) -> None:
-        """A tool entry with an empty 'type' string produces a FAIL."""
+    def test_empty_type_returns_warn(self) -> None:
+        """A tool entry with an empty 'type' string produces a WARN (platform)."""
         config = (
             "dependencies:\n"
             "  tools:\n"
@@ -449,12 +446,11 @@ class CodexConfigDependenciesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        type_fails = [e for e in fail_errors if "type" in e and "empty" in e]
-        self.assertEqual(len(type_fails), 1)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "type" in e and "empty" in e]
+        self.assertEqual(len(warn_errors), 1)
 
-    def test_empty_value_returns_fail(self) -> None:
-        """A tool entry with an empty 'value' string produces a FAIL."""
+    def test_empty_value_returns_warn(self) -> None:
+        """A tool entry with an empty 'value' string produces a WARN (platform)."""
         config = (
             "dependencies:\n"
             "  tools:\n"
@@ -464,9 +460,8 @@ class CodexConfigDependenciesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        value_fails = [e for e in fail_errors if "value" in e and "empty" in e]
-        self.assertEqual(len(value_fails), 1)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "value" in e and "empty" in e]
+        self.assertEqual(len(warn_errors), 1)
 
     def test_empty_section_no_warn(self) -> None:
         """An empty section (e.g., 'interface:' alone) produces no WARN."""
@@ -574,19 +569,18 @@ class CodexConfigMalformedTests(unittest.TestCase):
         self.assertEqual(len(info_errors), 1)
         self.assertIn("custom_section", info_errors[0])
 
-    def test_top_level_sequence_returns_fail(self) -> None:
-        """A top-level YAML sequence produces a FAIL."""
+    def test_top_level_sequence_returns_warn(self) -> None:
+        """A top-level YAML sequence produces a WARN (platform)."""
         config = "- item-one\n- item-two\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("mapping", fail_errors[0])
-        self.assertIn("sequence", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "mapping" in e]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("sequence", warn_errors[0])
 
-    def test_top_level_sequence_with_mappings_returns_fail(self) -> None:
-        """A top-level list of mappings (not a mapping) produces a FAIL."""
+    def test_top_level_sequence_with_mappings_returns_warn(self) -> None:
+        """A top-level list of mappings (not a mapping) produces a WARN (platform)."""
         config = (
             "- type: mcp\n"
             "  value: server\n"
@@ -594,12 +588,11 @@ class CodexConfigMalformedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("mapping", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "mapping" in e]
+        self.assertEqual(len(warn_errors), 1)
 
-    def test_bare_dash_sequence_returns_fail(self) -> None:
-        """A top-level bare dash (content on following indented lines) produces a FAIL."""
+    def test_bare_dash_sequence_returns_warn(self) -> None:
+        """A top-level bare dash (content on following indented lines) produces a WARN (platform)."""
         config = (
             "-\n"
             "  type: mcp\n"
@@ -608,33 +601,30 @@ class CodexConfigMalformedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("mapping", fail_errors[0])
-        self.assertIn("sequence", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "mapping" in e]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("sequence", warn_errors[0])
 
-    def test_indented_top_level_sequence_returns_fail(self) -> None:
-        """An indented top-level YAML sequence produces a FAIL."""
+    def test_indented_top_level_sequence_returns_warn(self) -> None:
+        """An indented top-level YAML sequence produces a WARN (platform)."""
         config = " - item-one\n - item-two\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("mapping", fail_errors[0])
-        self.assertIn("sequence", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "mapping" in e]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("sequence", warn_errors[0])
 
-    def test_malformed_content_coerced_to_empty_dict_returns_fail(self) -> None:
-        """Content that the parser coerces to an empty dict produces a FAIL."""
+    def test_malformed_content_coerced_to_empty_dict_returns_warn(self) -> None:
+        """Content that the parser coerces to an empty dict produces a WARN (platform)."""
         # A bare key without a colon is not valid YAML mapping syntax;
         # parse_yaml_subset silently returns {} for such input.
         config = "not-a-mapping\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, config)
             errors, passes = validate_codex_config(tmpdir)
-        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
-        self.assertEqual(len(fail_errors), 1)
-        self.assertIn("malformed", fail_errors[0])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN) and "malformed" in e]
+        self.assertEqual(len(warn_errors), 1)
 
 
 # ===================================================================

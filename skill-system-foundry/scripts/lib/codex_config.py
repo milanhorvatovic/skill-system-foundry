@@ -26,7 +26,6 @@ from .constants import (
     CODEX_KNOWN_POLICY_KEYS,
     CODEX_KNOWN_DEPENDENCIES_KEYS,
     CODEX_KNOWN_TOOL_KEYS,
-    LEVEL_FAIL,
     LEVEL_WARN,
     LEVEL_INFO,
 )
@@ -53,7 +52,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
             text = f.read()
     except OSError as exc:
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] cannot read {FILE_CODEX_CONFIG} "
+            f"{LEVEL_WARN}: [platform: OpenAI] cannot read {FILE_CODEX_CONFIG} "
             f"({exc.__class__.__name__}: {exc})"
         )
         return errors, passes
@@ -82,7 +81,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
 
     if first_line == "-" or first_line.startswith("- "):
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a "
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a "
             "mapping, not a sequence"
         )
         return errors, passes
@@ -91,13 +90,13 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
         config = parse_yaml_subset(text)
     except ValueError as exc:
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} YAML parse error: {exc}"
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} YAML parse error: {exc}"
         )
         return errors, passes
 
     if not isinstance(config, dict):
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a mapping"
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a mapping"
         )
         return errors, passes
 
@@ -106,7 +105,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     # Allow legitimate empty YAML mappings (e.g., "{}").
     if config == {} and first_line and not first_line.strip().startswith("{"):
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} malformed YAML content"
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} malformed YAML content"
         )
         return errors, passes
 
@@ -176,7 +175,7 @@ def _validate_interface(
             )
         elif len(val) > CODEX_MAX_DISPLAY_NAME_LENGTH:
             errors.append(
-                f"{LEVEL_FAIL}: [platform: OpenAI] 'interface.display_name' exceeds "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.display_name' exceeds "
                 f"{CODEX_MAX_DISPLAY_NAME_LENGTH} characters ({len(val)} chars)"
             )
         else:
@@ -195,7 +194,7 @@ def _validate_interface(
             )
         elif len(val) > CODEX_MAX_SHORT_DESCRIPTION_LENGTH:
             errors.append(
-                f"{LEVEL_FAIL}: [platform: OpenAI] 'interface.short_description' exceeds "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.short_description' exceeds "
                 f"{CODEX_MAX_SHORT_DESCRIPTION_LENGTH} characters "
                 f"({len(val)} chars)"
             )
@@ -388,7 +387,7 @@ def _validate_tool_entry(
 
     # Required fields: type, value
     if "type" not in tool:
-        errors.append(f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}' missing required 'type' field")
+        errors.append(f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}' missing required 'type' field")
     else:
         tool_type = tool["type"]
         if not isinstance(tool_type, str):
@@ -398,7 +397,7 @@ def _validate_tool_entry(
             )
         elif not tool_type.strip():
             errors.append(
-                f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}.type' is empty"
+                f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.type' is empty"
             )
         elif tool_type not in CODEX_KNOWN_TOOL_TYPES:
             errors.append(
@@ -409,7 +408,7 @@ def _validate_tool_entry(
 
     if "value" not in tool:
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}' missing required 'value' field"
+            f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}' missing required 'value' field"
         )
     elif not isinstance(tool["value"], str):
         errors.append(
@@ -418,7 +417,7 @@ def _validate_tool_entry(
         )
     elif not tool["value"].strip():
         errors.append(
-            f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}.value' is empty"
+            f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.value' is empty"
         )
 
     # Optional fields
