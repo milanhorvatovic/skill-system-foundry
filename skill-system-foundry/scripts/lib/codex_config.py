@@ -479,6 +479,10 @@ def _is_valid_relative_path(path: str) -> bool:
     normalized = path.replace("\\", "/")
     if os.path.isabs(normalized) or normalized.startswith("//"):
         return False
+    # Reject Windows drive-letter absolute paths (e.g., C:/icons/icon.svg)
+    # which os.path.isabs() does not catch on POSIX.
+    if len(normalized) >= 3 and normalized[0].isalpha() and normalized[1:3] == ":/":
+        return False
     if ".." in normalized.split("/"):
         return False
     return True

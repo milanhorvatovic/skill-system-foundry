@@ -281,6 +281,19 @@ class CodexConfigInterfaceTests(unittest.TestCase):
         self.assertEqual(len(warn_errors), 1)
         self.assertIn("relative path", warn_errors[0])
 
+    def test_drive_letter_path_icon_returns_warn(self) -> None:
+        """A Windows drive-letter path (C:/...) produces a WARN on any platform."""
+        config = 'interface:\n  icon_small: "C:/icons/icon.svg"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warn_errors = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "icon_small" in e
+        ]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("relative path", warn_errors[0])
+
     def test_valid_relative_icon_paths_pass(self) -> None:
         """Valid relative icon paths pass validation."""
         valid_paths = ["./assets/icon.svg", "assets/icon.png", "icon.svg"]

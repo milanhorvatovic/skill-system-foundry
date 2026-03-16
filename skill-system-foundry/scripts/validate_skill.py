@@ -67,7 +67,7 @@ def validate_description(description):
     # Platform restriction (Anthropic): XML tags not allowed in description
     if RE_XML_TAG.search(description):
         errors.append(
-            f"{LEVEL_WARN}: [platform: Anthropic] 'description' may contain XML tags "
+            f"{LEVEL_WARN}: [platform: Anthropic] 'description' contains XML tags "
             "— not allowed on Anthropic platforms"
         )
 
@@ -153,8 +153,9 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         # Note: references escaping the skill directory are allowed by the
         # spec and used by the foundry's shared-resource architecture
         # (e.g., ../../shared/references/).  Report as INFO for awareness.
-        # External refs still get existence/readability checks but are
-        # excluded from nested-reference depth checks.
+        # External refs get existence checks but NOT content reads (to
+        # prevent the validator from reading arbitrary files outside the
+        # skill directory).  Nesting checks are also skipped for external refs.
         is_external = not is_within_directory(ref_path, skill_dir)
         if is_external:
             external_found = True
@@ -163,8 +164,15 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
                 "resolves outside skill directory — acceptable for shared "
                 "resources but verify the path is intentional"
             )
-        else:
-            internal_checked += 1
+            # Only check existence for external refs — do NOT read content
+            if not os.path.exists(ref_path):
+                broken_found = True
+                errors.append(
+                    f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} does not exist"
+                )
+            continue
+
+        internal_checked += 1
 
         if not os.path.exists(ref_path):
             broken_found = True
@@ -181,8 +189,7 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             )
             continue
 
-        # Check file is readable regardless of allow_nested_refs
-        # (unreadable files should be reported even when nested check is skipped)
+        # Check file is readable
         try:
             with open(ref_path, "r", encoding="utf-8") as f:
                 ref_content = f.read()
@@ -194,8 +201,8 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             )
             continue
 
-        # Nested reference check — only for internal refs and when flag is not set
-        if not is_external and not allow_nested_refs:
+        # Nested reference check — only when flag is not set
+        if not allow_nested_refs:
             nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
             nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
             nested_refs = list(set(nested_refs + nested_backtick_refs))

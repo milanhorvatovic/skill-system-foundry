@@ -4,7 +4,7 @@ Reference for the Agent Skills specification (agentskills.io) plus platform-spec
 
 Each rule in this document is tagged with its origin:
 - **[spec]** — From the Agent Skills specification (agentskills.io)
-- **[platform: Anthropic]** / **[platform: OpenAI]** — From specific platform tools
+- **[platform: Anthropic]** / **[platform: OpenAI]** / **[platform: Cursor]** — From specific platform tools
 - **[foundry]** — Skill System Foundry opinionated best practice / recommendation
 
 ## Contents
