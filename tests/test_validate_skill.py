@@ -666,12 +666,13 @@ class ValidateBodyTests(unittest.TestCase):
         # Should have the external-only pass instead
         external_passes = [p for p in passes if "external" in p.lower()]
         self.assertEqual(len(external_passes), 1)
-        # External refs that don't exist still get a broken-ref warning
+        # External refs that don't exist still get a broken-ref warning with [foundry] tag
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e
         ]
         self.assertGreaterEqual(len(broken_warns), 1)
+        self.assertIn("[foundry]", broken_warns[0])
 
     def test_external_ref_existence_checked(self) -> None:
         """External refs still get existence checks even though nesting is skipped."""

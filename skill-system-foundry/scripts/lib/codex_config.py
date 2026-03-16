@@ -169,7 +169,9 @@ def _validate_interface(
     errors: list[str] = []
     passes: list[str] = []
 
-    if interface is None:
+    # The YAML subset parser returns "" for keys with no nested content
+    # (e.g., "interface:\n").  Treat this the same as an absent section.
+    if interface is None or interface == "":
         return errors, passes
 
     if not isinstance(interface, dict):
@@ -295,7 +297,7 @@ def _validate_policy(
     errors: list[str] = []
     passes: list[str] = []
 
-    if policy is None:
+    if policy is None or policy == "":
         return errors, passes
 
     if not isinstance(policy, dict):
@@ -338,7 +340,7 @@ def _validate_dependencies(
     errors: list[str] = []
     passes: list[str] = []
 
-    if dependencies is None:
+    if dependencies is None or dependencies == "":
         return errors, passes
 
     if not isinstance(dependencies, dict):
@@ -417,6 +419,10 @@ def _validate_tool_entry(
                 f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.type' should be a string, "
                 f"got {type(tool_type).__name__}"
             )
+        elif not tool_type.strip():
+            errors.append(
+                f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}.type' is empty"
+            )
         elif tool_type not in CODEX_KNOWN_TOOL_TYPES:
             errors.append(
                 f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.type' is not a recognised tool "
@@ -432,6 +438,10 @@ def _validate_tool_entry(
         errors.append(
             f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.value' should be a string, "
             f"got {type(tool['value']).__name__}"
+        )
+    elif not tool["value"].strip():
+        errors.append(
+            f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}.value' is empty"
         )
 
     # Optional fields

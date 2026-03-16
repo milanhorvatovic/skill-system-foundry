@@ -168,7 +168,7 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
             if not os.path.exists(ref_path):
                 broken_found = True
                 errors.append(
-                    f"{LEVEL_WARN}: '{ref}' referenced in {entry_filename} does not exist"
+                    f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {entry_filename} does not exist"
                 )
             continue
 

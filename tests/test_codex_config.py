@@ -438,6 +438,46 @@ class CodexConfigDependenciesTests(unittest.TestCase):
         value_fails = [e for e in fail_errors if "value" in e]
         self.assertEqual(len(value_fails), 1)
 
+    def test_empty_type_returns_fail(self) -> None:
+        """A tool entry with an empty 'type' string produces a FAIL."""
+        config = (
+            "dependencies:\n"
+            "  tools:\n"
+            '    - type: ""\n'
+            "      value: my-server\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        type_fails = [e for e in fail_errors if "type" in e and "empty" in e]
+        self.assertEqual(len(type_fails), 1)
+
+    def test_empty_value_returns_fail(self) -> None:
+        """A tool entry with an empty 'value' string produces a FAIL."""
+        config = (
+            "dependencies:\n"
+            "  tools:\n"
+            "    - type: mcp\n"
+            '      value: ""\n'
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        value_fails = [e for e in fail_errors if "value" in e and "empty" in e]
+        self.assertEqual(len(value_fails), 1)
+
+    def test_empty_section_no_warn(self) -> None:
+        """An empty section (e.g., 'interface:' alone) produces no WARN."""
+        config = "interface:\npolicy:\ndependencies:\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        type_warns = [e for e in warn_errors if "should be a mapping" in e]
+        self.assertEqual(type_warns, [])
+
     def test_unknown_tool_type_returns_info(self) -> None:
         """An unrecognised tool type produces an INFO."""
         config = (
