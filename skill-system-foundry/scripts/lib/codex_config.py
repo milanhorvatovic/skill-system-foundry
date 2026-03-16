@@ -462,6 +462,8 @@ def _is_valid_relative_path(path: str) -> bool:
         return False
     if os.path.isabs(path):
         return False
-    if ".." in path.split("/"):
+    # Normalize backslashes to catch Windows-style traversal attempts
+    normalized = path.replace("\\", "/")
+    if ".." in normalized.split("/"):
         return False
     return True
