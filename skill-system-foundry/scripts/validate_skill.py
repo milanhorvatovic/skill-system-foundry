@@ -220,7 +220,13 @@ def validate_body(
     if allow_nested_refs and refs and not broken_found:
         passes.append("references: nested-reference check skipped (--allow-nested-references)")
     elif internal_checked > 0 and not nested_found and not broken_found:
-        passes.append("references: one level deep, no nested refs")
+        if external_found:
+            passes.append(
+                "references: internal refs one level deep, no nested refs "
+                "(external refs excluded from nesting checks)"
+            )
+        else:
+            passes.append("references: one level deep, no nested refs")
 
     if external_found and internal_checked == 0 and refs:
         passes.append(

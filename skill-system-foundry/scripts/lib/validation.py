@@ -10,10 +10,15 @@ from .constants import (
 )
 
 
-def validate_name(name, dir_name):
-    """Validate the name field against spec rules."""
-    errors = []
-    passes = []
+def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
+    """Validate the name field.
+
+    Checks spec rules (format, length, directory match), platform
+    restrictions (Anthropic reserved words), and foundry conventions
+    (minimum name length advisory).
+    """
+    errors: list[str] = []
+    passes: list[str] = []
 
     if not name:
         errors.append(f"{LEVEL_FAIL}: [spec] 'name' field is empty")
