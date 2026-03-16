@@ -127,17 +127,18 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
 
     # Reject configs that parse to empty dict despite having content —
     # the parser may silently coerce malformed input to {}.
-    if config == {} and first_line:
+    # Allow legitimate empty YAML mappings (e.g., "{}").
+    if config == {} and first_line and not first_line.strip().startswith("{"):
         errors.append(
             f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} malformed YAML content"
         )
         return errors, passes
 
-    # Check for unrecognised top-level keys.
+    # Check for unrecognized top-level keys.
     unknown_top = sorted(k for k in config if k not in _KNOWN_TOP_KEYS)
     if unknown_top:
         errors.append(
-            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} has unrecognised top-level "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} has unrecognized top-level "
             f"keys: {', '.join(unknown_top)}"
         )
 
@@ -185,7 +186,7 @@ def _validate_interface(
     unknown = sorted(k for k in interface if k not in _KNOWN_INTERFACE_KEYS)
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'interface' has unrecognised "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'interface' has unrecognized "
             f"keys: {', '.join(unknown)}"
         )
 
@@ -311,7 +312,7 @@ def _validate_policy(
     unknown = sorted(k for k in policy if k not in _KNOWN_POLICY_KEYS)
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'policy' has unrecognised "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'policy' has unrecognized "
             f"keys: {', '.join(unknown)}"
         )
 
@@ -357,7 +358,7 @@ def _validate_dependencies(
     if unknown:
         errors.append(
             f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'dependencies' has "
-            f"unrecognised keys: {', '.join(unknown)}"
+            f"unrecognized keys: {', '.join(unknown)}"
         )
 
     # tools
@@ -405,7 +406,7 @@ def _validate_tool_entry(
     unknown = sorted(k for k in tool if k not in _KNOWN_TOOL_KEYS)
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}' has unrecognised keys: "
+            f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}' has unrecognized keys: "
             f"{', '.join(unknown)}"
         )
 
