@@ -537,6 +537,17 @@ class CodexConfigMalformedTests(unittest.TestCase):
         self.assertIn("mapping", fail_errors[0])
         self.assertIn("sequence", fail_errors[0])
 
+    def test_indented_top_level_sequence_returns_fail(self) -> None:
+        """An indented top-level YAML sequence produces a FAIL."""
+        config = " - item-one\n - item-two\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertIn("mapping", fail_errors[0])
+        self.assertIn("sequence", fail_errors[0])
+
     def test_malformed_content_coerced_to_empty_dict_returns_fail(self) -> None:
         """Content that the parser coerces to an empty dict produces a FAIL."""
         # A bare key without a colon is not valid YAML mapping syntax;

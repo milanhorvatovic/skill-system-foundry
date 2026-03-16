@@ -89,14 +89,15 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     # Pre-parse guard: detect top-level list syntax that the parser
     # would coerce to an empty dict, which would hide malformed input.
     # Checks both "- value" and bare "-" (content on following indented lines).
-    top_level_lines = [
-        ln.lstrip()
-        for ln in text.splitlines()
-        if ln.strip()
-        and not ln.lstrip().startswith("#")
-        and not ln[0:1].isspace()
-    ]
-    if any(ln == "-" or ln.startswith("- ") for ln in top_level_lines):
+    # Only the first non-empty, non-comment line is inspected so that
+    # nested sequences inside valid mappings are not misidentified.
+    first_line = ""
+    for ln in text.splitlines():
+        stripped = ln.strip()
+        if stripped and not stripped.startswith("#"):
+            first_line = stripped
+            break
+    if first_line == "-" or first_line.startswith("- "):
         errors.append(
             f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a "
             "mapping, not a sequence"
@@ -119,7 +120,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
 
     # Reject configs that parse to empty dict despite having content —
     # the parser may silently coerce malformed input to {}.
-    if config == {} and top_level_lines:
+    if config == {} and first_line:
         errors.append(
             f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} malformed YAML content"
         )
