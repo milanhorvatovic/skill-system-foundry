@@ -70,7 +70,8 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     first_line = ""
     for ln in text.splitlines():
         stripped = ln.strip()
-        if stripped and not stripped.startswith("#"):
+        # Skip empty lines, comments, and YAML document markers (--- / ...)
+        if stripped and not stripped.startswith("#") and stripped not in ("---", "..."):
             first_line = stripped
             break
 
