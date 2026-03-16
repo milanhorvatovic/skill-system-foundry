@@ -69,6 +69,16 @@ class CodexConfigAbsenceTests(unittest.TestCase):
         self.assertIn(LEVEL_WARN, errors[0])
         self.assertIn("empty", errors[0])
 
+    def test_comment_only_file_returns_warn(self) -> None:
+        """A comment-only agents/openai.yaml is treated as empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, "# TODO: configure later\n# another comment\n")
+            errors, passes = validate_codex_config(tmpdir)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(LEVEL_WARN, errors[0])
+        self.assertIn("empty", errors[0])
+        self.assertIn("comments only", errors[0])
+
 
 # ===================================================================
 # Valid Configuration

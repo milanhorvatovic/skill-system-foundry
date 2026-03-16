@@ -648,6 +648,25 @@ class ValidateBodyTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
 
+    def test_all_external_refs_no_misleading_pass(self) -> None:
+        """When all refs are external, 'one level deep' pass does not fire."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Use references/../../ paths so the regex matches but they escape the dir
+            body = (
+                "# Skill\n\n"
+                "See [a](references/../../shared/a.md) and "
+                "[b](references/../../shared/b.md) for details.\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md)
+        # Should NOT have the "one level deep" pass since no internal refs were checked
+        nesting_passes = [p for p in passes if "one level deep" in p]
+        self.assertEqual(nesting_passes, [])
+        # Should have the external-only pass instead
+        external_passes = [p for p in passes if "external" in p.lower()]
+        self.assertEqual(len(external_passes), 1)
+
     def test_markdown_link_title_handled(self) -> None:
         """A markdown link with a title suffix resolves correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:

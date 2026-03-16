@@ -91,12 +91,19 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     # Checks both "- value" and bare "-" (content on following indented lines).
     # Only the first non-empty, non-comment line is inspected so that
     # nested sequences inside valid mappings are not misidentified.
+    # A file containing only comments is treated as effectively empty.
     first_line = ""
     for ln in text.splitlines():
         stripped = ln.strip()
         if stripped and not stripped.startswith("#"):
             first_line = stripped
             break
+
+    if not first_line:
+        # File has content but only comments — treat as empty
+        errors.append(f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} is empty (comments only)")
+        return errors, passes
+
     if first_line == "-" or first_line.startswith("- "):
         errors.append(
             f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a "

@@ -130,6 +130,8 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
     # Always check for broken references regardless of allow_nested_refs
     broken_found = False
     nested_found = False
+    external_found = False
+    internal_checked = 0
 
     skill_dir = os.path.dirname(skill_md_path)
     seen_paths: set[str] = set()
@@ -151,13 +153,17 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
         # Note: references escaping the skill directory are allowed by the
         # spec and used by the foundry's shared-resource architecture
         # (e.g., ../../shared/references/).  Report as INFO for awareness.
+        # These refs are excluded from nested/broken checks.
         if not is_within_directory(ref_path, skill_dir):
+            external_found = True
             errors.append(
                 f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {entry_filename} "
                 "resolves outside skill directory — acceptable for shared "
                 "resources but verify the path is intentional"
             )
             continue
+
+        internal_checked += 1
 
         if not os.path.exists(ref_path):
             broken_found = True
@@ -203,8 +209,14 @@ def validate_body(body, skill_md_path, allow_nested_refs=False):
 
     if allow_nested_refs and refs and not broken_found:
         passes.append("references: nested-reference check skipped (--allow-nested-references)")
-    elif refs and not nested_found and not broken_found:
+    elif internal_checked > 0 and not nested_found and not broken_found:
         passes.append("references: one level deep, no nested refs")
+
+    if external_found and internal_checked == 0 and refs:
+        passes.append(
+            "references: all references resolve outside skill directory "
+            "(external refs excluded from nesting checks)"
+        )
 
     return errors, passes
 
