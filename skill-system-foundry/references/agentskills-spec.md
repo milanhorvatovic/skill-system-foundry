@@ -25,7 +25,7 @@ Each rule in this document is tagged with its origin:
 | `allowed-tools` | [spec] | Space-delimited pre-approved tools. Experimental. |
 | `compatibility` | [spec] | Max 500 chars. Environment requirements. |
 | `license` | [spec] | License name or reference to bundled LICENSE file. |
-| `metadata` | [spec] | Arbitrary key-value map (string → string). Clients can use this for additional properties not defined by the spec. |
+| `metadata` | [spec] | Arbitrary key-value map. Clients can use this for additional properties not defined by the spec. The validator is permissive with value types. |
 
 ### Platform-Specific Details
 

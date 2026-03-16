@@ -5,6 +5,10 @@ Codex-specific interface metadata, policy settings, and tool
 dependencies for a skill.  The file is not required — skills without
 it are valid — but when present its structure must conform to the
 schema documented in ``references/codex-extensions.md``.
+
+All validation messages from this module are tagged with
+``[platform: OpenAI]`` to indicate they are Codex-specific, not
+part of the Agent Skills specification.
 """
 
 import os
@@ -73,13 +77,13 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
             text = f.read()
     except OSError as exc:
         errors.append(
-            f"{LEVEL_FAIL}: cannot read {FILE_CODEX_CONFIG} "
+            f"{LEVEL_FAIL}: [platform: OpenAI] cannot read {FILE_CODEX_CONFIG} "
             f"({exc.__class__.__name__}: {exc})"
         )
         return errors, passes
 
     if not text.strip():
-        errors.append(f"{LEVEL_WARN}: {FILE_CODEX_CONFIG} is empty")
+        errors.append(f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} is empty")
         return errors, passes
 
     # Pre-parse guard: detect top-level list syntax that the parser
@@ -94,7 +98,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     ]
     if any(ln == "-" or ln.startswith("- ") for ln in top_level_lines):
         errors.append(
-            f"{LEVEL_FAIL}: {FILE_CODEX_CONFIG} top-level must be a "
+            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a "
             "mapping, not a sequence"
         )
         return errors, passes
@@ -103,13 +107,13 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
         config = parse_yaml_subset(text)
     except ValueError as exc:
         errors.append(
-            f"{LEVEL_FAIL}: {FILE_CODEX_CONFIG} YAML parse error: {exc}"
+            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} YAML parse error: {exc}"
         )
         return errors, passes
 
     if not isinstance(config, dict):
         errors.append(
-            f"{LEVEL_FAIL}: {FILE_CODEX_CONFIG} top-level must be a mapping"
+            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} top-level must be a mapping"
         )
         return errors, passes
 
@@ -117,7 +121,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     # the parser may silently coerce malformed input to {}.
     if config == {} and top_level_lines:
         errors.append(
-            f"{LEVEL_FAIL}: {FILE_CODEX_CONFIG} malformed YAML content"
+            f"{LEVEL_FAIL}: [platform: OpenAI] {FILE_CODEX_CONFIG} malformed YAML content"
         )
         return errors, passes
 
@@ -125,7 +129,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
     unknown_top = sorted(k for k in config if k not in _KNOWN_TOP_KEYS)
     if unknown_top:
         errors.append(
-            f"{LEVEL_INFO}: {FILE_CODEX_CONFIG} has unrecognised top-level "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} has unrecognised top-level "
             f"keys: {', '.join(unknown_top)}"
         )
 
@@ -162,7 +166,7 @@ def _validate_interface(
 
     if not isinstance(interface, dict):
         errors.append(
-            f"{LEVEL_WARN}: {FILE_CODEX_CONFIG} 'interface' should be a "
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'interface' should be a "
             f"mapping, got {type(interface).__name__}"
         )
         return errors, passes
@@ -171,7 +175,7 @@ def _validate_interface(
     unknown = sorted(k for k in interface if k not in _KNOWN_INTERFACE_KEYS)
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: {FILE_CODEX_CONFIG} 'interface' has unrecognised "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'interface' has unrecognised "
             f"keys: {', '.join(unknown)}"
         )
 
@@ -180,12 +184,12 @@ def _validate_interface(
         val = interface["display_name"]
         if not isinstance(val, str):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.display_name' should be a string, "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.display_name' should be a string, "
                 f"got {type(val).__name__}"
             )
         elif len(val) > CODEX_MAX_DISPLAY_NAME_LENGTH:
             errors.append(
-                f"{LEVEL_FAIL}: 'interface.display_name' exceeds "
+                f"{LEVEL_FAIL}: [platform: OpenAI] 'interface.display_name' exceeds "
                 f"{CODEX_MAX_DISPLAY_NAME_LENGTH} characters ({len(val)} chars)"
             )
         else:
@@ -199,12 +203,12 @@ def _validate_interface(
         val = interface["short_description"]
         if not isinstance(val, str):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.short_description' should be a "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.short_description' should be a "
                 f"string, got {type(val).__name__}"
             )
         elif len(val) > CODEX_MAX_SHORT_DESCRIPTION_LENGTH:
             errors.append(
-                f"{LEVEL_FAIL}: 'interface.short_description' exceeds "
+                f"{LEVEL_FAIL}: [platform: OpenAI] 'interface.short_description' exceeds "
                 f"{CODEX_MAX_SHORT_DESCRIPTION_LENGTH} characters "
                 f"({len(val)} chars)"
             )
@@ -219,12 +223,12 @@ def _validate_interface(
         val = interface["icon_small"]
         if not isinstance(val, str):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.icon_small' should be a string, "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.icon_small' should be a string, "
                 f"got {type(val).__name__}"
             )
         elif not _is_valid_relative_path(val):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.icon_small' is not a valid "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.icon_small' is not a valid "
                 f"relative path: '{val}'"
             )
         else:
@@ -235,12 +239,12 @@ def _validate_interface(
         val = interface["icon_large"]
         if not isinstance(val, str):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.icon_large' should be a string, "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.icon_large' should be a string, "
                 f"got {type(val).__name__}"
             )
         elif not _is_valid_relative_path(val):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.icon_large' is not a valid "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.icon_large' is not a valid "
                 f"relative path: '{val}'"
             )
         else:
@@ -251,12 +255,12 @@ def _validate_interface(
         val = interface["brand_color"]
         if not isinstance(val, str):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.brand_color' should be a string, "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.brand_color' should be a string, "
                 f"got {type(val).__name__}"
             )
         elif not RE_HEX_COLOR.match(val):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.brand_color' is not a valid hex "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.brand_color' is not a valid hex "
                 f"color: '{val}' — expected format #RRGGBB"
             )
         else:
@@ -267,7 +271,7 @@ def _validate_interface(
         val = interface["default_prompt"]
         if not isinstance(val, str):
             errors.append(
-                f"{LEVEL_WARN}: 'interface.default_prompt' should be a "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'interface.default_prompt' should be a "
                 f"string, got {type(val).__name__}"
             )
         else:
@@ -288,7 +292,7 @@ def _validate_policy(
 
     if not isinstance(policy, dict):
         errors.append(
-            f"{LEVEL_WARN}: {FILE_CODEX_CONFIG} 'policy' should be a "
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'policy' should be a "
             f"mapping, got {type(policy).__name__}"
         )
         return errors, passes
@@ -297,7 +301,7 @@ def _validate_policy(
     unknown = sorted(k for k in policy if k not in _KNOWN_POLICY_KEYS)
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: {FILE_CODEX_CONFIG} 'policy' has unrecognised "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'policy' has unrecognised "
             f"keys: {', '.join(unknown)}"
         )
 
@@ -312,7 +316,7 @@ def _validate_policy(
             )
         else:
             errors.append(
-                f"{LEVEL_WARN}: 'policy.allow_implicit_invocation' should be "
+                f"{LEVEL_WARN}: [platform: OpenAI] 'policy.allow_implicit_invocation' should be "
                 f"a boolean (true/false), got '{val}'"
             )
 
@@ -331,7 +335,7 @@ def _validate_dependencies(
 
     if not isinstance(dependencies, dict):
         errors.append(
-            f"{LEVEL_WARN}: {FILE_CODEX_CONFIG} 'dependencies' should be a "
+            f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'dependencies' should be a "
             f"mapping, got {type(dependencies).__name__}"
         )
         return errors, passes
@@ -342,7 +346,7 @@ def _validate_dependencies(
     )
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: {FILE_CODEX_CONFIG} 'dependencies' has "
+            f"{LEVEL_INFO}: [platform: OpenAI] {FILE_CODEX_CONFIG} 'dependencies' has "
             f"unrecognised keys: {', '.join(unknown)}"
         )
 
@@ -353,7 +357,7 @@ def _validate_dependencies(
 
     if not isinstance(tools, list):
         errors.append(
-            f"{LEVEL_WARN}: 'dependencies.tools' should be a list, "
+            f"{LEVEL_WARN}: [platform: OpenAI] 'dependencies.tools' should be a list, "
             f"got {type(tools).__name__}"
         )
         return errors, passes
@@ -382,7 +386,7 @@ def _validate_tool_entry(
 
     if not isinstance(tool, dict):
         errors.append(
-            f"{LEVEL_WARN}: '{prefix}' should be a mapping, "
+            f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}' should be a mapping, "
             f"got {type(tool).__name__}"
         )
         return errors, passes
@@ -391,41 +395,41 @@ def _validate_tool_entry(
     unknown = sorted(k for k in tool if k not in _KNOWN_TOOL_KEYS)
     if unknown:
         errors.append(
-            f"{LEVEL_INFO}: '{prefix}' has unrecognised keys: "
+            f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}' has unrecognised keys: "
             f"{', '.join(unknown)}"
         )
 
     # Required fields: type, value
     if "type" not in tool:
-        errors.append(f"{LEVEL_FAIL}: '{prefix}' missing required 'type' field")
+        errors.append(f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}' missing required 'type' field")
     else:
         tool_type = tool["type"]
         if not isinstance(tool_type, str):
             errors.append(
-                f"{LEVEL_WARN}: '{prefix}.type' should be a string, "
+                f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.type' should be a string, "
                 f"got {type(tool_type).__name__}"
             )
         elif tool_type not in CODEX_KNOWN_TOOL_TYPES:
             errors.append(
-                f"{LEVEL_INFO}: '{prefix}.type' is not a recognised tool "
+                f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.type' is not a recognised tool "
                 f"type: '{tool_type}' — known types: "
                 f"{', '.join(sorted(CODEX_KNOWN_TOOL_TYPES))}"
             )
 
     if "value" not in tool:
         errors.append(
-            f"{LEVEL_FAIL}: '{prefix}' missing required 'value' field"
+            f"{LEVEL_FAIL}: [platform: OpenAI] '{prefix}' missing required 'value' field"
         )
     elif not isinstance(tool["value"], str):
         errors.append(
-            f"{LEVEL_WARN}: '{prefix}.value' should be a string, "
+            f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.value' should be a string, "
             f"got {type(tool['value']).__name__}"
         )
 
     # Optional fields
     if "description" in tool and not isinstance(tool["description"], str):
         errors.append(
-            f"{LEVEL_WARN}: '{prefix}.description' should be a string, "
+            f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.description' should be a string, "
             f"got {type(tool['description']).__name__}"
         )
 
@@ -433,19 +437,19 @@ def _validate_tool_entry(
         transport = tool["transport"]
         if not isinstance(transport, str):
             errors.append(
-                f"{LEVEL_WARN}: '{prefix}.transport' should be a string, "
+                f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.transport' should be a string, "
                 f"got {type(transport).__name__}"
             )
         elif transport not in CODEX_KNOWN_TRANSPORTS:
             errors.append(
-                f"{LEVEL_INFO}: '{prefix}.transport' is not a recognised "
+                f"{LEVEL_INFO}: [platform: OpenAI] '{prefix}.transport' is not a recognised "
                 f"transport: '{transport}' — known transports: "
                 f"{', '.join(sorted(CODEX_KNOWN_TRANSPORTS))}"
             )
 
     if "url" in tool and not isinstance(tool["url"], str):
         errors.append(
-            f"{LEVEL_WARN}: '{prefix}.url' should be a string, "
+            f"{LEVEL_WARN}: [platform: OpenAI] '{prefix}.url' should be a string, "
             f"got {type(tool['url']).__name__}"
         )
 
