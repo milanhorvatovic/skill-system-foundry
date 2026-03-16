@@ -210,7 +210,7 @@ def append_role_entry(
         group_idx = _find_group_index(lines, roles_idx, group)
         if group_idx is not None:
             # Infer entry indentation from existing children.
-            entry_indent = _infer_child_indent(lines, group_idx, fallback=4)
+            entry_indent = _infer_child_indent(lines, group_idx, fallback=2)
             item_pad = " " * entry_indent
             attr_pad = " " * (entry_indent + 2)
             entry_block = (
