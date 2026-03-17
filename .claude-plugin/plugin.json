@@ -32,5 +32,5 @@
   "name": "skill-system-foundry",
   "repository": "https://github.com/milanhorvatovic/skill-system-foundry",
   "skills": "./",
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
