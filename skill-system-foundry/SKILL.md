@@ -1,15 +1,9 @@
 ---
 name: skill-system-foundry
 description: >
-  Designs, builds, validates, and evolves AI-agnostic skill systems composed of
-  skills (with optional capabilities) and roles. Activates when the user wants
-  to: create a new skill or capability, define or refine a role, restructure
-  their skill/role hierarchy, migrate from flat skills to a router+capabilities
-  pattern, audit skill system consistency, or reason about token efficiency and
-  maintainability trade-offs. Also triggers when the user mentions "skill
-  system", "canonical skill", "orchestrator", or discusses organizing
-  AI-agnostic automation across multiple tools like Claude Code, Cursor, or
-  Codex.
+  Designs and evolves AI-agnostic skill systems with skills, capabilities, and
+  roles. Triggers on skill/capability creation, role definition, router
+  migration, consistency audits, or token efficiency.
 allowed-tools: Bash Read Write Edit Glob Grep
 compatibility: Requires Python 3.12+ (stdlib only) for validation, scaffolding, and bundling scripts.
 license: MIT
