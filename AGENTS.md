@@ -8,7 +8,7 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 
 **Language:** Python 3.12+ (standard library only — no third-party imports in production code).
 
-**Dev dependency:** `coverage==7.6.1` (test coverage measurement only).
+**Dev dependency:** `coverage` (test coverage measurement only; see `requirements-dev.txt` for the exact version).
 
 **Repository structure:**
 
