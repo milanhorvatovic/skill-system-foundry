@@ -79,7 +79,7 @@ git commit -m "Update version to 1.1.0"
 git push origin main
 ```
 
-Use the commit message format: `Update version to X.Y.Z`. Reference an issue number when the release resolves specific issues: `Update version to 1.1.0 (closes #12)`.
+Use the commit message format: `Update version to X.Y.Z`.
 
 ### Step 4: Create the GitHub Release
 

@@ -31,9 +31,10 @@ This skill provides a manual validation workflow that complements automated vali
 
 Determine the skill directory to validate. The skill root is the directory containing `SKILL.md`. All file references are resolved relative to this root.
 
-If validation scripts are available (e.g., `validate_skill.py` from this repository), run them first:
+If validation scripts are available (e.g., `validate_skill.py` from this repository), run them from within the `skill-system-foundry/` directory:
 
 ```bash
+cd skill-system-foundry
 python3 scripts/validate_skill.py <skill-path> --verbose
 ```
 

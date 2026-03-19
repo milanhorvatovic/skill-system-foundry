@@ -34,18 +34,6 @@ Every commit message starts with a short summary line describing **what** change
 - **No co-authors.** Do not add `Co-Authored-By` or any other trailers to commit messages
 - **No issue closers.** Do not add `closes #N`, `fixes #N`, or similar references to commit messages — issue references belong in pull requests, not commits
 
-### Issue References
-
-Reference issue numbers when the commit resolves or relates to a specific issue:
-
-```
-Fix #12: validation false positive for optional frontmatter
-Update version to 1.1.0 (closes #15)
-Add forward-slash check to validate_skill.py (fixes #23)
-```
-
-Use `Fix #N` or `fixes #N` for bug fixes, `closes #N` for feature completions. Place the reference after a colon or in parentheses.
-
 ### Version Bumps
 
 Version bump commits use a specific format:
@@ -53,8 +41,6 @@ Version bump commits use a specific format:
 ```
 Update version to X.Y.Z
 ```
-
-Reference issues when the release resolves them: `Update version to 1.1.0 (closes #12)`.
 
 ## Examples
 
@@ -64,7 +50,7 @@ Reference issues when the release resolves them: `Update version to 1.1.0 (close
 - `Update shell-scripts skill description for clarity`
 - `Add solution-design skill to .agents/`
 - `Update configuration.yaml and constants for new limit`
-- `Fix #12: false positive in name validation`
+- `Fix false positive in name validation`
 
 **Bad:**
 - `updated stuff` — vague, no verb prefix, lowercase

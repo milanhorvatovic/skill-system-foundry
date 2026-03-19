@@ -169,17 +169,22 @@ See [skill-system-foundry/README.md](skill-system-foundry/README.md) for the ski
 
 Claude Code support relies on symlinks (`CLAUDE.md` and `.claude/skills/`). On Windows 11, two one-time steps are required before cloning:
 
-1. Enable **Developer Mode** — `Settings → Privacy & Security → For Developers`
-2. Enable symlink support in git — globally or per repository:
+1. Enable **Developer Mode** in Windows so non-admin processes can create symlinks. See [Microsoft's docs](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) for current instructions.
+2. Enable symlink support in git — either once globally, for a single clone, or per repository:
    ```bash
-   # Global (applies to all repositories)
+   # One-shot when cloning (preferred for new clones)
+   git clone -c core.symlinks=true <repo-url>
+
+   # Global (applies to all repositories you clone later)
    git config --global core.symlinks true
 
-   # Per repository (run inside the cloned directory)
+   # Per repository (run inside an existing cloned directory)
    git config core.symlinks true
+   # Then refresh the working tree so Git re-creates symlinks
+   git checkout .
    ```
 
-After that, symlinks work transparently on clone and checkout.
+For repositories cloned after enabling symlink support (via `-c core.symlinks=true` or global config), symlinks work transparently on clone and checkout. If you cloned before enabling symlinks, either re-clone with `git clone -c core.symlinks=true <repo-url>` or set `core.symlinks=true` and re-checkout the working tree as shown above.
 
 ## Learn More
 

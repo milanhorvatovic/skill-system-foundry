@@ -144,8 +144,6 @@ Add <new-thing> to <location>
 Fix <issue> in <component>
 ```
 
-Reference issue numbers when applicable: `Fix #12: validation false positive`.
-
 ## Architecture Rules
 
 The skill system has exactly two layers:
