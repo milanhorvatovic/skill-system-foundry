@@ -76,6 +76,8 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── solution-design/         ← solution planning before implementation
 │       ├── validate-skill-spec/     ← skill structure and spec compliance validation
 │       └── yaml-config/             ← configuration.yaml governance
+├── .claude/                         ← Claude Code configuration and skill symlinks
+│   └── skills/                      ← symlinks to .agents/skills/ for Claude Code
 ├── .claude-plugin/                  ← Claude Code plugin marketplace config
 │   ├── plugin.json
 │   └── marketplace.json
