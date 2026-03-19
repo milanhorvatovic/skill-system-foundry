@@ -100,8 +100,6 @@ Add <new-thing> to <location>
 Fix <issue> in <component>
 ```
 
-Reference the issue number when applicable (e.g., `Fix #12: validation false positive for optional frontmatter`).
-
 ## Pull Request Process
 
 1. **Fork and branch.** Create a feature branch from `main`.

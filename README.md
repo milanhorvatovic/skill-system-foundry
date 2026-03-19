@@ -165,6 +165,36 @@ Download the latest versioned zip from [Releases](https://github.com/milanhorvat
 
 See [skill-system-foundry/README.md](skill-system-foundry/README.md) for the skill's capabilities, file layout, and usage instructions.
 
+## Windows Setup
+
+Claude Code support relies on symlinks (`CLAUDE.md` and `.claude/skills/`). On Windows 11, two one-time steps are recommended (ideally before cloning) to make symlinks work reliably:
+
+1. Enable **Developer Mode** in Windows so non-admin processes can create symlinks. See [Microsoft's docs](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) for current instructions.
+2. Enable symlink support in git — either once globally, for a single clone, or per repository:
+   ```bash
+   # One-shot when cloning (preferred for new clones)
+   git clone -c core.symlinks=true <repo-url>
+
+   # Global (applies to all repositories you clone later)
+   git config --global core.symlinks true
+
+   # Per repository (run inside an existing cloned directory)
+   git config core.symlinks true
+   # Then refresh the working tree so Git re-creates symlinks
+   # WARNING: this discards local changes to tracked files; stash or commit first
+   git restore -- .
+   ```
+
+For repositories cloned after enabling symlink support (via `-c core.symlinks=true` or global config), symlinks work transparently on clone and checkout. If you cloned before enabling symlinks, either re-clone with `git clone -c core.symlinks=true <repo-url>` or set `core.symlinks=true` and re-checkout the working tree as shown above.
+
+To confirm that symlinks were materialized correctly (and not replaced by plain files):
+
+- Run `git ls-files -s CLAUDE.md` and check that the mode is `120000` (indicating a symlink).
+- On Unix-like systems, run `ls -l CLAUDE.md` or `readlink CLAUDE.md` to see the link target.
+- On Windows:
+  - In Command Prompt (`cmd.exe`), run `dir CLAUDE.md` and ensure it is listed as a `<SYMLINK>` entry.
+  - In PowerShell, run `Get-Item CLAUDE.md | Format-List Mode,LinkType,Target` and check that `LinkType` is `SymbolicLink`.
+
 ## Learn More
 
 | Topic | Link |
