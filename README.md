@@ -165,6 +165,22 @@ Download the latest versioned zip from [Releases](https://github.com/milanhorvat
 
 See [skill-system-foundry/README.md](skill-system-foundry/README.md) for the skill's capabilities, file layout, and usage instructions.
 
+## Windows Setup
+
+Claude Code support relies on symlinks (`CLAUDE.md` and `.claude/skills/`). On Windows 11, two one-time steps are required before cloning:
+
+1. Enable **Developer Mode** — `Settings → Privacy & Security → For Developers`
+2. Enable symlink support in git — globally or per repository:
+   ```bash
+   # Global (applies to all repositories)
+   git config --global core.symlinks true
+
+   # Per repository (run inside the cloned directory)
+   git config core.symlinks true
+   ```
+
+After that, symlinks work transparently on clone and checkout.
+
 ## Learn More
 
 | Topic | Link |
