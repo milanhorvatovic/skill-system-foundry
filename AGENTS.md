@@ -19,7 +19,7 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 ├── CONTRIBUTING.md                  ← contributor guidelines
 ├── README.md                        ← repository overview
 ├── .coveragerc                      ← coverage configuration (70% threshold, branch)
-├── .python-version                  ← 3.12.13
+├── .python-version                  ← Python version (see file for current value)
 ├── requirements-dev.txt             ← coverage only
 ├── skill-system-foundry/            ← the meta-skill itself
 │   ├── SKILL.md                     ← entry point (standalone)
@@ -58,7 +58,7 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── audit_skill_system.py    ← audit entire skill system
 │       ├── scaffold.py              ← scaffold new components from templates
 │       └── bundle.py                ← bundle for distribution (zip)
-├── tests/                           ← comprehensive test suite (14 files)
+├── tests/                           ← comprehensive test suite (see tests/ for current files)
 │   ├── helpers.py                   ← shared test utilities
 │   └── test_*.py                    ← one test file per source module
 ├── .agents/                         ← internal development skills (not distributed)
@@ -124,8 +124,8 @@ Coverage threshold: 70% branch coverage (configured in `.coveragerc`). CI runs t
 
 ```bash
 cd skill-system-foundry
-python3 scripts/validate_skill.py . --allow-nested-references --verbose
-python3 scripts/audit_skill_system.py .
+python scripts/validate_skill.py . --allow-nested-references --verbose
+python scripts/audit_skill_system.py .
 ```
 
 The `--allow-nested-references` flag is needed because this meta-skill intentionally uses nested references. One warning about a missing `skills/` directory from the audit is expected in this distribution repository.

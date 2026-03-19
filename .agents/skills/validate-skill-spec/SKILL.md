@@ -35,7 +35,7 @@ If validation scripts are available (e.g., `validate_skill.py` from this reposit
 
 ```bash
 cd skill-system-foundry
-python3 scripts/validate_skill.py <skill-path> --verbose
+python scripts/validate_skill.py <skill-path> --verbose
 ```
 
 If the skill uses nested references intentionally, add `--allow-nested-references`. If the scripts report failures, fix them before proceeding to the manual checks below.

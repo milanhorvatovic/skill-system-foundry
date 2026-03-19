@@ -44,11 +44,11 @@ Run validation and tests to confirm the codebase is clean:
 ```bash
 # Self-validate the meta-skill
 cd skill-system-foundry
-python3 scripts/validate_skill.py . --allow-nested-references
+python scripts/validate_skill.py . --allow-nested-references
 
 # Audit (expect one warning about missing skills/ directory — this is normal
 # for the distribution repository)
-python3 scripts/audit_skill_system.py .
+python scripts/audit_skill_system.py .
 
 # Run full test suite with coverage
 cd ..
@@ -115,7 +115,7 @@ After the workflow completes:
    ```bash
    unzip skill-system-foundry-v1.1.0.zip
    cd skill-system-foundry
-   python3 scripts/validate_skill.py . --allow-nested-references
+   python scripts/validate_skill.py . --allow-nested-references
    ```
 3. **Verify installation paths** — confirm the skill installs correctly:
    ```bash

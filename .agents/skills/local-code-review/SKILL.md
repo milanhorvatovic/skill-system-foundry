@@ -59,8 +59,8 @@ python -m coverage report
 
 # Skill validation
 cd skill-system-foundry
-python3 scripts/validate_skill.py . --allow-nested-references --json
-python3 scripts/audit_skill_system.py . --json
+python scripts/validate_skill.py . --allow-nested-references --json
+python scripts/audit_skill_system.py . --json
 cd ..
 
 # Shell lint (only if .sh files changed)

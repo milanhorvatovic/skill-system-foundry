@@ -191,7 +191,9 @@ To confirm that symlinks were materialized correctly (and not replaced by plain 
 
 - Run `git ls-files -s CLAUDE.md` and check that the mode is `120000` (indicating a symlink).
 - On Unix-like systems, run `ls -l CLAUDE.md` or `readlink CLAUDE.md` to see the link target.
-- On Windows, run `dir CLAUDE.md` and ensure it is listed as a `<SYMLINK>` entry.
+- On Windows:
+  - In Command Prompt (`cmd.exe`), run `dir CLAUDE.md` and ensure it is listed as a `<SYMLINK>` entry.
+  - In PowerShell, run `Get-Item CLAUDE.md | Format-List Mode,LinkType,Target` and check that `LinkType` is `SymbolicLink`.
 
 ## Learn More
 
