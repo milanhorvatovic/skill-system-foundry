@@ -48,7 +48,7 @@ system/
 
 The tree above shows the skill system's **logical structure** — how skills and roles relate conceptually. When deploying to a project, canonical content is placed in a location AI tools discover (e.g., `.agents/skills/`, or a top-level `skills/` directory).
 
-Tools that do not scan **project-level** `.agents/skills/` natively may need thin deployment pointers in their own discovery paths (e.g., `.claude/skills/`, `.cursor/skills/`, `.kiro/skills/`). These are optional, user-managed customizations — not Skill System Foundry artifacts. See [tool-integration.md](tool-integration.md) for details.
+Tools that do not scan **project-level** `.agents/skills/` natively may need thin deployment pointers in their own discovery paths (e.g., `.claude/skills/`, `.cursor/skills/`, `.kiro/skills/`). These are optional, user-managed customizations — not Skill System Foundry artifacts. See [tool-integration.md](references/tool-integration.md) for details.
 
 Roles are placed in `.agents/roles/` and referenced by skills directly. Roles have no tool-specific deployment path.
 
@@ -84,7 +84,7 @@ project/
 └── src/
 ```
 
-Tools that scan `.agents/skills/` natively (Codex, Gemini CLI, Warp, OpenCode, Windsurf) need no additional configuration. Tools that do not (Claude Code, Cursor, Kiro) may need thin deployment pointers — see [tool-integration.md](tool-integration.md) for details.
+Tools that scan `.agents/skills/` natively (Codex, Gemini CLI, Warp, OpenCode, Windsurf) need no additional configuration. Tools that do not (Claude Code, Cursor, Kiro) may need thin deployment pointers — see [tool-integration.md](references/tool-integration.md) for details.
 
 ### Why `.agents/skills/`
 
@@ -124,7 +124,7 @@ Choose based on team composition:
 - **Mixed OS** — wrapper files safer unless all Windows contributors have Developer Mode enabled
 - **Need tool-specific adaptation** — wrapper files required (symlinks cannot carry tool-specific content)
 
-See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the full decision guide, platform-specific commands, and tool compatibility details.
+See [tool-integration.md](references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide, platform-specific commands, and tool compatibility details.
 
 **Single-tool canonical location:**
 
@@ -196,7 +196,7 @@ Following the Agent Skills specification:
 
 All file references in markdown links are relative to the skill root directory (the directory containing `SKILL.md`), regardless of which file contains the reference. For example, a reference to `references/<file>.md` always resolves as `<skill-root>/references/<file>.md` — whether it appears in `SKILL.md`, a capability file, or a reference file. Do not use `../` parent traversals to navigate from a file's physical location.
 
-**Exception:** When an orchestration skill's SKILL.md references roles, those paths use system-root-relative form (e.g., `roles/<group>/<name>.md`) for consistency with how roles reference skills. See [architecture-patterns.md](architecture-patterns.md#orchestration-skills).
+**Exception:** When an orchestration skill's SKILL.md references roles, those paths use system-root-relative form (e.g., `roles/<group>/<name>.md`) for consistency with how roles reference skills. See [architecture-patterns.md](references/architecture-patterns.md#orchestration-skills).
 
 Paths in role files (e.g., `skills/<domain>/SKILL.md`) are relative to the **system root** — the directory containing `skills/` and `roles/`. This distinction matters because roles live at `roles/<group>/<name>.md`, not inside a skill directory.
 

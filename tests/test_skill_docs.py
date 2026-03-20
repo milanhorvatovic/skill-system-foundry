@@ -168,18 +168,12 @@ class AnchorValidationTests(unittest.TestCase):
                     continue
 
                 # Determine which file the anchor should be in.
-                # Resolve from SKILL_ROOT (spec: skill-root-relative paths).
-                # Fallback to doc_dir only for pre-existing sibling refs in
-                # references/ that have not yet been migrated to skill-root
-                # form (e.g., tool-integration.md within references/).
+                # All paths resolve from SKILL_ROOT per agentskills.io
+                # spec (skill-root-relative, no parent traversals).
                 if file_part:
                     target_path = os.path.normpath(
                         os.path.join(SKILL_ROOT, file_part)
                     )
-                    if not os.path.isfile(target_path):
-                        target_path = os.path.normpath(
-                            os.path.join(doc_dir, file_part)
-                        )
                 else:
                     # Self-reference: #anchor within the same file
                     target_path = doc_path

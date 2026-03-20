@@ -26,7 +26,7 @@ Capabilities are independent. Cross-capability orchestration is a role's job.
 Skills own domain execution; roles own workflow logic. In a coordination-only skill (path 1), domain logic should not accumulate — move it to a role or domain skill. In a self-contained skill (path 2), workflow and interaction logic should not live in the skill itself — extract it to a role.
 
 ### Absolute Symlink Paths
-Symlink targets must use relative paths (`../../.agents/skills/my-skill`), not absolute paths (`/home/user/project/.agents/skills/my-skill`). Absolute paths break when the repository is cloned to a different location or by a different user. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers).
+Symlink targets must use relative paths (`../../.agents/skills/my-skill`), not absolute paths (`/home/user/project/.agents/skills/my-skill`). Absolute paths break when the repository is cloned to a different location or by a different user. See [tool-integration.md](references/tool-integration.md#symlink-based-deployment-pointers).
 
 ### Symlinks Without Team Platform Verification
 Using symlinks as deployment pointers on a mixed-OS team without verifying that all Windows contributors have Developer Mode enabled (or equivalent). Symlinks that cannot be resolved degrade silently — the tool sees a broken pointer instead of skill content. Prefer wrapper files when platform support cannot be guaranteed across all contributors.
