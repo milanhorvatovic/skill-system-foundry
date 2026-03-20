@@ -7,7 +7,8 @@ Review changes as an **Agent Skills expert**, focusing on the **Agent Skills ope
 Skill System Foundry is a meta-skill that teaches AI agents how to create, validate, and evolve skill systems. It follows a two-layer architecture: **skills** (with optional capabilities) and **roles**. The repository contains reference documentation, templates, and Python validation scripts — no application code.
 
 **Repository structure:**
-- `skill-system-foundry/SKILL.md` — the meta-skill entry point
+- `skill-system-foundry/SKILL.md` — the meta-skill router entry point
+- `skill-system-foundry/capabilities/` — self-contained capability modules routed to by `SKILL.md`
 - `skill-system-foundry/references/` — guidance documents
 - `skill-system-foundry/assets/` — templates for scaffolding
 - `skill-system-foundry/scripts/` — validation, scaffolding, and bundling tools (entry points)
@@ -71,7 +72,7 @@ Focus review on what automated validation cannot catch:
 
 1. **Description quality** — Does the description include trigger phrases and keyword coverage so agents activate the skill reliably? A vague "Helps with projects" is worse than "Manages project timelines, tracks milestones, generates status reports. Use when asked to plan sprints, check deadlines, or summarize progress."
 2. **Progressive disclosure** — Is content in the right layer? Does `SKILL.md` duplicate reference material that should be loaded on demand? Are deeper topics in `references/` and linked appropriately?
-3. **Architecture justification** — Are capabilities warranted (3+ distinct operations with mutually exclusive triggers), or would a standalone skill suffice?
+3. **Architecture justification** — Are capabilities warranted (3+ distinct operations with mutually exclusive triggers), or would a standalone skill suffice? For router skills, also check that each capability is self-sufficient and that shared resources are exposed through capability-level resource lists rather than assumed implicitly.
 4. **Role completeness** — Does each role compose 2+ skills with responsibility, authority, constraints, and handoff rules? (Not automated)
 
 Only flag issues with high confidence. If uncertain whether something is a problem, do not comment — the validation scripts catch mechanical errors, so review should focus on semantic and architectural judgment.

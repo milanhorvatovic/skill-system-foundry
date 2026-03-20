@@ -39,7 +39,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 
 - **Progressive disclosure** — `SKILL.md` serves as an overview that points to detailed materials. Do not inline large reference content into `SKILL.md` when a reference file serves the same purpose
 - **`SKILL.md` under 500 lines** — move detailed reference material to separate files. Agents load these on demand, so smaller files mean less context usage
-- **Cross-references stay one level deep** — `SKILL.md` → `references/foo.md` is valid. `SKILL.md` → `references/foo.md` → `references/bar.md` is not — the model may partially read chained files
+- **Cross-references stay one level deep from the entry point** — for standalone skills: `SKILL.md` → `references/foo.md` is valid; `SKILL.md` → `references/foo.md` → `references/bar.md` is not. For router skills: each capability acts as its own entry point once loaded, so `capability.md` → `references/foo.md` is valid. Avoid chains where a referenced file itself references other files — the model may partially read chained files
 - **Reference supporting files from `SKILL.md`** — for standalone skills, every file in `references/`, `scripts/`, or `assets/` should be linked from `SKILL.md`. For router skills, shared files are indexed transitively: the router links capabilities, and each capability lists its own relevant resources in a Key Resources section. Every shared file must be reachable through at least one capability
 - **Table of contents for long files** — reference files over 100 lines should include a table of contents at the top
 - **No time-sensitive content** — use an "old patterns" section for deprecated approaches instead of embedding dates or version-specific language that will age
@@ -78,7 +78,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 - Overly complex phrasing — nested qualifications, double negatives, or multi-clause sentences where a direct statement works
 - Inconsistent terminology within a file or between related files
 - `SKILL.md` exceeding 500 lines without delegating to reference files
-- Cross-reference chains deeper than one level from `SKILL.md`
+- Cross-reference chains deeper than one level from the entry point (`SKILL.md` for standalone skills, `capability.md` for capabilities within router skills)
 - Unreferenced files in `references/`, `scripts/`, or `assets/` not reachable from `SKILL.md` (directly for standalone skills, or transitively through capabilities for router skills)
 - Backslashes in file paths
 - Non-descriptive filenames (`doc2.md`, `notes.md`, `misc.md`)
