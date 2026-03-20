@@ -105,7 +105,7 @@ skills-ref validate ./skill-name
 
 Available from: https://github.com/agentskills/agentskills/tree/main/skills-ref
 
-> **Note:** `skills-ref` is the official spec validator from the Agent Skills project. Skill System Foundry's [scripts/validate_skill.py](../scripts/validate_skill.py) covers the same spec checks plus foundry conventions (third-person voice, semver recommendations, directory conventions, etc.) and platform restrictions (reserved words, XML tags). Use `validate_skill.py` for day-to-day skill system validation; use `skills-ref` for standalone spec conformance.
+> **Note:** `skills-ref` is the official spec validator from the Agent Skills project. Skill System Foundry's [scripts/validate_skill.py](scripts/validate_skill.py) covers the same spec checks plus foundry conventions (third-person voice, semver recommendations, directory conventions, etc.) and platform restrictions (reserved words, XML tags). Use `validate_skill.py` for day-to-day skill system validation; use `skills-ref` for standalone spec conformance.
 
 ## Foundry Conventions
 

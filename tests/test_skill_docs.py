@@ -168,8 +168,10 @@ class AnchorValidationTests(unittest.TestCase):
                     continue
 
                 # Determine which file the anchor should be in.
-                # Resolve from SKILL_ROOT (spec: skill-root-relative paths)
-                # with fallback to doc_dir for pre-existing sibling refs.
+                # Resolve from SKILL_ROOT (spec: skill-root-relative paths).
+                # Fallback to doc_dir only for pre-existing sibling refs in
+                # references/ that have not yet been migrated to skill-root
+                # form (e.g., tool-integration.md within references/).
                 if file_part:
                     target_path = os.path.normpath(
                         os.path.join(SKILL_ROOT, file_part)
@@ -371,6 +373,35 @@ class DocsSafetyTests(unittest.TestCase):
                 "Extension files with '## Deployment Pointer' section missing "
                 f"symlink cross-reference ({anchor}):\n  "
                 + "\n  ".join(failures)
+            )
+
+    def test_no_parent_traversal_in_markdown_links(self) -> None:
+        """Markdown link targets must not use ../ parent traversals per
+        agentskills.io spec — paths should be skill-root-relative."""
+        failures = []
+
+        for doc_label, doc_path in DOCS.items():
+            if not os.path.isfile(doc_path):
+                continue
+            content = _read(doc_path)
+            # Strip fenced code blocks so symlink command examples
+            # (e.g., ln -s ../../.agents/...) are not flagged.
+            content_no_code = RE_FENCED_CODE_BLOCK.sub("", content)
+            for match in RE_MD_LINK.finditer(content_no_code):
+                target = match.group(1).strip()
+                if re.match(r"https?://|mailto:|file:///|<|#", target):
+                    continue
+                if "../" in target:
+                    failures.append(
+                        f"  {doc_label}: link target '{target}' uses ../ "
+                        "traversal (should be skill-root-relative)"
+                    )
+
+        if failures:
+            self.fail(
+                "Markdown links with ../ parent traversal violate "
+                "skill-root-relative path convention:\n"
+                + "\n".join(failures)
             )
 
     def test_no_dot_slash_prefix_in_file_references(self) -> None:
