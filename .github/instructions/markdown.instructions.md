@@ -39,14 +39,14 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 
 - **Progressive disclosure** — `SKILL.md` serves as an overview that points to detailed materials. Do not inline large reference content into `SKILL.md` when a reference file serves the same purpose
 - **`SKILL.md` under 500 lines** — move detailed reference material to separate files. Agents load these on demand, so smaller files mean less context usage
-- **Cross-references stay one level deep** — `SKILL.md` → `references/foo.md` is valid. `SKILL.md` → `references/foo.md` → `references/bar.md` is not — the model may partially read chained files
-- **Reference supporting files from `SKILL.md`** — every file in `references/`, `scripts/`, or `assets/` should be linked from `SKILL.md` so agents know what each file contains and when to load it
+- **Cross-references stay one level deep from each entry point** — entry points are `SKILL.md` (for standalone skills and routers) and `capability.md` (for capabilities). From an entry point, one hop to a reference file is allowed: `SKILL.md` → `references/foo.md` or `capability.md` → `references/foo.md`. Reference files, including capability-local reference docs, must not link to other reference files — avoid chains where a referenced file itself references other files
+- **Reference supporting files from the entry point** — for standalone skills, every file in `references/`, `scripts/`, or `assets/` should be linked directly from `SKILL.md`. For router skills, `SKILL.md` links capabilities, and each `capability.md` lists its own resources in a Key Resources section. Every shared file must be reachable from at least one entry point (`SKILL.md` or `capability.md`)
 - **Table of contents for long files** — reference files over 100 lines should include a table of contents at the top
 - **No time-sensitive content** — use an "old patterns" section for deprecated approaches instead of embedding dates or version-specific language that will age
 
 ## File References
 
-- **Relative paths from skill root** — all references use paths relative to the directory containing `SKILL.md` (e.g., `references/foo.md`, `scripts/validate.py`)
+- **Relative paths from skill root** — all file references in markdown links use paths relative to the directory containing `SKILL.md`, regardless of which file contains the reference (e.g., `references/foo.md`, `scripts/validate.py`, `capabilities/deployment/capability.md`). This applies to `SKILL.md`, capability files, and reference files alike. Do not use `../` parent traversals to navigate from a file's physical location — write the path as if standing at the skill root
 - **Forward slashes only** — regardless of operating system
 - **Descriptive filenames** — `form-validation-rules.md` not `doc2.md`
 - **System-root-relative paths in roles** — role files live outside skill directories, so they reference skills as `skills/<domain>/SKILL.md` (relative to the directory containing `skills/` and `roles/`)
@@ -65,7 +65,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 3. **Simplicity** — Is the phrasing direct and clear? Could complex sentences be broken into simpler ones?
 4. **DRY** — Is the same concept defined in only one place? Do other files reference it rather than duplicate it?
 5. **Structure** — Does the file follow progressive disclosure? Is `SKILL.md` under 500 lines? Are cross-references one level deep?
-6. **File references** — Are paths relative to skill root? Forward slashes only? Do referenced files actually exist? Are role paths system-root-relative?
+6. **File references** — Are all markdown link paths written relative to the skill root (no `../` traversals)? Forward slashes only? Do referenced files actually exist? Are role paths system-root-relative?
 7. **Consistency** — Is terminology consistent within the file and across the repository?
 8. **Accuracy** — Are spec claims aligned with the validation scripts? Are referenced file paths valid?
 
@@ -78,8 +78,8 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 - Overly complex phrasing — nested qualifications, double negatives, or multi-clause sentences where a direct statement works
 - Inconsistent terminology within a file or between related files
 - `SKILL.md` exceeding 500 lines without delegating to reference files
-- Cross-reference chains deeper than one level from `SKILL.md`
-- Unreferenced files in `references/`, `scripts/`, or `assets/` not linked from `SKILL.md`
+- Cross-reference chains deeper than one level from the entry point (`SKILL.md` for standalone skills, `capability.md` for capabilities within router skills)
+- Unreferenced files in `references/`, `scripts/`, or `assets/` not reachable from `SKILL.md` (directly for standalone skills, or transitively through capabilities for router skills)
 - Backslashes in file paths
 - Non-descriptive filenames (`doc2.md`, `notes.md`, `misc.md`)
 - Role file using skill-root-relative paths instead of system-root-relative paths

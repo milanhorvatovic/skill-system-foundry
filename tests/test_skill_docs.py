@@ -25,9 +25,6 @@ DOCS = {
     "references/architecture-patterns.md": os.path.join(
         SKILL_ROOT, "references", "architecture-patterns.md"
     ),
-    "references/workflows.md": os.path.join(
-        SKILL_ROOT, "references", "workflows.md"
-    ),
     "references/anti-patterns.md": os.path.join(
         SKILL_ROOT, "references", "anti-patterns.md"
     ),
@@ -45,6 +42,24 @@ DOCS = {
     ),
     "references/cursor-extensions.md": os.path.join(
         SKILL_ROOT, "references", "cursor-extensions.md"
+    ),
+    "capabilities/skill-design/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "skill-design", "capability.md"
+    ),
+    "capabilities/validation/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "validation", "capability.md"
+    ),
+    "capabilities/migration/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "migration", "capability.md"
+    ),
+    "capabilities/bundling/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "bundling", "capability.md"
+    ),
+    "capabilities/deployment/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "deployment", "capability.md"
+    ),
+    "capabilities/deployment/references/symlink-setup.md": os.path.join(
+        SKILL_ROOT, "capabilities", "deployment", "references", "symlink-setup.md"
     ),
 }
 
@@ -152,10 +167,12 @@ class AnchorValidationTests(unittest.TestCase):
                 if not anchor:
                     continue
 
-                # Determine which file the anchor should be in
+                # Determine which file the anchor should be in.
+                # All paths resolve from SKILL_ROOT per agentskills.io
+                # spec (skill-root-relative, no parent traversals).
                 if file_part:
                     target_path = os.path.normpath(
-                        os.path.join(doc_dir, file_part)
+                        os.path.join(SKILL_ROOT, file_part)
                     )
                 else:
                     # Self-reference: #anchor within the same file
@@ -198,7 +215,6 @@ class TocConsistencyTests(unittest.TestCase):
             "references/architecture-patterns.md",
             DOCS["references/architecture-patterns.md"],
         ),
-        ("references/workflows.md", DOCS["references/workflows.md"]),
     ]
 
     def test_toc_entries_have_matching_headings(self) -> None:
@@ -289,7 +305,7 @@ class DocsSafetyTests(unittest.TestCase):
                 ],
             ),
             (
-                DOCS["references/workflows.md"],
+                DOCS["capabilities/deployment/references/symlink-setup.md"],
                 [
                     # Unix: two-level relative symlink
                     r"\.\./\.\./\.agents/skills/\S+",
@@ -315,7 +331,7 @@ class DocsSafetyTests(unittest.TestCase):
         """Symlink docs should include a cmd verification example."""
         docs_to_check = [
             DOCS["references/tool-integration.md"],
-            DOCS["references/workflows.md"],
+            DOCS["capabilities/deployment/references/symlink-setup.md"],
         ]
 
         for path in docs_to_check:
@@ -353,6 +369,35 @@ class DocsSafetyTests(unittest.TestCase):
                 + "\n  ".join(failures)
             )
 
+    def test_no_parent_traversal_in_markdown_links(self) -> None:
+        """Markdown link targets must not use ../ parent traversals per
+        agentskills.io spec — paths should be skill-root-relative."""
+        failures = []
+
+        for doc_label, doc_path in DOCS.items():
+            if not os.path.isfile(doc_path):
+                continue
+            content = _read(doc_path)
+            # Strip fenced code blocks so symlink command examples
+            # (e.g., ln -s ../../.agents/...) are not flagged.
+            content_no_code = RE_FENCED_CODE_BLOCK.sub("", content)
+            for match in RE_MD_LINK.finditer(content_no_code):
+                target = match.group(1).strip()
+                if re.match(r"https?://|mailto:|file:///|<|#", target):
+                    continue
+                if "../" in target:
+                    failures.append(
+                        f"  {doc_label}: link target '{target}' uses ../ "
+                        "traversal (should be skill-root-relative)"
+                    )
+
+        if failures:
+            self.fail(
+                "Markdown links with ../ parent traversal violate "
+                "skill-root-relative path convention:\n"
+                + "\n".join(failures)
+            )
+
     def test_no_dot_slash_prefix_in_file_references(self) -> None:
         """File references must use 'path/to/file' not './path/to/file' per
         agentskills.io spec."""
@@ -380,7 +425,7 @@ class DocsSafetyTests(unittest.TestCase):
         """Windows path snippets should not contain '..agents' typos."""
         docs_to_check = [
             DOCS["references/tool-integration.md"],
-            DOCS["references/workflows.md"],
+            DOCS["capabilities/deployment/references/symlink-setup.md"],
         ]
         failures = []
 

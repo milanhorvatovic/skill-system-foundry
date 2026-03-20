@@ -22,15 +22,27 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 ├── .python-version                  ← Python version (see file for current value)
 ├── requirements-dev.txt             ← coverage only
 ├── skill-system-foundry/            ← the meta-skill itself
-│   ├── SKILL.md                     ← entry point (standalone)
+│   ├── SKILL.md                     ← entry point (router)
 │   ├── README.md                    ← skill documentation
+│   ├── capabilities/                ← self-contained capability modules
+│   │   ├── skill-design/
+│   │   │   └── capability.md        ← create skills, capabilities, roles, manifests
+│   │   ├── validation/
+│   │   │   └── capability.md        ← validate skills, audit systems
+│   │   ├── migration/
+│   │   │   └── capability.md        ← migrate flat skills to router pattern
+│   │   ├── bundling/
+│   │   │   └── capability.md        ← package skills as zip bundles
+│   │   └── deployment/
+│   │       ├── capability.md        ← deploy to tools, wrappers, symlinks
+│   │       └── references/
+│   │           └── symlink-setup.md ← platform-specific symlink commands
 │   ├── references/                  ← guidance loaded into context on demand
 │   │   ├── authoring-principles.md  ← cross-platform skill writing consensus
 │   │   ├── architecture-patterns.md ← standalone vs router decisions
 │   │   ├── agentskills-spec.md      ← specification compliance guide
 │   │   ├── tool-integration.md      ← tool-specific paths and deployment
 │   │   ├── directory-structure.md   ← full layout and conventions
-│   │   ├── workflows.md             ← step-by-step creation, migration, deployment, auditing
 │   │   ├── anti-patterns.md         ← common mistakes
 │   │   ├── claude-code-extensions.md
 │   │   ├── codex-extensions.md
@@ -181,7 +193,7 @@ Detailed review rules are in `.github/instructions/`:
 | `.github/instructions/markdown.instructions.md` | `**/*.md` | Documentation quality, description triggers |
 | `.github/instructions/scripts.instructions.md` | `scripts/**/*.py` | Code quality, stdlib-only, type hints |
 
-Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles mechanical checks. Manual review focuses on description quality, progressive disclosure, architecture justification, and semantic consistency.
+Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many frontmatter, naming, line-count, and structural checks. Manual review still verifies markdown file-reference conventions (including skill-root-relative paths), path validity, progressive disclosure, description quality, architecture justification, and semantic consistency.
 
 ## Release Process
 
