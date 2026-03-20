@@ -70,4 +70,4 @@ Scripts should handle errors explicitly with helpful messages.
 Always validate new skills. Treat spec compliance as a hard requirement.
 
 ### Assuming Cross-Surface Sync
-Skills don't sync. Distribute manually. See [workflows.md](workflows.md#deploying-skills-to-tools).
+Skills don't sync. Distribute manually. See the deployment capability for per-tool instructions.

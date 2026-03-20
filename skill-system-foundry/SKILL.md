@@ -42,38 +42,33 @@ Each layer has a clear responsibility:
 - **Skills** — Canonical, AI-agnostic knowledge and logic. Conform to the Agent Skills specification. A skill handles a task directly (standalone) or optionally routes to capabilities for complex domains that warrant decomposition.
 - **Roles** — Canonical, AI-agnostic orchestration contracts. A role defines responsibility, authority, and constraints, plus handoff rules and workflow sequencing while composing multiple skills/capabilities.
 
-## Bundled Resources
+## Capabilities
 
-### references/ — Read when you need guidance
+Route to the appropriate capability based on the task:
 
-- [`references/authoring-principles.md`](references/authoring-principles.md) — Shared skill authoring principles (cross-platform consensus)
-- [`references/architecture-patterns.md`](references/architecture-patterns.md) — Standalone vs router decisions and architecture patterns
-- [`references/tool-integration.md`](references/tool-integration.md) — Tool-specific paths, discovery, and deployment
-- [`references/agentskills-spec.md`](references/agentskills-spec.md) — Agent Skills specification compliance guide
-- [`references/claude-code-extensions.md`](references/claude-code-extensions.md) — Claude Code-specific frontmatter and features
-- [`references/codex-extensions.md`](references/codex-extensions.md) — Codex agents/openai.yaml and discovery hierarchy
-- [`references/cursor-extensions.md`](references/cursor-extensions.md) — Cursor cross-vendor discovery and rules migration
-- [`references/anti-patterns.md`](references/anti-patterns.md) — Common mistakes and how to avoid them
-- [`references/directory-structure.md`](references/directory-structure.md) — Full directory layout and conventions
-- [`references/workflows.md`](references/workflows.md) — Step-by-step workflows for creation, migration, deployment, and auditing
+| Capability | Trigger | Path |
+|---|---|---|
+| skill-design | Create a skill, capability, role, or manifest; decide architecture; write descriptions | capabilities/skill-design/capability.md |
+| validation | Validate a skill against the spec; audit system consistency | capabilities/validation/capability.md |
+| migration | Migrate flat skills to the router+capabilities pattern | capabilities/migration/capability.md |
+| bundling | Package a skill as a zip bundle for distribution | capabilities/bundling/capability.md |
+| deployment | Deploy to tools; set up wrappers or symlinks; use tool-specific extensions | capabilities/deployment/capability.md |
 
-### assets/ — Copy and fill in when creating components
+Read only the relevant capability file. Do not load multiple capabilities unless the task explicitly spans them.
 
-- `assets/skill-standalone.md` — Template for standalone skills
-- `assets/skill-router.md` — Template for router skills with capabilities
-- `assets/capability.md` — Template for capabilities under a router
-- `assets/role.md` — Template for roles
-- `assets/manifest.yaml` — Manifest schema template
+## Shared Resources
 
-### scripts/ — Run for validation and auditing
+### references/ — Guidance loaded on demand by capabilities
 
-- `scripts/audit_skill_system.py` — Audit skill system structure and consistency
-- `scripts/validate_skill.py` — Validate a single skill against the spec
-- `scripts/scaffold.py` — Scaffold new skills or roles from templates
-- `scripts/bundle.py` — Bundle a skill into a self-contained zip bundle for distribution
-- `scripts/lib/validation.py` — Shared name validation logic
-- `scripts/lib/references.py` — Reference scanning, resolution, and graph traversal
-- `scripts/lib/constants.py` — Centralized constants and configuration
+Cross-cutting reference material shared across capabilities. Capabilities reference these by relative path.
+
+### assets/ — Templates for scaffolding new components
+
+Skill, capability, role, and manifest templates copied and filled in when creating new components.
+
+### scripts/ — Validation, scaffolding, and bundling tools
+
+Four entry points (`validate_skill.py`, `audit_skill_system.py`, `scaffold.py`, `bundle.py`) and shared library modules. All entry points support `--json` for machine-readable output.
 
 ## Core Principles
 
@@ -103,30 +98,3 @@ Match specificity to the task's fragility. High freedom for flexible tasks, low 
 ### 5. Write Once, Adapt Everywhere
 
 Domain knowledge is authored exactly once in the canonical layer (skills and roles). When domain knowledge changes, one file changes. Tool-specific deployment pointers, if needed, are optional user-managed customizations — implemented as wrapper files or symlinks. When deploying, always ask the user which mechanism to use. See [`references/tool-integration.md`](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide.
-
----
-
-## Quick Reference: When to Read What
-
-| Task | Resource |
-|---|---|
-| Understand the concept and goals | Architecture Overview and Core Principles (this file) |
-| Create a new skill | [`assets/skill-standalone.md`](assets/skill-standalone.md) or [`assets/skill-router.md`](assets/skill-router.md) |
-| Create a new capability | [`assets/capability.md`](assets/capability.md) + [`references/workflows.md`](references/workflows.md#adding-a-capability-to-an-existing-router-optional) |
-| Create a new role | [`assets/role.md`](assets/role.md) |
-| Deploy to a specific tool (wrapper or symlink) | [`references/tool-integration.md`](references/tool-integration.md) + [`references/workflows.md`](references/workflows.md#setting-up-symlink-based-pointers) |
-| Set up the manifest | [`assets/manifest.yaml`](assets/manifest.yaml) |
-| Write effective descriptions | [`references/authoring-principles.md`](references/authoring-principles.md) |
-| Decide skill architecture (standalone vs router) | [`references/architecture-patterns.md`](references/architecture-patterns.md#standalone-vs-router-when-to-split) |
-| Deploy to Claude Code, Cursor, Kiro (wrapper or symlink; Codex, Gemini CLI, Warp, OpenCode, Windsurf scan natively) | [`references/tool-integration.md`](references/tool-integration.md) |
-| Migrate flat skills to router | [`references/workflows.md`](references/workflows.md#migrating-flat-skills-to-router-pattern) |
-| Audit skill system | `scripts/audit_skill_system.py` + [`references/workflows.md`](references/workflows.md#auditing-system-consistency) |
-| Validate a skill | `scripts/validate_skill.py` |
-| Scaffold a new component | `scripts/scaffold.py` |
-| Check spec compliance | [`references/agentskills-spec.md`](references/agentskills-spec.md) |
-| Understand directory layout | [`references/directory-structure.md`](references/directory-structure.md) |
-| Use Claude Code extensions | [`references/claude-code-extensions.md`](references/claude-code-extensions.md) |
-| Use Codex extensions | [`references/codex-extensions.md`](references/codex-extensions.md) |
-| Use Cursor features | [`references/cursor-extensions.md`](references/cursor-extensions.md) |
-| Package a skill as a zip bundle | `scripts/bundle.py` + [`references/workflows.md`](references/workflows.md#packaging-a-skill-as-a-zip-bundle) |
-| Review common mistakes | [`references/anti-patterns.md`](references/anti-patterns.md) |

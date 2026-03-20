@@ -194,7 +194,7 @@ Following the Agent Skills specification:
 
 ## Path Convention
 
-Paths in SKILL.md bodies and skill-level reference files are relative to the skill root directory (the directory containing SKILL.md). For example, a reference file path resolves as `<skill-root>/references/<file>.md` (see [workflows.md](workflows.md)).
+Paths in SKILL.md bodies and skill-level reference files are relative to the skill root directory (the directory containing SKILL.md). For example, a reference file path resolves as `<skill-root>/references/<file>.md`.
 
 **Exception:** When an orchestration skill's SKILL.md references roles, those paths use system-root-relative form (e.g., `roles/<group>/<name>.md`) for consistency with how roles reference skills. See [architecture-patterns.md](architecture-patterns.md#orchestration-skills).
 

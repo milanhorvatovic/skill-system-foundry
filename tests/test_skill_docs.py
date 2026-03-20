@@ -25,9 +25,6 @@ DOCS = {
     "references/architecture-patterns.md": os.path.join(
         SKILL_ROOT, "references", "architecture-patterns.md"
     ),
-    "references/workflows.md": os.path.join(
-        SKILL_ROOT, "references", "workflows.md"
-    ),
     "references/anti-patterns.md": os.path.join(
         SKILL_ROOT, "references", "anti-patterns.md"
     ),
@@ -45,6 +42,24 @@ DOCS = {
     ),
     "references/cursor-extensions.md": os.path.join(
         SKILL_ROOT, "references", "cursor-extensions.md"
+    ),
+    "capabilities/skill-design/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "skill-design", "capability.md"
+    ),
+    "capabilities/validation/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "validation", "capability.md"
+    ),
+    "capabilities/migration/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "migration", "capability.md"
+    ),
+    "capabilities/bundling/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "bundling", "capability.md"
+    ),
+    "capabilities/deployment/capability.md": os.path.join(
+        SKILL_ROOT, "capabilities", "deployment", "capability.md"
+    ),
+    "capabilities/deployment/references/symlink-setup.md": os.path.join(
+        SKILL_ROOT, "capabilities", "deployment", "references", "symlink-setup.md"
     ),
 }
 
@@ -198,7 +213,6 @@ class TocConsistencyTests(unittest.TestCase):
             "references/architecture-patterns.md",
             DOCS["references/architecture-patterns.md"],
         ),
-        ("references/workflows.md", DOCS["references/workflows.md"]),
     ]
 
     def test_toc_entries_have_matching_headings(self) -> None:
@@ -289,7 +303,7 @@ class DocsSafetyTests(unittest.TestCase):
                 ],
             ),
             (
-                DOCS["references/workflows.md"],
+                DOCS["capabilities/deployment/references/symlink-setup.md"],
                 [
                     # Unix: two-level relative symlink
                     r"\.\./\.\./\.agents/skills/\S+",
@@ -315,7 +329,7 @@ class DocsSafetyTests(unittest.TestCase):
         """Symlink docs should include a cmd verification example."""
         docs_to_check = [
             DOCS["references/tool-integration.md"],
-            DOCS["references/workflows.md"],
+            DOCS["capabilities/deployment/references/symlink-setup.md"],
         ]
 
         for path in docs_to_check:
@@ -380,7 +394,7 @@ class DocsSafetyTests(unittest.TestCase):
         """Windows path snippets should not contain '..agents' typos."""
         docs_to_check = [
             DOCS["references/tool-integration.md"],
-            DOCS["references/workflows.md"],
+            DOCS["capabilities/deployment/references/symlink-setup.md"],
         ]
         failures = []
 

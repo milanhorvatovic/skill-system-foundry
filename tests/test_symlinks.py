@@ -1,7 +1,7 @@
 """Tests for symlink-based deployment pointer creation.
 
 Validates that directory-level and file-level symlinks work as documented
-in tool-integration.md and workflows.md.
+in tool-integration.md and the deployment capability's symlink-setup.md.
 """
 
 import os
