@@ -13,10 +13,10 @@ Create skills, capabilities, roles, and manifests. Decide architecture (standalo
    By default only `SKILL.md` is created (plus `capabilities/` for routers). Use the `--with-*` flags to include optional directories upfront.
 
 3. **Or create manually** using templates from `assets/`:
-   - Standalone: copy [skill-standalone.md](../../assets/skill-standalone.md) → `skills/<name>/SKILL.md`
-   - Router: copy [skill-router.md](../../assets/skill-router.md) → `skills/<name>/SKILL.md`
+   - Standalone: copy [skill-standalone.md](assets/skill-standalone.md) → `skills/<name>/SKILL.md`
+   - Router: copy [skill-router.md](assets/skill-router.md) → `skills/<name>/SKILL.md`
 
-4. **Write the SKILL.md** following [authoring-principles.md](../../references/authoring-principles.md):
+4. **Write the SKILL.md** following [authoring-principles.md](references/authoring-principles.md):
    - Description max 1024 chars, with triggers (third-person voice recommended)
    - Body recommended max 500 lines, only context the model doesn't already have
    - `name` matches directory, lowercase + hyphens, max 64 chars
@@ -37,7 +37,7 @@ Create skills, capabilities, roles, and manifests. Decide architecture (standalo
    python scripts/scaffold.py role <role-group> <role-name>
    ```
 
-3. **Or copy** [role.md](../../assets/role.md) → `roles/<group>/<name>.md`
+3. **Or copy** [role.md](assets/role.md) → `roles/<group>/<name>.md`
 
 4. **Define the role contract explicitly.** Include:
    - Responsibility, authority, and constraints (captured explicitly through the `Responsibilities`, `Allowed`, and `Forbidden` sections)
@@ -55,7 +55,7 @@ Create skills, capabilities, roles, and manifests. Decide architecture (standalo
 
 ## Creating an Orchestration Skill
 
-A skill can serve as the orchestration entry point. Two forms exist — choose based on needs. See [architecture-patterns.md](../../references/architecture-patterns.md#orchestration-skills) for the full decision checklist.
+A skill can serve as the orchestration entry point. Two forms exist — choose based on needs. See [architecture-patterns.md](references/architecture-patterns.md#orchestration-skills) for the full decision checklist.
 
 1. **Choose the form:**
    - **Coordination-only (path 1):** A lean standalone skill that sequences roles across domains. No domain logic.
@@ -107,20 +107,20 @@ Only add a capability when the integrator explicitly requests it or when the dom
 ## Key Resources
 
 **Templates** — copy and fill in when creating components:
-- [skill-standalone.md](../../assets/skill-standalone.md) — Standalone skill template
-- [skill-router.md](../../assets/skill-router.md) — Router skill template
-- [capability.md](../../assets/capability.md) — Capability template
-- [role.md](../../assets/role.md) — Role template
-- [manifest.yaml](../../assets/manifest.yaml) — Manifest schema template
+- [skill-standalone.md](assets/skill-standalone.md) — Standalone skill template
+- [skill-router.md](assets/skill-router.md) — Router skill template
+- [capability.md](assets/capability.md) — Capability template
+- [role.md](assets/role.md) — Role template
+- [manifest.yaml](assets/manifest.yaml) — Manifest schema template
 
 **References** — read when you need guidance:
-- [authoring-principles.md](../../references/authoring-principles.md) — Shared skill authoring principles
-- [architecture-patterns.md](../../references/architecture-patterns.md) — Standalone vs router decisions
-- [agentskills-spec.md](../../references/agentskills-spec.md) — Specification compliance
-- [directory-structure.md](../../references/directory-structure.md) — Full directory layout and conventions
-- [anti-patterns.md](../../references/anti-patterns.md) — Common mistakes and how to avoid them
+- [authoring-principles.md](references/authoring-principles.md) — Shared skill authoring principles
+- [architecture-patterns.md](references/architecture-patterns.md) — Standalone vs router decisions
+- [agentskills-spec.md](references/agentskills-spec.md) — Specification compliance
+- [directory-structure.md](references/directory-structure.md) — Full directory layout and conventions
+- [anti-patterns.md](references/anti-patterns.md) — Common mistakes and how to avoid them
 
 **Scripts** — run for scaffolding and validation:
-- [scaffold.py](../../scripts/scaffold.py) — Scaffold new skills or roles from templates
-- [validation.py](../../scripts/lib/validation.py) — Shared name validation logic
-- [manifest.py](../../scripts/lib/manifest.py) — Manifest parsing and validation
+- [scaffold.py](scripts/scaffold.py) — Scaffold new skills or roles from templates
+- [validation.py](scripts/lib/validation.py) — Shared name validation logic
+- [manifest.py](scripts/lib/manifest.py) — Manifest parsing and validation

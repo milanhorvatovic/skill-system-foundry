@@ -1,6 +1,6 @@
 # Setting Up Symlink-Based Pointers
 
-Use this workflow when the user chose symlinks as the deployment pointer mechanism. See [tool-integration.md](../../../references/tool-integration.md#symlink-based-deployment-pointers) for platform compatibility and tool support details.
+Use this workflow when the user chose symlinks as the deployment pointer mechanism. See [tool-integration.md](references/tool-integration.md#symlink-based-deployment-pointers) for platform compatibility and tool support details.
 
 ## 1. Determine Scope
 

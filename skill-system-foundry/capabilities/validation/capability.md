@@ -58,12 +58,12 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 ## Key Resources
 
 **References:**
-- [agentskills-spec.md](../../references/agentskills-spec.md) — Agent Skills specification compliance guide
+- [agentskills-spec.md](references/agentskills-spec.md) — Agent Skills specification compliance guide
 
 **Scripts:**
-- [validate_skill.py](../../scripts/validate_skill.py) — Single skill spec validation
-- [audit_skill_system.py](../../scripts/audit_skill_system.py) — Full skill system audit
-- [validation.py](../../scripts/lib/validation.py) — Shared name/metadata/license/allowed-tools validation
-- [frontmatter.py](../../scripts/lib/frontmatter.py) — Frontmatter extraction and body utilities
-- [discovery.py](../../scripts/lib/discovery.py) — Component discovery for system audit
-- [codex_config.py](../../scripts/lib/codex_config.py) — Codex agents/openai.yaml validation
+- [validate_skill.py](scripts/validate_skill.py) — Single skill spec validation
+- [audit_skill_system.py](scripts/audit_skill_system.py) — Full skill system audit
+- [validation.py](scripts/lib/validation.py) — Shared name/metadata/license/allowed-tools validation
+- [frontmatter.py](scripts/lib/frontmatter.py) — Frontmatter extraction and body utilities
+- [discovery.py](scripts/lib/discovery.py) — Component discovery for system audit
+- [codex_config.py](scripts/lib/codex_config.py) — Codex agents/openai.yaml validation

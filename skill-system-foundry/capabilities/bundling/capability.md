@@ -1,6 +1,6 @@
 # Bundling
 
-Package a skill as a self-contained zip bundle for distribution. The archive packages exactly one skill directory, preserves its internal layout, and excludes large or non-essential assets not required at runtime (patterns defined in [configuration.yaml](../../scripts/lib/configuration.yaml)).
+Package a skill as a self-contained zip bundle for distribution. The archive packages exactly one skill directory, preserves its internal layout, and excludes large or non-essential assets not required at runtime (patterns defined in [configuration.yaml](scripts/lib/configuration.yaml)).
 
 ## Prerequisites
 
@@ -57,7 +57,7 @@ python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --system-r
 ## Key Resources
 
 **Scripts:**
-- [bundle.py](../../scripts/bundle.py) — Bundle entry point
-- [bundling.py](../../scripts/lib/bundling.py) — Core bundling logic
-- [references.py](../../scripts/lib/references.py) — Reference scanning, resolution, and graph traversal
-- [configuration.yaml](../../scripts/lib/configuration.yaml) — Bundle exclusion patterns and limits
+- [bundle.py](scripts/bundle.py) — Bundle entry point
+- [bundling.py](scripts/lib/bundling.py) — Core bundling logic
+- [references.py](scripts/lib/references.py) — Reference scanning, resolution, and graph traversal
+- [configuration.yaml](scripts/lib/configuration.yaml) — Bundle exclusion patterns and limits
