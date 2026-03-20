@@ -180,7 +180,7 @@ To package a skill as a zip bundle, run `bundle.py` from the project root. The b
 
 **Roles** are plain markdown, grouped by functional domain with README.md.
 
-**Manifest** is the single source of truth. See [assets/manifest.yaml](../assets/manifest.yaml).
+**Manifest** is the single source of truth. See [assets/manifest.yaml](assets/manifest.yaml).
 
 ## Naming
 

@@ -40,7 +40,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 - **Progressive disclosure** — `SKILL.md` serves as an overview that points to detailed materials. Do not inline large reference content into `SKILL.md` when a reference file serves the same purpose
 - **`SKILL.md` under 500 lines** — move detailed reference material to separate files. Agents load these on demand, so smaller files mean less context usage
 - **Cross-references stay one level deep** — `SKILL.md` → `references/foo.md` is valid. `SKILL.md` → `references/foo.md` → `references/bar.md` is not — the model may partially read chained files
-- **Reference supporting files from `SKILL.md`** — every file in `references/`, `scripts/`, or `assets/` should be linked from `SKILL.md` so agents know what each file contains and when to load it
+- **Reference supporting files from `SKILL.md`** — for standalone skills, every file in `references/`, `scripts/`, or `assets/` should be linked from `SKILL.md`. For router skills, shared files are indexed transitively: the router links capabilities, and each capability lists its own relevant resources in a Key Resources section. Every shared file must be reachable through at least one capability
 - **Table of contents for long files** — reference files over 100 lines should include a table of contents at the top
 - **No time-sensitive content** — use an "old patterns" section for deprecated approaches instead of embedding dates or version-specific language that will age
 
@@ -79,7 +79,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 - Inconsistent terminology within a file or between related files
 - `SKILL.md` exceeding 500 lines without delegating to reference files
 - Cross-reference chains deeper than one level from `SKILL.md`
-- Unreferenced files in `references/`, `scripts/`, or `assets/` not linked from `SKILL.md`
+- Unreferenced files in `references/`, `scripts/`, or `assets/` not reachable from `SKILL.md` (directly for standalone skills, or transitively through capabilities for router skills)
 - Backslashes in file paths
 - Non-descriptive filenames (`doc2.md`, `notes.md`, `misc.md`)
 - Role file using skill-root-relative paths instead of system-root-relative paths

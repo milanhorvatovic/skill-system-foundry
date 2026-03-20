@@ -167,11 +167,17 @@ class AnchorValidationTests(unittest.TestCase):
                 if not anchor:
                     continue
 
-                # Determine which file the anchor should be in
+                # Determine which file the anchor should be in.
+                # Resolve from SKILL_ROOT (spec: skill-root-relative paths)
+                # with fallback to doc_dir for pre-existing sibling refs.
                 if file_part:
                     target_path = os.path.normpath(
-                        os.path.join(doc_dir, file_part)
+                        os.path.join(SKILL_ROOT, file_part)
                     )
+                    if not os.path.isfile(target_path):
+                        target_path = os.path.normpath(
+                            os.path.join(doc_dir, file_part)
+                        )
                 else:
                     # Self-reference: #anchor within the same file
                     target_path = doc_path
