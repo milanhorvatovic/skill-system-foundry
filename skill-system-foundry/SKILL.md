@@ -58,6 +58,8 @@ Read only the relevant capability file. Do not load multiple capabilities unless
 
 ## Shared Resources
 
+Shared resources live at the skill root and are referenced by capabilities via relative paths. Individual files are listed in each capability's Key Resources section — the router indexes directories, capabilities index files.
+
 ### references/ — Guidance loaded on demand by capabilities
 
 Cross-cutting reference material shared across capabilities. Capabilities reference these by relative path.

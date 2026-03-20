@@ -160,6 +160,7 @@ This skill is organized as a **router** within the skill system it describes. It
 - **Progressive disclosure** is respected: the discovery layer sees only the name and description (~100 tokens). The full SKILL.md loads when triggered. Capabilities, references, assets, and scripts load only when the specific task requires them.
 - **Token economy** is optimized: one skill registration covers five capabilities (loaded on demand), avoiding 5x discovery overhead.
 - **Capability self-sufficiency** — each capability is self-contained with its own key resources section. An agent loading a capability has enough context to complete the task without reading the router.
+- **Transitive file discoverability** — the router indexes directories, capabilities index individual files. Every shared file is reachable through router → capability → resource. This is an intentional router-pattern deviation from the stricter markdown-docs guidance that every bundled file be linked directly from `SKILL.md`.
 - **The spec is followed**: valid frontmatter, name matches directory, description is third-person with trigger words, body is recommended max 500 lines.
 - **Nested references are a documented exception.** Reference files cross-reference each other for navigability. This is an accepted exception to the one-level-deep rule because the meta-skill's reference files describe the skill system's own components. Running `validate_skill.py` on this skill produces nested-reference warnings; all are expected. Use `--allow-nested-references` to suppress them.
 

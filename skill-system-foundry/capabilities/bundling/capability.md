@@ -7,17 +7,18 @@ Package a skill as a self-contained zip bundle for distribution. The archive pac
 - The skill must pass `validate_skill.py` (spec compliance)
 - The skill's description must not exceed 200 characters (Claude.ai limit)
 - All file references in the skill must resolve to existing files
-- No external reference may point to another skill (cross-skill boundary violation)
+- No external reference may point to another skill (cross-skill boundary violation) — unless `--inline-orchestrated-skills` is used for Path 1 coordination skills
 
 ## Usage
 
 ```bash
-python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>] [--target claude|gemini|generic] [--verbose] [--json]
+python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>] [--target claude|gemini|generic] [--inline-orchestrated-skills] [--verbose] [--json]
 ```
 
 - `--system-root`: Path to the skill system root (contains `skills/`, `roles/`). If omitted, inferred by walking up from the skill path.
 - `--output`: Output path for the zip. Defaults to `<skill-name>.zip` in the current directory.
 - `--target`: Target platform. `claude` (default) enforces 200-char description limit as FAIL; `gemini` and `generic` downgrade to WARNING.
+- `--inline-orchestrated-skills`: When bundling a Path 1 coordination skill, inline the orchestrated skills into the bundle. Without this flag, cross-skill references are rejected.
 
 ## What the Bundler Does
 
@@ -44,7 +45,7 @@ python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --system-r
 |---|---|---|
 | Description exceeds 200 characters | Claude.ai limit is stricter than the 1024-char spec limit | Shorten the description |
 | Broken reference | A markdown link points to a non-existent file | Fix the file path or remove the reference |
-| Cross-skill reference | An external file references another skill | Remove the cross-skill reference or inline the content |
+| Cross-skill reference | An external file references another skill | Remove the reference, inline the content, or use `--inline-orchestrated-skills` for Path 1 coordination skills |
 | Circular reference between external files | External docs reference each other in a cycle | Break the cycle — this is likely a structural bug |
 | Multiple SKILL.md files | Case-insensitive scan found duplicates | Rename capability files to `capability.md` |
 
