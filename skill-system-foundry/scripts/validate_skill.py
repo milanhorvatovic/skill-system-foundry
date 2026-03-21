@@ -297,14 +297,15 @@ def validate_body(
 
 def validate_skill_references(
     skill_path: str, skill_root: str, entry_file: str,
-    allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
     Walks *skill_path*, reads each ``.md`` file, and checks that all
     intra-skill references resolve from *skill_root*.  The entry file
     (*entry_file*) is skipped because it is already validated by
-    :func:`validate_body`.
+    :func:`validate_body`.  Nested-reference depth checks are always
+    skipped for non-entry files because the spec constrains nesting
+    from entry points only.
     """
     errors: list[str] = []
     passes: list[str] = []
@@ -422,7 +423,7 @@ def validate_skill(
         passes.extend(body_passes)
         # Validate references in all other .md files in the capability tree
         ref_errors, ref_passes = validate_skill_references(
-            skill_path, skill_root, skill_md, allow_nested_refs,
+            skill_path, skill_root, skill_md,
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
@@ -492,7 +493,7 @@ def validate_skill(
 
     # Validate references in all other .md files in the skill tree
     sref_errors, sref_passes = validate_skill_references(
-        skill_path, skill_root, skill_md, allow_nested_refs,
+        skill_path, skill_root, skill_md,
     )
     errors.extend(sref_errors)
     passes.extend(sref_passes)
