@@ -29,6 +29,7 @@ from validate_skill import (
     validate_description,
     validate_directories,
     validate_skill,
+    validate_skill_references,
 )
 from lib.validation import (
     validate_allowed_tools,
@@ -1050,6 +1051,114 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(broken, [])
+
+
+# ===================================================================
+# validate_skill_references
+# ===================================================================
+
+
+class ValidateSkillReferencesTests(unittest.TestCase):
+    """Tests for validate_skill_references — skill-wide .md file scanning."""
+
+    def test_valid_refs_in_reference_file_passes(self) -> None:
+        """A reference file with valid root-relative links produces no warns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            write_text(
+                os.path.join(tmpdir, "references", "other.md"),
+                "# Other\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nSee also [other](references/other.md).\n",
+            )
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+        summary = [p for p in passes if "skill-wide references" in p]
+        self.assertEqual(len(summary), 1)
+
+    def test_broken_ref_in_reference_file_returns_warn(self) -> None:
+        """A reference file linking to a nonexistent file produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nSee [missing](references/missing.md).\n",
+            )
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken), 1)
+        self.assertIn("references/missing.md", broken[0])
+
+    def test_parent_traversal_in_reference_file_returns_warn(self) -> None:
+        """A reference file using ../ produces a parent-traversal WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nSee [t](references/../assets/other.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "assets", "other.md"),
+                "# Other\n",
+            )
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        traversal = [e for e in warn_errors if "parent traversal" in e]
+        self.assertEqual(len(traversal), 1)
+
+    def test_skips_entry_file(self) -> None:
+        """The entry file is skipped (already validated by validate_body)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Entry file has a broken ref — should NOT appear in results
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n\nSee [x](references/nope.md).\n",
+            )
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+
+    def test_no_extra_md_files_produces_no_summary(self) -> None:
+        """When the only .md file is the entry file, no summary pass is added."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        self.assertEqual(errors, [])
+        summary = [p for p in passes if "skill-wide references" in p]
+        self.assertEqual(summary, [])
+
+    def test_validate_skill_includes_skill_wide_refs(self) -> None:
+        """validate_skill() includes reference checks from non-entry .md files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir, body="# Router Skill\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nSee [missing](references/missing.md).\n",
+            )
+            errors, passes = validate_skill(tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken), 1)
+        self.assertIn("references/missing.md", broken[0])
 
 
 # ===================================================================

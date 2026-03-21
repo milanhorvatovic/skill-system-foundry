@@ -44,6 +44,7 @@ from lib.constants import (
     RE_MARKDOWN_LINK_REF, RE_BACKTICK_REF,
     RECOGNIZED_DIRS,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
+    EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 
@@ -127,32 +128,25 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
     return errors, passes
 
 
-def validate_body(
-    body: str, skill_md_path: str, skill_root: str,
+def _check_references(
+    body: str, source_label: str, skill_root: str,
     allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
-    """Validate skill or capability entry point body."""
+    """Check markdown references in *body* against the skill root.
+
+    *source_label* identifies the file in error messages (e.g.
+    ``"SKILL.md"`` or ``"references/guide.md"``).  All intra-skill
+    references are resolved relative to *skill_root*.
+    """
     errors: list[str] = []
     passes: list[str] = []
-    entry_filename = os.path.basename(skill_md_path)
 
-    line_count = count_body_lines(body)
-    if line_count > MAX_BODY_LINES:
-        errors.append(
-            f"{LEVEL_WARN}: [foundry] {entry_filename} body is {line_count} lines (recommended max: {MAX_BODY_LINES})"
-        )
-    else:
-        passes.append(f"body: {line_count} lines (max {MAX_BODY_LINES})")
-
-    # Check for deeply nested references (references to files that themselves reference)
-    # This is a heuristic — check for reference files in the body
     refs = RE_MARKDOWN_LINK_REF.findall(body)
     backtick_refs = RE_BACKTICK_REF.findall(body)
     refs = list(set(refs + backtick_refs))
     # Exclude template placeholders (e.g., references/<file>.md)
     refs = [r for r in refs if "<" not in r and ">" not in r]
 
-    # Always check for broken references regardless of allow_nested_refs
     broken_found = False
     nested_found = False
     external_found = False
@@ -188,13 +182,13 @@ def validate_body(
         # nesting checks still run for the resolved path.
         if not is_external and ".." in normalized_ref.replace("\\", "/").split("/"):
             errors.append(
-                f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {entry_filename} "
+                f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {source_label} "
                 "uses parent traversal — use skill-root-relative paths instead"
             )
         if is_external:
             external_found = True
             errors.append(
-                f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {entry_filename} "
+                f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {source_label} "
                 "resolves outside skill directory — acceptable for shared "
                 "resources but verify the path is intentional"
             )
@@ -207,7 +201,7 @@ def validate_body(
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {entry_filename} does not exist"
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} does not exist"
             )
             continue
 
@@ -215,7 +209,7 @@ def validate_body(
         if not os.path.isfile(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {entry_filename} resolves to a non-file path"
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} resolves to a non-file path"
             )
             continue
 
@@ -226,7 +220,7 @@ def validate_body(
         except (OSError, UnicodeError) as exc:
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {entry_filename} "
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
                 f"cannot be read ({exc.__class__.__name__}: {exc})"
             )
             continue
@@ -242,7 +236,7 @@ def validate_body(
                 nested_found = True
                 errors.append(
                     f"{LEVEL_WARN}: [spec] '{ref}' contains nested references: {nested_refs}. "
-                    f"Keep references one level deep from {entry_filename}."
+                    f"Keep references one level deep from {source_label}."
                 )
 
     if allow_nested_refs and refs and not broken_found:
@@ -261,6 +255,81 @@ def validate_body(
             "references: all references resolve outside skill directory "
             "(external refs excluded from nesting checks)"
         )
+
+    return errors, passes
+
+
+def validate_body(
+    body: str, skill_md_path: str, skill_root: str,
+    allow_nested_refs: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Validate skill or capability entry point body."""
+    errors: list[str] = []
+    passes: list[str] = []
+    entry_filename = os.path.basename(skill_md_path)
+
+    line_count = count_body_lines(body)
+    if line_count > MAX_BODY_LINES:
+        errors.append(
+            f"{LEVEL_WARN}: [foundry] {entry_filename} body is {line_count} lines (recommended max: {MAX_BODY_LINES})"
+        )
+    else:
+        passes.append(f"body: {line_count} lines (max {MAX_BODY_LINES})")
+
+    ref_errors, ref_passes = _check_references(
+        body, entry_filename, skill_root, allow_nested_refs,
+    )
+    errors.extend(ref_errors)
+    passes.extend(ref_passes)
+
+    return errors, passes
+
+
+def validate_skill_references(
+    skill_path: str, skill_root: str, entry_file: str,
+    allow_nested_refs: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Validate references in all markdown files across the skill tree.
+
+    Walks *skill_path*, reads each ``.md`` file, and checks that all
+    intra-skill references resolve from *skill_root*.  The entry file
+    (*entry_file*) is skipped because it is already validated by
+    :func:`validate_body`.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    entry_abs = os.path.abspath(entry_file)
+    files_checked = 0
+
+    for dirpath, _dirnames, filenames in os.walk(skill_path):
+        for fname in sorted(filenames):
+            if not fname.endswith(EXT_MARKDOWN):
+                continue
+            filepath = os.path.join(dirpath, fname)
+            if os.path.abspath(filepath) == entry_abs:
+                continue
+
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except (OSError, UnicodeError):
+                continue
+
+            rel_label = os.path.relpath(filepath, skill_root)
+            file_errors, _file_passes = _check_references(
+                content, rel_label, skill_root, allow_nested_refs,
+            )
+
+            if file_errors or content:
+                files_checked += 1
+            errors.extend(file_errors)
+
+    if files_checked > 0:
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        if not warn_errors:
+            passes.append(
+                f"skill-wide references: {files_checked} additional files checked, all refs valid"
+            )
 
     return errors, passes
 
@@ -336,6 +405,12 @@ def validate_skill(
         body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
         errors.extend(body_errors)
         passes.extend(body_passes)
+        # Validate references in all other .md files in the capability tree
+        ref_errors, ref_passes = validate_skill_references(
+            skill_path, skill_root, skill_md, allow_nested_refs,
+        )
+        errors.extend(ref_errors)
+        passes.extend(ref_passes)
         return errors, passes
 
     # Validate required fields
@@ -399,6 +474,13 @@ def validate_skill(
     dir_errors, dir_passes = validate_directories(skill_path)
     errors.extend(dir_errors)
     passes.extend(dir_passes)
+
+    # Validate references in all other .md files in the skill tree
+    sref_errors, sref_passes = validate_skill_references(
+        skill_path, skill_root, skill_md, allow_nested_refs,
+    )
+    errors.extend(sref_errors)
+    passes.extend(sref_passes)
 
     # Validate Codex configuration (agents/openai.yaml) when present
     codex_errors, codex_passes = validate_codex_config(skill_path)
