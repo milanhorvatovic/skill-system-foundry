@@ -351,5 +351,74 @@ class MainMissingCoverageJsonTests(unittest.TestCase):
             shutil.rmtree(tmpdir)
 
 
+# ===================================================================
+# main — malformed coverage.json
+# ===================================================================
+
+
+class MainMalformedCoverageJsonTests(unittest.TestCase):
+    """Integration tests for main with malformed coverage.json data."""
+
+    def test_missing_files_key_returns_one(self) -> None:
+        """Returns 1 when coverage.json has no top-level 'files' key."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, json.dumps({"totals": {"percent_covered": 80.0}}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_files_key_is_list_returns_one(self) -> None:
+        """Returns 1 when 'files' is a list instead of a dict."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, json.dumps({"files": ["a.py", "b.py"]}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_files_key_is_null_returns_one(self) -> None:
+        """Returns 1 when 'files' is null."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, json.dumps({"files": None}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_files_key_is_string_returns_one(self) -> None:
+        """Returns 1 when 'files' is a string instead of a dict."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, json.dumps({"files": "not a dict"}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+
 if __name__ == "__main__":
     unittest.main()

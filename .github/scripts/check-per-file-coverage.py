@@ -114,8 +114,16 @@ def main(argv: list[str] | None = None) -> int:
     with open(args.coverage_json, encoding="utf-8") as fh:
         data = json.load(fh)
 
+    # Validate top-level structure
+    if "files" not in data or not isinstance(data["files"], dict):
+        print(
+            "Error: coverage.json is malformed — missing or non-dict top-level 'files' key",
+            file=sys.stderr,
+        )
+        return 1
+
     # Check each file
-    all_files = data.get("files", {})
+    all_files = data["files"]
     failures: list[tuple[str, float]] = []
     passes: list[tuple[str, float]] = []
 
