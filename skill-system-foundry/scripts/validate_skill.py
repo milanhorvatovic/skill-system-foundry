@@ -48,6 +48,23 @@ from lib.constants import (
 )
 
 
+def find_skill_root(start_dir: str) -> str | None:
+    """Walk upward from *start_dir* looking for a directory containing SKILL.md.
+
+    Returns the absolute path of the directory containing ``SKILL.md``,
+    or ``None`` if no such directory is found before reaching the
+    filesystem root.
+    """
+    current = os.path.abspath(start_dir)
+    while True:
+        if os.path.exists(os.path.join(current, FILE_SKILL_MD)):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
 def validate_description(description: str) -> tuple[list[str], list[str]]:
     """Validate the description field.
 
@@ -111,7 +128,8 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
 
 
 def validate_body(
-    body: str, skill_md_path: str, allow_nested_refs: bool = False,
+    body: str, skill_md_path: str, skill_root: str,
+    allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Validate skill or capability entry point body."""
     errors: list[str] = []
@@ -140,7 +158,6 @@ def validate_body(
     external_found = False
     internal_checked = 0
 
-    skill_dir = os.path.dirname(skill_md_path)
     seen_paths: set[str] = set()
 
     for ref in refs:
@@ -149,7 +166,7 @@ def validate_body(
         if not normalized_ref:
             continue  # Nothing to check (pure fragment reference)
         ref_path = os.path.normpath(
-            os.path.join(os.path.dirname(skill_md_path), normalized_ref)
+            os.path.join(skill_root, normalized_ref)
         )
 
         # Skip refs that resolve to the same file (e.g., guide.md#one vs guide.md#two)
@@ -162,7 +179,17 @@ def validate_body(
         # (e.g., ../../shared/references/).  Report as INFO for awareness.
         # All filesystem checks (existence, readability, nesting) are
         # skipped for external refs to avoid acting as an existence oracle.
-        is_external = not is_within_directory(ref_path, skill_dir)
+        is_external = not is_within_directory(ref_path, skill_root)
+
+        # Reject parent traversals (../) for intra-skill references.
+        # Check raw path segments before normalization to catch patterns
+        # like references/../references/guide.md that normpath would collapse.
+        if not is_external and ".." in normalized_ref.replace("\\", "/").split("/"):
+            errors.append(
+                f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {entry_filename} "
+                "uses parent traversal — use skill-root-relative paths instead"
+            )
+            continue
         if is_external:
             external_found = True
             errors.append(
@@ -289,6 +316,15 @@ def validate_skill(
         errors.append(f"{LEVEL_FAIL}: [spec] YAML parse error: {frontmatter['_parse_error']}")
         return errors, passes
 
+    # Determine the skill root for reference resolution.
+    # For regular skills, skill_path is the root (contains SKILL.md).
+    # For capabilities, walk upward to find the containing skill root.
+    if is_capability:
+        detected_root = find_skill_root(os.path.dirname(skill_path))
+        skill_root = detected_root if detected_root is not None else skill_path
+    else:
+        skill_root = skill_path
+
     if is_capability:
         # Capabilities don't require frontmatter
         if frontmatter and "name" in frontmatter:
@@ -296,7 +332,7 @@ def validate_skill(
                 f"{LEVEL_INFO}: [foundry] Capability has 'name' in frontmatter — this is fine for "
                 "documentation but won't be used for discovery"
             )
-        body_errors, body_passes = validate_body(body, skill_md, allow_nested_refs)
+        body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
         errors.extend(body_errors)
         passes.extend(body_passes)
         return errors, passes
@@ -354,7 +390,7 @@ def validate_skill(
     passes.extend(key_passes)
 
     # Validate body
-    body_errors, body_passes = validate_body(body, skill_md, allow_nested_refs)
+    body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
     errors.extend(body_errors)
     passes.extend(body_passes)
 

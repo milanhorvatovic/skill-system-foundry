@@ -24,6 +24,7 @@ if SCRIPTS_DIR not in sys.path:
 
 from validate_skill import (
     _build_parser,
+    find_skill_root,
     validate_body,
     validate_description,
     validate_directories,
@@ -274,7 +275,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         line_pass = [p for p in passes if "lines" in p]
         self.assertEqual(len(line_pass), 1)
         fail_errors = [e for e in errors if "lines" in e]
@@ -286,7 +287,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         line_pass = [p for p in passes if "lines" in p]
         self.assertEqual(len(line_pass), 1)
         line_warns = [e for e in errors if "lines" in e]
@@ -298,7 +299,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         line_warns = [e for e in warn_errors if "lines" in e]
         self.assertEqual(len(line_warns), 1)
@@ -310,7 +311,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         line_warns = [e for e in warn_errors if "lines" in e]
         self.assertEqual(len(line_warns), 1)
@@ -321,7 +322,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         line_pass = [p for p in passes if "lines" in p]
         self.assertEqual(len(line_pass), 1)
         self.assertIn("0 lines", line_pass[0])
@@ -334,7 +335,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         line_pass = [p for p in passes if "lines" in p]
         self.assertEqual(len(line_pass), 1)
         self.assertIn("0 lines", line_pass[0])
@@ -349,7 +350,7 @@ class ValidateBodyTests(unittest.TestCase):
             write_text(ref_file, "# Guide\n\nSome content without references.\n")
             body = "# Skill\n\nSee [guide](references/guide.md) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         ref_pass = [p for p in passes if "one level deep" in p]
         self.assertEqual(len(ref_pass), 1)
         nested_warns = [e for e in errors if "nested" in e.lower()]
@@ -368,7 +369,7 @@ class ValidateBodyTests(unittest.TestCase):
             write_text(os.path.join(ref_dir, "details.md"), "# Details\n")
             body = "# Skill\n\nSee [guide](references/guide.md) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         nested_warns = [e for e in errors if "nested references" in e]
         self.assertEqual(len(nested_warns), 1)
 
@@ -384,7 +385,7 @@ class ValidateBodyTests(unittest.TestCase):
             write_text(os.path.join(ref_dir, "details.md"), "# Details\n")
             body = "# Skill\n\nSee [guide](references/guide.md) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md), allow_nested_refs=True)
         nested_warns = [e for e in errors if "nested" in e.lower()]
         self.assertEqual(nested_warns, [])
         skip_pass = [p for p in passes if "skipped" in p]
@@ -396,7 +397,7 @@ class ValidateBodyTests(unittest.TestCase):
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [guide](references/missing.md) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md), allow_nested_refs=True)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 1)
@@ -419,7 +420,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "Also `references/<other>.md` is useful.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # No nested ref warnings since template placeholders are excluded
         nested_warns = [e for e in errors if "nested" in e.lower()]
         self.assertEqual(nested_warns, [])
@@ -436,7 +437,7 @@ class ValidateBodyTests(unittest.TestCase):
             write_text(os.path.join(ref_dir, "nested.md"), "# Nested\n")
             body = '# Skill\n\nSee `references/guide.md` for details.\n'
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         nested_warns = [e for e in errors if "nested references" in e]
         self.assertEqual(len(nested_warns), 1)
 
@@ -446,7 +447,7 @@ class ValidateBodyTests(unittest.TestCase):
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [guide](references/missing.md) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 1)
@@ -469,7 +470,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "Also see [other](references/missing-b.md) for more.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 2)
@@ -497,7 +498,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "Also see [missing](references/missing.md) for more.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 1)
@@ -527,7 +528,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "Also see [gone](references/gone.md) for more.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 1)
@@ -554,7 +555,7 @@ class ValidateBodyTests(unittest.TestCase):
             # Reference with fragment
             body = "# Skill\n\nSee [guide](references/guide.md#section) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # Should NOT warn about "does not exist"
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
@@ -581,7 +582,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "See [setup](references/guide.md#setup) for more.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # Should produce exactly one nested-ref WARN, not two
         nested_warns = [e for e in errors if "nested references" in e]
         self.assertEqual(len(nested_warns), 1)
@@ -597,7 +598,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "See [setup](references/missing.md#setup) for more.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # Should produce exactly one "does not exist" WARN, not two
         broken_warns = [e for e in errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 1)
@@ -609,7 +610,7 @@ class ValidateBodyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         ref_passes = [p for p in passes if "reference" in p.lower()]
         self.assertEqual(ref_passes, [])
         nested_warns = [e for e in errors if "nested" in e.lower()]
@@ -623,7 +624,7 @@ class ValidateBodyTests(unittest.TestCase):
             os.makedirs(os.path.join(tmpdir, "references", "subdir"))
             body = "# Skill\n\nSee [refs](references/subdir) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         non_file_warns = [e for e in warn_errors if "non-file" in e]
         self.assertEqual(len(non_file_warns), 1)
@@ -639,7 +640,7 @@ class ValidateBodyTests(unittest.TestCase):
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [escape](references/../../somewhere) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         escape_infos = [e for e in info_errors if "outside skill directory" in e]
         self.assertEqual(len(escape_infos), 1)
@@ -659,7 +660,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "[b](references/../../shared/b.md) for details.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # Should NOT have the "one level deep" pass since no internal refs were checked
         nesting_passes = [p for p in passes if "one level deep" in p]
         self.assertEqual(nesting_passes, [])
@@ -684,7 +685,7 @@ class ValidateBodyTests(unittest.TestCase):
                 "See [a](references/../../shared/a.md) for details.\n"
             )
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # Should have the INFO for external ref
         info_errors = [e for e in errors if "outside skill directory" in e]
         self.assertEqual(len(info_errors), 1)
@@ -707,7 +708,7 @@ class ValidateBodyTests(unittest.TestCase):
             # The regex captures the full (path "title") as the ref
             body = '# Skill\n\nSee [foo](references/foo.md "Title") for details.\n'
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         # Should NOT warn about "does not exist" — strip_fragment handles the title
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken_warns = [e for e in warn_errors if "does not exist" in e]
@@ -735,7 +736,7 @@ class ValidateBodyTests(unittest.TestCase):
             body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
             write_text(skill_md, body)
             try:
-                errors, passes = validate_body(body, skill_md)
+                errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
             finally:
                 # Restore permissions for cleanup
                 os.chmod(ref_file, 0o644)
@@ -768,7 +769,7 @@ class ValidateBodyTests(unittest.TestCase):
             body = "# Skill\n\nSee [locked](references/locked.md) for details.\n"
             write_text(skill_md, body)
             try:
-                errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+                errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md), allow_nested_refs=True)
             finally:
                 os.chmod(ref_file, 0o644)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
@@ -791,7 +792,7 @@ class ValidateBodyTests(unittest.TestCase):
                 f.write(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\xfd")
             body = "# Skill\n\nSee [image](references/image.png) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         read_warns = [e for e in warn_errors if "cannot be read" in e]
         self.assertEqual(len(read_warns), 1)
@@ -813,7 +814,7 @@ class ValidateBodyTests(unittest.TestCase):
                 f.write("# Résumé\n\nCafé crème à côté".encode("latin-1"))
             body = "# Skill\n\nSee [latin1](references/latin1.md) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         read_warns = [e for e in warn_errors if "cannot be read" in e]
         self.assertEqual(len(read_warns), 1)
@@ -829,7 +830,7 @@ class ValidateBodyTests(unittest.TestCase):
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [escape](references/../../../etc/passwd) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         escape_infos = [e for e in info_errors if "outside skill directory" in e]
         self.assertEqual(len(escape_infos), 1)
@@ -841,10 +842,178 @@ class ValidateBodyTests(unittest.TestCase):
             os.makedirs(os.path.join(tmpdir, "references", "subdir"))
             body = "# Skill\n\nSee [refs](references/subdir) for details.\n"
             write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md, allow_nested_refs=True)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md), allow_nested_refs=True)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         non_file_warns = [e for e in warn_errors if "non-file" in e]
         self.assertEqual(len(non_file_warns), 1)
+
+
+# ===================================================================
+# find_skill_root
+# ===================================================================
+
+
+class FindSkillRootTests(unittest.TestCase):
+    """Tests for the find_skill_root function."""
+
+    def test_finds_root_one_level_up(self) -> None:
+        """Finds SKILL.md one directory above start_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            cap_dir = os.path.join(tmpdir, "capabilities", "my-cap")
+            os.makedirs(cap_dir)
+            result = find_skill_root(cap_dir)
+        self.assertEqual(result, os.path.abspath(tmpdir))
+
+    def test_finds_root_two_levels_up(self) -> None:
+        """Finds SKILL.md two directories above start_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            deep_dir = os.path.join(tmpdir, "capabilities", "validation")
+            os.makedirs(deep_dir)
+            result = find_skill_root(deep_dir)
+        self.assertEqual(result, os.path.abspath(tmpdir))
+
+    def test_returns_none_when_no_skill_md(self) -> None:
+        """Returns None when no SKILL.md is found."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap_dir = os.path.join(tmpdir, "some", "deep", "path")
+            os.makedirs(cap_dir)
+            result = find_skill_root(cap_dir)
+        self.assertIsNone(result)
+
+    def test_finds_root_at_start_dir(self) -> None:
+        """Finds SKILL.md in start_dir itself."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            result = find_skill_root(tmpdir)
+        self.assertEqual(result, os.path.abspath(tmpdir))
+
+
+# ===================================================================
+# validate_body — skill-root-relative resolution
+# ===================================================================
+
+
+class ValidateBodySkillRootTests(unittest.TestCase):
+    """Tests for skill-root-relative reference resolution in validate_body."""
+
+    def test_capability_ref_resolves_from_skill_root(self) -> None:
+        """A capability entry referencing references/guide.md resolves from
+        the skill root, not the capability directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set up skill root with SKILL.md and a reference file
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nContent.\n",
+            )
+            # Capability lives in a subdirectory
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
+            cap_md = os.path.join(cap_dir, "capability.md")
+            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            write_text(cap_md, body)
+            # skill_root is the skill root, not the capability dir
+            errors, passes = validate_body(body, cap_md, tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+        ref_pass = [p for p in passes if "one level deep" in p]
+        self.assertEqual(len(ref_pass), 1)
+
+    def test_capability_ref_without_skill_root_fails(self) -> None:
+        """When skill_root is the capability dir (no SKILL.md found),
+        a skill-root-relative reference is reported as broken."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nContent.\n",
+            )
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
+            cap_md = os.path.join(cap_dir, "capability.md")
+            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            write_text(cap_md, body)
+            # Pass cap_dir as skill_root (fallback when no SKILL.md found)
+            errors, passes = validate_body(body, cap_md, cap_dir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken), 1)
+
+    def test_parent_traversal_leading_intra_skill_produces_warn(self) -> None:
+        """A references/../.. style path that still resolves inside the skill
+        root produces a WARN for using parent traversal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            write_text(
+                os.path.join(tmpdir, "assets", "template.md"),
+                "# Template\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [t](references/../assets/template.md) for info.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
+        self.assertEqual(len(traversal_warns), 1)
+
+    def test_parent_traversal_midpath_intra_skill_produces_warn(self) -> None:
+        """A mid-path ../ in a reference produces WARN even though normpath
+        would collapse it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [guide](references/../references/guide.md) for info.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
+        self.assertEqual(len(traversal_warns), 1)
+
+    def test_external_parent_traversal_stays_info(self) -> None:
+        """A references/../../ reference escaping the skill root produces
+        INFO (external), not a parent-traversal WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [shared](references/../../shared/guide.md) for info.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, tmpdir)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        external_infos = [e for e in info_errors if "outside skill directory" in e]
+        self.assertEqual(len(external_infos), 1)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
+        self.assertEqual(traversal_warns, [])
+
+
+# ===================================================================
+# validate_skill — capability skill-root auto-detection
+# ===================================================================
+
+
+class ValidateSkillCapabilityRootTests(unittest.TestCase):
+    """Tests for validate_skill with is_capability=True auto-detecting the root."""
+
+    def test_capability_auto_detects_skill_root(self) -> None:
+        """validate_skill with is_capability=True walks up to find SKILL.md
+        and resolves references from that root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Skill root
+            write_skill_md(tmpdir, body="# Router Skill\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nContent.\n",
+            )
+            # Capability references a file at the skill root
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
+            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            write_text(os.path.join(cap_dir, "capability.md"), body)
+            errors, passes = validate_skill(cap_dir, is_capability=True)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken, [])
 
 
 # ===================================================================
