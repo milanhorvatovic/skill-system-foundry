@@ -987,6 +987,27 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         broken_warns = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken_warns), 1)
 
+    def test_reference_file_body_resolves_from_skill_root(self) -> None:
+        """When validate_body() is called with a reference file's body and
+        the correct skill_root, root-relative links resolve from the skill
+        root — the same resolution logic applies regardless of file origin."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Skill root with another reference file
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            write_text(
+                os.path.join(tmpdir, "references", "other.md"),
+                "# Other\n\nContent.\n",
+            )
+            # A reference file that links to a sibling via root-relative path
+            ref_file = os.path.join(tmpdir, "references", "guide.md")
+            body = "# Guide\n\nSee also [other](references/other.md).\n"
+            write_text(ref_file, body)
+            errors, passes = validate_body(body, ref_file, tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+        ref_pass = [p for p in passes if "one level deep" in p]
+        self.assertEqual(len(ref_pass), 1)
+
     def test_external_parent_traversal_stays_info(self) -> None:
         """A references/../../ reference escaping the skill root produces
         INFO (external), not a parent-traversal WARN."""
