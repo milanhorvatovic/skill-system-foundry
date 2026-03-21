@@ -1364,7 +1364,11 @@ class JsonOutputTests(unittest.TestCase):
             result = json.loads(stdout.getvalue())
             self.assertTrue(result["success"])
             self.assertIn("stats", result)
-            self.assertIn("output", result)
+            self.assertEqual(result["output"], output_path)
+            self.assertTrue(
+                os.path.exists(output_path),
+                "Archive file should exist after successful JSON bundle",
+            )
             self.assertEqual(result["stats"]["skill_name"], "demo-skill")
 
     def test_json_success_with_warnings(self) -> None:
@@ -1408,10 +1412,14 @@ class JsonOutputTests(unittest.TestCase):
             result = json.loads(stdout.getvalue())
             self.assertTrue(result["success"])
             self.assertIn("warnings", result)
-            # The WARN prefix should be stripped
-            self.assertTrue(
-                any("Some concern" in w for w in result["warnings"]),
-            )
+            # The WARN prefix must be fully stripped — assert exact value
+            self.assertIn("Some concern", result["warnings"])
+            # No warning entry should still carry the LEVEL_WARN prefix
+            for w in result["warnings"]:
+                self.assertFalse(
+                    w.startswith(LEVEL_WARN),
+                    f"Warning still has LEVEL_WARN prefix: {w!r}",
+                )
 
     def test_json_prevalidation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
