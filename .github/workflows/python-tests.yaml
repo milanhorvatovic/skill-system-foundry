@@ -35,6 +35,12 @@ jobs:
         env:
           PYTHONUTF8: "1"
 
+      - name: Generate coverage JSON
+        run: python -m coverage json
+
+      - name: Check per-file coverage
+        run: python .github/scripts/check-per-file-coverage.py
+
       - name: Generate coverage HTML report
         run: python -m coverage html
 
