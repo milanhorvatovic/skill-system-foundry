@@ -184,12 +184,13 @@ def validate_body(
         # Reject parent traversals (../) for intra-skill references.
         # Check raw path segments before normalization to catch patterns
         # like references/../references/guide.md that normpath would collapse.
+        # The WARN is emitted but validation continues so broken-link and
+        # nesting checks still run for the resolved path.
         if not is_external and ".." in normalized_ref.replace("\\", "/").split("/"):
             errors.append(
                 f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {entry_filename} "
                 "uses parent traversal — use skill-root-relative paths instead"
             )
-            continue
         if is_external:
             external_found = True
             errors.append(

@@ -972,6 +972,21 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         traversal_warns = [e for e in warn_errors if "parent traversal" in e]
         self.assertEqual(len(traversal_warns), 1)
 
+    def test_parent_traversal_missing_file_produces_both_warns(self) -> None:
+        """A ../ traversal to a missing file produces both the traversal WARN
+        and the broken-link WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [t](references/../assets/missing.md) for info.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, tmpdir)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
+        self.assertEqual(len(traversal_warns), 1)
+        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+
     def test_external_parent_traversal_stays_info(self) -> None:
         """A references/../../ reference escaping the skill root produces
         INFO (external), not a parent-traversal WARN."""
