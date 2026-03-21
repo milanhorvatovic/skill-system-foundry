@@ -1160,6 +1160,42 @@ class ValidateSkillReferencesTests(unittest.TestCase):
         self.assertEqual(len(broken), 1)
         self.assertIn("references/missing.md", broken[0])
 
+    def test_unreadable_md_file_produces_warn(self) -> None:
+        """An unreadable .md file produces a WARN instead of being skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            # Write a file with invalid encoding
+            bad_file = os.path.join(tmpdir, "references", "bad.md")
+            os.makedirs(os.path.dirname(bad_file), exist_ok=True)
+            with open(bad_file, "wb") as f:
+                f.write(b"\x80\x81\x82\x83")
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        read_warns = [e for e in warn_errors if "cannot be read" in e]
+        self.assertEqual(len(read_warns), 1)
+        self.assertIn("bad.md", read_warns[0])
+
+    def test_refs_inside_fenced_code_blocks_are_ignored(self) -> None:
+        """References inside fenced code blocks are not treated as real links."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\n"
+                "```markdown\n"
+                "See [example](references/FAKE.md) for details.\n"
+                "```\n",
+            )
+            errors, passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md,
+            )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+
 
 # ===================================================================
 # validate_directories

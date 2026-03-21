@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import re
 import sys
 import os
 
@@ -141,8 +142,12 @@ def _check_references(
     errors: list[str] = []
     passes: list[str] = []
 
-    refs = RE_MARKDOWN_LINK_REF.findall(body)
-    backtick_refs = RE_BACKTICK_REF.findall(body)
+    # Strip fenced code blocks so example links inside ``` are not
+    # treated as real references.
+    stripped = re.sub(r"```[^\n]*\n.*?```", "", body, flags=re.DOTALL)
+
+    refs = RE_MARKDOWN_LINK_REF.findall(stripped)
+    backtick_refs = RE_BACKTICK_REF.findall(stripped)
     refs = list(set(refs + backtick_refs))
     # Exclude template placeholders (e.g., references/<file>.md)
     refs = [r for r in refs if "<" not in r and ">" not in r]
@@ -312,7 +317,12 @@ def validate_skill_references(
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
-            except (OSError, UnicodeError):
+            except (OSError, UnicodeError) as exc:
+                rel_label = os.path.relpath(filepath, skill_root)
+                errors.append(
+                    f"{LEVEL_WARN}: [spec] '{rel_label}' cannot be read "
+                    f"({exc.__class__.__name__}: {exc})"
+                )
                 continue
 
             rel_label = os.path.relpath(filepath, skill_root)
