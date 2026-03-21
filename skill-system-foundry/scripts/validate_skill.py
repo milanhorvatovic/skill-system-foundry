@@ -232,8 +232,13 @@ def _check_references(
 
         # Nested reference check — only when flag is not set
         if not allow_nested_refs:
-            nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_content)
-            nested_backtick_refs = RE_BACKTICK_REF.findall(ref_content)
+            # Strip fenced code blocks from referenced content so example
+            # links inside ``` don't trigger false nested-reference WARNs.
+            ref_stripped = re.sub(
+                r"```[^\n]*\n.*?```", "", ref_content, flags=re.DOTALL,
+            )
+            nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_stripped)
+            nested_backtick_refs = RE_BACKTICK_REF.findall(ref_stripped)
             nested_refs = list(set(nested_refs + nested_backtick_refs))
             # Exclude template placeholders in nested refs too
             nested_refs = [r for r in nested_refs if "<" not in r and ">" not in r]
@@ -327,11 +332,11 @@ def validate_skill_references(
 
             rel_label = os.path.relpath(filepath, skill_root)
             file_errors, _file_passes = _check_references(
-                content, rel_label, skill_root, allow_nested_refs,
+                content, rel_label, skill_root,
+                True,  # nested refs allowed in non-entry files; spec constrains depth from entry points only
             )
 
-            if file_errors or content:
-                files_checked += 1
+            files_checked += 1
             errors.extend(file_errors)
 
     if files_checked > 0:

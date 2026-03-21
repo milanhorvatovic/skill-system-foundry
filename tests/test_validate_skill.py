@@ -411,6 +411,26 @@ class ValidateBodyTests(unittest.TestCase):
         skip_pass = [p for p in passes if "skipped" in p]
         self.assertEqual(skip_pass, [])
 
+    def test_nested_ref_check_ignores_fenced_code_blocks(self) -> None:
+        """Nested-reference detection strips fenced code blocks from the
+        referenced file so example links inside ``` don't trigger a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            ref_dir = os.path.join(tmpdir, "references")
+            # Reference file has a link only inside a fenced code block
+            write_text(
+                os.path.join(ref_dir, "guide.md"),
+                "# Guide\n\n"
+                "```markdown\n"
+                "See [example](references/example.md) for details.\n"
+                "```\n",
+            )
+            body = "# Skill\n\nSee [guide](references/guide.md) for details.\n"
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(nested_warns, [])
+
     def test_template_placeholders_excluded_from_ref_checks(self) -> None:
         """Template placeholders with < > are excluded from reference checks."""
         with tempfile.TemporaryDirectory() as tmpdir:
