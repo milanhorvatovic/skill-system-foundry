@@ -910,6 +910,13 @@ class FindSkillRootTests(unittest.TestCase):
             result = find_skill_root(tmpdir)
         self.assertEqual(result, os.path.abspath(tmpdir))
 
+    def test_ignores_directory_named_skill_md(self) -> None:
+        """A directory named SKILL.md is not treated as a valid skill root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "SKILL.md"))
+            result = find_skill_root(tmpdir)
+        self.assertIsNone(result)
+
 
 # ===================================================================
 # validate_body — skill-root-relative resolution
@@ -1071,6 +1078,27 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(broken, [])
+
+    def test_capability_mode_scans_entire_skill_tree(self) -> None:
+        """In --capability mode, skill-wide scanning walks the skill root,
+        not just the capability subtree, catching broken refs elsewhere."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir, body="# Router Skill\n")
+            # Broken ref in a reference file at the skill root (outside capability dir)
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n\nSee [missing](references/missing.md).\n",
+            )
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Validation\n\nSome content.\n",
+            )
+            errors, passes = validate_skill(cap_dir, is_capability=True)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(len(broken), 1)
+        self.assertIn("references/missing.md", broken[0])
 
 
 # ===================================================================

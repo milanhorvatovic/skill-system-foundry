@@ -59,7 +59,7 @@ def find_skill_root(start_dir: str) -> str | None:
     """
     current = os.path.abspath(start_dir)
     while True:
-        if os.path.exists(os.path.join(current, FILE_SKILL_MD)):
+        if os.path.isfile(os.path.join(current, FILE_SKILL_MD)):
             return current
         parent = os.path.dirname(current)
         if parent == current:
@@ -421,9 +421,10 @@ def validate_skill(
         body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
         errors.extend(body_errors)
         passes.extend(body_passes)
-        # Validate references in all other .md files in the capability tree
+        # Validate references in all .md files across the skill tree
+        # (walk skill_root, not skill_path, so the entire skill is scanned)
         ref_errors, ref_passes = validate_skill_references(
-            skill_path, skill_root, skill_md,
+            skill_root, skill_root, skill_md,
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
