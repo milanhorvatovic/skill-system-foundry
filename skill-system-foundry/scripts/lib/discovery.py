@@ -8,7 +8,7 @@ from .constants import (
 )
 
 
-def find_skill_dirs(system_root):
+def find_skill_dirs(system_root: str) -> list[dict[str, str]]:
     """Find all skill and capability directories.
 
     Registered skills contain SKILL.md; capabilities contain capability.md.
@@ -48,7 +48,7 @@ def find_skill_dirs(system_root):
     return skills
 
 
-def find_roles(system_root):
+def find_roles(system_root: str) -> list[dict[str, str]]:
     """Find all role files."""
     roles = []
     roles_dir = os.path.join(system_root, DIR_ROLES)
@@ -72,13 +72,13 @@ def find_roles(system_root):
     return roles
 
 
-def check_line_count(filepath):
+def check_line_count(filepath: str) -> int:
     """Return line count of a file."""
     with open(filepath, "r", encoding="utf-8") as f:
         return sum(1 for _ in f)
 
 
-def read_file(filepath):
+def read_file(filepath: str) -> str:
     """Read file content."""
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()

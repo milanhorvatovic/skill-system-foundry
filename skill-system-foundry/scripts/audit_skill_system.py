@@ -72,7 +72,7 @@ from lib.constants import (
 )
 
 
-def check_upward_references(content, component_type, allow_orchestration=False):
+def check_upward_references(content: str, component_type: str, allow_orchestration: bool = False) -> list[tuple[str, str]]:
     """Check for references that violate dependency direction.
 
     Returns a list of (level, message) tuples.

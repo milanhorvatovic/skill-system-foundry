@@ -3,7 +3,7 @@
 from .yaml_parser import parse_yaml_subset
 
 
-def load_frontmatter(filepath):
+def load_frontmatter(filepath: str) -> tuple[dict | None, str]:
     """Extract YAML frontmatter from a SKILL.md file.
 
     Returns (frontmatter_dict, body_string). If no frontmatter is found,
@@ -32,7 +32,7 @@ def load_frontmatter(filepath):
     return frontmatter, body
 
 
-def count_body_lines(body):
+def count_body_lines(body: str) -> int:
     """Count lines in the SKILL.md body (after frontmatter).
 
     Returns 0 for empty/whitespace-only body, otherwise the number
