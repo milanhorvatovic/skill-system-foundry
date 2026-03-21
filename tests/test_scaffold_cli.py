@@ -1896,6 +1896,20 @@ class ValidateNameHumanOutputTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertIn("Warning:", buf.getvalue())
 
+    def test_no_prefix_error_treated_as_warning(self) -> None:
+        """Error with no recognized level prefix is treated as Warning."""
+        buf = io.StringIO()
+        with mock.patch(
+            "scaffold._validate_name_detailed",
+            return_value=(["Some unexpected message"], []),
+        ), mock.patch("sys.stdout", buf):
+            result = validate_name("some-name")
+        # No FAIL prefix means validation passes
+        self.assertTrue(result)
+        output = buf.getvalue()
+        self.assertIn("Warning:", output)
+        self.assertIn("Some unexpected message", output)
+
 
 # ===================================================================
 # read_template() FileNotFoundError
