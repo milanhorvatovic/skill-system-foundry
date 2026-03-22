@@ -123,6 +123,11 @@ def check_per_file(
             num = summary.get("num_branches")
             covered = summary.get("covered_branches")
             if isinstance(num, (int, float)) and num == 0:
+                if isinstance(covered, (int, float)) and covered != 0:
+                    raise ValueError(
+                        f"coverage.json malformed entry for '{filename}': "
+                        f"'num_branches' is 0 but 'covered_branches' is {covered}"
+                    )
                 pct = 100.0
             elif (
                 isinstance(num, (int, float))

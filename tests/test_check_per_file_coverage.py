@@ -15,17 +15,18 @@ import sys
 import tempfile
 import unittest
 
-# Add the CI scripts directory so we can import the module under test.
+# The filename uses hyphens so we must import via importlib from a file path.
+import importlib.util
+
 _CI_SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", ".github", "scripts")
 )
-if _CI_SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _CI_SCRIPTS_DIR)
-
-# The filename uses hyphens so we must import via importlib.
-import importlib
-
-_mod = importlib.import_module("check-per-file-coverage")
+_script_path = os.path.join(_CI_SCRIPTS_DIR, "check-per-file-coverage.py")
+_spec = importlib.util.spec_from_file_location("check_per_file_coverage", _script_path)
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"Could not load module from {_script_path}")
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
 load_threshold = _mod.load_threshold
 check_per_file = _mod.check_per_file
 main = _mod.main
@@ -476,6 +477,23 @@ class CheckPerFileMalformedTests(unittest.TestCase):
         data = {"files": {"a.py": {"summary": {
             "num_branches": 10,
             "covered_branches": 15,
+        }}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_zero_branches_with_positive_covered_raises(self) -> None:
+        """Raises ValueError when num_branches is 0 but covered_branches > 0."""
+        data = {"files": {"a.py": {"summary": {
+            "num_branches": 0,
+            "covered_branches": 3,
         }}}}
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
