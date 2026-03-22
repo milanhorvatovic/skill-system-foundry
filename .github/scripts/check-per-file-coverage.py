@@ -27,7 +27,22 @@ def load_threshold(coveragerc_path: str) -> float:
         raise SystemExit(1)
 
     parser = configparser.ConfigParser()
-    parser.read(coveragerc_path, encoding="utf-8")
+    try:
+        files_read = parser.read(coveragerc_path, encoding="utf-8")
+    except (OSError, configparser.Error) as exc:
+        print(
+            "Error: failed to read/parse .coveragerc at %s: %s"
+            % (coveragerc_path, exc),
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    if not files_read:
+        print(
+            "Error: failed to read .coveragerc at: %s" % coveragerc_path,
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     if not parser.has_section("report"):
         print(
@@ -56,22 +71,51 @@ def load_threshold(coveragerc_path: str) -> float:
 
 def check_per_file(
     json_path: str, threshold: float
-) -> list[tuple[str, float]]:
-    """Return a list of ``(filename, branch_coverage)`` for files below *threshold*.
+) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+    """Return ``(failures, passes)`` for per-file branch coverage.
 
     *json_path* is the path to a ``coverage.json`` file produced by
     ``python -m coverage json``.  Each file's
     ``summary.percent_branches_covered`` is compared against *threshold*.
+
+    Raises ``OSError`` when the file cannot be read, ``json.JSONDecodeError``
+    when the content is not valid JSON, and ``ValueError`` when the data
+    structure is malformed (missing ``files`` dict, or a file entry lacks
+    ``summary.percent_branches_covered`` as a number).
     """
     with open(json_path, encoding="utf-8") as fh:
         data = json.load(fh)
 
+    if "files" not in data or not isinstance(data.get("files"), dict):
+        raise ValueError(
+            "coverage.json is malformed — missing or non-dict top-level 'files' key"
+        )
+
     failures: list[tuple[str, float]] = []
-    for filename, info in data["files"].items():
-        pct = info["summary"]["percent_branches_covered"]
+    passes: list[tuple[str, float]] = []
+    for filename in sorted(data["files"]):
+        info = data["files"][filename]
+        if not isinstance(info, dict) or "summary" not in info:
+            raise ValueError(
+                "coverage.json malformed entry for '%s': missing 'summary'" % filename
+            )
+        summary = info["summary"]
+        if not isinstance(summary, dict) or "percent_branches_covered" not in summary:
+            raise ValueError(
+                "coverage.json malformed entry for '%s': missing "
+                "'summary.percent_branches_covered'" % filename
+            )
+        pct = summary["percent_branches_covered"]
+        if not isinstance(pct, (int, float)):
+            raise ValueError(
+                "coverage.json malformed entry for '%s': "
+                "'percent_branches_covered' is not a number" % filename
+            )
         if pct < threshold:
             failures.append((filename, pct))
-    return failures
+        else:
+            passes.append((filename, pct))
+    return failures, passes
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         threshold = load_threshold(args.coveragerc)
 
-    # Load coverage data
+    # Load and validate coverage data via check_per_file
     if not os.path.isfile(args.coverage_json):
         print(
             "Error: coverage.json not found at: %s" % args.coverage_json,
@@ -111,28 +155,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    with open(args.coverage_json, encoding="utf-8") as fh:
-        data = json.load(fh)
-
-    # Validate top-level structure
-    if "files" not in data or not isinstance(data["files"], dict):
+    try:
+        failures, passes = check_per_file(args.coverage_json, threshold)
+    except (OSError, json.JSONDecodeError) as exc:
         print(
-            "Error: coverage.json is malformed — missing or non-dict top-level 'files' key",
+            "Error: failed to read/parse coverage.json at %s: %s"
+            % (args.coverage_json, exc),
             file=sys.stderr,
         )
         return 1
-
-    # Check each file
-    all_files = data["files"]
-    failures: list[tuple[str, float]] = []
-    passes: list[tuple[str, float]] = []
-
-    for filename in sorted(all_files):
-        pct = all_files[filename]["summary"]["percent_branches_covered"]
-        if pct < threshold:
-            failures.append((filename, pct))
-        else:
-            passes.append((filename, pct))
+    except ValueError as exc:
+        print("Error: %s" % exc, file=sys.stderr)
+        return 1
 
     # Print results
     print("Per-file branch coverage (threshold: %.1f%%)" % threshold)

@@ -42,9 +42,11 @@ jobs:
         run: python .github/scripts/check-per-file-coverage.py
 
       - name: Generate coverage HTML report
+        if: always()
         run: python -m coverage html
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
         with:
           name: coverage-report-${{ matrix.os }}

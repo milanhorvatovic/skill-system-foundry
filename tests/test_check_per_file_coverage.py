@@ -160,14 +160,16 @@ class CheckPerFilePassTests(unittest.TestCase):
     """Tests for check_per_file when all files meet the threshold."""
 
     def test_all_files_above_threshold(self) -> None:
-        """Returns an empty list when every file exceeds the threshold."""
+        """Returns empty failures when every file exceeds the threshold."""
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as fh:
             fh.write(_coverage_json({"a.py": 80.0, "b.py": 90.0}))
             path = fh.name
         try:
-            self.assertEqual(check_per_file(path, 70.0), [])
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(failures, [])
+            self.assertEqual(len(passes), 2)
         finally:
             os.unlink(path)
 
@@ -184,19 +186,23 @@ class CheckPerFilePassTests(unittest.TestCase):
             )
             path = fh.name
         try:
-            self.assertEqual(check_per_file(path, 70.0), [])
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(failures, [])
+            self.assertEqual(len(passes), 1)
         finally:
             os.unlink(path)
 
     def test_empty_files_dict(self) -> None:
-        """Returns an empty list when the files dict is empty."""
+        """Returns empty lists when the files dict is empty."""
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as fh:
             fh.write(json.dumps({"files": {}}))
             path = fh.name
         try:
-            self.assertEqual(check_per_file(path, 70.0), [])
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(failures, [])
+            self.assertEqual(passes, [])
         finally:
             os.unlink(path)
 
@@ -219,10 +225,11 @@ class CheckPerFileFailTests(unittest.TestCase):
             )
             path = fh.name
         try:
-            result = check_per_file(path, 70.0)
-            self.assertEqual(len(result), 1)
-            self.assertEqual(result[0][0], "bad.py")
-            self.assertAlmostEqual(result[0][1], 50.0)
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0][0], "bad.py")
+            self.assertAlmostEqual(failures[0][1], 50.0)
+            self.assertEqual(len(passes), 1)
         finally:
             os.unlink(path)
 
@@ -236,8 +243,9 @@ class CheckPerFileFailTests(unittest.TestCase):
             )
             path = fh.name
         try:
-            result = check_per_file(path, 70.0)
-            self.assertEqual(len(result), 2)
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(len(failures), 2)
+            self.assertEqual(len(passes), 0)
         finally:
             os.unlink(path)
 
@@ -251,7 +259,7 @@ class CheckPerFileMalformedTests(unittest.TestCase):
     """Tests for check_per_file with malformed coverage data."""
 
     def test_missing_percent_branches_covered_key(self) -> None:
-        """Raises KeyError when percent_branches_covered is missing."""
+        """Raises ValueError when percent_branches_covered is missing."""
         data = {"files": {"a.py": {"summary": {"percent_covered": 80.0}}}}
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
@@ -259,7 +267,49 @@ class CheckPerFileMalformedTests(unittest.TestCase):
             json.dump(data, fh)
             path = fh.name
         try:
-            with self.assertRaises(KeyError):
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_missing_summary_key(self) -> None:
+        """Raises ValueError when summary is missing from a file entry."""
+        data = {"files": {"a.py": {"executed_lines": [1, 2, 3]}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_missing_files_key_raises_value_error(self) -> None:
+        """Raises ValueError when top-level 'files' key is missing."""
+        data = {"totals": {"percent_covered": 80.0}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_percent_branches_covered_not_a_number(self) -> None:
+        """Raises ValueError when percent_branches_covered is not a number."""
+        data = {"files": {"a.py": {"summary": {"percent_branches_covered": "high"}}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
                 check_per_file(path, 70.0)
         finally:
             os.unlink(path)
@@ -410,6 +460,53 @@ class MainMalformedCoverageJsonTests(unittest.TestCase):
         try:
             json_path = os.path.join(tmpdir, "coverage.json")
             _write(json_path, json.dumps({"files": "not a dict"}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_invalid_json_returns_one(self) -> None:
+        """Returns 1 with a clear error when coverage.json is not valid JSON."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, "{{not valid json")
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_missing_summary_in_file_entry_returns_one(self) -> None:
+        """Returns 1 when a file entry is missing 'summary'."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            data = {"files": {"a.py": {"executed_lines": [1, 2]}}}
+            _write(json_path, json.dumps(data))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_missing_percent_branches_covered_returns_one(self) -> None:
+        """Returns 1 when a file entry is missing 'percent_branches_covered'."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            data = {"files": {"a.py": {"summary": {"percent_covered": 80.0}}}}
+            _write(json_path, json.dumps(data))
             result = main([
                 "--coverage-json", json_path,
                 "--threshold", "70",
