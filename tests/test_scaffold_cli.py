@@ -1,14 +1,23 @@
 """CLI-level tests for scaffold.py.
 
-Tests run the scaffold script as a subprocess in a temporary directory,
-verifying filesystem output, exit codes, and stdout messages.
+Tests are organised in two styles:
+
+- **Subprocess tests** run the scaffold script as a child process in a
+  temporary directory, verifying filesystem output, exit codes, and stdout
+  messages.
+- **In-process tests** call ``main()`` and individual helper functions
+  directly (with ``sys.argv`` patching where needed) so that coverage can
+  observe the execution paths without subprocess overhead.
 """
 
+import io
+import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 SCRIPTS_DIR = os.path.abspath(
@@ -30,11 +39,13 @@ from scaffold import (
     scaffold_role,
     _validate_flags,
     _parse_optional_dirs,
+    main,
 )
 from lib.constants import (
     FILE_SKILL_MD,
     FILE_CAPABILITY_MD,
     FILE_GITKEEP,
+    FILE_MANIFEST,
     DIR_SKILLS,
     DIR_CAPABILITIES,
     DIR_ROLES,
@@ -45,6 +56,9 @@ from lib.constants import (
     TEMPLATE_SKILL_ROUTER,
     TEMPLATE_CAPABILITY,
     TEMPLATE_ROLE,
+    LEVEL_FAIL,
+    LEVEL_WARN,
+    LEVEL_INFO,
 )
 
 
@@ -516,12 +530,20 @@ class ValidateFlagsUnitTests(unittest.TestCase):
         _validate_flags(["--router", "--with-references"], "skill")
 
     def test_unknown_flag_exits(self) -> None:
-        with self.assertRaises(SystemExit):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
             _validate_flags(["--bogus"], "skill")
+        self.assertEqual(ctx.exception.code, 1)
+        output = buf.getvalue()
+        self.assertIn(LEVEL_FAIL, output)
 
     def test_unknown_flag_json_mode_exits(self) -> None:
-        with self.assertRaises(SystemExit):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
             _validate_flags(["--bogus"], "skill", json_mode=True)
+        self.assertEqual(ctx.exception.code, 1)
 
 
 class ParseOptionalDirsUnitTests(unittest.TestCase):
@@ -1117,6 +1139,882 @@ class UpdateManifestMalformedTests(unittest.TestCase):
             self.assertTrue(data["success"])
             self.assertFalse(data["manifest_updated"])
             self.assertIn("manifest_warning", data)
+
+
+# ===================================================================
+# main() function tests — exercises the entire main() dispatch
+# via sys.argv patching so coverage can observe execution.
+# ===================================================================
+
+
+class MainFunctionInsufficientArgsTests(unittest.TestCase):
+    """Test main() with insufficient arguments."""
+
+    def test_no_args_non_json_prints_docstring_and_exits(self) -> None:
+        """No arguments in non-JSON mode prints docstring and exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("Usage:", buf.getvalue())
+
+    def test_no_args_json_prints_error_and_exits(self) -> None:
+        """No arguments in JSON mode outputs JSON error and exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("Insufficient arguments", data["error"])
+
+    def test_only_component_no_name_non_json_exits(self) -> None:
+        """Only component type but no name in non-JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("python scripts/scaffold.py skill", buf.getvalue())
+
+    def test_only_component_no_name_json_exits(self) -> None:
+        """Only component type and a dummy arg but no real name in JSON mode."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        # After --json is stripped, args are ["scaffold.py", "skill"] which is < 3
+        self.assertIn("Insufficient arguments", data["error"])
+
+
+class MainFunctionRootParsingTests(unittest.TestCase):
+    """Test main() --root option parsing."""
+
+    def test_root_missing_value_non_json_exits(self) -> None:
+        """--root without a value in non-JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--root"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("--root requires a path argument", buf.getvalue())
+
+    def test_root_missing_value_json_exits(self) -> None:
+        """--root without a value in JSON mode exits 1 with JSON error."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--root", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("--root requires a path argument", data["error"])
+
+    def test_root_value_starts_with_dashes_exits(self) -> None:
+        """--root followed by another flag exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--root", "--other"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("--root requires a path argument", buf.getvalue())
+
+    def test_root_happy_path(self) -> None:
+        """--root with a valid path creates skill under that root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf):
+                main()
+            skill_dir = os.path.join(tmpdir, DIR_SKILLS, "test-skill")
+            self.assertTrue(os.path.isdir(skill_dir))
+
+
+class MainFunctionUnknownComponentTests(unittest.TestCase):
+    """Test main() with an unknown component type."""
+
+    def test_unknown_component_non_json_exits(self) -> None:
+        """Unknown component type in non-JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "bogus", "x"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        output = buf.getvalue()
+        self.assertIn(LEVEL_FAIL, output)
+        self.assertIn("Unknown component type: bogus", output)
+        self.assertIn("Valid types: skill, capability, role", output)
+
+    def test_unknown_component_json_exits(self) -> None:
+        """Unknown component type in JSON mode exits 1 with JSON error."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "bogus", "x", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("Unknown component type: bogus", data["error"])
+
+
+class MainFunctionSkillDispatchTests(unittest.TestCase):
+    """Test main() skill dispatch paths."""
+
+    def test_skill_missing_name_non_json_exits(self) -> None:
+        """Skill with only flags but no name in non-JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill", "--router"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("python scripts/scaffold.py skill", buf.getvalue())
+
+    def test_skill_missing_name_json_exits(self) -> None:
+        """Skill with only flags but no name in JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "skill", "--router", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("Missing skill name", data["error"])
+
+    def test_skill_json_success(self) -> None:
+        """Skill dispatch with --json prints JSON result and exits 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--json", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 0)
+            data = json.loads(buf.getvalue())
+            self.assertTrue(data["success"])
+            self.assertEqual(data["name"], "test-skill")
+
+    def test_skill_json_with_router_flag(self) -> None:
+        """Skill dispatch with --router creates a router skill."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "test-router", "--router", "--json", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 0)
+            data = json.loads(buf.getvalue())
+            self.assertTrue(data["success"])
+            self.assertTrue(data["router"])
+
+    def test_skill_json_with_update_manifest(self) -> None:
+        """Skill dispatch with --update-manifest includes manifest_updated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--update-manifest", "--json", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 0)
+            data = json.loads(buf.getvalue())
+            self.assertTrue(data["success"])
+            self.assertIn("manifest_updated", data)
+
+    def test_skill_json_invalid_name_exits(self) -> None:
+        """Skill dispatch with invalid name in JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "INVALID", "--json", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 1)
+            data = json.loads(buf.getvalue())
+            self.assertFalse(data["success"])
+
+    def test_skill_exception_json_catches(self) -> None:
+        """Generic exception during skill scaffold in JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--json", "--root", tmpdir]), \
+                 mock.patch("scaffold.scaffold_skill", side_effect=RuntimeError("boom")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 1)
+            data = json.loads(buf.getvalue())
+            self.assertFalse(data["success"])
+            self.assertIn("RuntimeError: boom", data["error"])
+
+    def test_skill_exception_non_json_reraises(self) -> None:
+        """Generic exception during skill scaffold in non-JSON mode re-raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("sys.argv", ["scaffold.py", "skill", "test-skill", "--root", tmpdir]), \
+                 mock.patch("scaffold.scaffold_skill", side_effect=RuntimeError("boom")), \
+                 self.assertRaises(RuntimeError) as ctx:
+                main()
+            self.assertIn("boom", str(ctx.exception))
+
+
+class MainFunctionCapabilityDispatchTests(unittest.TestCase):
+    """Test main() capability dispatch paths."""
+
+    def test_capability_missing_name_non_json_exits(self) -> None:
+        """Capability with only domain in non-JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "capability", "my-domain"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("python scripts/scaffold.py capability", buf.getvalue())
+
+    def test_capability_missing_name_json_exits(self) -> None:
+        """Capability with only domain in JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "capability", "my-domain", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("Missing domain or capability name", data["error"])
+
+    def test_capability_json_success(self) -> None:
+        """Capability dispatch with --json prints JSON result and exits 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "capability", "my-domain", "my-cap", "--json", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 0)
+            data = json.loads(buf.getvalue())
+            self.assertTrue(data["success"])
+            self.assertEqual(data["component"], "capability")
+
+    def test_capability_exception_json_catches(self) -> None:
+        """Generic exception during capability scaffold in JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "capability", "my-domain", "my-cap", "--json", "--root", tmpdir]), \
+                 mock.patch("scaffold.scaffold_capability", side_effect=RuntimeError("cap-boom")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 1)
+            data = json.loads(buf.getvalue())
+            self.assertFalse(data["success"])
+            self.assertIn("RuntimeError: cap-boom", data["error"])
+
+    def test_capability_exception_non_json_reraises(self) -> None:
+        """Generic exception during capability scaffold in non-JSON mode re-raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("sys.argv", ["scaffold.py", "capability", "my-domain", "my-cap", "--root", tmpdir]), \
+                 mock.patch("scaffold.scaffold_capability", side_effect=RuntimeError("cap-boom")), \
+                 self.assertRaises(RuntimeError) as ctx:
+                main()
+            self.assertIn("cap-boom", str(ctx.exception))
+
+
+class MainFunctionRoleDispatchTests(unittest.TestCase):
+    """Test main() role dispatch paths."""
+
+    def test_role_missing_name_non_json_exits(self) -> None:
+        """Role with only group in non-JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "role", "my-group"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("python scripts/scaffold.py role", buf.getvalue())
+
+    def test_role_missing_name_json_exits(self) -> None:
+        """Role with only group in JSON mode exits 1."""
+        buf = io.StringIO()
+        with mock.patch("sys.argv", ["scaffold.py", "role", "my-group", "--json"]), \
+             mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            main()
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("Missing group or role name", data["error"])
+
+    def test_role_json_success(self) -> None:
+        """Role dispatch with --json prints JSON result and exits 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "role", "my-group", "my-role", "--json", "--root", tmpdir]), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 0)
+            data = json.loads(buf.getvalue())
+            self.assertTrue(data["success"])
+            self.assertEqual(data["component"], "role")
+
+    def test_role_exception_json_catches(self) -> None:
+        """Generic exception during role scaffold in JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.argv", ["scaffold.py", "role", "my-group", "my-role", "--json", "--root", tmpdir]), \
+                 mock.patch("scaffold.scaffold_role", side_effect=RuntimeError("role-boom")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                main()
+            self.assertEqual(ctx.exception.code, 1)
+            data = json.loads(buf.getvalue())
+            self.assertFalse(data["success"])
+            self.assertIn("RuntimeError: role-boom", data["error"])
+
+    def test_role_exception_non_json_reraises(self) -> None:
+        """Generic exception during role scaffold in non-JSON mode re-raises."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("sys.argv", ["scaffold.py", "role", "my-group", "my-role", "--root", tmpdir]), \
+                 mock.patch("scaffold.scaffold_role", side_effect=RuntimeError("role-boom")), \
+                 self.assertRaises(RuntimeError) as ctx:
+                main()
+            self.assertIn("role-boom", str(ctx.exception))
+
+
+# ===================================================================
+# Non-JSON output paths for scaffold_skill()
+# ===================================================================
+
+
+class ScaffoldSkillHumanOutputTests(unittest.TestCase):
+    """Non-JSON output paths for scaffold_skill()."""
+
+    def test_invalid_name_exits(self) -> None:
+        """Invalid name in non-JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_skill("INVALID", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
+
+    def test_duplicate_directory_exits(self) -> None:
+        """Duplicate skill directory in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            scaffold_skill("dup-test", root=tmpdir, json_output=True)
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_skill("dup-test", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+            self.assertIn("already exists", output)
+
+    def test_router_optional_dir_prints_created(self) -> None:
+        """Router skill with optional dirs prints Created lines and Note."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("test-router", router=True, optional_dirs=[DIR_REFERENCES], root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Created:", output)
+            self.assertIn("Note:", output)
+            self.assertIn(DIR_REFERENCES, output)
+
+    def test_standalone_optional_dir_prints_created(self) -> None:
+        """Standalone skill with optional dirs prints Created line."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("test-standalone", optional_dirs=[DIR_REFERENCES], root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Created:", output)
+            self.assertIn(DIR_REFERENCES, output)
+
+    def test_router_template_not_found_non_json_exits(self) -> None:
+        """Missing router template in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("scaffold.read_template", side_effect=FileNotFoundError("Template not found")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_skill("test-skill", router=True, root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+            self.assertIn("Template not found", output)
+
+    def test_standalone_template_not_found_non_json_exits(self) -> None:
+        """Missing standalone template in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("scaffold.read_template", side_effect=FileNotFoundError("Template not found")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_skill("test-skill", router=False, root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+            self.assertIn("Template not found", output)
+
+    def test_manifest_update_non_json_prints_messages(self) -> None:
+        """update_manifest=True in non-JSON mode prints Created/Updated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("test-skill", update_manifest=True, root=tmpdir)
+            output = buf.getvalue()
+            # Manifest is created (new) and updated (entry added)
+            self.assertIn("Created:", output)
+            self.assertIn("Updated:", output)
+
+    def test_manifest_warning_non_json_prints_warn(self) -> None:
+        """Manifest conflict in non-JSON mode prints WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  conflict-skill:\n"
+                    "    canonical: skills/conflict-skill/SKILL.md\n"
+                    "    type: standalone\n"
+                    "\nroles:\n"
+                )
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("conflict-skill", update_manifest=True, root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_WARN, output)
+
+    def test_success_message_without_update_manifest(self) -> None:
+        """Success message without update_manifest includes manifest guidance."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("test-skill", root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Skill 'test-skill' scaffolded at", output)
+            self.assertIn("Next:", output)
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            self.assertIn(manifest_path, output)
+
+    def test_success_message_with_update_manifest(self) -> None:
+        """Success message with update_manifest omits manifest guidance."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("test-skill", update_manifest=True, root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Skill 'test-skill' scaffolded at", output)
+            self.assertIn("Next: edit", output)
+            # Check that the "Next:" line does NOT tell user to update manifest
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            next_lines = [line for line in output.splitlines() if "Next:" in line]
+            for line in next_lines:
+                self.assertNotIn("update " + manifest_path, line)
+
+
+# ===================================================================
+# Non-JSON output paths for scaffold_capability()
+# ===================================================================
+
+
+class ScaffoldCapabilityHumanOutputTests(unittest.TestCase):
+    """Non-JSON output paths for scaffold_capability()."""
+
+    def _create_router(self, tmpdir: str) -> None:
+        """Helper: create a router skill prerequisite."""
+        scaffold_skill("my-domain", router=True, root=tmpdir, json_output=True)
+
+    def test_invalid_domain_exits(self) -> None:
+        """Invalid domain name in non-JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_capability("INVALID", "my-cap", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
+
+    def test_invalid_name_exits(self) -> None:
+        """Invalid capability name in non-JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_capability("my-domain", "INVALID", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
+
+    def test_duplicate_capability_exits(self) -> None:
+        """Duplicate capability in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            scaffold_capability("my-domain", "dup-cap", root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_capability("my-domain", "dup-cap", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+            self.assertIn("already exists", output)
+
+    def test_missing_parent_exits(self) -> None:
+        """Missing parent router skill in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_capability("no-parent", "my-cap", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+            self.assertIn("Parent skill not found", output)
+
+    def test_template_not_found_non_json_exits(self) -> None:
+        """Missing template in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("scaffold.read_template", side_effect=FileNotFoundError("Template not found")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_capability("my-domain", "my-cap", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+
+    def test_optional_dir_prints_created(self) -> None:
+        """Capability with optional dirs prints Created line."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability("my-domain", "my-cap", root=tmpdir, optional_dirs=[DIR_REFERENCES])
+            output = buf.getvalue()
+            self.assertIn("Created:", output)
+            self.assertIn(DIR_REFERENCES, output)
+
+    def test_success_message_non_json(self) -> None:
+        """Success message includes checkmark, Next: lines."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability("my-domain", "my-cap", root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Capability 'my-cap' scaffolded at", output)
+            self.assertIn("Next:", output)
+            self.assertIn("routing table", output)
+            # The manifest path includes the tmpdir prefix
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            self.assertIn("update " + manifest_path, output)
+
+    def test_update_manifest_info_non_json(self) -> None:
+        """With update_manifest=True, prints INFO about not adding to manifest directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability("my-domain", "my-cap", root=tmpdir, update_manifest=True)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_INFO, output)
+            self.assertIn("not added to manifest.yaml directly", output)
+
+    def test_no_update_manifest_shows_manifest_guidance(self) -> None:
+        """Without update_manifest, prints Next: update <manifest_path>."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_router(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability("my-domain", "my-cap", root=tmpdir, update_manifest=False)
+            output = buf.getvalue()
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            self.assertIn("Next: update " + manifest_path, output)
+
+
+# ===================================================================
+# Non-JSON output paths for scaffold_role()
+# ===================================================================
+
+
+class ScaffoldRoleHumanOutputTests(unittest.TestCase):
+    """Non-JSON output paths for scaffold_role()."""
+
+    def test_invalid_group_exits(self) -> None:
+        """Invalid group name in non-JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_role("INVALID", "my-role", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
+
+    def test_invalid_name_exits(self) -> None:
+        """Invalid role name in non-JSON mode exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_role("my-group", "INVALID", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
+
+    def test_duplicate_role_exits(self) -> None:
+        """Duplicate role in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_role("my-group", "dup-role", root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_role("my-group", "dup-role", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+            self.assertIn("already exists", output)
+
+    def test_template_not_found_non_json_exits(self) -> None:
+        """Missing template in non-JSON mode prints FAIL and exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("scaffold.read_template", side_effect=FileNotFoundError("Template not found")), \
+                 mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
+                scaffold_role("my-group", "my-role", root=tmpdir)
+            self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_FAIL, output)
+
+    def test_roles_readme_created(self) -> None:
+        """First role in a fresh tmpdir creates roles/README.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("my-group", "my-role", root=tmpdir)
+            roles_readme = os.path.join(tmpdir, DIR_ROLES, "README.md")
+            self.assertTrue(os.path.isfile(roles_readme))
+
+    def test_group_readme_created(self) -> None:
+        """First role in a group creates roles/<group>/README.md."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("my-group", "my-role", root=tmpdir)
+            group_readme = os.path.join(tmpdir, DIR_ROLES, "my-group", "README.md")
+            self.assertTrue(os.path.isfile(group_readme))
+
+    def test_readmes_not_recreated(self) -> None:
+        """Second role in same group does not recreate READMEs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_role("my-group", "first-role", root=tmpdir, json_output=True)
+            roles_readme = os.path.join(tmpdir, DIR_ROLES, "README.md")
+            group_readme = os.path.join(tmpdir, DIR_ROLES, "my-group", "README.md")
+            # Write a sentinel string into each README after the first scaffold
+            sentinel = "SENTINEL-DO-NOT-OVERWRITE"
+            for path in (roles_readme, group_readme):
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(sentinel)
+            # Create a second role in the same group
+            scaffold_role("my-group", "second-role", root=tmpdir, json_output=True)
+            # Sentinels must still be present — files were not recreated
+            for path in (roles_readme, group_readme):
+                with open(path, "r", encoding="utf-8") as f:
+                    self.assertIn(sentinel, f.read())
+
+    def test_manifest_update_non_json_prints_messages(self) -> None:
+        """update_manifest=True in non-JSON mode prints Created/Updated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("my-group", "my-role", update_manifest=True, root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Created:", output)
+            self.assertIn("Updated:", output)
+
+    def test_manifest_warning_non_json_prints_warn(self) -> None:
+        """Manifest conflict in non-JSON mode prints WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "\nroles:\n"
+                    "  my-group:\n"
+                    "    - name: my-role\n"
+                    "      path: roles/my-group/my-role.md\n"
+                )
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("my-group", "my-role", update_manifest=True, root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn(LEVEL_WARN, output)
+
+    def test_success_message_non_json(self) -> None:
+        """Success message includes checkmark and Next: guidance."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("my-group", "my-role", root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Role 'my-role' scaffolded at", output)
+            self.assertIn("Next: edit", output)
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            self.assertIn("Next: update " + manifest_path, output)
+
+    def test_success_message_with_update_manifest(self) -> None:
+        """Success with update_manifest omits manifest guidance."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("my-group", "my-role", update_manifest=True, root=tmpdir)
+            output = buf.getvalue()
+            self.assertIn("Role 'my-role' scaffolded at", output)
+            # Should not contain "Next: update <manifest_path>"
+            manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
+            next_lines = [line for line in output.splitlines() if "Next:" in line]
+            for line in next_lines:
+                self.assertNotIn("update " + manifest_path, line)
+
+
+# ===================================================================
+# validate_name() human-readable output
+# ===================================================================
+
+
+class ValidateNameHumanOutputTests(unittest.TestCase):
+    """Human-readable output paths for validate_name()."""
+
+    def test_fail_prefixed_error_prints_error(self) -> None:
+        """FAIL-prefixed error prints 'Error:' prefix."""
+        buf = io.StringIO()
+        with mock.patch(
+            "scaffold._validate_name_detailed",
+            return_value=([LEVEL_FAIL + ": Invalid name"], []),
+        ), mock.patch("sys.stdout", buf):
+            result = validate_name("some-name")
+        self.assertFalse(result)
+        self.assertIn("Error:", buf.getvalue())
+
+    def test_warn_prefixed_error_prints_warning(self) -> None:
+        """WARN-prefixed error prints 'Warning:' prefix."""
+        buf = io.StringIO()
+        with mock.patch(
+            "scaffold._validate_name_detailed",
+            return_value=([LEVEL_WARN + ": Name too long"], []),
+        ), mock.patch("sys.stdout", buf):
+            result = validate_name("some-name")
+        # WARN does not fail validation (no FAIL prefix)
+        self.assertTrue(result)
+        self.assertIn("Warning:", buf.getvalue())
+
+    def test_no_prefix_error_treated_as_warning(self) -> None:
+        """Error with no recognized level prefix is treated as Warning."""
+        buf = io.StringIO()
+        with mock.patch(
+            "scaffold._validate_name_detailed",
+            return_value=(["Some unexpected message"], []),
+        ), mock.patch("sys.stdout", buf):
+            result = validate_name("some-name")
+        # No FAIL prefix means validation passes
+        self.assertTrue(result)
+        output = buf.getvalue()
+        self.assertIn("Warning:", output)
+        self.assertIn("Some unexpected message", output)
+
+
+# ===================================================================
+# read_template() FileNotFoundError
+# ===================================================================
+
+
+class ReadTemplateErrorTests(unittest.TestCase):
+    """Test read_template() raises FileNotFoundError for missing template."""
+
+    def test_nonexistent_template_raises(self) -> None:
+        """Non-existent template raises FileNotFoundError."""
+        with self.assertRaises(FileNotFoundError) as ctx:
+            read_template("nonexistent-template.md")
+        self.assertIn("Template not found", str(ctx.exception))
+
+
+# ===================================================================
+# write_file() non-quiet print path
+# ===================================================================
+
+
+class WriteFileOutputTests(unittest.TestCase):
+    """Test write_file() prints Created message when quiet=False."""
+
+    def test_default_quiet_false_prints_created(self) -> None:
+        """Default quiet=False prints 'Created:' message."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sub", "test.txt")
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                write_file(path, "content")
+            self.assertIn("Created:", buf.getvalue())
+            self.assertIn(path, buf.getvalue())
+
+
+# ===================================================================
+# _validate_flags() JSON mode output
+# ===================================================================
+
+
+class ValidateFlagsJsonTests(unittest.TestCase):
+    """Test _validate_flags() JSON mode output format."""
+
+    def test_unknown_flag_json_mode_outputs_json(self) -> None:
+        """Unknown flag in JSON mode prints JSON with error message."""
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
+            _validate_flags(["--bogus"], "skill", json_mode=True)
+        self.assertEqual(ctx.exception.code, 1)
+        data = json.loads(buf.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("Unknown flag(s)", data["error"])
+        self.assertIn("Allowed:", data["error"])
+
+
+# ===================================================================
+# _parse_optional_dirs() deduplication
+# ===================================================================
+
+
+class ParseOptionalDirsDeduplicationTests(unittest.TestCase):
+    """Test _parse_optional_dirs() deduplication logic."""
+
+    def test_duplicate_flags_deduplicated(self) -> None:
+        """Duplicate --with-references flags return single entry."""
+        dirs = _parse_optional_dirs(["--with-references", "--with-references"])
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual(dirs[0], DIR_REFERENCES)
 
 
 if __name__ == "__main__":
