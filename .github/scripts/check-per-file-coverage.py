@@ -29,7 +29,7 @@ def load_threshold(coveragerc_path: str) -> float:
     parser = configparser.ConfigParser(interpolation=None)
     try:
         files_read = parser.read(coveragerc_path, encoding="utf-8")
-    except (OSError, configparser.Error) as exc:
+    except (OSError, configparser.Error, UnicodeDecodeError) as exc:
         print(
             f"Error: failed to read/parse .coveragerc at {coveragerc_path}: {exc}",
             file=sys.stderr,
@@ -136,6 +136,11 @@ def check_per_file(
                     f"'summary.percent_branches_covered' and cannot compute "
                     f"from raw counts"
                 )
+        if not (0.0 <= pct <= 100.0):
+            raise ValueError(
+                f"coverage.json malformed entry for '{filename}': "
+                f"branch coverage {pct:.2f}% is outside the 0–100 range"
+            )
         if pct < threshold:
             failures.append((filename, pct))
         else:
@@ -170,7 +175,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.threshold is not None:
         threshold = args.threshold
     else:
-        threshold = load_threshold(args.coveragerc)
+        try:
+            threshold = load_threshold(args.coveragerc)
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 1
 
     # Validate threshold range
     if not (0.0 <= threshold <= 100.0):

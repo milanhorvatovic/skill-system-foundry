@@ -1,11 +1,12 @@
 """Tests for .github/scripts/check-per-file-coverage.py.
 
 Covers load_threshold (valid config, decimal threshold, missing file,
-missing section, missing key, non-numeric value), check_per_file (all
-above, some below, all below, zero branches, branchless without key,
-computed from raw counts, empty files, missing key), and main
-integration (all pass, some fail, threshold override, threshold range
-validation, missing coverage JSON).
+missing section, missing key, non-numeric value, non-UTF-8 file),
+check_per_file (all above, some below, all below, zero branches,
+branchless without key, computed from raw counts, empty files, missing
+key, out-of-range pct), and main integration (all pass, some fail,
+threshold override, threshold range validation, load_threshold errors,
+missing coverage JSON, malformed coverage JSON).
 """
 
 import json
@@ -73,7 +74,7 @@ def _coverage_json(
                 num = 100
                 summary = {
                     "num_branches": num,
-                    "covered_branches": int(pct),
+                    "covered_branches": round(pct * num / 100),
                 }
         else:
             summary = {"percent_branches_covered": pct}
@@ -163,6 +164,19 @@ class LoadThresholdErrorTests(unittest.TestCase):
             mode="w", suffix=".coveragerc", delete=False, encoding="utf-8"
         ) as fh:
             fh.write("[report]\nfail_under = abc\n")
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit):
+                load_threshold(path)
+        finally:
+            os.unlink(path)
+
+    def test_non_utf8_file_raises_system_exit(self) -> None:
+        """Raises SystemExit when .coveragerc contains invalid UTF-8 bytes."""
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".coveragerc", delete=False
+        ) as fh:
+            fh.write(b"[report]\nfail_under = \xff\xfe\n")
             path = fh.name
         try:
             with self.assertRaises(SystemExit):
@@ -429,6 +443,51 @@ class CheckPerFileMalformedTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_pct_above_100_raises_value_error(self) -> None:
+        """Raises ValueError when percent_branches_covered exceeds 100."""
+        data = {"files": {"a.py": {"summary": {"percent_branches_covered": 150.0}}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_pct_negative_raises_value_error(self) -> None:
+        """Raises ValueError when percent_branches_covered is negative."""
+        data = {"files": {"a.py": {"summary": {"percent_branches_covered": -10.0}}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_computed_pct_above_100_raises_value_error(self) -> None:
+        """Raises ValueError when covered_branches exceeds num_branches."""
+        data = {"files": {"a.py": {"summary": {
+            "num_branches": 10,
+            "covered_branches": 15,
+        }}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
 
 # ===================================================================
 # main — integration tests
@@ -556,6 +615,42 @@ class MainThresholdRangeTests(unittest.TestCase):
                 "--threshold", "100",
             ])
             self.assertEqual(result, 0)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+
+class MainLoadThresholdErrorTests(unittest.TestCase):
+    """Integration tests for main when load_threshold fails."""
+
+    def test_missing_coveragerc_returns_one(self) -> None:
+        """Returns 1 (not SystemExit) when .coveragerc does not exist."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--coveragerc", os.path.join(tmpdir, "missing.coveragerc"),
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_malformed_coveragerc_returns_one(self) -> None:
+        """Returns 1 (not SystemExit) when .coveragerc is malformed."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            rc_path = os.path.join(tmpdir, ".coveragerc")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            _write(rc_path, "[run]\nsource = .\n")
+            result = main([
+                "--coverage-json", json_path,
+                "--coveragerc", rc_path,
+            ])
+            self.assertEqual(result, 1)
         finally:
             import shutil
             shutil.rmtree(tmpdir)
