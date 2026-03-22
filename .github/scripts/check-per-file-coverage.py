@@ -77,14 +77,15 @@ def check_per_file(
     ``python -m coverage json``.  Each file's
     ``summary.percent_branches_covered`` is compared against *threshold*.
 
+    When ``percent_branches_covered`` is absent (coverage < 7.7), the
+    percentage is computed from ``covered_branches / num_branches``.
     Files with ``num_branches == 0`` (branchless) are treated as 100%
-    covered even when ``percent_branches_covered`` is absent from the
-    summary — some versions of ``coverage`` omit the key for such files.
+    covered.
 
     Raises ``OSError`` when the file cannot be read, ``json.JSONDecodeError``
     when the content is not valid JSON, and ``ValueError`` when the data
     structure is malformed (missing ``files`` dict, or a file entry lacks
-    ``summary.percent_branches_covered`` as a number).
+    branch coverage data that can be used or computed).
     """
     with open(json_path, encoding="utf-8") as fh:
         data = json.load(fh)
@@ -109,24 +110,32 @@ def check_per_file(
                 f"'summary' is not a dict"
             )
 
-        if "percent_branches_covered" not in summary:
-            # Some coverage versions omit percent_branches_covered for
-            # branchless files.  Treat them as 100% when num_branches is
-            # explicitly 0; otherwise the entry is genuinely malformed.
-            if summary.get("num_branches") == 0:
-                passes.append((filename, 100.0))
-                continue
-            raise ValueError(
-                f"coverage.json malformed entry for '{filename}': missing "
-                f"'summary.percent_branches_covered'"
-            )
-
-        pct = summary["percent_branches_covered"]
-        if not isinstance(pct, (int, float)):
-            raise ValueError(
-                f"coverage.json malformed entry for '{filename}': "
-                f"'percent_branches_covered' is not a number"
-            )
+        if "percent_branches_covered" in summary:
+            pct = summary["percent_branches_covered"]
+            if not isinstance(pct, (int, float)):
+                raise ValueError(
+                    f"coverage.json malformed entry for '{filename}': "
+                    f"'percent_branches_covered' is not a number"
+                )
+        else:
+            # coverage < 7.7 omits percent_branches_covered — compute
+            # from raw counts when available.
+            num = summary.get("num_branches")
+            covered = summary.get("covered_branches")
+            if isinstance(num, (int, float)) and num == 0:
+                pct = 100.0
+            elif (
+                isinstance(num, (int, float))
+                and num > 0
+                and isinstance(covered, (int, float))
+            ):
+                pct = covered / num * 100.0
+            else:
+                raise ValueError(
+                    f"coverage.json malformed entry for '{filename}': missing "
+                    f"'summary.percent_branches_covered' and cannot compute "
+                    f"from raw counts"
+                )
         if pct < threshold:
             failures.append((filename, pct))
         else:

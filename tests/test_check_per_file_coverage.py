@@ -3,8 +3,9 @@
 Covers load_threshold (valid config, decimal threshold, missing file,
 missing section, missing key, non-numeric value), check_per_file (all
 above, some below, all below, zero branches, branchless without key,
-empty files, missing key), and main integration (all pass, some fail,
-threshold override, threshold range validation, missing coverage JSON).
+computed from raw counts, empty files, missing key), and main
+integration (all pass, some fail, threshold override, threshold range
+validation, missing coverage JSON).
 """
 
 import json
@@ -53,16 +54,27 @@ def _coverage_json(
 
     *files* maps filenames to ``percent_branches_covered`` values.
     Files listed in *use_num_branches_zero* get ``num_branches: 0``.
-    Files listed in *omit_percent_branches* get ``num_branches: 0``
-    and no ``percent_branches_covered`` key — mimicking the output
-    some coverage versions produce for branchless files.
+    Files listed in *omit_percent_branches* only get raw
+    ``num_branches`` / ``covered_branches`` counts (no
+    ``percent_branches_covered`` key) — mimicking coverage < 7.7
+    output.  Branchless files in this set get both counts as 0.
     """
     use_zero = use_num_branches_zero or set()
     omit_pct = omit_percent_branches or set()
     file_data: dict[str, object] = {}
     for name, pct in files.items():
         if name in omit_pct:
-            summary: dict[str, object] = {"num_branches": 0}
+            if name in use_zero:
+                summary: dict[str, object] = {
+                    "num_branches": 0,
+                    "covered_branches": 0,
+                }
+            else:
+                num = 100
+                summary = {
+                    "num_branches": num,
+                    "covered_branches": int(pct),
+                }
         else:
             summary = {"percent_branches_covered": pct}
             if name in use_zero:
@@ -227,6 +239,7 @@ class CheckPerFilePassTests(unittest.TestCase):
                 _coverage_json(
                     {"init.py": 0.0, "real.py": 80.0},
                     omit_percent_branches={"init.py"},
+                    use_num_branches_zero={"init.py"},
                 )
             )
             path = fh.name
@@ -237,6 +250,26 @@ class CheckPerFilePassTests(unittest.TestCase):
             pass_dict = dict(passes)
             self.assertAlmostEqual(pass_dict["init.py"], 100.0)
             self.assertAlmostEqual(pass_dict["real.py"], 80.0)
+        finally:
+            os.unlink(path)
+
+    def test_computed_from_raw_counts_passes(self) -> None:
+        """Files without percent_branches_covered pass when computed coverage meets threshold."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(
+                _coverage_json(
+                    {"lib.py": 80.0},
+                    omit_percent_branches={"lib.py"},
+                )
+            )
+            path = fh.name
+        try:
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(failures, [])
+            self.assertEqual(len(passes), 1)
+            self.assertAlmostEqual(passes[0][1], 80.0)
         finally:
             os.unlink(path)
 
@@ -278,6 +311,26 @@ class CheckPerFileFailTests(unittest.TestCase):
             self.assertEqual(failures[0][0], "bad.py")
             self.assertAlmostEqual(failures[0][1], 50.0)
             self.assertEqual(len(passes), 1)
+        finally:
+            os.unlink(path)
+
+    def test_computed_from_raw_counts_below_threshold(self) -> None:
+        """Files without percent_branches_covered fail when computed coverage is below threshold."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(
+                _coverage_json(
+                    {"bad.py": 50.0},
+                    omit_percent_branches={"bad.py"},
+                )
+            )
+            path = fh.name
+        try:
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(len(failures), 1)
+            self.assertAlmostEqual(failures[0][1], 50.0)
+            self.assertEqual(len(passes), 0)
         finally:
             os.unlink(path)
 
