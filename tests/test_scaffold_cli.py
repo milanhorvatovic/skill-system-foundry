@@ -29,7 +29,6 @@ SCAFFOLD_SCRIPT = os.path.join(SCRIPTS_DIR, "scaffold.py")
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-import scaffold
 from scaffold import (
     validate_name,
     read_template,
