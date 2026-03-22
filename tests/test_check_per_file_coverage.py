@@ -11,7 +11,6 @@ missing coverage JSON, malformed coverage JSON).
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 
@@ -285,6 +284,25 @@ class CheckPerFilePassTests(unittest.TestCase):
             self.assertEqual(failures, [])
             self.assertEqual(len(passes), 1)
             self.assertAlmostEqual(passes[0][1], 80.0)
+        finally:
+            os.unlink(path)
+
+    def test_raw_counts_boundary_threshold_passes(self) -> None:
+        """Raw-count coverage exactly at the threshold (7/10 = 70%) passes."""
+        data = {"files": {"lib.py": {"summary": {
+            "num_branches": 10,
+            "covered_branches": 7,
+        }}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(failures, [])
+            self.assertEqual(len(passes), 1)
+            self.assertAlmostEqual(passes[0][1], 70.0)
         finally:
             os.unlink(path)
 

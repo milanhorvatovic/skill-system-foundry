@@ -134,7 +134,7 @@ def check_per_file(
                 and num > 0
                 and isinstance(covered, (int, float))
             ):
-                pct = covered / num * 100.0
+                pct = (covered * 100.0) / num
             else:
                 raise ValueError(
                     f"coverage.json malformed entry for '{filename}': missing "
