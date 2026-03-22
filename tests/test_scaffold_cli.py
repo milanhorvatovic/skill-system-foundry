@@ -530,12 +530,20 @@ class ValidateFlagsUnitTests(unittest.TestCase):
         _validate_flags(["--router", "--with-references"], "skill")
 
     def test_unknown_flag_exits(self) -> None:
-        with self.assertRaises(SystemExit):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
             _validate_flags(["--bogus"], "skill")
+        self.assertEqual(ctx.exception.code, 1)
+        output = buf.getvalue()
+        self.assertIn(LEVEL_FAIL, output)
 
     def test_unknown_flag_json_mode_exits(self) -> None:
-        with self.assertRaises(SystemExit):
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf), \
+             self.assertRaises(SystemExit) as ctx:
             _validate_flags(["--bogus"], "skill", json_mode=True)
+        self.assertEqual(ctx.exception.code, 1)
 
 
 class ParseOptionalDirsUnitTests(unittest.TestCase):
@@ -1499,9 +1507,13 @@ class ScaffoldSkillHumanOutputTests(unittest.TestCase):
     def test_invalid_name_exits(self) -> None:
         """Invalid name in non-JSON mode exits 1."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(SystemExit) as ctx:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
                 scaffold_skill("INVALID", root=tmpdir)
             self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
 
     def test_duplicate_directory_exits(self) -> None:
         """Duplicate skill directory in non-JSON mode prints FAIL and exits 1."""
@@ -1635,17 +1647,25 @@ class ScaffoldCapabilityHumanOutputTests(unittest.TestCase):
     def test_invalid_domain_exits(self) -> None:
         """Invalid domain name in non-JSON mode exits 1."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(SystemExit) as ctx:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
                 scaffold_capability("INVALID", "my-cap", root=tmpdir)
             self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
 
     def test_invalid_name_exits(self) -> None:
         """Invalid capability name in non-JSON mode exits 1."""
         with tempfile.TemporaryDirectory() as tmpdir:
             self._create_router(tmpdir)
-            with self.assertRaises(SystemExit) as ctx:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
                 scaffold_capability("my-domain", "INVALID", root=tmpdir)
             self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
 
     def test_duplicate_capability_exits(self) -> None:
         """Duplicate capability in non-JSON mode prints FAIL and exits 1."""
@@ -1746,16 +1766,24 @@ class ScaffoldRoleHumanOutputTests(unittest.TestCase):
     def test_invalid_group_exits(self) -> None:
         """Invalid group name in non-JSON mode exits 1."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(SystemExit) as ctx:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
                 scaffold_role("INVALID", "my-role", root=tmpdir)
             self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
 
     def test_invalid_name_exits(self) -> None:
         """Invalid role name in non-JSON mode exits 1."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(SystemExit) as ctx:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf), \
+                 self.assertRaises(SystemExit) as ctx:
                 scaffold_role("my-group", "INVALID", root=tmpdir)
             self.assertEqual(ctx.exception.code, 1)
+            output = buf.getvalue()
+            self.assertIn("Error:", output)
 
     def test_duplicate_role_exits(self) -> None:
         """Duplicate role in non-JSON mode prints FAIL and exits 1."""
