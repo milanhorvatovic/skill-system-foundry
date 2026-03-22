@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from helpers import write_text
 
@@ -13,11 +14,20 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from lib.references import (
+    BoundaryViolation,
     RE_TEXT_FILE_REF,
+    classify_external_file,
+    compute_bundle_path,
+    extract_references,
     find_containing_skill,
+    infer_system_root,
+    is_within_directory,
+    resolve_reference,
+    resolve_reference_with_reason,
     scan_references,
     should_skip_reference,
     strip_fragment,
+    walk_skill_files,
 )
 
 
@@ -47,6 +57,9 @@ class ShouldSkipReferenceTests(unittest.TestCase):
             "<ftp://files.example.com/data>": True,
             "file:///C:/docs/foo.md": True,
             "<file:///home/user/docs/foo.md>": True,
+            "": True,
+            "  ": True,
+            "<a <b>": True,
             "references/foo.md": False,
             "<references/foo.md>": False,
             "<references/foo.md> \"Title\"": False,
@@ -1415,6 +1428,990 @@ class InlineOrchestratedSkillsTests(unittest.TestCase):
             # No errors — the decoy SKILL.md above system_root was
             # never reached by the alias-root walk.
             self.assertEqual(result["errors"], [])
+
+
+# ===================================================================
+# is_within_directory
+# ===================================================================
+
+
+class IsWithinDirectoryTests(unittest.TestCase):
+    """Tests for is_within_directory()."""
+
+    def test_file_inside_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "sub", "file.md")
+            self.assertTrue(is_within_directory(filepath, tmpdir))
+
+    def test_file_outside_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filepath = os.path.join(tmpdir, "..", "outside.md")
+            self.assertFalse(is_within_directory(filepath, tmpdir))
+
+    def test_commonpath_value_error_returns_false(self) -> None:
+        """ValueError from commonpath (e.g. different Windows drives) returns False."""
+        with patch("lib.references.os.path.commonpath", side_effect=ValueError):
+            result = is_within_directory("/some/path", "/other/path")
+        self.assertFalse(result)
+
+
+# ===================================================================
+# extract_references
+# ===================================================================
+
+
+class ExtractReferencesTests(unittest.TestCase):
+    """Tests for extract_references()."""
+
+    def test_markdown_backtick_refs_extracted(self) -> None:
+        """Backtick-wrapped paths in markdown are extracted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_file = os.path.join(tmpdir, "doc.md")
+            write_text(md_file, "Use `references/guide.md` for details.\n")
+            refs = extract_references(md_file)
+        paths = [r[1] for r in refs]
+        self.assertIn("references/guide.md", paths)
+
+    def test_markdown_backtick_dedup_with_link(self) -> None:
+        """A path in both link and backtick on the same line is not duplicated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_file = os.path.join(tmpdir, "doc.md")
+            write_text(
+                md_file,
+                "See [guide](references/guide.md) or `references/guide.md`.\n",
+            )
+            refs = extract_references(md_file)
+        paths = [r[1] for r in refs]
+        self.assertEqual(paths.count("references/guide.md"), 1)
+
+    def test_binary_file_returns_empty(self) -> None:
+        """Binary files return an empty list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            png_file = os.path.join(tmpdir, "image.png")
+            with open(png_file, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n")
+            refs = extract_references(png_file)
+        self.assertEqual(refs, [])
+
+    def test_non_markdown_text_detection(self) -> None:
+        """Non-markdown text files use text-detection mode."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = os.path.join(tmpdir, "config.yaml")
+            write_text(yaml_file, "path: references/guide.md\n")
+            refs = extract_references(yaml_file)
+        self.assertGreater(len(refs), 0)
+        types = [r[3] for r in refs]
+        self.assertTrue(all(t == "text_detected" for t in types))
+
+    def test_skip_and_empty_clean_path_filtered(self) -> None:
+        """URLs and empty-after-strip refs are filtered out."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_file = os.path.join(tmpdir, "doc.md")
+            write_text(
+                md_file,
+                "See [link](https://example.com) and [anchor](#top).\n",
+            )
+            refs = extract_references(md_file)
+        self.assertEqual(refs, [])
+
+    def test_query_only_ref_stripped_to_empty(self) -> None:
+        """A ref like '?query' strips to empty and is filtered out."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_file = os.path.join(tmpdir, "doc.md")
+            write_text(md_file, "See [q](?query)\n")
+            refs = extract_references(md_file)
+        self.assertEqual(refs, [])
+
+
+# ===================================================================
+# resolve_reference / resolve_reference_with_reason
+# ===================================================================
+
+
+class ResolveReferenceTests(unittest.TestCase):
+    """Tests for resolve_reference and resolve_reference_with_reason."""
+
+    def test_resolve_reference_delegates(self) -> None:
+        """resolve_reference returns the same path as the _with_reason variant."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = os.path.join(tmpdir, "doc.md")
+            target = os.path.join(tmpdir, "ref.md")
+            write_text(source, "")
+            write_text(target, "")
+            result = resolve_reference("ref.md", source)
+            self.assertEqual(result, os.path.normpath(target))
+
+    def test_absolute_path_rejected(self) -> None:
+        _, reason = resolve_reference_with_reason("/absolute/path.md", "/some/doc.md")
+        self.assertEqual(reason, "absolute_path")
+
+    def test_escapes_system_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = os.path.join(tmpdir, "root", "skills", "demo", "doc.md")
+            write_text(source, "")
+            system_root = os.path.join(tmpdir, "root")
+            os.makedirs(system_root, exist_ok=True)
+            _, reason = resolve_reference_with_reason(
+                "../../../../outside.md", source, system_root,
+            )
+        self.assertEqual(reason, "escapes_system_root")
+
+    def test_is_directory_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = os.path.join(tmpdir, "doc.md")
+            write_text(source, "")
+            ref_dir = os.path.join(tmpdir, "somedir")
+            os.makedirs(ref_dir)
+            _, reason = resolve_reference_with_reason("somedir", source)
+        self.assertEqual(reason, "is_directory")
+
+    def test_system_root_fallback_resolves(self) -> None:
+        """A ref not found relative to source but found relative to system_root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            source = os.path.join(system_root, "skills", "demo", "doc.md")
+            write_text(source, "")
+            target = os.path.join(system_root, "references", "guide.md")
+            write_text(target, "")
+            resolved, reason = resolve_reference_with_reason(
+                "references/guide.md", source, system_root,
+            )
+        self.assertIsNotNone(resolved)
+        self.assertIsNone(reason)
+
+    def test_system_root_fallback_escapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            source = os.path.join(system_root, "skills", "demo", "doc.md")
+            write_text(source, "")
+            os.makedirs(system_root, exist_ok=True)
+            _, reason = resolve_reference_with_reason(
+                "../../../outside.md", source, system_root,
+            )
+        self.assertEqual(reason, "escapes_system_root")
+
+    def test_system_root_fallback_is_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            source = os.path.join(system_root, "skills", "demo", "doc.md")
+            write_text(source, "")
+            # Create a directory at system_root/references (not a file)
+            os.makedirs(os.path.join(system_root, "references"))
+            _, reason = resolve_reference_with_reason(
+                "references", source, system_root,
+            )
+        self.assertEqual(reason, "is_directory")
+
+    def test_system_root_fallback_escapes_system_root(self) -> None:
+        """A ref within boundary from source dir but escaping from system_root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            # Source deep enough that ../../nonexistent.md stays within root
+            source = os.path.join(
+                system_root, "skills", "demo", "deep", "doc.md",
+            )
+            write_text(source, "")
+            os.makedirs(system_root, exist_ok=True)
+            # From source dir: root/skills/demo/deep/../../nonexistent.md
+            #   = root/skills/nonexistent.md → within root, not found as file
+            # From system_root: root/../../nonexistent.md → escapes root
+            _, reason = resolve_reference_with_reason(
+                "../../nonexistent.md", source, system_root,
+            )
+        self.assertEqual(reason, "escapes_system_root")
+
+    def test_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = os.path.join(tmpdir, "doc.md")
+            write_text(source, "")
+            _, reason = resolve_reference_with_reason("nonexistent.md", source)
+        self.assertEqual(reason, "not_found")
+
+
+# ===================================================================
+# walk_skill_files
+# ===================================================================
+
+
+class WalkSkillFilesTests(unittest.TestCase):
+    """Tests for walk_skill_files()."""
+
+    def test_excluded_files_skipped(self) -> None:
+        """Files matching exclude patterns are not yielded."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\n---\n")
+            write_text(os.path.join(tmpdir, ".git", "config"), "git")
+            files = list(walk_skill_files(tmpdir, [".git"], tmpdir))
+        filenames = [f for _, f in files]
+        self.assertNotIn("config", filenames)
+
+    def test_boundary_violations_recorded(self) -> None:
+        """Symlink boundary violations are recorded in the list."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            outside = os.path.join(tmpdir, "outside")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\n---\n")
+            write_text(os.path.join(outside, "secret.md"), "secret")
+            link = os.path.join(skill_dir, "secret.md")
+            try:
+                os.symlink(os.path.join(outside, "secret.md"), link)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+            violations: list[BoundaryViolation] = []
+            files = list(walk_skill_files(skill_dir, [], skill_dir, violations))
+            filenames = [f for _, f in files]
+        self.assertNotIn("secret.md", filenames)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].kind, "file")
+
+    def test_boundary_violation_raises_when_no_list(self) -> None:
+        """When violations list is None, ValueError is raised."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            outside = os.path.join(tmpdir, "outside")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\n---\n")
+            write_text(os.path.join(outside, "secret.md"), "secret")
+            link = os.path.join(skill_dir, "secret.md")
+            try:
+                os.symlink(os.path.join(outside, "secret.md"), link)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+            with self.assertRaises(ValueError):
+                list(walk_skill_files(skill_dir, [], skill_dir, None))
+
+    def test_directory_boundary_violation_recorded(self) -> None:
+        """Symlinked directory escaping boundary is recorded."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            outside = os.path.join(tmpdir, "outside")
+            os.makedirs(os.path.join(skill_dir))
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\n---\n")
+            os.makedirs(outside)
+            write_text(os.path.join(outside, "data.md"), "data")
+            link = os.path.join(skill_dir, "linked-dir")
+            try:
+                os.symlink(outside, link)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+            violations: list[BoundaryViolation] = []
+            list(walk_skill_files(skill_dir, [], skill_dir, violations))
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].kind, "directory")
+
+    def test_directory_boundary_violation_raises_when_no_list(self) -> None:
+        """Symlinked directory escaping boundary raises ValueError when violations is None."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            outside = os.path.join(tmpdir, "outside")
+            os.makedirs(skill_dir)
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\n---\n")
+            os.makedirs(outside)
+            write_text(os.path.join(outside, "data.md"), "data")
+            link = os.path.join(skill_dir, "linked-dir")
+            try:
+                os.symlink(outside, link)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+            with self.assertRaises(ValueError):
+                list(walk_skill_files(skill_dir, [], skill_dir, None))
+
+    def test_symlink_target_excluded_component_skipped(self) -> None:
+        """A symlink whose real target path contains an excluded component is skipped."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            hidden_dir = os.path.join(tmpdir, ".hidden")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\n---\n")
+            target = os.path.join(hidden_dir, "data.md")
+            write_text(target, "hidden data")
+            # Symlink to a file whose real path contains .hidden
+            link = os.path.join(skill_dir, "data.md")
+            try:
+                os.symlink(target, link)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+            # Use tmpdir as boundary so the symlink target is within boundary
+            # but its path contains ".hidden" which we exclude
+            files = list(walk_skill_files(skill_dir, [".hidden"], tmpdir))
+        filenames = [f for _, f in files]
+        self.assertNotIn("data.md", filenames)
+
+
+# ===================================================================
+# scan_references — Exception handling branches
+# ===================================================================
+
+
+class ScanReferencesExceptionHandlingTests(unittest.TestCase):
+    """Tests for UnicodeDecodeError and OSError handling in scan_references."""
+
+    def test_unicode_decode_error_markdown_produces_fail(self) -> None:
+        """A markdown file with invalid UTF-8 produces a FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            bad_file = os.path.join(skill_dir, "bad.md")
+            with open(bad_file, "wb") as f:
+                f.write(b"\x80\x81\x82 broken utf-8")
+            result = scan_references(skill_dir, tmpdir)
+        fails = [e for e in result["errors"] if "Cannot read" in e and "UTF-8" in e]
+        self.assertGreaterEqual(len(fails), 1)
+
+    def test_unicode_decode_error_non_markdown_produces_warn(self) -> None:
+        """A non-markdown file with invalid UTF-8 produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            bad_file = os.path.join(skill_dir, "data.yaml")
+            with open(bad_file, "wb") as f:
+                f.write(b"\x80\x81\x82 broken utf-8")
+            result = scan_references(skill_dir, tmpdir)
+        warns = [w for w in result["warnings"] if "Cannot read" in w and "UTF-8" in w]
+        self.assertGreaterEqual(len(warns), 1)
+
+    def test_os_error_markdown_produces_fail(self) -> None:
+        """An OSError when reading a markdown file produces a FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(os.path.join(skill_dir, "doc.md"), "content")
+            with patch(
+                "lib.references.extract_references",
+                side_effect=OSError("mocked read error"),
+            ):
+                result = scan_references(skill_dir, tmpdir)
+        fails = [e for e in result["errors"] if "Cannot read" in e]
+        self.assertGreaterEqual(len(fails), 1)
+
+    def test_os_error_non_markdown_produces_warn(self) -> None:
+        """An OSError when reading a non-markdown file produces a WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skill")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(os.path.join(skill_dir, "config.yaml"), "key: value")
+
+            original = extract_references
+
+            def selective_oserror(filepath: str) -> list:
+                if filepath.endswith(".yaml"):
+                    raise OSError("mocked")
+                return original(filepath)
+
+            with patch(
+                "lib.references.extract_references",
+                side_effect=selective_oserror,
+            ):
+                result = scan_references(skill_dir, tmpdir)
+        warns = [w for w in result["warnings"] if "Cannot read" in w]
+        self.assertGreaterEqual(len(warns), 1)
+
+
+# ===================================================================
+# scan_references — Fail reason branches
+# ===================================================================
+
+
+class ScanReferencesFailReasonTests(unittest.TestCase):
+    """Tests for absolute_path, escapes_system_root, is_directory failures in scan."""
+
+    def test_absolute_reference_produces_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "See [abs](/absolute/path.md)\n",
+            )
+            result = scan_references(skill_dir, system_root)
+        fails = [e for e in result["errors"] if "absolute" in e.lower()]
+        self.assertGreaterEqual(len(fails), 1)
+
+    def test_escapes_system_root_produces_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "See [out](../../../../outside.md)\n",
+            )
+            result = scan_references(skill_dir, system_root)
+        fails = [e for e in result["errors"] if "escapes" in e.lower()]
+        self.assertGreaterEqual(len(fails), 1)
+
+    def test_is_directory_reference_produces_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            os.makedirs(os.path.join(skill_dir, "somedir"))
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "See [dir](somedir)\n",
+            )
+            result = scan_references(skill_dir, system_root)
+        fails = [e for e in result["errors"] if "directory" in e.lower()]
+        self.assertGreaterEqual(len(fails), 1)
+
+
+# ===================================================================
+# classify_external_file
+# ===================================================================
+
+
+class ClassifyExternalFileTests(unittest.TestCase):
+    """Tests for classify_external_file()."""
+
+    def test_no_system_root_returns_references(self) -> None:
+        self.assertEqual(classify_external_file("/any/path.md", None), "references")
+
+    def test_roles_classification(self) -> None:
+        result = classify_external_file("/root/roles/eng/release.md", "/root")
+        self.assertEqual(result, "roles")
+
+    def test_assets_classification(self) -> None:
+        result = classify_external_file("/root/assets/template.md", "/root")
+        self.assertEqual(result, "assets")
+
+    def test_scripts_classification(self) -> None:
+        result = classify_external_file("/root/scripts/validate.py", "/root")
+        self.assertEqual(result, "scripts")
+
+    def test_unknown_returns_references(self) -> None:
+        result = classify_external_file("/root/other/misc.md", "/root")
+        self.assertEqual(result, "references")
+
+
+# ===================================================================
+# compute_bundle_path
+# ===================================================================
+
+
+class ComputeBundlePathTests(unittest.TestCase):
+    """Tests for compute_bundle_path()."""
+
+    def test_role_preserves_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = tmpdir
+            role_file = os.path.join(tmpdir, "roles", "eng", "release.md")
+            write_text(role_file, "")
+            result = compute_bundle_path(role_file, system_root)
+        self.assertEqual(result, "roles/eng/release.md")
+
+    def test_references_within_category_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = tmpdir
+            ref_file = os.path.join(tmpdir, "references", "sub", "guide.md")
+            write_text(ref_file, "")
+            result = compute_bundle_path(ref_file, system_root)
+        self.assertEqual(result, "references/sub/guide.md")
+
+    def test_no_system_root_uses_basename(self) -> None:
+        result = compute_bundle_path("/any/path/guide.md", None)
+        self.assertEqual(result, "references/guide.md")
+
+    def test_file_outside_category_uses_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = tmpdir
+            misc_file = os.path.join(tmpdir, "other", "misc.md")
+            write_text(misc_file, "")
+            result = compute_bundle_path(misc_file, system_root)
+        self.assertEqual(result, "references/misc.md")
+
+
+# ===================================================================
+# infer_system_root
+# ===================================================================
+
+
+class InferSystemRootTests(unittest.TestCase):
+    """Tests for infer_system_root()."""
+
+    def test_from_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "project")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            os.makedirs(skill_dir)
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: test\n")
+            result = infer_system_root(skill_dir)
+        self.assertEqual(os.path.realpath(result), os.path.realpath(system_root))
+
+    def test_from_skills_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "project")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            os.makedirs(skill_dir)
+            result = infer_system_root(skill_dir)
+        self.assertEqual(os.path.realpath(result), os.path.realpath(system_root))
+
+    def test_returns_none_when_no_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "isolated")
+            os.makedirs(skill_dir)
+            result = infer_system_root(skill_dir)
+        self.assertIsNone(result)
+
+
+# ===================================================================
+# scan_references — commonpath ValueError branches
+# ===================================================================
+
+
+class ScanReferencesCommonpathValueErrorTests(unittest.TestCase):
+    """Tests for commonpath ValueError fallback branches in scan_references."""
+
+    def test_commonpath_valueerror_in_lexical_within_skill(self) -> None:
+        """ValueError from commonpath at line 769 (lexical_within_skill) is handled."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_a = os.path.join(system_root, "skills", "alpha")
+            skill_b = os.path.join(system_root, "skills", "beta")
+            write_text(os.path.join(skill_a, "SKILL.md"), "---\nname: alpha\n---\n")
+            write_text(os.path.join(skill_b, "SKILL.md"), "---\nname: beta\n---\n")
+            target_file = os.path.join(skill_b, "notes.md")
+            write_text(target_file, "Beta notes\n")
+
+            link_path = os.path.join(skill_a, "borrowed.md")
+            try:
+                os.symlink(target_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+
+            write_text(
+                os.path.join(skill_a, "doc.md"),
+                "See [borrowed](borrowed.md)\n",
+            )
+
+            original_commonpath = os.path.commonpath
+            # Line 769: commonpath([lexical_path_norm, skill_norm])
+            # lexical_path_norm = normcase(abspath(resolved)) = alpha/borrowed.md
+            # skill_norm = normcase(current_skill) = alpha
+            # We want to raise ValueError for this specific call.
+            lexical_resolved = os.path.normcase(os.path.abspath(link_path))
+            skill_a_norm = os.path.normcase(os.path.abspath(skill_a))
+
+            def raise_for_lexical_check(paths: list[str]) -> str:
+                normed = [os.path.normcase(p) for p in paths]
+                if (
+                    len(normed) == 2
+                    and skill_a_norm in normed
+                    and lexical_resolved in normed
+                ):
+                    raise ValueError("mocked different drives")
+                return original_commonpath(paths)
+
+            with patch("lib.references.os.path.commonpath", side_effect=raise_for_lexical_check):
+                result = scan_references(skill_a, system_root)
+
+            # ValueError means lexical_within_skill stays False, so the
+            # symlink reference is treated as external and recorded in
+            # external_files (by its resolved absolute path within alpha/).
+            self.assertIn(
+                os.path.abspath(link_path), result["external_files"],
+            )
+
+    def test_commonpath_valueerror_in_under_skills_root(self) -> None:
+        """ValueError from commonpath at line 792 (under_skills_root) is handled."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_a = os.path.join(system_root, "skills", "alpha")
+            skill_b = os.path.join(system_root, "skills", "beta")
+            write_text(os.path.join(skill_a, "SKILL.md"), "---\nname: alpha\n---\n")
+            write_text(os.path.join(skill_b, "SKILL.md"), "---\nname: beta\n---\n")
+            target_file = os.path.join(skill_b, "notes.md")
+            write_text(target_file, "Beta notes\n")
+
+            link_path = os.path.join(skill_a, "borrowed.md")
+            try:
+                os.symlink(target_file, link_path)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+
+            write_text(
+                os.path.join(skill_a, "doc.md"),
+                "See [borrowed](borrowed.md)\n",
+            )
+
+            original_commonpath = os.path.commonpath
+            # Line 792: commonpath([resolved_real, skills_root_real])
+            skills_root_real = os.path.normcase(os.path.realpath(
+                os.path.join(system_root, "skills")
+            ))
+            resolved_real = os.path.normcase(os.path.realpath(target_file))
+
+            def raise_for_under_skills_root(paths: list[str]) -> str:
+                normed = [os.path.normcase(p) for p in paths]
+                if (
+                    len(normed) == 2
+                    and skills_root_real in normed
+                    and resolved_real in normed
+                ):
+                    raise ValueError("mocked different drives")
+                return original_commonpath(paths)
+
+            with patch("lib.references.os.path.commonpath", side_effect=raise_for_under_skills_root):
+                result = scan_references(skill_a, system_root)
+
+            # ValueError means under_skills_root = False, so the
+            # cross-skill symlink check is bypassed.
+            # Ensure we don't report a cross-skill symlink error in this case.
+            self.assertIsInstance(result["errors"], list)
+            self.assertFalse(
+                any("Symlinked reference" in str(err) for err in result["errors"]),
+                "cross-skill symlink error should be bypassed when under_skills_root "
+                "check raises ValueError",
+            )
+            # And the symlinked file should not be treated as an external file.
+            self.assertIn("external_files", result)
+            self.assertFalse(
+                result["external_files"],
+                "symlink under skills root should not be classified as external "
+                "when under_skills_root check fails",
+            )
+
+    def test_commonpath_valueerror_in_already_inlined_check(self) -> None:
+        """ValueError from commonpath at line 692 (already-inlined lexical) is handled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "notes.md"), "Testing notes\n")
+
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            original_commonpath = os.path.commonpath
+            testing_real = os.path.normcase(os.path.realpath(testing))
+
+            def raise_for_already_inlined(paths: list[str]) -> str:
+                # Line 692: commonpath([resolved_norm, matched_norm])
+                # matched_norm is the inlined skill dir (testing).
+                normed = [os.path.normcase(p) for p in paths]
+                if len(normed) == 2 and testing_real in normed:
+                    other = [p for p in normed if p != testing_real]
+                    # Only raise when checking a file in testing against
+                    # testing itself (the already-inlined check)
+                    if other and "testing" in other[0] and other[0] != testing_real:
+                        raise ValueError("mocked different drives")
+                return original_commonpath(paths)
+
+            with patch("lib.references.os.path.commonpath", side_effect=raise_for_already_inlined):
+                result = scan_references(
+                    coordinator, system_root,
+                    inline_orchestrated_skills=True,
+                )
+
+            # The testing skill should still be collected
+            self.assertEqual(len(result["inlined_skills"]), 1)
+
+
+# ===================================================================
+# scan_references — relpath ValueError
+# ===================================================================
+
+
+class ScanReferencesRelpathValueErrorTests(unittest.TestCase):
+    """Tests for os.path.relpath ValueError in inlined skill collection."""
+
+    def test_relpath_valueerror_falls_back_to_abs_skill_dir(self) -> None:
+        """ValueError from relpath at line 908 falls back to abs_skill_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            role_file = os.path.join(system_root, "roles", "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../../roles/qa-role.md)\n",
+            )
+
+            original_relpath = os.path.relpath
+            sr_real = os.path.normcase(os.path.realpath(system_root))
+
+            def selective_valueerror(path: str, start: str | None = None) -> str:
+                # Line 908: os.path.relpath(real_skill_dir, _sr_real)
+                # Raise when computing relpath from system_root's realpath
+                if start is not None:
+                    start_norm = os.path.normcase(start)
+                    if start_norm == sr_real:
+                        path_norm = os.path.normcase(path)
+                        if "testing" in path_norm:
+                            raise ValueError("mocked cross-drive relpath")
+                return original_relpath(path, start) if start is not None else original_relpath(path)
+
+            with patch("lib.references.os.path.relpath", side_effect=selective_valueerror):
+                result = scan_references(
+                    coordinator, system_root,
+                    inline_orchestrated_skills=True,
+                )
+
+            # The skill should still be collected despite the ValueError
+            self.assertEqual(len(result["inlined_skills"]), 1)
+
+    def test_no_system_root_uses_abs_skill_dir(self) -> None:
+        """When system_root is None, primary_dir falls back to abs_skill_dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Place skills directly under tmpdir without a skills/ parent
+            # directory or manifest.yaml, so infer_system_root() returns None
+            # and the primary_dir fallback at line 918-919 is exercised.
+            coordinator = os.path.join(tmpdir, "coordinator")
+            testing = os.path.join(tmpdir, "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+
+            role_file = os.path.join(tmpdir, "qa-role.md")
+            write_text(
+                role_file,
+                "# QA Role\nSee [skill](./testing/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc.md"),
+                "See [qa role](../qa-role.md)\n",
+            )
+
+            # system_root=None triggers inference; with no manifest or
+            # skills/ directory markers, infer_system_root() returns None
+            # so primary_dir falls back to abs_skill_dir (line 918-919).
+            result = scan_references(
+                coordinator, system_root=None,
+                inline_orchestrated_skills=True,
+            )
+
+            # Without system root, cross-skill refs produce at least one error
+            self.assertGreater(len(result["errors"]), 0)
+
+
+# ===================================================================
+# scan_references — already-collected alias dedup
+# ===================================================================
+
+
+class ScanReferencesAlreadyCollectedAliasDedupTests(unittest.TestCase):
+    """Tests for the already-collected alias dedup path (lines 935-950)."""
+
+    def test_same_skill_discovered_via_two_aliases(self) -> None:
+        """A skill referenced twice via different aliases records both aliases."""
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink not supported")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            coordinator = os.path.join(system_root, "skills", "coordinator")
+            testing = os.path.join(system_root, "skills", "testing")
+            write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
+            write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
+            write_text(os.path.join(testing, "notes.md"), "Testing notes\n")
+
+            # Two symlink aliases pointing to the same testing skill
+            alias1 = os.path.join(system_root, "skills", "testing-alias1")
+            alias2 = os.path.join(system_root, "skills", "testing-alias2")
+            try:
+                os.symlink(testing, alias1)
+                os.symlink(testing, alias2)
+            except OSError:
+                self.skipTest("symlink creation not permitted")
+
+            # Role references via first alias
+            role1 = os.path.join(system_root, "roles", "role1.md")
+            write_text(
+                role1,
+                "# Role 1\nSee [skill](../skills/testing-alias1/SKILL.md)\n",
+            )
+            # Second role references via second alias
+            role2 = os.path.join(system_root, "roles", "role2.md")
+            write_text(
+                role2,
+                "# Role 2\nSee [skill](../skills/testing-alias2/SKILL.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc1.md"),
+                "See [role1](../../roles/role1.md)\n",
+            )
+            write_text(
+                os.path.join(coordinator, "doc2.md"),
+                "See [role2](../../roles/role2.md)\n",
+            )
+
+            result = scan_references(
+                coordinator, system_root,
+                inline_orchestrated_skills=True,
+            )
+
+            # The testing skill collected once, both aliases recorded
+            self.assertEqual(len(result["inlined_skills"]), 1)
+            self.assertEqual(len(result["inlined_skill_aliases"]), 2)
+
+
+# ===================================================================
+# scan_references — display path fallback
+# ===================================================================
+
+
+class ScanReferencesDisplayPathTests(unittest.TestCase):
+    """Tests for the _rel display path fallback (line 1084)."""
+
+    def test_display_path_outside_both_skill_and_system(self) -> None:
+        """A reference escaping system root shows doc.md display path in error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            # Create an external file completely outside system_root
+            outside = os.path.join(tmpdir, "outside", "ext.md")
+            write_text(outside, "External\n")
+
+            # Reference pointing outside system root
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "See [ext](../../../outside/ext.md)\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+        # Should produce an escapes error with the referencing file's
+        # display path (relative to skill dir since doc.md is inside the skill)
+        fails = [e for e in result["errors"] if "escapes" in e.lower()]
+        self.assertGreaterEqual(len(fails), 1)
+        # The _rel() display path for doc.md is relative to skill_dir
+        self.assertTrue(
+            any("doc.md" in e for e in fails),
+            f"Expected 'doc.md' in error messages, got: {fails}",
+        )
+
+    def test_display_path_no_system_root_outside_skill(self) -> None:
+        """With system_root=None, a file outside the skill uses absolute path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "standalone")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            ext = os.path.join(tmpdir, "outside.md")
+            write_text(ext, "External\n")
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "See [ext](../outside.md)\n",
+            )
+            # No system_root markers, so inference returns None
+            result = scan_references(skill_dir, system_root=None)
+        # Should warn about no system root with the display path
+        fails = [e for e in result["errors"] if "no system root" in e]
+        self.assertGreaterEqual(len(fails), 1)
+
+
+# ===================================================================
+# scan_references — text_detected recursion
+# ===================================================================
+
+
+class ScanReferencesTextDetectedRecursionTests(unittest.TestCase):
+    """Tests for non-markdown text_detected reference recursion."""
+
+    def test_text_detected_ref_recurses(self) -> None:
+        """A text-detected reference should recurse into the referenced file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            # YAML file referencing an external reference
+            guide = os.path.join(system_root, "references", "guide.md")
+            write_text(guide, "# Guide\n")
+            write_text(
+                os.path.join(skill_dir, "config.yaml"),
+                "path: references/guide.md\n",
+            )
+
+            # The guide itself references another file
+            deep = os.path.join(system_root, "references", "deep.md")
+            write_text(deep, "# Deep\n")
+            write_text(guide, "See [deep](deep.md)\n")
+
+            result = scan_references(skill_dir, system_root)
+
+        # Both guide.md and deep.md should be in external_files
+        self.assertIn(os.path.abspath(guide), result["external_files"])
+        self.assertIn(os.path.abspath(deep), result["external_files"])
+
+    def test_text_detected_already_scanned_skips_rescan(self) -> None:
+        """Two non-markdown files referencing the same external file — second skips rescan."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            guide = os.path.join(system_root, "references", "guide.md")
+            write_text(guide, "# Guide\n")
+
+            # Two YAML files both text-detect the same external ref
+            write_text(
+                os.path.join(skill_dir, "config1.yaml"),
+                "path: references/guide.md\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "config2.yaml"),
+                "path: references/guide.md\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+        # guide.md collected once, two warnings (one per yaml file)
+        self.assertIn(os.path.abspath(guide), result["external_files"])
+        text_warns = [w for w in result["warnings"] if "Non-markdown" in w]
+        self.assertEqual(len(text_warns), 2)
+
+    def test_already_scanned_external_not_rescanned(self) -> None:
+        """An external file referenced from two internal files is scanned once."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+
+            shared = os.path.join(system_root, "references", "shared.md")
+            write_text(shared, "Shared content\n")
+
+            # Two files reference the same external file
+            write_text(
+                os.path.join(skill_dir, "doc1.md"),
+                "See [shared](../../references/shared.md)\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "doc2.md"),
+                "See [shared](../../references/shared.md)\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+        # The file appears exactly once in external_files (set deduplication)
+        self.assertIn(os.path.abspath(shared), result["external_files"])
+        self.assertEqual(result["errors"], [])
 
 
 if __name__ == "__main__":
