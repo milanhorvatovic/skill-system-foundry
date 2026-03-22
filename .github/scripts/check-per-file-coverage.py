@@ -90,7 +90,7 @@ def check_per_file(
     with open(json_path, encoding="utf-8") as fh:
         data = json.load(fh)
 
-    if "files" not in data or not isinstance(data.get("files"), dict):
+    if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
         raise ValueError(
             "coverage.json is malformed — missing or non-dict top-level 'files' key"
         )
@@ -123,10 +123,12 @@ def check_per_file(
             num = summary.get("num_branches")
             covered = summary.get("covered_branches")
             if isinstance(num, (int, float)) and num == 0:
-                if isinstance(covered, (int, float)) and covered != 0:
+                if covered is not None and not (
+                    isinstance(covered, (int, float)) and covered == 0
+                ):
                     raise ValueError(
                         f"coverage.json malformed entry for '{filename}': "
-                        f"'num_branches' is 0 but 'covered_branches' is {covered}"
+                        f"'num_branches' is 0 but 'covered_branches' is {covered!r}"
                     )
                 pct = 100.0
             elif (

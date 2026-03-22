@@ -524,6 +524,62 @@ class CheckPerFileMalformedTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_zero_branches_with_string_covered_raises(self) -> None:
+        """Raises ValueError when num_branches is 0 but covered_branches is non-numeric."""
+        data = {"files": {"a.py": {"summary": {
+            "num_branches": 0,
+            "covered_branches": "none",
+        }}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_json_root_is_null_raises_value_error(self) -> None:
+        """Raises ValueError when coverage.json root is null."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write("null")
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_json_root_is_number_raises_value_error(self) -> None:
+        """Raises ValueError when coverage.json root is a number."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write("42")
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_json_root_is_boolean_raises_value_error(self) -> None:
+        """Raises ValueError when coverage.json root is a boolean."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write("true")
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
 
 # ===================================================================
 # main — integration tests
