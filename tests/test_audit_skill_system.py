@@ -1229,8 +1229,9 @@ class AuditAdditionalBranchTests(unittest.TestCase):
         # deep.txt used by 1 capability → WARN
         deep_warns = [e for e in errors if "deep.txt" in e and "WARN" in e]
         self.assertGreaterEqual(len(deep_warns), 1)
-        # Check that the warning reflects a single user count
-        self.assertIn("1", deep_warns[0])
+        # Check that the warning reflects a single user count (trailing space
+        # prevents false matches on "10", "12", etc.)
+        self.assertIn("used by 1 ", deep_warns[0])
 
 
 # ===================================================================
