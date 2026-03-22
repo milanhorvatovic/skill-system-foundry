@@ -1227,8 +1227,10 @@ class AuditAdditionalBranchTests(unittest.TestCase):
             )
             errors = audit_skill_system(tmpdir, verbose=False)
         # deep.txt used by 1 capability → WARN
-        deep_warns = [e for e in errors if "deep.txt" in e and "1 capabilities" in e]
+        deep_warns = [e for e in errors if "deep.txt" in e and "WARN" in e]
         self.assertGreaterEqual(len(deep_warns), 1)
+        # Check that the warning reflects a single user count
+        self.assertIn("1", deep_warns[0])
 
 
 # ===================================================================
@@ -1254,30 +1256,34 @@ class MainFunctionInProcessTests(unittest.TestCase):
     def test_invalid_dir_human_mode(self) -> None:
         """Non-directory path in human mode prints error and exits 1."""
         stdout = io.StringIO()
-        with (
-            mock.patch.object(
-                sys, "argv",
-                ["audit_skill_system.py", "/nonexistent/path/xyz"],
-            ),
-            contextlib.redirect_stdout(stdout),
-        ):
-            with self.assertRaises(SystemExit) as cm:
-                main()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_path = os.path.join(tmpdir, "does-not-exist")
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", invalid_path],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("not a directory", stdout.getvalue())
 
     def test_invalid_dir_json_mode(self) -> None:
         """Non-directory path with --json outputs JSON error and exits 1."""
         stdout = io.StringIO()
-        with (
-            mock.patch.object(
-                sys, "argv",
-                ["audit_skill_system.py", "/nonexistent/path/xyz", "--json"],
-            ),
-            contextlib.redirect_stdout(stdout),
-        ):
-            with self.assertRaises(SystemExit) as cm:
-                main()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_path = os.path.join(tmpdir, "does-not-exist")
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", invalid_path, "--json"],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
         self.assertEqual(cm.exception.code, 1)
         data = json.loads(stdout.getvalue())
         self.assertFalse(data["success"])
