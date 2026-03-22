@@ -2,9 +2,9 @@
 
 Covers load_threshold (valid config, decimal threshold, missing file,
 missing section, missing key, non-numeric value), check_per_file (all
-above, some below, all below, zero branches, empty files, missing key),
-and main integration (all pass, some fail, threshold override, missing
-coverage JSON).
+above, some below, all below, zero branches, branchless without key,
+empty files, missing key), and main integration (all pass, some fail,
+threshold override, threshold range validation, missing coverage JSON).
 """
 
 import json
@@ -47,20 +47,28 @@ def _coverage_json(
     files: dict[str, float],
     *,
     use_num_branches_zero: set[str] | None = None,
+    omit_percent_branches: set[str] | None = None,
 ) -> str:
     """Build a minimal coverage.json string.
 
     *files* maps filenames to ``percent_branches_covered`` values.
     Files listed in *use_num_branches_zero* get ``num_branches: 0``.
+    Files listed in *omit_percent_branches* get ``num_branches: 0``
+    and no ``percent_branches_covered`` key — mimicking the output
+    some coverage versions produce for branchless files.
     """
     use_zero = use_num_branches_zero or set()
+    omit_pct = omit_percent_branches or set()
     file_data: dict[str, object] = {}
     for name, pct in files.items():
-        summary: dict[str, object] = {"percent_branches_covered": pct}
-        if name in use_zero:
-            summary["num_branches"] = 0
+        if name in omit_pct:
+            summary: dict[str, object] = {"num_branches": 0}
         else:
-            summary["num_branches"] = 10
+            summary = {"percent_branches_covered": pct}
+            if name in use_zero:
+                summary["num_branches"] = 0
+            else:
+                summary["num_branches"] = 10
         file_data[name] = {"summary": summary}
     return json.dumps({"files": file_data})
 
@@ -210,6 +218,28 @@ class CheckPerFilePassTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_branchless_file_missing_percent_key_passes(self) -> None:
+        """A branchless file without percent_branches_covered passes as 100%."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(
+                _coverage_json(
+                    {"init.py": 0.0, "real.py": 80.0},
+                    omit_percent_branches={"init.py"},
+                )
+            )
+            path = fh.name
+        try:
+            failures, passes = check_per_file(path, 70.0)
+            self.assertEqual(failures, [])
+            self.assertEqual(len(passes), 2)
+            pass_dict = dict(passes)
+            self.assertAlmostEqual(pass_dict["init.py"], 100.0)
+            self.assertAlmostEqual(pass_dict["real.py"], 80.0)
+        finally:
+            os.unlink(path)
+
     def test_empty_files_dict(self) -> None:
         """Returns empty lists when the files dict is empty."""
         with tempfile.NamedTemporaryFile(
@@ -279,6 +309,20 @@ class CheckPerFileMalformedTests(unittest.TestCase):
     def test_missing_percent_branches_covered_key(self) -> None:
         """Raises ValueError when percent_branches_covered is missing."""
         data = {"files": {"a.py": {"summary": {"percent_covered": 80.0}}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_missing_percent_with_nonzero_branches_raises(self) -> None:
+        """Raises ValueError when percent_branches_covered is missing but num_branches > 0."""
+        data = {"files": {"a.py": {"summary": {"num_branches": 5}}}}
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as fh:
@@ -393,6 +437,70 @@ class MainThresholdOverrideTests(unittest.TestCase):
             result = main([
                 "--coverage-json", json_path,
                 "--threshold", "40",
+            ])
+            self.assertEqual(result, 0)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+
+class MainThresholdRangeTests(unittest.TestCase):
+    """Integration tests for main with out-of-range thresholds."""
+
+    def test_negative_threshold_returns_one(self) -> None:
+        """Returns 1 when --threshold is negative."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "-1",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_threshold_above_100_returns_one(self) -> None:
+        """Returns 1 when --threshold exceeds 100."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "101",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_threshold_zero_is_valid(self) -> None:
+        """Returns 0 when --threshold is 0 (boundary, all files pass)."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 0.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "0",
+            ])
+            self.assertEqual(result, 0)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_threshold_100_is_valid(self) -> None:
+        """Returns 0 when --threshold is 100 and all files are at 100%."""
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 100.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "100",
             ])
             self.assertEqual(result, 0)
         finally:

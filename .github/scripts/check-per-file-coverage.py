@@ -21,7 +21,7 @@ def load_threshold(coveragerc_path: str) -> float:
     """
     if not os.path.isfile(coveragerc_path):
         print(
-            "Error: .coveragerc not found at: %s" % coveragerc_path,
+            f"Error: .coveragerc not found at: {coveragerc_path}",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -31,15 +31,14 @@ def load_threshold(coveragerc_path: str) -> float:
         files_read = parser.read(coveragerc_path, encoding="utf-8")
     except (OSError, configparser.Error) as exc:
         print(
-            "Error: failed to read/parse .coveragerc at %s: %s"
-            % (coveragerc_path, exc),
+            f"Error: failed to read/parse .coveragerc at {coveragerc_path}: {exc}",
             file=sys.stderr,
         )
         raise SystemExit(1)
 
     if not files_read:
         print(
-            "Error: failed to read .coveragerc at: %s" % coveragerc_path,
+            f"Error: failed to read .coveragerc at: {coveragerc_path}",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -63,7 +62,7 @@ def load_threshold(coveragerc_path: str) -> float:
         return float(raw)
     except ValueError:
         print(
-            "Error: .coveragerc fail_under is not a valid number: %s" % raw,
+            f"Error: .coveragerc fail_under is not a valid number: {raw}",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -77,6 +76,10 @@ def check_per_file(
     *json_path* is the path to a ``coverage.json`` file produced by
     ``python -m coverage json``.  Each file's
     ``summary.percent_branches_covered`` is compared against *threshold*.
+
+    Files with ``num_branches == 0`` (branchless) are treated as 100%
+    covered even when ``percent_branches_covered`` is absent from the
+    summary — some versions of ``coverage`` omit the key for such files.
 
     Raises ``OSError`` when the file cannot be read, ``json.JSONDecodeError``
     when the content is not valid JSON, and ``ValueError`` when the data
@@ -97,19 +100,32 @@ def check_per_file(
         info = data["files"][filename]
         if not isinstance(info, dict) or "summary" not in info:
             raise ValueError(
-                "coverage.json malformed entry for '%s': missing 'summary'" % filename
+                f"coverage.json malformed entry for '{filename}': missing 'summary'"
             )
         summary = info["summary"]
-        if not isinstance(summary, dict) or "percent_branches_covered" not in summary:
+        if not isinstance(summary, dict):
             raise ValueError(
-                "coverage.json malformed entry for '%s': missing "
-                "'summary.percent_branches_covered'" % filename
+                f"coverage.json malformed entry for '{filename}': "
+                f"'summary' is not a dict"
             )
+
+        if "percent_branches_covered" not in summary:
+            # Some coverage versions omit percent_branches_covered for
+            # branchless files.  Treat them as 100% when num_branches is
+            # explicitly 0; otherwise the entry is genuinely malformed.
+            if summary.get("num_branches") == 0:
+                passes.append((filename, 100.0))
+                continue
+            raise ValueError(
+                f"coverage.json malformed entry for '{filename}': missing "
+                f"'summary.percent_branches_covered'"
+            )
+
         pct = summary["percent_branches_covered"]
         if not isinstance(pct, (int, float)):
             raise ValueError(
-                "coverage.json malformed entry for '%s': "
-                "'percent_branches_covered' is not a number" % filename
+                f"coverage.json malformed entry for '{filename}': "
+                f"'percent_branches_covered' is not a number"
             )
         if pct < threshold:
             failures.append((filename, pct))
@@ -147,10 +163,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         threshold = load_threshold(args.coveragerc)
 
+    # Validate threshold range
+    if not (0.0 <= threshold <= 100.0):
+        print(
+            f"Error: coverage threshold must be between 0 and 100 (inclusive); got {threshold:.2f}",
+            file=sys.stderr,
+        )
+        return 1
+
     # Load and validate coverage data via check_per_file
     if not os.path.isfile(args.coverage_json):
         print(
-            "Error: coverage.json not found at: %s" % args.coverage_json,
+            f"Error: coverage.json not found at: {args.coverage_json}",
             file=sys.stderr,
         )
         return 1
@@ -159,35 +183,33 @@ def main(argv: list[str] | None = None) -> int:
         failures, passes = check_per_file(args.coverage_json, threshold)
     except (OSError, json.JSONDecodeError) as exc:
         print(
-            "Error: failed to read/parse coverage.json at %s: %s"
-            % (args.coverage_json, exc),
+            f"Error: failed to read/parse coverage.json at {args.coverage_json}: {exc}",
             file=sys.stderr,
         )
         return 1
     except ValueError as exc:
-        print("Error: %s" % exc, file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     # Print results
-    print("Per-file branch coverage (threshold: %.1f%%)" % threshold)
+    print(f"Per-file branch coverage (threshold: {threshold:.1f}%)")
     print("-" * 60)
 
     for filename, pct in passes:
-        print("  PASS  %6.1f%%  %s" % (pct, filename))
+        print(f"  PASS  {pct:6.1f}%  {filename}")
 
     for filename, pct in failures:
-        print("  FAIL  %6.1f%%  %s" % (pct, filename))
+        print(f"  FAIL  {pct:6.1f}%  {filename}")
 
     print("-" * 60)
 
     if failures:
         print(
-            "%d file(s) below %.1f%% branch coverage threshold"
-            % (len(failures), threshold)
+            f"{len(failures)} file(s) below {threshold:.1f}% branch coverage threshold"
         )
         return 1
 
-    print("All %d file(s) meet the %.1f%% threshold" % (len(passes), threshold))
+    print(f"All {len(passes)} file(s) meet the {threshold:.1f}% threshold")
     return 0
 
 
