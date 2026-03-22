@@ -2016,8 +2016,11 @@ class ScanReferencesCommonpathValueErrorTests(unittest.TestCase):
                 result = scan_references(skill_a, system_root)
 
             # ValueError means lexical_within_skill stays False, so the
-            # reference is treated as external.
-            self.assertIsInstance(result["errors"], list)
+            # symlink reference is treated as external and recorded in
+            # external_files (by its resolved absolute path within alpha/).
+            self.assertIn(
+                os.path.abspath(link_path), result["external_files"],
+            )
 
     def test_commonpath_valueerror_in_under_skills_root(self) -> None:
         """ValueError from commonpath at line 792 (under_skills_root) is handled."""
@@ -2065,7 +2068,20 @@ class ScanReferencesCommonpathValueErrorTests(unittest.TestCase):
 
             # ValueError means under_skills_root = False, so the
             # cross-skill symlink check is bypassed.
+            # Ensure we don't report a cross-skill symlink error in this case.
             self.assertIsInstance(result["errors"], list)
+            self.assertFalse(
+                any("Symlinked reference" in str(err) for err in result["errors"]),
+                "cross-skill symlink error should be bypassed when under_skills_root "
+                "check raises ValueError",
+            )
+            # And the symlinked file should not be treated as an external file.
+            self.assertIn("external_files", result)
+            self.assertFalse(
+                result["external_files"],
+                "symlink under skills root should not be classified as external "
+                "when under_skills_root check fails",
+            )
 
     def test_commonpath_valueerror_in_already_inlined_check(self) -> None:
         """ValueError from commonpath at line 692 (already-inlined lexical) is handled."""
@@ -2165,31 +2181,34 @@ class ScanReferencesRelpathValueErrorTests(unittest.TestCase):
     def test_no_system_root_uses_abs_skill_dir(self) -> None:
         """When system_root is None, primary_dir falls back to abs_skill_dir."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            coordinator = os.path.join(tmpdir, "skills", "coordinator")
-            testing = os.path.join(tmpdir, "skills", "testing")
+            # Place skills directly under tmpdir without a skills/ parent
+            # directory or manifest.yaml, so infer_system_root() returns None
+            # and the primary_dir fallback at line 918-919 is exercised.
+            coordinator = os.path.join(tmpdir, "coordinator")
+            testing = os.path.join(tmpdir, "testing")
             write_text(os.path.join(coordinator, "SKILL.md"), "---\nname: coordinator\n---\n")
             write_text(os.path.join(testing, "SKILL.md"), "---\nname: testing\n---\n")
 
-            role_file = os.path.join(tmpdir, "roles", "qa-role.md")
+            role_file = os.path.join(tmpdir, "qa-role.md")
             write_text(
                 role_file,
-                "# QA Role\nSee [skill](../skills/testing/SKILL.md)\n",
+                "# QA Role\nSee [skill](./testing/SKILL.md)\n",
             )
             write_text(
                 os.path.join(coordinator, "doc.md"),
-                "See [qa role](../../roles/qa-role.md)\n",
+                "See [qa role](../qa-role.md)\n",
             )
 
-            # system_root=None triggers inference; with manifest present
-            # it finds the root, but we explicitly pass None and provide
-            # no markers so inference returns None → line 918-919
+            # system_root=None triggers inference; with no manifest or
+            # skills/ directory markers, infer_system_root() returns None
+            # so primary_dir falls back to abs_skill_dir (line 918-919).
             result = scan_references(
                 coordinator, system_root=None,
                 inline_orchestrated_skills=True,
             )
 
-            # Without system root, cross-skill refs produce errors
-            self.assertIsInstance(result["errors"], list)
+            # Without system root, cross-skill refs produce at least one error
+            self.assertGreater(len(result["errors"]), 0)
 
 
 # ===================================================================
@@ -2247,9 +2266,9 @@ class ScanReferencesAlreadyCollectedAliasDedupTests(unittest.TestCase):
                 inline_orchestrated_skills=True,
             )
 
-            # The testing skill collected once, aliases recorded
+            # The testing skill collected once, both aliases recorded
             self.assertEqual(len(result["inlined_skills"]), 1)
-            self.assertGreaterEqual(len(result["inlined_skill_aliases"]), 1)
+            self.assertEqual(len(result["inlined_skill_aliases"]), 2)
 
 
 # ===================================================================
@@ -2261,7 +2280,7 @@ class ScanReferencesDisplayPathTests(unittest.TestCase):
     """Tests for the _rel display path fallback (line 1084)."""
 
     def test_display_path_outside_both_skill_and_system(self) -> None:
-        """A file outside both skill and system root uses its absolute path."""
+        """A reference escaping system root shows doc.md display path in error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")
             skill_dir = os.path.join(system_root, "skills", "demo")
@@ -2279,9 +2298,15 @@ class ScanReferencesDisplayPathTests(unittest.TestCase):
 
             result = scan_references(skill_dir, system_root)
 
-        # Should produce an escapes error with the path displayed
+        # Should produce an escapes error with the referencing file's
+        # display path (relative to skill dir since doc.md is inside the skill)
         fails = [e for e in result["errors"] if "escapes" in e.lower()]
         self.assertGreaterEqual(len(fails), 1)
+        # The _rel() display path for doc.md is relative to skill_dir
+        self.assertTrue(
+            any("doc.md" in e for e in fails),
+            f"Expected 'doc.md' in error messages, got: {fails}",
+        )
 
     def test_display_path_no_system_root_outside_skill(self) -> None:
         """With system_root=None, a file outside the skill uses absolute path."""
