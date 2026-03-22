@@ -4,6 +4,9 @@ Covers check_upward_references, audit_skill_system, and the main()
 CLI entry point.
 """
 
+import contextlib
+import io
+import json
 import os
 import subprocess
 import sys
@@ -27,6 +30,7 @@ from audit_skill_system import (
     check_upward_references,
     check_role_composition,
     audit_skill_system,
+    main,
 )
 from lib.constants import (
     LEVEL_FAIL,
@@ -105,6 +109,40 @@ def _create_system_with_manifest(
     """Create a valid skill system with a custom manifest.yaml."""
     _create_valid_system(system_root)
     write_text(os.path.join(system_root, "manifest.yaml"), manifest_content)
+
+
+def _create_full_valid_system(system_root: str) -> None:
+    """Create a complete valid skill system with all components.
+
+    Includes a skill with a capability, a role composing 2+ skills,
+    and a manifest — all checks pass with zero errors.
+    """
+    # Skill with capability
+    skill_dir = os.path.join(system_root, "skills", "demo-skill")
+    write_skill_md(skill_dir)
+    cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+    _write_capability_md(cap_dir, body="# My Capability\n")
+
+    # Second skill for role composition
+    skill2_dir = os.path.join(system_root, "skills", "other-skill")
+    write_skill_md(skill2_dir, name="other-skill", description="Another skill.")
+
+    # Role composing 2 skills
+    role_path = os.path.join(system_root, "roles", "test", "reviewer.md")
+    _write_role_md(
+        role_path,
+        skills_used_body=(
+            "| skills/demo-skill/SKILL.md | Demo skill |\n"
+            "| skills/other-skill/SKILL.md | Other skill |\n"
+        ),
+    )
+
+    # Manifest
+    write_text(
+        os.path.join(system_root, "manifest.yaml"),
+        "skills:\n  demo-skill:\n    capabilities:\n      - my-cap\n"
+        "  other-skill:\n",
+    )
 
 
 # ===================================================================
@@ -1075,6 +1113,315 @@ class MainCLITests(unittest.TestCase):
             )
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
         self.assertIn("orchestration", proc.stdout.lower())
+
+
+# ===================================================================
+# audit_skill_system — Verbose branch coverage
+# ===================================================================
+
+
+class AuditVerboseBranchTests(unittest.TestCase):
+    """Tests for verbose=True branches in audit_skill_system()."""
+
+    def test_verbose_valid_system_prints_all_sections_and_passes(self) -> None:
+        """A fully valid system with verbose=True prints all section headers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_full_valid_system(tmpdir)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                errors = audit_skill_system(tmpdir, verbose=True)
+        output = stdout.getvalue()
+        # All section headers must appear
+        for section in [
+            "Spec Compliance",
+            "Capability Isolation",
+            "Dependency Direction",
+            "Nesting Depth",
+            "Shared Resources",
+            "Capability Entry Naming",
+            "Manifest",
+        ]:
+            self.assertIn(section, output)
+        # Checkmark pass lines
+        self.assertIn("\u2713", output)
+        # Found counts
+        self.assertIn("Found:", output)
+        # No FAIL errors
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    def test_verbose_no_skills_dir_prints_manifest_skipped(self) -> None:
+        """With no skills/ directory, verbose manifest section prints skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                audit_skill_system(tmpdir, verbose=True)
+        self.assertIn("skipped", stdout.getvalue())
+
+    def test_verbose_manifest_no_skills_section(self) -> None:
+        """A manifest without a skills key prints 'no skills section'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_valid_system(tmpdir)
+            write_text(
+                os.path.join(tmpdir, "manifest.yaml"),
+                "name: test-system\n",
+            )
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                audit_skill_system(tmpdir, verbose=True)
+        self.assertIn("no skills section", stdout.getvalue())
+
+    def test_verbose_manifest_content_validated(self) -> None:
+        """A valid manifest with skills section prints 'content validated'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_full_valid_system(tmpdir)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                audit_skill_system(tmpdir, verbose=True)
+        self.assertIn("content validated", stdout.getvalue())
+
+
+# ===================================================================
+# audit_skill_system — Additional branch coverage
+# ===================================================================
+
+
+class AuditAdditionalBranchTests(unittest.TestCase):
+    """Tests for specific untested branches in audit_skill_system()."""
+
+    def test_non_directory_in_capabilities_is_skipped(self) -> None:
+        """A file (not directory) inside capabilities/ is skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            cap_base = os.path.join(skill_dir, "capabilities")
+            os.makedirs(cap_base, exist_ok=True)
+            # Create a file (not a directory) inside capabilities/
+            write_text(os.path.join(cap_base, "stray-file.txt"), "not a cap")
+            # Also a valid capability so the loop runs
+            cap_dir = os.path.join(cap_base, "my-cap")
+            _write_capability_md(cap_dir, body="# My Capability\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        # No error about the stray file — it is silently skipped
+        stray_errors = [e for e in errors if "stray-file" in e]
+        self.assertEqual(stray_errors, [])
+
+    def test_shared_resource_in_nested_subdirectory(self) -> None:
+        """Shared resources in nested subdirectories are walked and checked."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            # Nested shared directory
+            nested_shared = os.path.join(skill_dir, "shared", "sub")
+            write_text(
+                os.path.join(nested_shared, "deep.txt"), "deep data",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir,
+                body="# My Capability\n\nUses shared/sub/deep.txt here.\n",
+            )
+            cap2_dir = os.path.join(skill_dir, "capabilities", "other")
+            _write_capability_md(
+                cap2_dir, body="# Other\n\nNo shared refs.\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        # deep.txt used by 1 capability → WARN
+        deep_warns = [e for e in errors if "deep.txt" in e and "WARN" in e]
+        self.assertGreaterEqual(len(deep_warns), 1)
+        # Check that the warning reflects a single user count (trailing space
+        # prevents false matches on "10", "12", etc.)
+        self.assertIn("used by 1 ", deep_warns[0])
+
+
+# ===================================================================
+# main() — In-process tests
+# ===================================================================
+
+
+class MainFunctionInProcessTests(unittest.TestCase):
+    """In-process tests for main() to contribute to coverage."""
+
+    def test_no_args_prints_docstring_and_exits_1(self) -> None:
+        """No arguments prints the module docstring and exits 1."""
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", ["audit_skill_system.py"]),
+            contextlib.redirect_stdout(stdout),
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                main()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("Usage:", stdout.getvalue())
+
+    def test_invalid_dir_human_mode(self) -> None:
+        """Non-directory path in human mode prints error and exits 1."""
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_path = os.path.join(tmpdir, "does-not-exist")
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", invalid_path],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("not a directory", stdout.getvalue())
+
+    def test_invalid_dir_json_mode(self) -> None:
+        """Non-directory path with --json outputs JSON error and exits 1."""
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_path = os.path.join(tmpdir, "does-not-exist")
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", invalid_path, "--json"],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+        self.assertEqual(cm.exception.code, 1)
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("not a directory", data["error"])
+
+    def test_json_aware_error_non_json_mode(self) -> None:
+        """Argparse error without --json prints to stderr and exits 1."""
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                sys, "argv",
+                ["audit_skill_system.py", "/some/path", "--bogus"],
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                main()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("error:", stderr.getvalue())
+
+    def test_json_aware_error_json_mode(self) -> None:
+        """Argparse error with --json outputs JSON error and exits 1."""
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(
+                sys, "argv",
+                ["audit_skill_system.py", "--json", "--bogus"],
+            ),
+            contextlib.redirect_stdout(stdout),
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                main()
+        self.assertEqual(cm.exception.code, 1)
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["success"])
+        self.assertIn("error", data)
+
+    def test_valid_system_json_output(self) -> None:
+        """Valid system with --json outputs structured JSON and exits 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_full_valid_system(tmpdir)
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", tmpdir, "--json"],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+            self.assertEqual(cm.exception.code, 0)
+            data = json.loads(stdout.getvalue())
+            self.assertTrue(data["success"])
+            self.assertIn("counts", data)
+            self.assertIn("summary", data)
+            self.assertIn("errors", data)
+
+    def test_json_output_with_failures_exits_1(self) -> None:
+        """System with FAIL errors and --json outputs success=False, exits 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "# Demo Skill\n\nNo frontmatter.\n",
+            )
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", tmpdir, "--json"],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+            self.assertEqual(cm.exception.code, 1)
+            data = json.loads(stdout.getvalue())
+            self.assertFalse(data["success"])
+
+    def test_valid_system_human_with_errors_prints_summary(self) -> None:
+        """System with warnings prints 'Issues found' and summary."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_valid_system(tmpdir)
+            # No manifest → WARN
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", tmpdir],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+            self.assertEqual(cm.exception.code, 0)
+            output = stdout.getvalue()
+            self.assertIn("Issues found", output)
+
+    def test_valid_system_no_errors_prints_passed(self) -> None:
+        """A clean system prints 'passed' and exits 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_full_valid_system(tmpdir)
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    ["audit_skill_system.py", tmpdir],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+            self.assertEqual(cm.exception.code, 0)
+            self.assertIn("passed", stdout.getvalue().lower())
+
+    def test_verbose_and_orchestration_banners(self) -> None:
+        """Verbose + orchestration flags print banners."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_full_valid_system(tmpdir)
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "audit_skill_system.py", tmpdir,
+                        "--verbose", "--allow-orchestration",
+                    ],
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    main()
+            self.assertEqual(cm.exception.code, 0)
+            output = stdout.getvalue()
+            self.assertIn("Orchestration mode", output)
+            self.assertIn("===", output)
 
 
 if __name__ == "__main__":
