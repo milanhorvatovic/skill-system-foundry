@@ -31,14 +31,23 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
+        id: run-tests
         run: python -m coverage run -m unittest discover -s tests -p "test_*.py" -v
         env:
           PYTHONUTF8: "1"
 
+      - name: Generate coverage JSON
+        run: python -m coverage json
+
+      - name: Check per-file coverage
+        run: python .github/scripts/check-per-file-coverage.py
+
       - name: Generate coverage HTML report
+        if: always() && steps.run-tests.outcome != 'skipped'
         run: python -m coverage html
 
       - name: Upload coverage report
+        if: always() && steps.run-tests.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
         with:
           name: coverage-report-${{ matrix.os }}
