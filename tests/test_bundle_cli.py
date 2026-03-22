@@ -1,3 +1,4 @@
+import collections.abc
 import contextlib
 import io
 import json
@@ -532,6 +533,24 @@ def _make_fake_stats(
         "rewrite_count": rewrite_count,
         "inlined_skill_count": inlined_skill_count,
     }
+
+
+def _setup_bundling_env(tmpdir: str) -> tuple[str, str, str]:
+    """Create a minimal bundling env. Returns (system_root, skill_dir, output_path)."""
+    write_text(os.path.join(tmpdir, "manifest.yaml"), "name: demo\n")
+    skill_dir = os.path.join(tmpdir, "demo-skill")
+    write_skill_md(skill_dir)
+    output_path = os.path.join(tmpdir, "out.zip")
+    return tmpdir, skill_dir, output_path
+
+
+def _create_zip_side_effect() -> collections.abc.Callable[[str, str], None]:
+    """Return a side_effect for create_zip that writes a dummy zip."""
+    def _side_effect(bundle_dir: str, out_path: str) -> None:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with zipfile.ZipFile(out_path, "w") as zf:
+            zf.writestr("demo-skill/SKILL.md", "# demo\n")
+    return _side_effect
 
 
 # ===================================================================
@@ -1309,27 +1328,9 @@ class GenericExceptionJsonTests(unittest.TestCase):
 class JsonOutputTests(unittest.TestCase):
     """Tests for JSON output paths (success, warnings, failures)."""
 
-    def _setup_bundling_env(self, tmpdir: str) -> tuple[str, str, str]:
-        """Create a minimal bundling env. Returns (system_root, skill_dir, output_path)."""
-        write_text(os.path.join(tmpdir, "manifest.yaml"), "name: demo\n")
-        skill_dir = os.path.join(tmpdir, "demo-skill")
-        write_skill_md(skill_dir)
-        output_path = os.path.join(tmpdir, "out.zip")
-        return tmpdir, skill_dir, output_path
-
-    def _create_zip_side_effect(
-        self, output_path: str,
-    ) -> "callable":
-        """Return a side_effect for create_zip that writes a dummy zip."""
-        def _side_effect(bundle_dir: str, out_path: str) -> None:
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            with zipfile.ZipFile(out_path, "w") as zf:
-                zf.writestr("demo-skill/SKILL.md", "# demo\n")
-        return _side_effect
-
     def test_json_success_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats()
 
@@ -1353,7 +1354,7 @@ class JsonOutputTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(output_path),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1373,7 +1374,7 @@ class JsonOutputTests(unittest.TestCase):
 
     def test_json_success_with_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats()
             warn_msg = f"{LEVEL_WARN}: Some concern"
@@ -1401,7 +1402,7 @@ class JsonOutputTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(output_path),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1423,7 +1424,7 @@ class JsonOutputTests(unittest.TestCase):
 
     def test_json_prevalidation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             errors = [f"{LEVEL_FAIL}: Something is wrong"]
 
             stdout = io.StringIO()
@@ -1454,7 +1455,7 @@ class JsonOutputTests(unittest.TestCase):
 
     def test_json_postvalidation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats()
             post_errors = [f"{LEVEL_FAIL}: Post-validation issue"]
@@ -1489,7 +1490,7 @@ class JsonOutputTests(unittest.TestCase):
 
     def test_json_missing_scan_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
 
             stdout = io.StringIO()
             stderr = io.StringIO()
@@ -1525,25 +1526,9 @@ class JsonOutputTests(unittest.TestCase):
 class HumanReadableSummaryTests(unittest.TestCase):
     """Tests for human-readable success summary output."""
 
-    def _setup_bundling_env(self, tmpdir: str) -> tuple[str, str, str]:
-        """Create a minimal bundling env. Returns (system_root, skill_dir, output_path)."""
-        write_text(os.path.join(tmpdir, "manifest.yaml"), "name: demo\n")
-        skill_dir = os.path.join(tmpdir, "demo-skill")
-        write_skill_md(skill_dir)
-        output_path = os.path.join(tmpdir, "out.zip")
-        return tmpdir, skill_dir, output_path
-
-    def _create_zip_side_effect(self) -> "callable":
-        """Return a side_effect for create_zip that writes a dummy zip."""
-        def _side_effect(bundle_dir: str, out_path: str) -> None:
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            with zipfile.ZipFile(out_path, "w") as zf:
-                zf.writestr("demo-skill/SKILL.md", "# demo\n")
-        return _side_effect
-
     def test_success_summary_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats(file_count=5, total_size=2048)
 
@@ -1566,7 +1551,7 @@ class HumanReadableSummaryTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1580,7 +1565,7 @@ class HumanReadableSummaryTests(unittest.TestCase):
 
     def test_success_summary_with_external_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats(external_count=3)
 
@@ -1603,7 +1588,7 @@ class HumanReadableSummaryTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1614,7 +1599,7 @@ class HumanReadableSummaryTests(unittest.TestCase):
 
     def test_success_summary_with_inlined_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats(inlined_skill_count=2)
 
@@ -1637,7 +1622,7 @@ class HumanReadableSummaryTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1654,25 +1639,9 @@ class HumanReadableSummaryTests(unittest.TestCase):
 class HumanModePhaseOutputTests(unittest.TestCase):
     """Tests for human-readable phase output lines."""
 
-    def _setup_bundling_env(self, tmpdir: str) -> tuple[str, str, str]:
-        """Create a minimal bundling env. Returns (system_root, skill_dir, output_path)."""
-        write_text(os.path.join(tmpdir, "manifest.yaml"), "name: demo\n")
-        skill_dir = os.path.join(tmpdir, "demo-skill")
-        write_skill_md(skill_dir)
-        output_path = os.path.join(tmpdir, "out.zip")
-        return tmpdir, skill_dir, output_path
-
-    def _create_zip_side_effect(self) -> "callable":
-        """Return a side_effect for create_zip that writes a dummy zip."""
-        def _side_effect(bundle_dir: str, out_path: str) -> None:
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-            with zipfile.ZipFile(out_path, "w") as zf:
-                zf.writestr("demo-skill/SKILL.md", "# demo\n")
-        return _side_effect
-
     def test_human_mode_phase_headers_printed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats()
 
@@ -1695,7 +1664,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1710,7 +1679,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
 
     def test_human_mode_prevalidation_notices(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats()
             warn_msg = f"{LEVEL_WARN}: Watch out"
@@ -1737,7 +1706,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1750,7 +1719,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
 
     def test_human_mode_rewrite_count_printed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats(rewrite_count=3)
 
@@ -1773,7 +1742,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
                 mock.patch("bundle.postvalidate", return_value=[]),
                 mock.patch(
                     "bundle.create_zip",
-                    side_effect=self._create_zip_side_effect(),
+                    side_effect=_create_zip_side_effect(),
                 ),
                 contextlib.redirect_stdout(stdout),
                 contextlib.redirect_stderr(stderr),
@@ -1785,7 +1754,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
     def test_human_mode_prevalidation_failure(self) -> None:
         """Human-readable pre-validation failure prints failure block."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             errors = [f"{LEVEL_FAIL}: Something broke"]
             warnings = [f"{LEVEL_WARN}: Also watch this"]
 
@@ -1817,7 +1786,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
     def test_human_mode_postvalidation_failure(self) -> None:
         """Human-readable post-validation failure prints failure block."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
             fake_scan = _make_fake_scan()
             fake_stats = _make_fake_stats()
             post_errors = [f"{LEVEL_FAIL}: Post issue"]
@@ -1852,7 +1821,7 @@ class HumanModePhaseOutputTests(unittest.TestCase):
     def test_human_mode_missing_scan_result(self) -> None:
         """Human-readable missing scan result prints error."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            system_root, skill_dir, output_path = self._setup_bundling_env(tmpdir)
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
 
             stdout = io.StringIO()
             stderr = io.StringIO()
