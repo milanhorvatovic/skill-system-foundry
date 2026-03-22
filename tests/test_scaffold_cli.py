@@ -1,7 +1,13 @@
 """CLI-level tests for scaffold.py.
 
-Tests run the scaffold script as a subprocess in a temporary directory,
-verifying filesystem output, exit codes, and stdout messages.
+Tests are organised in two styles:
+
+- **Subprocess tests** run the scaffold script as a child process in a
+  temporary directory, verifying filesystem output, exit codes, and stdout
+  messages.
+- **In-process tests** call ``main()`` and individual helper functions
+  directly (with ``sys.argv`` patching where needed) so that coverage can
+  observe the execution paths without subprocess overhead.
 """
 
 import io
@@ -1801,14 +1807,17 @@ class ScaffoldRoleHumanOutputTests(unittest.TestCase):
             scaffold_role("my-group", "first-role", root=tmpdir, json_output=True)
             roles_readme = os.path.join(tmpdir, DIR_ROLES, "README.md")
             group_readme = os.path.join(tmpdir, DIR_ROLES, "my-group", "README.md")
-            # Get modification times after first role
-            roles_mtime = os.path.getmtime(roles_readme)
-            group_mtime = os.path.getmtime(group_readme)
-            # Create a second role
+            # Write a sentinel string into each README after the first scaffold
+            sentinel = "SENTINEL-DO-NOT-OVERWRITE"
+            for path in (roles_readme, group_readme):
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(sentinel)
+            # Create a second role in the same group
             scaffold_role("my-group", "second-role", root=tmpdir, json_output=True)
-            # Modification times should not change
-            self.assertEqual(os.path.getmtime(roles_readme), roles_mtime)
-            self.assertEqual(os.path.getmtime(group_readme), group_mtime)
+            # Sentinels must still be present — files were not recreated
+            for path in (roles_readme, group_readme):
+                with open(path, "r", encoding="utf-8") as f:
+                    self.assertIn(sentinel, f.read())
 
     def test_manifest_update_non_json_prints_messages(self) -> None:
         """update_manifest=True in non-JSON mode prints Created/Updated."""
