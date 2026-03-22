@@ -462,6 +462,40 @@ class CheckPerFileMalformedTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_percent_branches_covered_boolean_raises_value_error(self) -> None:
+        """Raises ValueError when percent_branches_covered is a boolean."""
+        data = {"files": {"a.py": {"summary": {
+            "num_branches": 5,
+            "percent_branches_covered": True,
+        }}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
+    def test_num_branches_boolean_raises_value_error(self) -> None:
+        """Raises ValueError when num_branches is a boolean."""
+        data = {"files": {"a.py": {"summary": {
+            "num_branches": False,
+            "covered_branches": 0,
+        }}}}
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            json.dump(data, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError):
+                check_per_file(path, 70.0)
+        finally:
+            os.unlink(path)
+
     def test_pct_above_100_raises_value_error(self) -> None:
         """Raises ValueError when percent_branches_covered exceeds 100."""
         data = {"files": {"a.py": {"summary": {"percent_branches_covered": 150.0}}}}

@@ -12,6 +12,11 @@ import os
 import sys
 
 
+def _is_number(value: object) -> bool:
+    """Return True when *value* is an int or float but not a bool."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def load_threshold(coveragerc_path: str) -> float:
     """Read ``fail_under`` from a ``.coveragerc`` file.
 
@@ -112,7 +117,7 @@ def check_per_file(
 
         if "percent_branches_covered" in summary:
             pct = summary["percent_branches_covered"]
-            if not isinstance(pct, (int, float)):
+            if not _is_number(pct):
                 raise ValueError(
                     f"coverage.json malformed entry for '{filename}': "
                     f"'percent_branches_covered' is not a number"
@@ -122,9 +127,9 @@ def check_per_file(
             # from raw counts when available.
             num = summary.get("num_branches")
             covered = summary.get("covered_branches")
-            if isinstance(num, (int, float)) and num == 0:
+            if _is_number(num) and num == 0:
                 if covered is not None and not (
-                    isinstance(covered, (int, float)) and covered == 0
+                    _is_number(covered) and covered == 0
                 ):
                     raise ValueError(
                         f"coverage.json malformed entry for '{filename}': "
@@ -132,9 +137,9 @@ def check_per_file(
                     )
                 pct = 100.0
             elif (
-                isinstance(num, (int, float))
+                _is_number(num)
                 and num > 0
-                and isinstance(covered, (int, float))
+                and _is_number(covered)
             ):
                 pct = (covered * 100.0) / num
             else:
