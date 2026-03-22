@@ -7,7 +7,7 @@ strings — no type coercion for booleans, numbers, or null.
 """
 
 
-def parse_yaml_subset(text):
+def parse_yaml_subset(text: str) -> dict:
     """Parse a limited YAML subset into a Python dict.
 
     Raises ValueError on structural parse failures.
@@ -32,7 +32,7 @@ def parse_yaml_subset(text):
     return result if isinstance(result, dict) else {}
 
 
-def _strip_inline_comment(text):
+def _strip_inline_comment(text: str) -> str:
     """Remove trailing ``# comment``, respecting quoted strings."""
     in_quote = False
     quote_char = None
@@ -47,7 +47,7 @@ def _strip_inline_comment(text):
     return text
 
 
-def _unquote(s):
+def _unquote(s: str) -> str:
     """Strip surrounding quotes from a scalar value."""
     s = s.strip()
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
@@ -55,7 +55,7 @@ def _unquote(s):
     return s
 
 
-def _parse_structure(lines, start, base_indent):
+def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int) -> tuple[dict | list, int]:
     """Dispatch to mapping or list parser based on the first token."""
     if start >= len(lines):
         return {}, start
@@ -64,7 +64,7 @@ def _parse_structure(lines, start, base_indent):
     return _parse_mapping(lines, start, base_indent)
 
 
-def _parse_mapping(lines, start, base_indent):
+def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int) -> tuple[dict, int]:
     """Parse ``key: value`` pairs at *base_indent*."""
     result = {}
     i = start
@@ -110,7 +110,7 @@ def _parse_mapping(lines, start, base_indent):
     return result, i
 
 
-def _parse_list(lines, start, base_indent):
+def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int) -> tuple[list, int]:
     """Parse ``- item`` entries at *base_indent*."""
     result = []
     i = start
