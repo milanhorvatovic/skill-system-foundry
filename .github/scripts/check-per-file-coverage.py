@@ -26,7 +26,7 @@ def load_threshold(coveragerc_path: str) -> float:
         )
         raise SystemExit(1)
 
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         files_read = parser.read(coveragerc_path, encoding="utf-8")
     except (OSError, configparser.Error) as exc:

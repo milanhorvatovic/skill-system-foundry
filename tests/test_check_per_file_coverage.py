@@ -150,6 +150,24 @@ class LoadThresholdErrorTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_percent_sign_in_value_raises_system_exit(self) -> None:
+        """Raises SystemExit when fail_under contains a percent sign.
+
+        ConfigParser's default interpolation treats ``%`` as a special
+        character.  With ``interpolation=None`` the value is read
+        literally as ``"70%"``, which fails float conversion.
+        """
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".coveragerc", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write("[report]\nfail_under = 70%\n")
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit):
+                load_threshold(path)
+        finally:
+            os.unlink(path)
+
 
 # ===================================================================
 # check_per_file — passing scenarios
