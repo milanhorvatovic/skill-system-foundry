@@ -616,6 +616,25 @@ class CheckPerFileMalformedTests(unittest.TestCase):
 
 
 # ===================================================================
+# main — argument parsing errors
+# ===================================================================
+
+
+class MainArgparseErrorTests(unittest.TestCase):
+    """Integration tests for main with invalid CLI arguments."""
+
+    def test_invalid_threshold_type_returns_two(self) -> None:
+        """Returns 2 when --threshold receives a non-numeric value."""
+        result = main(["--threshold", "abc"])
+        self.assertEqual(result, 2)
+
+    def test_unknown_flag_returns_two(self) -> None:
+        """Returns 2 when an unknown flag is passed."""
+        result = main(["--bogus"])
+        self.assertEqual(result, 2)
+
+
+# ===================================================================
 # main — integration tests
 # ===================================================================
 

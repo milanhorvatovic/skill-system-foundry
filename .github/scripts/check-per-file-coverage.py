@@ -161,7 +161,20 @@ def check_per_file(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point.  Returns 0 when all files pass, 1 otherwise."""
+    """Entry point.  Returns 0 when all files pass, 1 otherwise.
+
+    Returns 2 when the command-line arguments are invalid (mirrors
+    ``argparse``'s default exit code for usage errors).
+    """
+    try:
+        args = _parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+    return _run(args)
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """Parse command-line arguments.  Raises ``SystemExit`` on errors."""
     parser = argparse.ArgumentParser(
         description="Check per-file branch coverage against a minimum threshold."
     )
@@ -181,8 +194,11 @@ def main(argv: list[str] | None = None) -> int:
         default=".coveragerc",
         help="Path to .coveragerc (default: .coveragerc)",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
+
+def _run(args: argparse.Namespace) -> int:
+    """Execute the coverage check using parsed *args*.  Returns exit code."""
     # Determine threshold
     if args.threshold is not None:
         threshold = args.threshold
