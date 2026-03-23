@@ -148,7 +148,9 @@ module.exports = async function publish({ github, context, core, process }) {
   );
 
   for (const finding of findings) {
-    if (!finding.title || !finding.path || !Number.isInteger(finding.line) || finding.line <= 0 || !finding.body) {
+    if (!finding.title || !finding.path || !Number.isInteger(finding.line) || finding.line <= 0 || !finding.body ||
+        !Number.isInteger(finding.priority) || finding.priority < 0 || finding.priority > 3 ||
+        !Number.isFinite(finding.confidenceScore)) {
       skippedIncomplete += 1;
       continue;
     }

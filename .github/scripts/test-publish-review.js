@@ -75,6 +75,22 @@ const reviewOutput = {
       line: 999,
       body: 'This line was not changed.',
     },
+    {
+      title: 'NaN priority finding',
+      priority: 'not-a-number',
+      confidence_score: 0.9,
+      path: 'src/main.js',
+      line: 3,
+      body: 'Priority is not an integer.',
+    },
+    {
+      title: 'NaN confidence finding',
+      priority: 1,
+      confidence_score: 'bad',
+      path: 'src/main.js',
+      line: 4,
+      body: 'Confidence is not a number.',
+    },
   ],
   overall_correctness: 'patch is correct',
   overall_confidence_score: 0.92,
@@ -307,6 +323,17 @@ async function runTests() {
   test('finding body field is used in comment', () => {
     const p1Comment = capturedReview.comments.find(c => c.body.includes('P1 correctness issue'));
     assert.ok(p1Comment.body.includes('Off-by-one error in loop'), 'Expected body content');
+  });
+
+  // NaN priority/confidence findings are skipped as incomplete
+  test('NaN priority findings are skipped', () => {
+    const nanComment = capturedReview.comments.find(c => c.body.includes('NaN priority finding'));
+    assert.ok(!nanComment, 'Finding with NaN priority should be skipped');
+  });
+
+  test('NaN confidence findings are skipped', () => {
+    const nanComment = capturedReview.comments.find(c => c.body.includes('NaN confidence finding'));
+    assert.ok(!nanComment, 'Finding with NaN confidence should be skipped');
   });
 
   // Metadata section mentions skipped low-confidence
