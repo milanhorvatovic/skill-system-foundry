@@ -1,108 +1,101 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "required": [
-    "summary",
-    "changes",
-    "files",
-    "findings",
-    "overall_correctness",
-    "overall_confidence_score",
-    "model"
-  ],
   "additionalProperties": false,
   "properties": {
-    "summary": {
-      "type": "string",
-      "description": "1-5 sentence description of what the PR changes and why."
-    },
     "changes": {
-      "type": "array",
+      "description": "Short bullets describing logical changes.",
       "items": {
         "type": "string"
       },
-      "description": "Short bullets describing logical changes."
+      "type": "array"
     },
     "files": {
-      "type": "array",
+      "description": "Files changed in this PR with descriptions.",
       "items": {
-        "type": "object",
-        "required": ["path", "description"],
         "additionalProperties": false,
         "properties": {
-          "path": {
-            "type": "string",
-            "description": "Repo-relative file path."
-          },
           "description": {
-            "type": "string",
-            "description": "Short description of what changed in this file."
+            "description": "Short description of what changed in this file.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Repo-relative file path.",
+            "type": "string"
           }
-        }
+        },
+        "required": ["description", "path"],
+        "type": "object"
       },
-      "description": "Files changed in this PR with descriptions."
+      "type": "array"
     },
     "findings": {
-      "type": "array",
+      "description": "Actionable findings from the review.",
       "items": {
-        "type": "object",
-        "required": ["title", "priority", "confidence_score", "path", "line", "body"],
         "additionalProperties": false,
         "properties": {
-          "title": {
-            "type": "string",
-            "description": "Short issue title."
-          },
-          "priority": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 3,
-            "description": "P0 critical, P1 correctness, P2 maintainability, P3 minor."
+          "body": {
+            "description": "Why this matters and concrete fix guidance.",
+            "type": "string"
           },
           "confidence_score": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Confidence that this finding is a real issue (0-1)."
-          },
-          "path": {
-            "type": "string",
-            "description": "Repo-relative file path."
+            "description": "Confidence that this finding is a real issue (0.0 to 1.0).",
+            "type": "number"
           },
           "line": {
-            "type": "integer",
-            "description": "Changed line on the RIGHT side of the diff."
+            "description": "Changed line on the RIGHT side of the diff.",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Repo-relative file path.",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority level: 0 = critical, 1 = correctness, 2 = maintainability, 3 = minor.",
+            "type": "integer"
           },
           "start_line": {
-            "type": "integer",
-            "description": "First line when a suggestion spans multiple consecutive lines. Must be <= line."
-          },
-          "body": {
-            "type": "string",
-            "description": "Why this matters and concrete fix guidance."
+            "description": "First line when a suggestion spans multiple consecutive lines. Must be <= line. Null when not applicable.",
+            "type": ["integer", "null"]
           },
           "suggestion": {
-            "type": "string",
-            "description": "Exact replacement code for lines start_line..line (optional)."
+            "description": "Exact replacement code for lines start_line..line. Null when the fix is non-trivial or ambiguous.",
+            "type": ["string", "null"]
+          },
+          "title": {
+            "description": "Short issue title.",
+            "type": "string"
           }
-        }
+        },
+        "required": ["body", "confidence_score", "line", "path", "priority", "start_line", "suggestion", "title"],
+        "type": "object"
       },
-      "description": "Actionable findings from the review."
-    },
-    "overall_correctness": {
-      "type": "string",
-      "enum": ["patch is correct", "patch is incorrect"],
-      "description": "Overall verdict on the patch."
-    },
-    "overall_confidence_score": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1,
-      "description": "Confidence in the overall correctness verdict (0-1)."
+      "type": "array"
     },
     "model": {
-      "type": "string",
-      "description": "Self-reported model identifier."
+      "description": "Self-reported model identifier.",
+      "type": "string"
+    },
+    "overall_confidence_score": {
+      "description": "Confidence in the overall correctness verdict (0.0 to 1.0).",
+      "type": "number"
+    },
+    "overall_correctness": {
+      "description": "Overall verdict on the patch.",
+      "enum": ["patch is correct", "patch is incorrect"],
+      "type": "string"
+    },
+    "summary": {
+      "description": "1-5 sentence description of what the PR changes and why.",
+      "type": "string"
     }
-  }
+  },
+  "required": [
+    "changes",
+    "files",
+    "findings",
+    "model",
+    "overall_confidence_score",
+    "overall_correctness",
+    "summary"
+  ],
+  "type": "object"
 }
