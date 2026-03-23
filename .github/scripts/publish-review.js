@@ -79,19 +79,28 @@ function escapeTableCell(text) {
 
 function normalizeFinding(finding) {
   const title = String(finding?.title || '').trim();
-  const severity = String(finding?.severity || 'medium').trim().toLowerCase();
+  const priority = Number(finding?.priority);
+  const confidenceScore = Number(finding?.confidence_score);
   const path = normalizePath(finding?.path);
   const line = Number(finding?.line);
-  const startLine = Number(finding?.startLine) || null;
-  const comment = String(finding?.comment || '').trim();
+  const startLine = Number(finding?.start_line) || null;
+  const body = String(finding?.body || '').trim();
   const rawSuggestion = finding?.suggestion != null ? String(finding.suggestion) : '';
   const suggestion = rawSuggestion.length > 0 ? rawSuggestion : null;
-  return { title, severity, path, line, startLine, comment, suggestion };
+  return { title, priority, confidenceScore, path, line, startLine, body, suggestion };
+}
+
+function resolveModel(parsed) {
+  const envModel = String(process.env.CODEX_REVIEW_MODEL || '').trim();
+  const selfReported = String(parsed?.model || '').trim();
+  const raw = envModel || selfReported || 'unknown';
+  return raw.replace(/[\n\r`*_~]/g, '').slice(0, 80);
 }
 
 module.exports = async function publish({ github, context, core, process }) {
   const maxInlineConversations = Number(process.env.MAX_INLINE_CONVERSATIONS);
   const githubMaxBodyChars = Number(process.env.GITHUB_MAX_BODY_CHARS);
+  const minConfidence = Number(process.env.MIN_CONFIDENCE || '0');
   const issue_number = context.payload.pull_request.number;
   const { owner, repo } = context.repo;
   const prHeadSha = context.payload.pull_request.head.sha;
@@ -103,6 +112,15 @@ module.exports = async function publish({ github, context, core, process }) {
   const summaryText = String(parsed?.summary || '').trim();
   const changes = Array.isArray(parsed?.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean) : [];
   const files = Array.isArray(parsed?.files) ? parsed.files : [];
+  const overallCorrectness = String(parsed?.overall_correctness || '').trim();
+  const overallConfidenceScore = Number(parsed?.overall_confidence_score);
+  const model = resolveModel(parsed);
+
+  // Sort findings: P0 first, then by confidence descending within same priority
+  findings.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return b.confidenceScore - a.confidenceScore;
+  });
 
   const diffText = fs.readFileSync('.codex/pr.diff', 'utf8');
   const addedByFile = parseAddedLinesByFile(diffText);
@@ -111,6 +129,7 @@ module.exports = async function publish({ github, context, core, process }) {
   const reviewComments = [];
   let skippedInvalidLocation = 0;
   let skippedIncomplete = 0;
+  let skippedLowConfidence = 0;
 
   const existingReviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
     owner,
@@ -129,8 +148,13 @@ module.exports = async function publish({ github, context, core, process }) {
   );
 
   for (const finding of findings) {
-    if (!finding.title || !finding.path || !Number.isInteger(finding.line) || finding.line <= 0 || !finding.comment) {
+    if (!finding.title || !finding.path || !Number.isInteger(finding.line) || finding.line <= 0 || !finding.body) {
       skippedIncomplete += 1;
+      continue;
+    }
+
+    if (finding.confidenceScore < minConfidence) {
+      skippedLowConfidence += 1;
       continue;
     }
 
@@ -142,18 +166,18 @@ module.exports = async function publish({ github, context, core, process }) {
 
     const signature = crypto
       .createHash('sha256')
-      .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}`)
+      .update(`${finding.path}|${finding.line}|${finding.title}|${finding.priority}`)
       .digest('hex')
       .slice(0, 16);
     if (existingInlineMarkers.has(signature)) {
       continue;
     }
 
-    const alertType = { high: 'CAUTION', medium: 'WARNING', low: 'NOTE' }[finding.severity] || 'WARNING';
+    const alertType = { 0: 'CAUTION', 1: 'WARNING', 2: 'NOTE', 3: 'NOTE' }[finding.priority] || 'NOTE';
     const suggestionBlock = finding.suggestion
       ? `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``
       : '';
-    const commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.comment}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+    const commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
     const commentObj = {
       path: finding.path,
       line: finding.line,
@@ -177,6 +201,13 @@ module.exports = async function publish({ github, context, core, process }) {
   const maxFilesInTable = Number(process.env.MAX_FILES_IN_TABLE);
   const maxReviewBodyChars = Number(process.env.MAX_REVIEW_BODY_CHARS);
 
+  function buildVerdictSection() {
+    if (!overallCorrectness) return '';
+    const confidence = Number.isFinite(overallConfidenceScore) ? ` (confidence: ${overallConfidenceScore.toFixed(2)})` : '';
+    const verdict = overallCorrectness.charAt(0).toUpperCase() + overallCorrectness.slice(1);
+    return `> **Verdict:** ${verdict}${confidence}`;
+  }
+
   // "N out of N" format matches Copilot's review output.
   function buildReviewedLine(commentCount) {
     const commentLabel = commentCount > 0 ? `${commentCount} comment(s)` : 'no new comments';
@@ -191,6 +222,10 @@ module.exports = async function publish({ github, context, core, process }) {
         ? `${summaryText.slice(0, maxSummaryChars)}\n\n...(summary truncated)`
         : summaryText;
       sections.push(summary);
+    }
+    const verdictSection = buildVerdictSection();
+    if (verdictSection) {
+      sections.push(verdictSection);
     }
     if (changes.length > 0) {
       const limitedChanges = changes.slice(0, maxChangeItems);
@@ -222,20 +257,26 @@ module.exports = async function publish({ github, context, core, process }) {
 
   function buildSubsequentReviewBody(commentCount) {
     const reviewedLine = buildReviewedLine(commentCount);
-    return `## Pull request overview\n\n${reviewedLine}`;
+    const verdictSection = buildVerdictSection();
+    const sections = ['## Pull request overview', reviewedLine];
+    if (verdictSection) {
+      sections.push(verdictSection);
+    }
+    return sections.join('\n\n');
   }
 
-  function buildMetadataSection(skippedLoc, skippedInc, error) {
+  function buildMetadataSection(skippedLoc, skippedInc, skippedConf, error) {
     const notes = [
       skippedLoc > 0 ? `Skipped ${skippedLoc} finding(s) not on changed RIGHT-side lines.` : null,
       skippedInc > 0 ? `Skipped ${skippedInc} incomplete finding(s).` : null,
+      skippedConf > 0 ? `Skipped ${skippedConf} finding(s) below confidence threshold.` : null,
       error ? `Failed to post inline conversations: ${error}` : null,
     ].filter(Boolean);
     return notes.length > 0 ? `\n\n<details>\n<summary>Review metadata</summary>\n\n${notes.join('\n')}\n\n</details>` : '';
   }
 
   function buildFooter() {
-    return `\n\n---\n*Generated by [Codex Review](${process.env.RUN_URL}) using ${process.env.CODEX_MODEL}*`;
+    return `\n\n---\n*Generated by [Codex Review](${process.env.RUN_URL}) using ${model}*`;
   }
 
   // GitHub hard limit for review body is 65,536 characters.
@@ -269,7 +310,7 @@ module.exports = async function publish({ github, context, core, process }) {
     } else {
       body = buildSubsequentReviewBody(commentCount);
     }
-    body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, '');
+    body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, '');
     body += buildFooter();
     body = capReviewBody(`${reviewMarker}\n\n${body}`);
 
@@ -298,7 +339,7 @@ module.exports = async function publish({ github, context, core, process }) {
         } else {
           body = buildSubsequentReviewBody(0);
         }
-        body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, inlineError);
+        body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, inlineError);
         body += buildFooter();
         body = capReviewBody(`${reviewMarker}\n\n${body}`);
 

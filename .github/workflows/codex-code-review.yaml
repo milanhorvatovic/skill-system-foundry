@@ -52,12 +52,6 @@ jobs:
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
     steps:
-      - name: Validate required variables
-        env:
-          CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
-        run: |
-          : "${CODEX_REVIEW_MODEL:?CODEX_REVIEW_MODEL is not set. Configure it in Settings → Actions → Variables.}"
-
       - name: Checkout PR
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
@@ -81,6 +75,26 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/build-pr-diff.sh
 
+      - name: Write PR metadata
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          mkdir -p .codex
+          node -e "
+            const meta = {
+              number: Number(process.env.PR_NUMBER),
+              title: process.env.PR_TITLE || '',
+              body: process.env.PR_BODY || ''
+            };
+            require('fs').writeFileSync(
+              '.codex/pr-metadata.json',
+              JSON.stringify(meta, null, 2)
+            );
+          "
+
       - name: Run Codex review
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
         id: codex
@@ -89,64 +103,13 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           sandbox: read-only
-          prompt: |
-            You are reviewing a GitHub pull request for this repository.
-            Analyze `.codex/pr.diff` and the referenced files.
-
-            Prioritize:
-            1) Behavioral bugs and regressions
-            2) Security and safety issues
-            3) Missing tests for risky changes
-            4) Violations of repository conventions:
-               - `.github/copilot-instructions.md` — applies to all files
-               - `.github/instructions/markdown.instructions.md` — applies only to `**/*.md` files
-               - `.github/instructions/scripts.instructions.md` — applies only to `skill-system-foundry/scripts/**/*.py` files
-
-            Return STRICT JSON only (no markdown/code fences) with this schema:
-            {
-              "summary": "1-5 sentence description of what the PR changes and why",
-              "changes": [
-                "short bullet describing a logical change"
-              ],
-              "files": [
-                {
-                  "path": "repo-relative/path.ext",
-                  "description": "short description of what changed in this file"
-                }
-              ],
-              "findings": [
-                {
-                  "title": "short issue title",
-                  "severity": "high|medium|low",
-                  "path": "repo-relative/path.ext",
-                  "line": 123,
-                  "startLine": 120,
-                  "comment": "why this matters and concrete fix guidance",
-                  "suggestion": "exact replacement code for lines startLine..line (optional)"
-                }
-              ]
-            }
-
-            Rules:
-            - Always include `summary`, `changes`, and `files` — even when there are no findings.
-            - If there are no high-confidence issues, set `findings` to an empty array.
-            - Include only high-confidence findings in `findings`.
-            - `path` must be a repo-relative path.
-            - `line` in findings must refer to a changed line on the RIGHT side of this PR diff.
-            - `startLine` is optional. Use it only when the suggestion spans multiple consecutive lines. It must be ≤ `line`.
-            - When a finding has a concrete fix, include `suggestion` with the exact replacement source code (preserve indentation). The suggestion replaces lines `startLine` through `line` (or just `line` when `startLine` is omitted). Omit `suggestion` when the fix is non-trivial or ambiguous.
-            - Keep all text concise and action-oriented.
-
-            Pull request #${{ github.event.pull_request.number }}:
-            Title: ${{ github.event.pull_request.title }}
-            Body:
-            ${{ github.event.pull_request.body }}
+          prompt-file: .github/codex/review-prompt.md
+          output-schema-file: .github/codex/review-output-schema.json
+          output-file: .codex/review-output.json
 
       - name: Save review output
         id: save
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.codex.outputs.final-message != '' }}
-        env:
-          CODEX_REVIEW: ${{ steps.codex.outputs.final-message }}
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.codex.outcome == 'success' }}
         run: bash .github/scripts/prepare-codex-artifacts.sh
 
       - name: Upload review artifacts
@@ -168,6 +131,8 @@ jobs:
       pull-requests: write
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+      MIN_CONFIDENCE: '0'
       MAX_INLINE_CONVERSATIONS: '20'
       MAX_SUMMARY_CHARS: '4000'
       MAX_CHANGE_ITEMS: '50'

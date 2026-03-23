@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "summary",
+    "changes",
+    "files",
+    "findings",
+    "overall_correctness",
+    "overall_confidence_score",
+    "model"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "1-5 sentence description of what the PR changes and why."
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Short bullets describing logical changes."
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Repo-relative file path."
+          },
+          "description": {
+            "type": "string",
+            "description": "Short description of what changed in this file."
+          }
+        }
+      },
+      "description": "Files changed in this PR with descriptions."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "priority", "confidence_score", "path", "line", "body"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short issue title."
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3,
+            "description": "P0 critical, P1 correctness, P2 maintainability, P3 minor."
+          },
+          "confidence_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Confidence that this finding is a real issue (0-1)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Repo-relative file path."
+          },
+          "line": {
+            "type": "integer",
+            "description": "Changed line on the RIGHT side of the diff."
+          },
+          "start_line": {
+            "type": "integer",
+            "description": "First line when a suggestion spans multiple consecutive lines. Must be <= line."
+          },
+          "body": {
+            "type": "string",
+            "description": "Why this matters and concrete fix guidance."
+          },
+          "suggestion": {
+            "type": "string",
+            "description": "Exact replacement code for lines start_line..line (optional)."
+          }
+        }
+      },
+      "description": "Actionable findings from the review."
+    },
+    "overall_correctness": {
+      "type": "string",
+      "enum": ["patch is correct", "patch is incorrect"],
+      "description": "Overall verdict on the patch."
+    },
+    "overall_confidence_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence in the overall correctness verdict (0-1)."
+    },
+    "model": {
+      "type": "string",
+      "description": "Self-reported model identifier."
+    }
+  }
+}
