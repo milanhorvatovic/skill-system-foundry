@@ -79,11 +79,13 @@ jobs:
       # cannot tamper with the instructions that run with OPENAI_API_KEY.
       # The workflow YAML is already protected by `on: pull_request`, but
       # these files come from the head checkout and need the same guarantee.
+      # When .github/codex/ does not exist on the base branch (e.g. the
+      # introducing PR), the head-branch versions are used as-is.
       - name: Restore review artifacts from base branch
         if: ${{ steps.allowlist.outputs.allowed == 'true' }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git checkout "$BASE_SHA" -- .github/codex/
+        run: git checkout "$BASE_SHA" -- .github/codex/ 2>/dev/null || true
 
       - name: Write PR metadata
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
