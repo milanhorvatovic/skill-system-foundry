@@ -91,6 +91,22 @@ const reviewOutput = {
       line: 4,
       body: 'Confidence is not a number.',
     },
+    {
+      title: 'Out of range confidence',
+      priority: 1,
+      confidence_score: 1.5,
+      path: 'src/main.js',
+      line: 6,
+      body: 'Confidence exceeds 1.0.',
+    },
+    {
+      title: 'Negative confidence',
+      priority: 1,
+      confidence_score: -0.5,
+      path: 'src/main.js',
+      line: 7,
+      body: 'Confidence is negative.',
+    },
   ],
   overall_correctness: 'patch is correct',
   overall_confidence_score: 0.92,
@@ -336,6 +352,16 @@ async function runTests() {
     assert.ok(!nanComment, 'Finding with NaN confidence should be skipped');
   });
 
+  test('out-of-range confidence findings are skipped', () => {
+    const oorComment = capturedReview.comments.find(c => c.body.includes('Out of range confidence'));
+    assert.ok(!oorComment, 'Finding with confidence > 1.0 should be skipped');
+  });
+
+  test('negative confidence findings are skipped', () => {
+    const negComment = capturedReview.comments.find(c => c.body.includes('Negative confidence'));
+    assert.ok(!negComment, 'Finding with negative confidence should be skipped');
+  });
+
   // Metadata section mentions skipped low-confidence
   test('metadata mentions skipped low-confidence findings', () => {
     assert.ok(capturedReview.body.includes('below confidence threshold'),
@@ -356,6 +382,21 @@ async function runTests() {
   test('model falls back to self-reported when env var is empty', () => {
     assert.ok(capturedReview.body.includes('o3-2025-04-16'),
       'Footer should use self-reported model when CODEX_REVIEW_MODEL is not set');
+  });
+
+  // ── NaN MIN_CONFIDENCE test ───────────────────────────────────────
+
+  capturedReview = null;
+  process.env.CODEX_REVIEW_MODEL = 'test-model';
+  process.env.MIN_CONFIDENCE = 'not-a-number';
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('NaN MIN_CONFIDENCE defaults to 0 (no filtering)', () => {
+    assert.ok(capturedReview.comments.length > 0,
+      'Expected comments when MIN_CONFIDENCE is NaN (defaults to 0)');
   });
 
   // ── Summary ───────────────────────────────────────────────────────

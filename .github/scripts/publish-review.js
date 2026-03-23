@@ -97,10 +97,19 @@ function resolveModel(parsed, env) {
   return raw.replace(/[\n\r`*_~]/g, '').slice(0, 80);
 }
 
+function isValidFinding(finding) {
+  return finding.title && finding.path && Number.isInteger(finding.line) && finding.line > 0 && finding.body &&
+    Number.isInteger(finding.priority) && finding.priority >= 0 && finding.priority <= 3 &&
+    Number.isFinite(finding.confidenceScore) && finding.confidenceScore >= 0 && finding.confidenceScore <= 1;
+}
+
 module.exports = async function publish({ github, context, core, process }) {
   const maxInlineConversations = Number(process.env.MAX_INLINE_CONVERSATIONS);
   const githubMaxBodyChars = Number(process.env.GITHUB_MAX_BODY_CHARS);
-  const minConfidence = Number(process.env.MIN_CONFIDENCE || '0');
+  const rawMinConfidence = Number(process.env.MIN_CONFIDENCE);
+  const minConfidence = Number.isFinite(rawMinConfidence)
+    ? Math.min(1, Math.max(0, rawMinConfidence))
+    : 0;
   const issue_number = context.payload.pull_request.number;
   const { owner, repo } = context.repo;
   const prHeadSha = context.payload.pull_request.head.sha;
@@ -108,13 +117,18 @@ module.exports = async function publish({ github, context, core, process }) {
   const codexReview = fs.readFileSync('.codex/review-output.json', 'utf8');
   const parsed = JSON.parse(codexReview);
   const parsedFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
-  const findings = parsedFindings.map(normalizeFinding);
+  const allFindings = parsedFindings.map(normalizeFinding);
   const summaryText = String(parsed?.summary || '').trim();
   const changes = Array.isArray(parsed?.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean) : [];
   const files = Array.isArray(parsed?.files) ? parsed.files : [];
   const overallCorrectness = String(parsed?.overall_correctness || '').trim();
   const overallConfidenceScore = Number(parsed?.overall_confidence_score);
   const model = resolveModel(parsed, process.env);
+
+  // Filter out incomplete findings before sorting so NaN values cannot
+  // cause unstable ordering in the comparator.
+  const findings = allFindings.filter(isValidFinding);
+  let skippedIncomplete = allFindings.length - findings.length;
 
   // Sort findings: P0 first, then by confidence descending within same priority
   findings.sort((a, b) => {
@@ -128,7 +142,6 @@ module.exports = async function publish({ github, context, core, process }) {
 
   const reviewComments = [];
   let skippedInvalidLocation = 0;
-  let skippedIncomplete = 0;
   let skippedLowConfidence = 0;
 
   const existingReviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
@@ -148,13 +161,6 @@ module.exports = async function publish({ github, context, core, process }) {
   );
 
   for (const finding of findings) {
-    if (!finding.title || !finding.path || !Number.isInteger(finding.line) || finding.line <= 0 || !finding.body ||
-        !Number.isInteger(finding.priority) || finding.priority < 0 || finding.priority > 3 ||
-        !Number.isFinite(finding.confidenceScore)) {
-      skippedIncomplete += 1;
-      continue;
-    }
-
     if (finding.confidenceScore < minConfidence) {
       skippedLowConfidence += 1;
       continue;
