@@ -90,8 +90,8 @@ function normalizeFinding(finding) {
   return { title, priority, confidenceScore, path, line, startLine, body, suggestion };
 }
 
-function resolveModel(parsed) {
-  const envModel = String(process.env.CODEX_REVIEW_MODEL || '').trim();
+function resolveModel(parsed, env) {
+  const envModel = String(env.CODEX_REVIEW_MODEL || '').trim();
   const selfReported = String(parsed?.model || '').trim();
   const raw = envModel || selfReported || 'unknown';
   return raw.replace(/[\n\r`*_~]/g, '').slice(0, 80);
@@ -114,7 +114,7 @@ module.exports = async function publish({ github, context, core, process }) {
   const files = Array.isArray(parsed?.files) ? parsed.files : [];
   const overallCorrectness = String(parsed?.overall_correctness || '').trim();
   const overallConfidenceScore = Number(parsed?.overall_confidence_score);
-  const model = resolveModel(parsed);
+  const model = resolveModel(parsed, process.env);
 
   // Sort findings: P0 first, then by confidence descending within same priority
   findings.sort((a, b) => {

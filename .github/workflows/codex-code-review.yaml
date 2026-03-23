@@ -75,6 +75,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/build-pr-diff.sh
 
+      # Restore review prompt and schema from the base branch so a PR
+      # cannot tamper with the instructions that run with OPENAI_API_KEY.
+      # The workflow YAML is already protected by `on: pull_request`, but
+      # these files come from the head checkout and need the same guarantee.
+      - name: Restore review artifacts from base branch
+        if: ${{ steps.allowlist.outputs.allowed == 'true' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git checkout "$BASE_SHA" -- .github/codex/
+
       - name: Write PR metadata
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
         env:
@@ -95,6 +105,10 @@ jobs:
             );
           "
 
+      # model input is optional: action.yml has required: false, default: "".
+      # When CODEX_REVIEW_MODEL is undefined, GitHub substitutes an empty
+      # string — identical to the action's default — so the action falls
+      # back to its built-in model selection.
       - name: Run Codex review
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
         id: codex

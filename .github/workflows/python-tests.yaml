@@ -86,6 +86,9 @@ jobs:
       - name: Run publish-review smoke test
         run: node .github/scripts/test-publish-review.js
 
+  # update-badge intentionally depends only on "test" (Python coverage),
+  # not "script-test". The badge tracks Python coverage, and the JS job
+  # is temporary — it will be removed once script-tests.yaml exists on main.
   update-badge:
     needs: test
     if: github.ref == 'refs/heads/main'
