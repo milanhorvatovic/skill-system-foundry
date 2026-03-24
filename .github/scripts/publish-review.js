@@ -144,6 +144,7 @@ module.exports = async function publish({ github, context, core, process }) {
   const reviewComments = [];
   let skippedInvalidLocation = 0;
   let skippedLowConfidence = 0;
+  let skippedTruncated = 0;
 
   const existingReviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
     owner,
@@ -189,7 +190,15 @@ module.exports = async function publish({ github, context, core, process }) {
     const reasoningBlock = finding.reasoning && finding.priority > 0
       ? `\n\n<details>\n<summary>Reasoning</summary>\n\n${finding.reasoning}\n\n</details>`
       : '';
-    const commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}${reasoningBlock}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+    const maxInlineBodyChars = 65000;
+    let commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}${reasoningBlock}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+    if (commentBody.length > maxInlineBodyChars) {
+      skippedTruncated += 1;
+      commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}\n\n...(reasoning/suggestion truncated to fit GitHub limits)\n\n<!-- codex-inline:${signature} -->`;
+      if (commentBody.length > maxInlineBodyChars) {
+        commentBody = commentBody.slice(0, maxInlineBodyChars - 50) + '\n\n...(truncated)\n\n<!-- codex-inline:${signature} -->';
+      }
+    }
     const commentObj = {
       path: finding.path,
       line: finding.line,
@@ -281,11 +290,12 @@ module.exports = async function publish({ github, context, core, process }) {
     return sections.join('\n\n');
   }
 
-  function buildMetadataSection(skippedLoc, skippedInc, skippedConf, error) {
+  function buildMetadataSection(skippedLoc, skippedInc, skippedConf, skippedTrunc, error) {
     const notes = [
       skippedLoc > 0 ? `Skipped ${skippedLoc} finding(s) not on changed RIGHT-side lines.` : null,
       skippedInc > 0 ? `Skipped ${skippedInc} incomplete finding(s).` : null,
       skippedConf > 0 ? `Skipped ${skippedConf} finding(s) below confidence threshold.` : null,
+      skippedTrunc > 0 ? `Truncated ${skippedTrunc} comment(s) to fit GitHub limits.` : null,
       error ? `Failed to post inline conversations: ${error}` : null,
     ].filter(Boolean);
     return notes.length > 0 ? `\n\n<details>\n<summary>Review metadata</summary>\n\n${notes.join('\n')}\n\n</details>` : '';
@@ -328,7 +338,7 @@ module.exports = async function publish({ github, context, core, process }) {
     } else {
       body = buildSubsequentReviewBody(commentCount);
     }
-    body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, '');
+    body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, skippedTruncated, '');
     body += buildFooter();
     body = capReviewBody(`${reviewMarker}\n\n${body}`);
 
@@ -357,7 +367,7 @@ module.exports = async function publish({ github, context, core, process }) {
         } else {
           body = buildSubsequentReviewBody(0);
         }
-        body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, inlineError);
+        body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, skippedTruncated, inlineError);
         body += buildFooter();
         body = capReviewBody(`${reviewMarker}\n\n${body}`);
 

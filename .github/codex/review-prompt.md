@@ -50,7 +50,7 @@ This reasoning drives the quality of the finding. If you cannot articulate a cle
 Every finding must reference a specific line in the diff:
 
 - `line` must refer to a **changed line on the RIGHT side** of the diff (a `+` line in unified diff format). Findings pointing to unchanged context lines or left-side-only lines will be discarded by the publish step.
-- `start_line` is optional. Use it only when a `suggestion` spans multiple consecutive changed lines. It must be less than or equal to `line`, and both `start_line` and `line` must be on changed RIGHT-side lines.
+- `start_line` is required in the schema. Set it to `null` when the finding covers a single line. Set it to an integer only when a `suggestion` spans multiple consecutive changed lines — it must be less than or equal to `line`, and both `start_line` and `line` must be on changed RIGHT-side lines.
 
 ## Suggestions
 
