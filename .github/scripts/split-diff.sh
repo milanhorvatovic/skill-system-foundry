@@ -22,8 +22,12 @@ if ! [[ "$FILES_PER_CHUNK" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 OUTPUT_DIR="${OUTPUT_DIR:-.codex/chunks}"
+if [ -z "$OUTPUT_DIR" ] || [ "$OUTPUT_DIR" = "/" ] || [ "$OUTPUT_DIR" = "." ] || [ "$OUTPUT_DIR" = ".." ]; then
+  echo "::error::Refusing unsafe OUTPUT_DIR value: '$OUTPUT_DIR'"
+  exit 1
+fi
 
-rm -rf "$OUTPUT_DIR"
+rm -rf -- "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 if [ ! -s "$DIFF_FILE" ]; then

@@ -57,12 +57,12 @@ sanitize_text() {
 SAFE_TITLE=$(sanitize_text "$PR_TITLE" 500)
 SAFE_BODY=$(sanitize_text "$PR_BODY" "$MAX_PR_BODY_CHARS")
 
-# Build a fence delimiter longer than any backtick run in the given text.
-# Usage: build_fence "text content"
-# Outputs the fence string (e.g., ```` or longer).
+# Build a fence delimiter longer than any backtick run in the given input.
+# Reads from stdin to avoid loading large content into shell arguments.
+# Usage: echo "text" | build_fence   OR   build_fence < file
 build_fence() {
   local max_run
-  max_run=$(printf '%s' "$1" | awk '{ n=0; for(i=1;i<=length($0);i++) { if(substr($0,i,1)=="`") { n++; if(n>m) m=n } else n=0 } } END { print m+0 }')
+  max_run=$(awk '{ n=0; for(i=1;i<=length($0);i++) { if(substr($0,i,1)=="`") { n++; if(n>m) m=n } else n=0 } } END { print m+0 }')
   local fence_len=$((max_run > 3 ? max_run + 1 : 4))
   printf '%*s' "$fence_len" '' | tr ' ' '`'
 }
@@ -74,7 +74,7 @@ META_CONTENT=$(printf 'Pull request #%s\nTitle: %s\n' "$PR_NUMBER" "$SAFE_TITLE"
 if [ -n "$SAFE_BODY" ]; then
   META_CONTENT=$(printf '%s\nDescription:\n%s' "$META_CONTENT" "$SAFE_BODY")
 fi
-META_FENCE=$(build_fence "$META_CONTENT")
+META_FENCE=$(printf '%s' "$META_CONTENT" | build_fence)
 
 {
   cat "$PROMPT_FILE"
@@ -92,7 +92,7 @@ META_FENCE=$(build_fence "$META_CONTENT")
   printf '%s\n\n' "$META_FENCE"
 
   printf '## Code diff\n\n'
-  DIFF_FENCE=$(build_fence "$(cat "$DIFF_FILE")")
+  DIFF_FENCE=$(build_fence < "$DIFF_FILE")
   printf '%sdiff\n' "$DIFF_FENCE"
   cat "$DIFF_FILE"
   printf '\n%s\n' "$DIFF_FENCE"

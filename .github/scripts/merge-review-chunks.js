@@ -1,6 +1,6 @@
 // Merge multiple Codex review chunk outputs into a single review-output.json.
 //
-// Reads .codex/chunks/chunk-*/review-output.json and produces .codex/review-output.json
+// Reads .codex/chunks/codex-review-chunk-*/review-output.json and produces .codex/review-output.json
 // that the existing publish-review.js can consume without modification.
 //
 // Run: node .github/scripts/merge-review-chunks.js
