@@ -12,6 +12,11 @@ const chunksDir = '.codex/chunks';
 const outputFile = '.codex/review-output.json';
 
 // Discover chunk directories
+if (!fs.existsSync(chunksDir)) {
+  console.log('Chunks directory does not exist. Nothing to merge.');
+  process.exit(0);
+}
+
 const chunkDirs = fs.readdirSync(chunksDir, { withFileTypes: true })
   .filter(d => d.isDirectory() && d.name.startsWith('chunk-'))
   .map(d => d.name)

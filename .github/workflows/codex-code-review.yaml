@@ -193,15 +193,22 @@ jobs:
         run: |
           # download-artifact creates directories named after the artifact.
           # Rename to the chunk-N format that merge-review-chunks.js expects.
+          mkdir -p .codex/chunks
           cd .codex/chunks
+          COPIED=0
           for dir in codex-review-chunk-*; do
             if [ -d "$dir" ]; then
               CHUNK_NUM="${dir#codex-review-chunk-}"
               mkdir -p "chunk-${CHUNK_NUM}"
-              cp "$dir"/* "chunk-${CHUNK_NUM}/" 2>/dev/null || true
+              if cp "$dir"/* "chunk-${CHUNK_NUM}/"; then
+                COPIED=$((COPIED + 1))
+              else
+                echo "::warning::Failed to copy chunk ${CHUNK_NUM} artifacts."
+              fi
               rm -rf "$dir"
             fi
           done
+          echo "Copied ${COPIED} chunk artifact(s)."
           ls -la
 
       - name: Merge chunk reviews

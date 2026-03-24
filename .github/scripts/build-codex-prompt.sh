@@ -76,11 +76,11 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   printf '\n'
 
   printf '## Code diff\n\n'
-  printf '```diff\n'
-  # Neutralize triple backticks in diff content to prevent fence-breaking.
-  # Insert a zero-width space between each backtick to break the sequence.
-  sanitize_text "$(cat "$DIFF_FILE")" 999999999
-  printf '\n```\n'
+  # Use 4-backtick fence so triple backticks in diff content cannot break it.
+  # This is standard Markdown: a fence with N backticks is only closed by >= N backticks.
+  printf '````diff\n'
+  cat "$DIFF_FILE"
+  printf '\n````\n'
 } > "$OUTPUT_FILE"
 
 PROMPT_SIZE=$(wc -c < "$OUTPUT_FILE" | tr -d ' ')
