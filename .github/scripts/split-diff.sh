@@ -17,9 +17,14 @@ set -euo pipefail
 #   chunk-count  — total number of chunks
 
 FILES_PER_CHUNK="${FILES_PER_CHUNK:-5}"
+if ! [[ "$FILES_PER_CHUNK" =~ ^[1-9][0-9]*$ ]]; then
+  echo "::error::FILES_PER_CHUNK must be a positive integer."
+  exit 1
+fi
 OUTPUT_DIR="${OUTPUT_DIR:-.codex/chunks}"
 
 mkdir -p "$OUTPUT_DIR"
+rm -f "$OUTPUT_DIR"/chunk-*.diff
 
 if [ ! -s "$DIFF_FILE" ]; then
   echo "Diff is empty — creating single empty chunk."

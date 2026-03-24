@@ -34,7 +34,8 @@ const allFiles = [];
 const allFindings = [];
 let model = '';
 let worstVerdict = 'patch is correct';
-let lowestConfidence = 1.0;
+let lowestConfidence = null;
+let validChunks = 0;
 
 for (const dir of chunkDirs) {
   const filePath = path.join(chunksDir, dir, 'review-output.json');
@@ -52,6 +53,7 @@ for (const dir of chunkDirs) {
     continue;
   }
 
+  validChunks += 1;
   console.log(`  ${dir}: ${(parsed.findings || []).length} finding(s)`);
 
   // Summary: collect non-empty summaries
@@ -97,11 +99,17 @@ for (const dir of chunkDirs) {
     worstVerdict = 'patch is incorrect';
   }
 
-  // Confidence: take the lowest
+  // Confidence: take the lowest finite value
   const conf = Number(parsed.overall_confidence_score);
-  if (Number.isFinite(conf) && conf < lowestConfidence) {
-    lowestConfidence = conf;
+  if (Number.isFinite(conf)) {
+    lowestConfidence = lowestConfidence === null ? conf : Math.min(lowestConfidence, conf);
   }
+}
+
+// Guard: if no chunks were successfully parsed, do not write a false-positive review.
+if (validChunks === 0) {
+  console.log('No valid chunk outputs found. Skipping merge — no review will be published.');
+  process.exit(0);
 }
 
 // Build merged output
@@ -111,9 +119,9 @@ const merged = {
   files: allFiles,
   findings: allFindings,
   overall_correctness: worstVerdict,
-  overall_confidence_score: lowestConfidence,
+  overall_confidence_score: lowestConfidence !== null ? lowestConfidence : 0,
   model: model || 'unknown',
 };
 
 fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2));
-console.log(`Merged output: ${allFindings.length} finding(s) -> ${outputFile}`);
+console.log(`Merged ${validChunks} chunk(s): ${allFindings.length} finding(s) -> ${outputFile}`);

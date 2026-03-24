@@ -31,10 +31,14 @@ PR_BODY="${PR_BODY:-}"
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD 2>/dev/null || echo 'unknown')}"
 REVIEW_RUN_ID="${REVIEW_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 MAX_PR_BODY_CHARS="${MAX_PR_BODY_CHARS:-8000}"
+if ! [[ "$MAX_PR_BODY_CHARS" =~ ^[0-9]+$ ]]; then
+  echo "::warning::MAX_PR_BODY_CHARS is not a valid integer, defaulting to 8000."
+  MAX_PR_BODY_CHARS=8000
+fi
 
-# Sanitize PR metadata: neutralize triple-backtick sequences that could
-# break the diff fence or inject prompt structure, and cap body length.
-sanitize_metadata() {
+# Sanitize text: neutralize triple-backtick sequences that could
+# break code fences or inject prompt structure, and cap length.
+sanitize_text() {
   local text="$1"
   local max_chars="$2"
   # Replace triple backticks with escaped version
@@ -48,8 +52,8 @@ sanitize_metadata() {
   printf '%s' "$text"
 }
 
-SAFE_TITLE=$(sanitize_metadata "$PR_TITLE" 500)
-SAFE_BODY=$(sanitize_metadata "$PR_BODY" "$MAX_PR_BODY_CHARS")
+SAFE_TITLE=$(sanitize_text "$PR_TITLE" 500)
+SAFE_BODY=$(sanitize_text "$PR_BODY" "$MAX_PR_BODY_CHARS")
 
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
@@ -73,7 +77,9 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
 
   printf '## Code diff\n\n'
   printf '```diff\n'
-  cat "$DIFF_FILE"
+  # Neutralize triple backticks in diff content to prevent fence-breaking.
+  # Insert a zero-width space between each backtick to break the sequence.
+  sanitize_text "$(cat "$DIFF_FILE")" 999999999
   printf '\n```\n'
 } > "$OUTPUT_FILE"
 
