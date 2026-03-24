@@ -189,16 +189,19 @@ diff --git a/src/utils.js b/src/utils.js
 
 const tmpDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'codex-test-'));
 const codexDir = path.join(tmpDir, '.codex');
-const scriptsDir = path.join(codexDir, 'scripts');
-fs.mkdirSync(scriptsDir, { recursive: true });
+fs.mkdirSync(codexDir, { recursive: true });
+
+// Mirror production paths: .github/scripts/ for publish script, .codex/ for review data
+const githubScriptsDir = path.join(tmpDir, '.github', 'scripts');
+fs.mkdirSync(githubScriptsDir, { recursive: true });
 
 fs.writeFileSync(path.join(codexDir, 'review-output.json'), JSON.stringify(reviewOutput));
 fs.writeFileSync(path.join(codexDir, 'pr.diff'), prDiff);
 
-// Copy the publish script to the expected location
+// Copy the publish script to the same path the workflow uses
 fs.copyFileSync(
   path.join(__dirname, 'publish-review.js'),
-  path.join(scriptsDir, 'publish-review.js'),
+  path.join(githubScriptsDir, 'publish-review.js'),
 );
 
 // ── Mock GitHub API ─────────────────────────────────────────────────────
@@ -271,7 +274,7 @@ async function runTests() {
   process.env.CODEX_REVIEW_MODEL = 'test-model-configured';
   process.env.MIN_CONFIDENCE = '0.5';
 
-  const publish = require(path.join(scriptsDir, 'publish-review.js'));
+  const publish = require(path.join(githubScriptsDir, 'publish-review.js'));
   await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
 
   process.chdir(originalCwd);

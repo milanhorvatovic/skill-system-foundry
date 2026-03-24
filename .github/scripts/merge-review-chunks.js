@@ -32,8 +32,8 @@ function findReviewOutputs(dir) {
 const reviewFiles = findReviewOutputs(chunksDir).sort();
 
 if (reviewFiles.length === 0) {
-  console.log('No review-output.json files found. Nothing to merge.');
-  process.exit(0);
+  console.error('No review-output.json files found. Failing merge.');
+  process.exit(1);
 }
 
 console.log(`Found ${reviewFiles.length} review output(s)...`);
@@ -59,10 +59,13 @@ for (const filePath of reviewFiles) {
     continue;
   }
 
-  // Shape validation: require at minimum a summary string and findings array.
+  // Shape validation: require core fields to prevent partial/malformed chunks
+  // from biasing the merged verdict toward false-positive defaults.
   if (typeof parsed !== 'object' || parsed === null ||
-      typeof parsed.summary !== 'string' || !Array.isArray(parsed.findings)) {
-    console.log(`  ${label}: missing required fields (summary, findings) — skipping`);
+      typeof parsed.summary !== 'string' || !Array.isArray(parsed.findings) ||
+      typeof parsed.overall_correctness !== 'string' ||
+      typeof parsed.overall_confidence_score !== 'number') {
+    console.log(`  ${label}: missing required fields — skipping`);
     continue;
   }
 
