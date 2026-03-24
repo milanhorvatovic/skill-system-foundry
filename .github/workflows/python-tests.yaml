@@ -70,27 +70,6 @@ jobs:
       - name: Check coverage threshold
         run: python -m coverage report
 
-  # Temporary: run JS smoke test from this workflow so the introducing PR
-  # is covered. Remove after script-tests.yaml exists on main.
-  # PR-only to avoid double-running with script-tests.yaml on main pushes.
-  script-test:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
-
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # @v4 as 4.4.0
-        with:
-          node-version: '20'
-
-      - name: Run publish-review smoke test
-        run: node .github/scripts/test-publish-review.js
-
-  # update-badge intentionally depends only on "test" (Python coverage),
-  # not "script-test". The badge tracks Python coverage, and the JS job
-  # is temporary — it will be removed once script-tests.yaml exists on main.
   update-badge:
     needs: test
     if: github.ref == 'refs/heads/main'

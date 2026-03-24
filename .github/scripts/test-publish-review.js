@@ -297,7 +297,7 @@ async function runTests() {
       // Fallback to alert type when no explicit priority marker is present.
       if (c.body.includes('CAUTION')) return 0;
       if (c.body.includes('WARNING')) return 1;
-      if (c.body.includes('NOTE')) return 2;
+      if (c.body.includes('NOTE')) return 99;
       return 99;
     });
     for (let i = 1; i < priorities.length; i++) {

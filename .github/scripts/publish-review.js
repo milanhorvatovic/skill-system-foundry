@@ -196,7 +196,7 @@ module.exports = async function publish({ github, context, core, process }) {
       skippedTruncated += 1;
       commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}\n\n...(reasoning/suggestion truncated to fit GitHub limits)\n\n<!-- codex-inline:${signature} -->`;
       if (commentBody.length > maxInlineBodyChars) {
-        commentBody = commentBody.slice(0, maxInlineBodyChars - 50) + '\n\n...(truncated)\n\n<!-- codex-inline:${signature} -->';
+        commentBody = commentBody.slice(0, maxInlineBodyChars - 50) + `\n\n...(truncated)\n\n<!-- codex-inline:${signature} -->`;
       }
     }
     const commentObj = {

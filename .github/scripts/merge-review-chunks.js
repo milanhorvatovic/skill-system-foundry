@@ -111,10 +111,10 @@ for (const dir of chunkDirs) {
   }
 }
 
-// Guard: if no chunks were successfully parsed, do not write a false-positive review.
+// Guard: if no chunks were successfully parsed, fail so CI surfaces the issue.
 if (validChunks === 0) {
-  console.log('No valid chunk outputs found. Skipping merge — no review will be published.');
-  process.exit(0);
+  console.error('No valid chunk outputs found. Failing merge — no review will be published.');
+  process.exit(1);
 }
 
 // Build merged output

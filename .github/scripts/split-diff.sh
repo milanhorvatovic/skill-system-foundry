@@ -37,6 +37,7 @@ fi
 # Split the diff by "diff --git" boundaries into per-file temp files,
 # then group files into chunks.
 TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
 FILE_INDEX=0
 CURRENT_FILE=""
 
@@ -57,7 +58,6 @@ if [ "$TOTAL_FILES" -eq 0 ]; then
   touch "$OUTPUT_DIR/chunk-0.diff"
   echo 'chunk-matrix={"include":[{"chunk":0}]}' >> "$GITHUB_OUTPUT"
   echo "chunk-count=1" >> "$GITHUB_OUTPUT"
-  rm -rf "$TEMP_DIR"
   exit 0
 fi
 
@@ -105,5 +105,3 @@ for i in $(seq 0 $((CHUNK_COUNT - 1))); do
     echo "  chunk-${i}: ${FILE_COUNT} file(s), ${BYTE_COUNT} bytes"
   fi
 done
-
-rm -rf "$TEMP_DIR"

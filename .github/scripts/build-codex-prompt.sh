@@ -76,11 +76,14 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   printf '\n'
 
   printf '## Code diff\n\n'
-  # Use 4-backtick fence so triple backticks in diff content cannot break it.
-  # This is standard Markdown: a fence with N backticks is only closed by >= N backticks.
-  printf '````diff\n'
+  # Build a fence delimiter longer than any backtick run in the diff.
+  # A Markdown fence with N backticks is only closed by >= N backticks.
+  MAX_RUN=$(grep -oP '`+' "$DIFF_FILE" 2>/dev/null | awk '{ if (length > max) max = length } END { print max+0 }')
+  FENCE_LEN=$((MAX_RUN > 3 ? MAX_RUN + 1 : 4))
+  FENCE=$(printf '%*s' "$FENCE_LEN" '' | tr ' ' '`')
+  printf '%sdiff\n' "$FENCE"
   cat "$DIFF_FILE"
-  printf '\n````\n'
+  printf '\n%s\n' "$FENCE"
 } > "$OUTPUT_FILE"
 
 PROMPT_SIZE=$(wc -c < "$OUTPUT_FILE" | tr -d ' ')
