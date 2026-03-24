@@ -52,6 +52,10 @@
             "description": "Priority level: 0 = critical, 1 = correctness, 2 = maintainability, 3 = minor.",
             "type": "integer"
           },
+          "reasoning": {
+            "description": "Chain-of-thought explanation: what you observed, why it is a problem, and what the impact is. Written before deciding priority and confidence.",
+            "type": "string"
+          },
           "start_line": {
             "description": "First line when a suggestion spans multiple consecutive lines. Must be <= line. Null when not applicable.",
             "type": ["integer", "null"]
@@ -65,7 +69,7 @@
             "type": "string"
           }
         },
-        "required": ["body", "confidence_score", "line", "path", "priority", "start_line", "suggestion", "title"],
+        "required": ["body", "confidence_score", "line", "path", "priority", "reasoning", "start_line", "suggestion", "title"],
         "type": "object"
       },
       "type": "array"

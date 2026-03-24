@@ -148,6 +148,7 @@ jobs:
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+      CODEX_REVIEW_EFFORT: ${{ vars.CODEX_REVIEW_EFFORT }}
       MIN_CONFIDENCE: '0'
       MAX_INLINE_CONVERSATIONS: '20'
       MAX_SUMMARY_CHARS: '4000'

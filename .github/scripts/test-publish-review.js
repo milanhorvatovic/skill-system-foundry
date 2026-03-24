@@ -23,7 +23,10 @@ const reviewOutput = {
       confidence_score: 0.8,
       path: 'src/main.js',
       line: 5,
+      reasoning: 'Variable name is misleading given its usage context.',
       body: 'Consider renaming for clarity.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'P0 critical bug',
@@ -31,7 +34,9 @@ const reviewOutput = {
       confidence_score: 0.95,
       path: 'src/main.js',
       line: 10,
+      reasoning: 'Calling method on null reference. The object is only initialized inside the if-branch but used unconditionally after.',
       body: 'This will crash at runtime.',
+      start_line: null,
       suggestion: 'fixedCode();',
     },
     {
@@ -40,7 +45,10 @@ const reviewOutput = {
       confidence_score: 0.85,
       path: 'src/utils.js',
       line: 3,
+      reasoning: 'Loop iterates from 0 to length inclusive, but array indices are 0 to length-1.',
       body: 'Off-by-one error in loop.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'P3 minor nit',
@@ -48,7 +56,10 @@ const reviewOutput = {
       confidence_score: 0.6,
       path: 'src/utils.js',
       line: 7,
+      reasoning: 'Tabs mixed with spaces in this block.',
       body: 'Whitespace inconsistency.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'Low confidence finding',
@@ -56,7 +67,10 @@ const reviewOutput = {
       confidence_score: 0.1,
       path: 'src/main.js',
       line: 15,
+      reasoning: 'This pattern looks unusual but may be intentional.',
       body: 'Might be an issue.',
+      start_line: null,
+      suggestion: null,
     },
     {
       // Incomplete finding — missing body
@@ -65,7 +79,10 @@ const reviewOutput = {
       confidence_score: 0.9,
       path: 'src/main.js',
       line: 20,
+      reasoning: 'Some reasoning.',
       body: '',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'Not on changed line',
@@ -73,7 +90,10 @@ const reviewOutput = {
       confidence_score: 0.9,
       path: 'src/main.js',
       line: 999,
+      reasoning: 'This line exists but was not changed.',
       body: 'This line was not changed.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'NaN priority finding',
@@ -81,7 +101,10 @@ const reviewOutput = {
       confidence_score: 0.9,
       path: 'src/main.js',
       line: 3,
+      reasoning: 'Priority is invalid.',
       body: 'Priority is not an integer.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'NaN confidence finding',
@@ -89,7 +112,10 @@ const reviewOutput = {
       confidence_score: 'bad',
       path: 'src/main.js',
       line: 4,
+      reasoning: 'Confidence is invalid.',
       body: 'Confidence is not a number.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'Out of range confidence',
@@ -97,7 +123,10 @@ const reviewOutput = {
       confidence_score: 1.5,
       path: 'src/main.js',
       line: 6,
+      reasoning: 'Confidence exceeds valid range.',
       body: 'Confidence exceeds 1.0.',
+      start_line: null,
+      suggestion: null,
     },
     {
       title: 'Negative confidence',
@@ -105,7 +134,10 @@ const reviewOutput = {
       confidence_score: -0.5,
       path: 'src/main.js',
       line: 7,
+      reasoning: 'Confidence is below valid range.',
       body: 'Confidence is negative.',
+      start_line: null,
+      suggestion: null,
     },
   ],
   overall_correctness: 'patch is correct',
@@ -255,13 +287,17 @@ async function runTests() {
     assert.ok(capturedReview.comments.length > 0, 'Expected at least one comment');
   });
 
-  // Priority sorting: P0 should come before P1, P1 before P2, etc.
+  // Priority sorting: P0 should come before P1, P1 before P2, P2 before P3.
   test('findings are sorted by priority (P0 first)', () => {
     const comments = capturedReview.comments;
     const priorities = comments.map(c => {
+      // Parse P0–P3 from the finding title embedded in the comment body.
+      const match = c.body.match(/\bP([0-3])\b/);
+      if (match) return Number(match[1]);
+      // Fallback to alert type when no explicit priority marker is present.
       if (c.body.includes('CAUTION')) return 0;
       if (c.body.includes('WARNING')) return 1;
-      if (c.body.includes('NOTE')) return 2; // P2 or P3
+      if (c.body.includes('NOTE')) return 2;
       return 99;
     });
     for (let i = 1; i < priorities.length; i++) {
@@ -335,6 +371,20 @@ async function runTests() {
     assert.ok(p0Comment.body.includes('fixedCode();'), 'Expected suggestion content');
   });
 
+  // Reasoning is omitted for P0 findings
+  test('P0 findings do not include reasoning', () => {
+    const p0Comment = capturedReview.comments.find(c => c.body.includes('P0 critical bug'));
+    assert.ok(!p0Comment.body.includes('Reasoning'), 'P0 should not include reasoning block');
+  });
+
+  // Reasoning appears as collapsible section for P1+ findings
+  test('reasoning appears in P1 inline comment', () => {
+    const p1Comment = capturedReview.comments.find(c => c.body.includes('P1 correctness issue'));
+    assert.ok(p1Comment.body.includes('<details>'), 'Expected collapsible details');
+    assert.ok(p1Comment.body.includes('Reasoning'), 'Expected Reasoning summary');
+    assert.ok(p1Comment.body.includes('Loop iterates from 0 to length inclusive'), 'Expected reasoning content');
+  });
+
   // body field is used (not comment)
   test('finding body field is used in comment', () => {
     const p1Comment = capturedReview.comments.find(c => c.body.includes('P1 correctness issue'));
@@ -397,6 +447,36 @@ async function runTests() {
   test('NaN MIN_CONFIDENCE defaults to 0 (no filtering)', () => {
     assert.ok(capturedReview.comments.length > 0,
       'Expected comments when MIN_CONFIDENCE is NaN (defaults to 0)');
+  });
+
+  // ── Effort in footer test ─────────────────────────────────────────
+
+  capturedReview = null;
+  process.env.CODEX_REVIEW_MODEL = 'test-model';
+  process.env.CODEX_REVIEW_EFFORT = 'high';
+  process.env.MIN_CONFIDENCE = '0';
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('effort appears in footer when set', () => {
+    assert.ok(capturedReview.body.includes('(effort: high)'),
+      'Footer should include effort level when CODEX_REVIEW_EFFORT is set');
+  });
+
+  // ── No effort in footer test ──────────────────────────────────────
+
+  capturedReview = null;
+  delete process.env.CODEX_REVIEW_EFFORT;
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('effort omitted from footer when not set', () => {
+    assert.ok(!capturedReview.body.includes('effort:'),
+      'Footer should not include effort when CODEX_REVIEW_EFFORT is not set');
   });
 
   // ── Summary ───────────────────────────────────────────────────────
