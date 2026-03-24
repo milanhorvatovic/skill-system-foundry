@@ -11,27 +11,32 @@ const path = require('node:path');
 const chunksDir = '.codex/chunks';
 const outputFile = '.codex/review-output.json';
 
-// Discover chunk directories
-if (!fs.existsSync(chunksDir)) {
-  console.log('Chunks directory does not exist. Nothing to merge.');
+// Recursively find all review-output.json files under chunksDir.
+// Supports both direct layout (chunk-N/review-output.json) and
+// artifact-downloaded layout (codex-review-chunk-N/.codex/.../review-output.json).
+function findReviewOutputs(dir) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name === 'review-output.json') {
+      results.push(fullPath);
+    } else if (entry.isDirectory()) {
+      results.push(...findReviewOutputs(fullPath));
+    }
+  }
+  return results;
+}
+
+const reviewFiles = findReviewOutputs(chunksDir).sort();
+
+if (reviewFiles.length === 0) {
+  console.log('No review-output.json files found. Nothing to merge.');
   process.exit(0);
 }
 
-const chunkDirs = fs.readdirSync(chunksDir, { withFileTypes: true })
-  .filter(d => d.isDirectory() && d.name.startsWith('chunk-'))
-  .map(d => d.name)
-  .sort((a, b) => {
-    const numA = Number(a.replace('chunk-', ''));
-    const numB = Number(b.replace('chunk-', ''));
-    return numA - numB;
-  });
-
-if (chunkDirs.length === 0) {
-  console.log('No chunk directories found. Nothing to merge.');
-  process.exit(0);
-}
-
-console.log(`Merging ${chunkDirs.length} chunk(s)...`);
+console.log(`Found ${reviewFiles.length} review output(s)...`);
 
 const summaries = [];
 const allChanges = [];
@@ -42,24 +47,20 @@ let worstVerdict = 'patch is correct';
 let lowestConfidence = null;
 let validChunks = 0;
 
-for (const dir of chunkDirs) {
-  const filePath = path.join(chunksDir, dir, 'review-output.json');
-  if (!fs.existsSync(filePath)) {
-    console.log(`  ${dir}: no review-output.json — skipping`);
-    continue;
-  }
+for (const filePath of reviewFiles) {
+  const label = path.relative(chunksDir, filePath);
 
   const raw = fs.readFileSync(filePath, 'utf8');
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    console.log(`  ${dir}: invalid JSON — skipping`);
+    console.log(`  ${label}: invalid JSON — skipping`);
     continue;
   }
 
   validChunks += 1;
-  console.log(`  ${dir}: ${(parsed.findings || []).length} finding(s)`);
+  console.log(`  ${label}: ${(parsed.findings || []).length} finding(s)`);
 
   // Summary: collect non-empty summaries
   const summary = String(parsed.summary || '').trim();
