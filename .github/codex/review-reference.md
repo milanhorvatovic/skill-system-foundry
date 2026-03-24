@@ -60,6 +60,64 @@ Apply the appropriate checklist for each file type changed in the diff.
 - Check step ordering and conditional expressions (`if:`) for logical correctness
 - Look for secrets or tokens that could be exposed in logs
 
+## Few-shot examples
+
+These examples show the expected quality bar for findings. Each demonstrates the reasoning → priority → confidence → body → suggestion structure.
+
+### Example 1: P1 — NaN propagation through data flow (JavaScript)
+
+```json
+{
+  "title": "MIN_CONFIDENCE NaN silently disables filtering",
+  "priority": 1,
+  "confidence_score": 0.92,
+  "path": ".github/scripts/publish-review.js",
+  "line": 103,
+  "start_line": null,
+  "reasoning": "Number(process.env.MIN_CONFIDENCE || '0') is used to parse the confidence threshold. If MIN_CONFIDENCE is set to a non-numeric string like 'high', Number('high') returns NaN. The comparison finding.confidenceScore < NaN is always false, which means no findings are ever filtered — the opposite of the intended behavior. The || '0' fallback only covers undefined/empty, not invalid strings.",
+  "body": "`MIN_CONFIDENCE` is parsed with `Number()` but not validated. A non-numeric value produces `NaN`, and `x < NaN` is always `false`, silently disabling confidence filtering. Validate with `Number.isFinite()` and clamp to 0-1.",
+  "suggestion": "  const rawMinConfidence = Number(process.env.MIN_CONFIDENCE);\n  const minConfidence = Number.isFinite(rawMinConfidence)\n    ? Math.min(1, Math.max(0, rawMinConfidence))\n    : 0;"
+}
+```
+
+**Why this is a good finding:** It traces data from input (`process.env`) through parsing (`Number()`) to use (comparison), identifies the specific failure mode (`NaN`), explains the concrete impact (filtering disabled), and provides a working fix.
+
+### Example 2: P1 — Untrusted input breaks prompt structure (Shell)
+
+```json
+{
+  "title": "PR body can break diff fence via triple backticks",
+  "priority": 1,
+  "confidence_score": 0.88,
+  "path": ".github/scripts/build-codex-prompt.sh",
+  "line": 48,
+  "start_line": null,
+  "reasoning": "PR_BODY is embedded verbatim into the prompt between the metadata section and the diff fence. A PR description containing triple backticks (```) would close the diff fence prematurely, corrupting the prompt structure. Since PR descriptions are untrusted input from any PR author, this is a realistic attack surface.",
+  "body": "PR metadata is embedded verbatim. A PR description containing triple backticks can break the diff code fence and corrupt the prompt structure. Sanitize by escaping triple backticks and truncating to a bounded length.",
+  "suggestion": null
+}
+```
+
+**Why this is a good finding:** It identifies a trust boundary (untrusted PR body → prompt structure), explains the mechanism (backticks closing the fence), and notes the realistic attack surface.
+
+### Example 3: P2 — Prompt/schema contract mismatch (Markdown)
+
+```json
+{
+  "title": "start_line described as optional but required in schema",
+  "priority": 2,
+  "confidence_score": 0.77,
+  "path": ".github/codex/review-prompt.md",
+  "line": 53,
+  "start_line": null,
+  "reasoning": "The prompt says 'start_line is optional' but the JSON schema lists start_line in the required array with type ['integer', 'null']. If the model follows the prompt literally and omits start_line, schema validation rejects the output. This creates intermittent review publishing failures depending on which instruction the model prioritizes.",
+  "body": "The prompt says `start_line` is optional, but the schema requires it (as nullable). This contract mismatch can cause schema validation to reject findings. Update the prompt to say `start_line` is required and should be set to `null` when not applicable.",
+  "suggestion": null
+}
+```
+
+**Why this is a good finding:** It connects two files (prompt and schema), identifies the specific contradiction, and explains the concrete failure mode (review output rejected).
+
 ## Review-specific focus areas
 
 Beyond code correctness, also evaluate:
