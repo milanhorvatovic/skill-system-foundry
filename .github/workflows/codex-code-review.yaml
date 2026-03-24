@@ -136,7 +136,9 @@ jobs:
       # model input is optional: action.yml has required: false, default: "".
       # When CODEX_REVIEW_MODEL is undefined, GitHub substitutes an empty
       # string — identical to the action's default — so the action falls
-      # back to its built-in model selection.
+      # back to its built-in model selection. Splitting into two conditional
+      # steps (with/without model) was evaluated and rejected because empty
+      # string and omission produce identical behavior.
       - name: Run Codex review (chunk ${{ matrix.chunk }})
         id: codex
         uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4

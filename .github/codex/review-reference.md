@@ -128,3 +128,11 @@ Beyond code correctness, also evaluate:
 - **Convention compliance** — does the change follow the constraints and rules documented in `AGENTS.md`?
 
 `AGENTS.md` is the authority for repository conventions. Do not duplicate its content — reference it.
+
+## Known limitations — do not flag these
+
+The following are known design decisions or platform constraints. Do not report findings for these items — they have been evaluated and accepted:
+
+- **Schema does not use `minimum`/`maximum` for numeric ranges.** OpenAI's structured output API rejects schemas containing these keywords. Range enforcement (`priority` 0-3, `confidence_score` 0-1) is handled at runtime in `publish-review.js` via `isValidFinding()`. This is intentional, not an oversight.
+- **Codex action `model` input is always passed, even when the variable is undefined.** The action's `model` input has `required: false` and `default: ""`. When the variable is undefined, GitHub substitutes an empty string, which is identical to the action's default. Splitting into two conditional steps adds complexity with no behavioral difference.
+- **PR metadata is embedded in the prompt as a fenced text block.** This is the standard approach for providing PR context to the reviewer. The metadata is structurally isolated in a code fence and labeled as untrusted data. Full prompt-injection prevention is not achievable with in-band data, but the fencing and warning reduce the risk to an acceptable level.
