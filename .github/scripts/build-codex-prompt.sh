@@ -78,7 +78,9 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   printf '## Code diff\n\n'
   # Build a fence delimiter longer than any backtick run in the diff.
   # A Markdown fence with N backticks is only closed by >= N backticks.
-  MAX_RUN=$(grep -oP '`+' "$DIFF_FILE" 2>/dev/null | awk '{ if (length > max) max = length } END { print max+0 }')
+  # awk scans every character to find the longest backtick run, avoiding
+  # grep -P (non-portable) and grep exit-code issues under set -e.
+  MAX_RUN=$(awk '{ n=0; for(i=1;i<=length;i++) { if(substr($0,i,1)=="`") { n++; if(n>m) m=n } else n=0 } } END { print m+0 }' "$DIFF_FILE")
   FENCE_LEN=$((MAX_RUN > 3 ? MAX_RUN + 1 : 4))
   FENCE=$(printf '%*s' "$FENCE_LEN" '' | tr ' ' '`')
   printf '%sdiff\n' "$FENCE"
