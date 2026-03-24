@@ -83,7 +83,8 @@ function normalizeFinding(finding) {
   const confidenceScore = Number(finding?.confidence_score);
   const path = normalizePath(finding?.path);
   const line = Number(finding?.line);
-  const startLine = Number(finding?.start_line) || null;
+  const rawStartLine = Number(finding?.start_line);
+  const startLine = Number.isInteger(rawStartLine) && rawStartLine > 0 ? rawStartLine : null;
   const body = String(finding?.body || '').trim();
   const rawSuggestion = finding?.suggestion != null ? String(finding.suggestion) : '';
   const suggestion = rawSuggestion.length > 0 ? rawSuggestion : null;
@@ -95,7 +96,9 @@ function resolveModel(parsed, env) {
   const envModel = String(env.CODEX_REVIEW_MODEL || '').trim();
   const selfReported = String(parsed?.model || '').trim();
   const raw = envModel || selfReported || 'unknown';
-  return raw.replace(/[\n\r`*_~]/g, '').slice(0, 80);
+  // Allowlist: keep only safe characters for Markdown rendering.
+  const matches = raw.match(/[A-Za-z0-9._: -]+/g);
+  return matches && matches.length > 0 ? matches.join(' ').slice(0, 80) : 'unknown';
 }
 
 function isValidFinding(finding) {

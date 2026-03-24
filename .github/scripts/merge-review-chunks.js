@@ -88,13 +88,15 @@ for (const filePath of reviewFiles) {
     }
   }
 
-  // Files: deduplicate by path
+  // Files: deduplicate by path, skip malformed entries
   if (Array.isArray(parsed.files)) {
     const existingPaths = new Set(allFiles.map(f => f.path));
     for (const f of parsed.files) {
-      if (f.path && !existingPaths.has(f.path)) {
-        allFiles.push(f);
-        existingPaths.add(f.path);
+      if (!f || typeof f !== 'object') continue;
+      const filePath = typeof f.path === 'string' ? f.path : '';
+      if (filePath && !existingPaths.has(filePath)) {
+        allFiles.push({ path: filePath, description: typeof f.description === 'string' ? f.description : '' });
+        existingPaths.add(filePath);
       }
     }
   }
