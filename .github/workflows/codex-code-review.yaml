@@ -197,6 +197,8 @@ jobs:
           path: .codex/chunks
 
       - name: Merge chunk reviews
+        env:
+          EXPECTED_CHUNKS: ${{ needs.prepare.outputs.chunk-count }}
         run: node .github/scripts/merge-review-chunks.js
 
       - name: Validate merged output

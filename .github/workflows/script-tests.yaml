@@ -22,3 +22,6 @@ jobs:
 
       - name: Run publish-review smoke test
         run: node .github/scripts/test-publish-review.js
+
+      - name: Run merge-review-chunks smoke test
+        run: node .github/scripts/test-merge-review-chunks.js

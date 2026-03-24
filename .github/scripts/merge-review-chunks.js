@@ -130,6 +130,14 @@ if (validChunks === 0) {
   process.exit(1);
 }
 
+// Guard: if EXPECTED_CHUNKS is set, verify all chunks were successfully merged.
+// This prevents publishing a partial review that claims full coverage.
+const expectedChunks = Number(process.env.EXPECTED_CHUNKS);
+if (Number.isInteger(expectedChunks) && expectedChunks > 0 && validChunks < expectedChunks) {
+  console.error(`Only ${validChunks} of ${expectedChunks} expected chunk(s) were valid. Failing merge to prevent partial review.`);
+  process.exit(1);
+}
+
 // Build merged output
 const merged = {
   summary: summaries.join(' '),
