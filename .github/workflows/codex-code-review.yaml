@@ -1,16 +1,12 @@
 name: Codex code review
 
 # Security model:
-# - This workflow uses `on: pull_request`, so GitHub loads the workflow YAML from the base
-#   branch. A malicious PR cannot alter this file and have the altered version run against
-#   itself. However, this guarantee depends on the trigger type — switching to
-#   `pull_request_target` or `push` would change the trust boundary. Do not change the
-#   trigger without a security review.
-# - Protection against tampering with this workflow also relies on CODEOWNERS
-#   (.github/CODEOWNERS requires code-owner approval for .github/workflows/ and
-#   .github/scripts/) combined with the "Require review from Code Owners" branch
-#   protection rule. Without both, a merged PR could weaken the workflow for all
-#   subsequent PRs.
+# - This workflow uses `on: pull_request`. For same-repo PRs, the workflow YAML
+#   is loaded from the PR branch (head). For fork PRs, secrets are not available.
+# - Protection against tampering relies on CODEOWNERS (.github/CODEOWNERS requires
+#   code-owner approval for .github/workflows/ and .github/scripts/) combined with
+#   the "Require review from Code Owners" branch protection rule. Without both, a
+#   merged PR could weaken the workflow for all subsequent PRs.
 # - Security boundaries are enforced by job permissions, not script provenance:
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
 #   * publish job: pull-requests: write only — can only post PR comments
@@ -75,37 +71,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/build-pr-diff.sh
 
-      # Restore review prompt and schema from the base branch so a PR
-      # cannot tamper with the instructions that run with OPENAI_API_KEY.
-      # The workflow YAML is already protected by `on: pull_request`, but
-      # these files come from the head checkout and need the same guarantee.
-      # When .github/codex/ does not exist on the base branch (e.g. the
-      # introducing PR), the head-branch versions are used as-is.
-      - name: Restore review artifacts from base branch
-        if: ${{ steps.allowlist.outputs.allowed == 'true' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git checkout "$BASE_SHA" -- .github/codex/ 2>/dev/null || true
-
-      - name: Write PR metadata
+      - name: Build prompt
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
         env:
+          PROMPT_FILE: .github/codex/review-prompt.md
+          REFERENCE_FILE: .github/codex/review-reference.md
+          DIFF_FILE: .codex/pr.diff
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          mkdir -p .codex
-          node -e "
-            const meta = {
-              number: Number(process.env.PR_NUMBER),
-              title: process.env.PR_TITLE || '',
-              body: process.env.PR_BODY || ''
-            };
-            require('fs').writeFileSync(
-              '.codex/pr-metadata.json',
-              JSON.stringify(meta, null, 2)
-            );
-          "
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_RUN_ID: ${{ github.run_id }}
+          OUTPUT_FILE: .codex/prompt.txt
+        run: bash .github/scripts/build-codex-prompt.sh
 
       # model input is optional: action.yml has required: false, default: "".
       # When CODEX_REVIEW_MODEL is undefined, GitHub substitutes an empty
@@ -119,7 +97,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           sandbox: read-only
-          prompt-file: .github/codex/review-prompt.md
+          prompt-file: .codex/prompt.txt
           output-schema-file: .github/codex/review-output-schema.json
           output-file: .codex/review-output.json
 

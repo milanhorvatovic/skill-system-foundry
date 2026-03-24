@@ -214,8 +214,12 @@ module.exports = async function publish({ github, context, core, process }) {
   const maxReviewBodyChars = Number(process.env.MAX_REVIEW_BODY_CHARS);
 
   function buildVerdictSection() {
-    if (!overallCorrectness) return '';
-    const confidence = Number.isFinite(overallConfidenceScore) ? ` (confidence: ${overallConfidenceScore.toFixed(2)})` : '';
+    const allowedVerdicts = new Set(['patch is correct', 'patch is incorrect']);
+    if (!allowedVerdicts.has(overallCorrectness)) return '';
+    const clamped = Number.isFinite(overallConfidenceScore)
+      ? Math.max(0, Math.min(1, overallConfidenceScore))
+      : null;
+    const confidence = clamped !== null ? ` (confidence: ${clamped.toFixed(2)})` : '';
     const verdict = overallCorrectness.charAt(0).toUpperCase() + overallCorrectness.slice(1);
     return `> **Verdict:** ${verdict}${confidence}`;
   }

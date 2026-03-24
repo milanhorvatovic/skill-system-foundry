@@ -18,7 +18,7 @@ Do not default all scores to the same value. Differentiate based on the evidence
 
 Apply the appropriate checklist for each file type changed in the diff.
 
-### Python scripts (`scripts/**/*.py`)
+### Python scripts (`skill-system-foundry/scripts/**/*.py`)
 
 - Verify all function signatures have type hints using builtin generics (`list`, `dict`, `tuple`) and `X | None`
 - Check that all `open()` calls include `encoding="utf-8"`
@@ -27,7 +27,7 @@ Apply the appropriate checklist for each file type changed in the diff.
 - Check that validation functions return `(errors, passes)` tuples and never raise exceptions for validation failures
 - Verify error levels use `LEVEL_FAIL`, `LEVEL_WARN`, `LEVEL_INFO` from `lib/constants.py`, not hardcoded strings
 - Check that validation rules come from `configuration.yaml` via `constants.py`, not hardcoded values
-- Verify library modules (`scripts/lib/*.py`) do not call `print()` or `sys.exit()` — those belong only in entry points and `reporting.py`
+- Verify library modules (`skill-system-foundry/scripts/lib/*.py`) do not call `print()` or `sys.exit()` — those belong only in entry points and `reporting.py`
 
 ### Shell scripts (`.github/scripts/*.sh`)
 

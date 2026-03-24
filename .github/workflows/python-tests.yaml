@@ -72,7 +72,9 @@ jobs:
 
   # Temporary: run JS smoke test from this workflow so the introducing PR
   # is covered. Remove after script-tests.yaml exists on main.
+  # PR-only to avoid double-running with script-tests.yaml on main pushes.
   script-test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
