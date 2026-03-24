@@ -108,8 +108,10 @@ function isValidFinding(finding) {
 }
 
 module.exports = async function publish({ github, context, core, process }) {
-  const maxInlineConversations = Number(process.env.MAX_INLINE_CONVERSATIONS);
-  const githubMaxBodyChars = Number(process.env.GITHUB_MAX_BODY_CHARS);
+  const rawMaxInline = Number(process.env.MAX_INLINE_CONVERSATIONS);
+  const maxInlineConversations = Number.isFinite(rawMaxInline) && rawMaxInline > 0 ? rawMaxInline : 20;
+  const rawMaxBody = Number(process.env.GITHUB_MAX_BODY_CHARS);
+  const githubMaxBodyChars = Number.isFinite(rawMaxBody) && rawMaxBody > 0 ? rawMaxBody : 65536;
   const rawMinConfidence = Number(process.env.MIN_CONFIDENCE);
   const minConfidence = Number.isFinite(rawMinConfidence)
     ? Math.min(1, Math.max(0, rawMinConfidence))

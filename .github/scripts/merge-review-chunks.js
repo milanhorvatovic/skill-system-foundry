@@ -59,13 +59,14 @@ for (const filePath of reviewFiles) {
     continue;
   }
 
-  // Shape validation: require core fields to prevent partial/malformed chunks
-  // from biasing the merged verdict toward false-positive defaults.
+  // Shape validation: require core fields with correct types/values to prevent
+  // partial/malformed chunks from biasing the merged verdict.
+  const allowedVerdicts = ['patch is correct', 'patch is incorrect'];
   if (typeof parsed !== 'object' || parsed === null ||
       typeof parsed.summary !== 'string' || !Array.isArray(parsed.findings) ||
-      typeof parsed.overall_correctness !== 'string' ||
-      typeof parsed.overall_confidence_score !== 'number') {
-    console.log(`  ${label}: missing required fields — skipping`);
+      !allowedVerdicts.includes(parsed.overall_correctness) ||
+      !Number.isFinite(parsed.overall_confidence_score)) {
+    console.log(`  ${label}: missing or invalid required fields — skipping`);
     continue;
   }
 

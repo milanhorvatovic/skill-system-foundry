@@ -180,6 +180,11 @@ jobs:
       GITHUB_MAX_BODY_CHARS: '65536'
 
     steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # @v4 as 4.4.0
+        with:
+          node-version: '20'
+
       - name: Download prepare artifacts
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
         with:
