@@ -59,8 +59,15 @@ for (const filePath of reviewFiles) {
     continue;
   }
 
+  // Shape validation: require at minimum a summary string and findings array.
+  if (typeof parsed !== 'object' || parsed === null ||
+      typeof parsed.summary !== 'string' || !Array.isArray(parsed.findings)) {
+    console.log(`  ${label}: missing required fields (summary, findings) — skipping`);
+    continue;
+  }
+
   validChunks += 1;
-  console.log(`  ${label}: ${(parsed.findings || []).length} finding(s)`);
+  console.log(`  ${label}: ${parsed.findings.length} finding(s)`);
 
   // Summary: collect non-empty summaries
   const summary = String(parsed.summary || '').trim();

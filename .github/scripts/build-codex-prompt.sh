@@ -41,8 +41,10 @@ fi
 sanitize_text() {
   local text="$1"
   local max_chars="$2"
-  # Replace triple backticks with escaped version
-  text="${text//\`\`\`/\`\`\​\`}"
+  # Replace triple backticks by inserting a zero-width space to break the sequence.
+  # Using explicit $'\u200b' so the invisible character is visible in source.
+  local zwsp=$'\u200b'
+  text="${text//\`\`\`/\`\`${zwsp}\`}"
   # Truncate to max length
   if [ "${#text}" -gt "$max_chars" ]; then
     text="${text:0:$max_chars}
@@ -80,7 +82,7 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   # A Markdown fence with N backticks is only closed by >= N backticks.
   # awk scans every character to find the longest backtick run, avoiding
   # grep -P (non-portable) and grep exit-code issues under set -e.
-  MAX_RUN=$(awk '{ n=0; for(i=1;i<=length;i++) { if(substr($0,i,1)=="`") { n++; if(n>m) m=n } else n=0 } } END { print m+0 }' "$DIFF_FILE")
+  MAX_RUN=$(awk '{ n=0; for(i=1;i<=length($0);i++) { if(substr($0,i,1)=="`") { n++; if(n>m) m=n } else n=0 } } END { print m+0 }' "$DIFF_FILE")
   FENCE_LEN=$((MAX_RUN > 3 ? MAX_RUN + 1 : 4))
   FENCE=$(printf '%*s' "$FENCE_LEN" '' | tr ' ' '`')
   printf '%sdiff\n' "$FENCE"
