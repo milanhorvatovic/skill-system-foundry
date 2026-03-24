@@ -8,6 +8,7 @@ name: Codex code review
 #   the "Require review from Code Owners" branch protection rule. Without both, a
 #   merged PR could weaken the workflow for all subsequent PRs.
 # - Security boundaries are enforced by job permissions, not script provenance:
+#   * prepare job: contents: read only — checkout, diff, split
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
 #   * publish job: pull-requests: write only — can only post PR comments
 # - Fork PRs cannot access repository secrets per GitHub's security model,
@@ -26,22 +27,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Two-job architecture for permission isolation:
-  # - "review" runs Codex in a read-only sandbox (contents: read only),
-  #   so the third-party Codex action never has write access to the repo.
-  # - "publish" receives the review artifact and posts the PR review
-  #   (pull-requests: write only). No checkout, no third-party actions.
-
-  # ── Job 1: Run Codex review (read-only) ──────────────────────────────
-  review:
+  # ── Job 1: Prepare diff and split into chunks ──────────────────────
+  prepare:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Codex sandbox may need up to 30 min for large diffs
+    timeout-minutes: 5
     permissions:
       contents: read
     outputs:
       allowed: ${{ steps.allowlist.outputs.allowed }}
-      has-review: ${{ steps.save.outputs.has-review }}
+      has-changes: ${{ steps.diff.outputs.has-changes }}
+      chunk-matrix: ${{ steps.split.outputs.chunk-matrix }}
+      chunk-count: ${{ steps.split.outputs.chunk-count }}
     env:
       HAS_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
       REVIEW_USERS_RAW: ${{ vars.CODEX_REVIEW_USERS }}
@@ -55,9 +52,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # This step gates all subsequent steps via the "allowed" output.
-      # It checks the OPENAI_API_KEY secret, the CODEX_REVIEW_USERS variable,
-      # and whether the PR author is in the allowlist.
       - name: Check prerequisites
         id: allowlist
         run: bash .github/scripts/check-allowlist.sh
@@ -71,54 +65,101 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/build-pr-diff.sh
 
-      - name: Build prompt
+      - name: Split diff into chunks
+        id: split
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
+        env:
+          DIFF_FILE: .codex/pr.diff
+          FILES_PER_CHUNK: '5'
+          OUTPUT_DIR: .codex/chunks
+        run: bash .github/scripts/split-diff.sh
+
+      - name: Build prompts per chunk
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
         env:
           PROMPT_FILE: .github/codex/review-prompt.md
           REFERENCE_FILE: .github/codex/review-reference.md
-          DIFF_FILE: .codex/pr.diff
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_RUN_ID: ${{ github.run_id }}
-          OUTPUT_FILE: .codex/prompt.txt
-        run: bash .github/scripts/build-codex-prompt.sh
+        run: |
+          CHUNK_COUNT=${{ steps.split.outputs.chunk-count }}
+          for i in $(seq 0 $((CHUNK_COUNT - 1))); do
+            DIFF_FILE=".codex/chunks/chunk-${i}.diff"
+            OUTPUT_FILE=".codex/chunks/chunk-${i}/prompt.txt"
+            mkdir -p ".codex/chunks/chunk-${i}"
+            DIFF_FILE="$DIFF_FILE" OUTPUT_FILE="$OUTPUT_FILE" \
+              bash .github/scripts/build-codex-prompt.sh
+          done
+
+      - name: Upload prepare artifacts
+        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # @v7 as 7.0.0
+        with:
+          name: codex-prepare
+          path: |
+            .codex/chunks/
+            .codex/pr.diff
+            .github/codex/review-output-schema.json
+            .github/scripts/publish-review.js
+            .github/scripts/merge-review-chunks.js
+          include-hidden-files: true
+          retention-days: 1
+
+  # ── Job 2: Run Codex review per chunk (read-only) ──────────────────
+  review:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.allowed == 'true' && needs.prepare.outputs.has-changes == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.chunk-matrix) }}
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download prepare artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
+        with:
+          name: codex-prepare
 
       # model input is optional: action.yml has required: false, default: "".
       # When CODEX_REVIEW_MODEL is undefined, GitHub substitutes an empty
       # string — identical to the action's default — so the action falls
       # back to its built-in model selection.
-      - name: Run Codex review
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
+      - name: Run Codex review (chunk ${{ matrix.chunk }})
         id: codex
         uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           sandbox: read-only
-          prompt-file: .codex/prompt.txt
+          prompt-file: .codex/chunks/chunk-${{ matrix.chunk }}/prompt.txt
           output-schema-file: .github/codex/review-output-schema.json
-          output-file: .codex/review-output.json
+          output-file: .codex/chunks/chunk-${{ matrix.chunk }}/review-output.json
 
-      - name: Save review output
-        id: save
-        if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.codex.outcome == 'success' }}
-        run: bash .github/scripts/prepare-codex-artifacts.sh
-
-      - name: Upload review artifacts
-        if: ${{ steps.save.outputs.has-review == 'true' }}
+      - name: Upload chunk review
+        if: ${{ steps.codex.outcome == 'success' }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # @v7 as 7.0.0
         with:
-          name: codex-review
-          path: .codex/
-          include-hidden-files: true
+          name: codex-review-chunk-${{ matrix.chunk }}
+          path: .codex/chunks/chunk-${{ matrix.chunk }}/review-output.json
           retention-days: 1
 
-  # ── Job 2: Publish PR review (write access) ──────────────────────────
+  # ── Job 3: Merge and publish PR review (write access) ──────────────
   publish:
-    needs: review
-    if: ${{ needs.review.outputs.allowed == 'true' && needs.review.outputs.has-review == 'true' }}
+    needs: [prepare, review]
+    if: ${{ needs.prepare.outputs.allowed == 'true' && needs.prepare.outputs.has-changes == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -136,15 +177,55 @@ jobs:
       GITHUB_MAX_BODY_CHARS: '65536'
 
     steps:
-      - name: Download review artifacts
+      - name: Download prepare artifacts
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
         with:
-          name: codex-review
-          path: .codex
+          name: codex-prepare
+
+      - name: Download chunk reviews
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
+        with:
+          pattern: codex-review-chunk-*
+          path: .codex/chunks
+          merge-multiple: false
+
+      - name: Rename chunk directories
+        run: |
+          # download-artifact creates directories named after the artifact.
+          # Rename to the chunk-N format that merge-review-chunks.js expects.
+          cd .codex/chunks
+          for dir in codex-review-chunk-*; do
+            if [ -d "$dir" ]; then
+              CHUNK_NUM="${dir#codex-review-chunk-}"
+              mkdir -p "chunk-${CHUNK_NUM}"
+              cp "$dir"/* "chunk-${CHUNK_NUM}/" 2>/dev/null || true
+              rm -rf "$dir"
+            fi
+          done
+          ls -la
+
+      - name: Merge chunk reviews
+        run: node .github/scripts/merge-review-chunks.js
+
+      - name: Validate merged output
+        id: validate
+        run: |
+          if [ ! -s .codex/review-output.json ]; then
+            echo "::error::Merged review output is missing or empty."
+            echo "has-review=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! jq . .codex/review-output.json > /dev/null 2>&1; then
+            echo "::error::Merged review output is not valid JSON."
+            echo "has-review=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "has-review=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish PR review
+        if: ${{ steps.validate.outputs.has-review == 'true' }}
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
         with:
           script: |
-            const publish = require(`${process.env.GITHUB_WORKSPACE}/.codex/scripts/publish-review.js`)
+            const publish = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/publish-review.js`)
             await publish({ github, context, core, process })
