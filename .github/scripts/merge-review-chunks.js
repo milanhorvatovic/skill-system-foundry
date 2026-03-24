@@ -11,19 +11,18 @@ const path = require('node:path');
 const chunksDir = '.codex/chunks';
 const outputFile = '.codex/review-output.json';
 
-// Recursively find all review-output.json files under chunksDir.
-// Supports both direct layout (chunk-N/review-output.json) and
-// artifact-downloaded layout (codex-review-chunk-N/.codex/.../review-output.json).
+// Find review-output.json files only in expected artifact directories.
+// Restricts to codex-review-chunk-* directories to avoid picking up
+// stale or unrelated files from the prepare artifact.
 function findReviewOutputs(dir) {
   const results = [];
   if (!fs.existsSync(dir)) return results;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isFile() && entry.name === 'review-output.json') {
-      results.push(fullPath);
-    } else if (entry.isDirectory()) {
-      results.push(...findReviewOutputs(fullPath));
+    if (!entry.isDirectory() || !entry.name.startsWith('codex-review-chunk-')) continue;
+    const reviewFile = path.join(dir, entry.name, 'review-output.json');
+    if (fs.existsSync(reviewFile)) {
+      results.push(reviewFile);
     }
   }
   return results;

@@ -23,8 +23,8 @@ if ! [[ "$FILES_PER_CHUNK" =~ ^[1-9][0-9]*$ ]]; then
 fi
 OUTPUT_DIR="${OUTPUT_DIR:-.codex/chunks}"
 
+rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
-rm -f "$OUTPUT_DIR"/chunk-*.diff
 
 if [ ! -s "$DIFF_FILE" ]; then
   echo "Diff is empty — creating single empty chunk."
