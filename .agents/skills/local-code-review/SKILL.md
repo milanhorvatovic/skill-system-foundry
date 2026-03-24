@@ -9,9 +9,12 @@ description: >
   phrases like "check this before I push," "does this look right," "run
   the checks," or "review the current branch locally." Use this skill to
   catch issues locally and avoid spending CI tokens and time on problems
-  that can be detected on the development machine. For design-level
-  criticism and constructive feedback, use the critique skill instead. For
-  human PR review process guidance, use the review skill instead.
+  that can be detected on the development machine. For a deep review
+  replicating the CI code review pipeline with confidence scoring and
+  structured findings, use the local-ci-code-review skill instead. For
+  design-level criticism and constructive feedback, use the critique skill
+  instead. For human PR review process guidance, use the review skill
+  instead.
 ---
 
 # Local Code Review Skill
