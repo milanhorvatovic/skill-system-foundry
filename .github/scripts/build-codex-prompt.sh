@@ -45,11 +45,14 @@ sanitize_text() {
   # Using explicit $'\u200b' so the invisible character is visible in source.
   local zwsp=$'\u200b'
   text="${text//\`\`\`/\`\`${zwsp}\`}"
-  # Truncate to max length
+  # Truncate to max length, accounting for suffix so total stays within cap.
   if [ "${#text}" -gt "$max_chars" ]; then
-    text="${text:0:$max_chars}
-
-...(truncated)"
+    local trunc_suffix=$'\n\n...(truncated)'
+    local keep_chars=$((max_chars - ${#trunc_suffix}))
+    if [ "$keep_chars" -lt 0 ]; then
+      keep_chars=0
+    fi
+    text="${text:0:$keep_chars}${trunc_suffix}"
   fi
   printf '%s' "$text"
 }

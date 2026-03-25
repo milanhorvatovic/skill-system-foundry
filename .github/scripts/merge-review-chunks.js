@@ -140,10 +140,19 @@ if (validChunks === 0) {
 
 // Guard: if EXPECTED_CHUNKS is set, verify all chunks were successfully merged.
 // This prevents publishing a partial review that claims full coverage.
-const expectedChunks = Number(process.env.EXPECTED_CHUNKS);
-if (Number.isInteger(expectedChunks) && expectedChunks > 0 && validChunks !== expectedChunks) {
-  console.error(`Expected ${expectedChunks} chunk(s) but got ${validChunks}. Failing merge to prevent inconsistent review.`);
-  process.exit(1);
+// Fail closed: if EXPECTED_CHUNKS is present but not a valid positive integer,
+// treat it as a configuration error rather than silently skipping the guard.
+const expectedChunksRaw = process.env.EXPECTED_CHUNKS;
+if (expectedChunksRaw !== undefined && expectedChunksRaw !== '') {
+  const expectedChunks = Number(expectedChunksRaw);
+  if (!Number.isInteger(expectedChunks) || expectedChunks <= 0) {
+    console.error(`EXPECTED_CHUNKS must be a positive integer, got: '${expectedChunksRaw}'`);
+    process.exit(1);
+  }
+  if (validChunks !== expectedChunks) {
+    console.error(`Expected ${expectedChunks} chunk(s) but got ${validChunks}. Failing merge to prevent inconsistent review.`);
+    process.exit(1);
+  }
 }
 
 // Build merged output

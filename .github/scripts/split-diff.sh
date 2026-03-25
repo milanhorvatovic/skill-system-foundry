@@ -26,6 +26,14 @@ if [ -z "$OUTPUT_DIR" ] || [ "$OUTPUT_DIR" = "/" ] || [ "$OUTPUT_DIR" = "." ] ||
   echo "::error::Refusing unsafe OUTPUT_DIR value: '$OUTPUT_DIR'"
   exit 1
 fi
+if [[ "$OUTPUT_DIR" = /* ]]; then
+  echo "::error::Refusing absolute OUTPUT_DIR path: '$OUTPUT_DIR'"
+  exit 1
+fi
+if [[ "$OUTPUT_DIR" == *".."* ]]; then
+  echo "::error::Refusing OUTPUT_DIR with path traversal: '$OUTPUT_DIR'"
+  exit 1
+fi
 
 rm -rf -- "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"

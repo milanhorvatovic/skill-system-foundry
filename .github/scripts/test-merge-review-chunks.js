@@ -159,6 +159,13 @@ test('fails when valid chunks > expected count', () => {
   assert.strictEqual(result.exitCode, 1);
 });
 
+test('fails when EXPECTED_CHUNKS is non-numeric', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  writeChunk(chunksDir, 0, validChunk);
+  const result = runMerge(tmpDir, { EXPECTED_CHUNKS: 'two' });
+  assert.strictEqual(result.exitCode, 1);
+});
+
 // ── Files deduplication ─────────────────────────────────────────────
 
 test('deduplicates files across chunks', () => {
