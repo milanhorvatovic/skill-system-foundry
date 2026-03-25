@@ -20,7 +20,7 @@ set -euo pipefail
 #   chunk-matrix — JSON matrix for GitHub Actions (e.g. {"include":[{"chunk":0},{"chunk":1}]})
 #   chunk-count  — total number of chunks
 
-MAX_CHUNK_BYTES="${MAX_CHUNK_BYTES:-32768}"
+MAX_CHUNK_BYTES="${MAX_CHUNK_BYTES:-204800}"
 if ! [[ "$MAX_CHUNK_BYTES" =~ ^[1-9][0-9]*$ ]]; then
   echo "::error::MAX_CHUNK_BYTES must be a positive integer."
   exit 1
