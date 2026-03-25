@@ -101,10 +101,10 @@ for (const filePath of reviewFiles) {
     const existingPaths = new Set(allFiles.map(f => f.path));
     for (const f of parsed.files) {
       if (!f || typeof f !== 'object') continue;
-      const filePath = typeof f.path === 'string' ? f.path : '';
-      if (filePath && !existingPaths.has(filePath)) {
-        allFiles.push({ path: filePath, description: typeof f.description === 'string' ? f.description : '' });
-        existingPaths.add(filePath);
+      const reviewedPath = typeof f.path === 'string' ? f.path : '';
+      if (reviewedPath && !existingPaths.has(reviewedPath)) {
+        allFiles.push({ path: reviewedPath, description: typeof f.description === 'string' ? f.description : '' });
+        existingPaths.add(reviewedPath);
       }
     }
   }
