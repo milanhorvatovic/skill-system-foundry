@@ -5,20 +5,24 @@ set -euo pipefail
 : "${DIFF_FILE:?Environment variable DIFF_FILE is required}"
 : "${GITHUB_OUTPUT:?Environment variable GITHUB_OUTPUT is required}"
 
-# Split a unified diff into per-chunk diffs by file boundaries.
+# Split a unified diff into per-chunk diffs grouped by byte budget.
+#
+# Files are never split — each file's diff stays intact. A new chunk starts
+# when adding the next file would exceed MAX_CHUNK_BYTES. A single file
+# larger than the budget gets its own chunk.
 #
 # Environment variables:
 #   DIFF_FILE          — path to the full PR diff
-#   FILES_PER_CHUNK    — max files per chunk (default: 5)
+#   MAX_CHUNK_BYTES    — max bytes per chunk before starting a new one (default: 32768)
 #   OUTPUT_DIR         — output directory for chunks (default: .codex/chunks)
 #
 # Outputs (via $GITHUB_OUTPUT):
 #   chunk-matrix — JSON matrix for GitHub Actions (e.g. {"include":[{"chunk":0},{"chunk":1}]})
 #   chunk-count  — total number of chunks
 
-FILES_PER_CHUNK="${FILES_PER_CHUNK:-5}"
-if ! [[ "$FILES_PER_CHUNK" =~ ^[1-9][0-9]*$ ]]; then
-  echo "::error::FILES_PER_CHUNK must be a positive integer."
+MAX_CHUNK_BYTES="${MAX_CHUNK_BYTES:-32768}"
+if ! [[ "$MAX_CHUNK_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "::error::MAX_CHUNK_BYTES must be a positive integer."
   exit 1
 fi
 OUTPUT_DIR="${OUTPUT_DIR:-.codex/chunks}"
@@ -50,8 +54,7 @@ if [ ! -s "$DIFF_FILE" ]; then
   exit 0
 fi
 
-# Split the diff by "diff --git" boundaries into per-file temp files,
-# then group files into chunks.
+# Split the diff by "diff --git" boundaries into per-file temp files.
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 FILE_INDEX=0
@@ -77,9 +80,11 @@ if [ "$TOTAL_FILES" -eq 0 ]; then
   exit 0
 fi
 
-# Group files into chunks
+# Group files into chunks by byte budget.
+# A new chunk starts when adding the next file would exceed MAX_CHUNK_BYTES,
+# unless the current chunk is empty (so a single large file gets its own chunk).
 CHUNK_INDEX=0
-FILE_IN_CHUNK=0
+CHUNK_BYTES=0
 
 for i in $(seq 0 $((TOTAL_FILES - 1))); do
   FILE_PATH="${TEMP_DIR}/file-${i}.diff"
@@ -87,17 +92,23 @@ for i in $(seq 0 $((TOTAL_FILES - 1))); do
     continue
   fi
 
-  cat "$FILE_PATH" >> "${OUTPUT_DIR}/chunk-${CHUNK_INDEX}.diff"
-  FILE_IN_CHUNK=$((FILE_IN_CHUNK + 1))
+  FILE_BYTES=$(wc -c < "$FILE_PATH" | tr -d ' ')
 
-  if [ "$FILE_IN_CHUNK" -ge "$FILES_PER_CHUNK" ] && [ "$i" -lt $((TOTAL_FILES - 1)) ]; then
+  # Start a new chunk if adding this file would exceed the budget
+  # and the current chunk already has content. The CHUNK_BYTES > 0 guard
+  # ensures a single file larger than the budget gets its own chunk
+  # rather than creating an empty chunk before it.
+  if [ "$CHUNK_BYTES" -gt 0 ] && [ $((CHUNK_BYTES + FILE_BYTES)) -gt "$MAX_CHUNK_BYTES" ]; then
     CHUNK_INDEX=$((CHUNK_INDEX + 1))
-    FILE_IN_CHUNK=0
+    CHUNK_BYTES=0
   fi
+
+  cat "$FILE_PATH" >> "${OUTPUT_DIR}/chunk-${CHUNK_INDEX}.diff"
+  CHUNK_BYTES=$((CHUNK_BYTES + FILE_BYTES))
 done
 
 CHUNK_COUNT=$((CHUNK_INDEX + 1))
-echo "Created ${CHUNK_COUNT} chunk(s) from ${TOTAL_FILES} file(s) (${FILES_PER_CHUNK} files/chunk)."
+echo "Created ${CHUNK_COUNT} chunk(s) from ${TOTAL_FILES} file(s) (max ${MAX_CHUNK_BYTES} bytes/chunk)."
 
 # Build JSON matrix for GitHub Actions
 MATRIX='{"include":['

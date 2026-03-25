@@ -81,7 +81,7 @@ jobs:
         if: ${{ steps.allowlist.outputs.allowed == 'true' && steps.diff.outputs.has-changes == 'true' }}
         env:
           DIFF_FILE: .codex/pr.diff
-          FILES_PER_CHUNK: '5'
+          MAX_CHUNK_BYTES: '32768'
           OUTPUT_DIR: .codex/chunks
         run: bash .github/scripts/split-diff.sh
 
