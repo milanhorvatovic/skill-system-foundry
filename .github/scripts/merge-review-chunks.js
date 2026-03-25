@@ -11,18 +11,31 @@ const path = require('node:path');
 const chunksDir = '.codex/chunks';
 const outputFile = '.codex/review-output.json';
 
+// Recursively find a file by name within a directory.
+function findFileRecursive(dir, filename) {
+  const direct = path.join(dir, filename);
+  if (fs.existsSync(direct)) return direct;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const found = findFileRecursive(path.join(dir, entry.name), filename);
+    if (found) return found;
+  }
+  return null;
+}
+
 // Find review-output.json files only in expected artifact directories.
-// Restricts to codex-review-chunk-* directories to avoid picking up
-// stale or unrelated files from the prepare artifact.
+// Restricts to codex-review-chunk-\d+ directories. Searches recursively
+// within each to handle nested artifact extraction paths (e.g.
+// codex-review-chunk-0/.codex/chunks/chunk-0/review-output.json).
 function findReviewOutputs(dir) {
   const results = [];
   if (!fs.existsSync(dir)) return results;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^codex-review-chunk-\d+$/.test(entry.name)) continue;
-    const reviewFile = path.join(dir, entry.name, 'review-output.json');
-    if (fs.existsSync(reviewFile)) {
-      results.push(reviewFile);
+    const found = findFileRecursive(path.join(dir, entry.name), 'review-output.json');
+    if (found) {
+      results.push(found);
     }
   }
   return results;
@@ -47,6 +60,7 @@ console.log(`Found ${reviewFiles.length} review output(s)...`);
 
 const summaries = [];
 const allChanges = [];
+const seenChanges = new Set();
 const allFiles = [];
 const allFindings = [];
 let model = '';
@@ -86,12 +100,13 @@ for (const filePath of reviewFiles) {
     summaries.push(summary);
   }
 
-  // Changes: append
+  // Changes: append, deduplicate via Set
   if (Array.isArray(parsed.changes)) {
     for (const c of parsed.changes) {
       const text = String(c).trim();
-      if (text && !allChanges.includes(text)) {
+      if (text && !seenChanges.has(text)) {
         allChanges.push(text);
+        seenChanges.add(text);
       }
     }
   }
@@ -166,5 +181,6 @@ const merged = {
   model: model || 'unknown',
 };
 
+fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2));
 console.log(`Merged ${validChunks} chunk(s): ${allFindings.length} finding(s) -> ${outputFile}`);

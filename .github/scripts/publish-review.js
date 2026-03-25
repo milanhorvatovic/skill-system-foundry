@@ -142,9 +142,11 @@ function resolveModel(parsed, env) {
 }
 
 function isValidFinding(finding) {
+  const validRange = finding.startLine === null || finding.startLine <= finding.line;
   return finding.title && finding.path && Number.isInteger(finding.line) && finding.line > 0 && finding.body &&
     Number.isInteger(finding.priority) && finding.priority >= 0 && finding.priority <= 3 &&
-    Number.isFinite(finding.confidenceScore) && finding.confidenceScore >= 0 && finding.confidenceScore <= 1;
+    Number.isFinite(finding.confidenceScore) && finding.confidenceScore >= 0 && finding.confidenceScore <= 1 &&
+    validRange;
 }
 
 module.exports = async function publish({ github, context, core, process }) {
@@ -365,15 +367,22 @@ module.exports = async function publish({ github, context, core, process }) {
     return body.slice(0, githubMaxBodyChars - suffix.length) + suffix;
   }
 
+  // Build a Markdown code fence that cannot be broken by backticks in content.
+  function buildSafeFence(content) {
+    const runs = content.match(/`+/g) || [];
+    const maxRun = runs.length > 0 ? Math.max(...runs.map(r => r.length)) : 0;
+    return '`'.repeat(Math.max(3, maxRun + 1));
+  }
+
   function buildFallbackBody() {
     const maxFallbackChars = 12000;
     const raw = codexReview.trim();
     const limited = raw.length > maxFallbackChars
       ? `${raw.slice(0, maxFallbackChars)}\n...(truncated)`
       : raw;
-    return raw
-      ? `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n\`\`\`\n${limited}\n\`\`\``
-      : '## Pull request overview\n\nCodex returned an empty response.';
+    if (!raw) return '## Pull request overview\n\nCodex returned an empty response.';
+    const fence = buildSafeFence(limited);
+    return `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n${fence}\n${limited}\n${fence}`;
   }
 
   // Detect isFirstReview via pulls.listReviews

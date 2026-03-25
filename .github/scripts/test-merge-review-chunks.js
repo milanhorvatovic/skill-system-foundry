@@ -189,6 +189,36 @@ test('handles null entries in files array', () => {
   assert.strictEqual(merged.files.length, 1);
 });
 
+// ── Nested artifact paths ────────────────────────────────────────────
+
+function writeNestedChunk(chunksDir, chunkNum, data) {
+  // Simulate GitHub's nested artifact extraction layout:
+  // codex-review-chunk-N/.codex/chunks/chunk-N/review-output.json
+  const dir = path.join(chunksDir, `codex-review-chunk-${chunkNum}`, '.codex', 'chunks', `chunk-${chunkNum}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'review-output.json'), JSON.stringify(data));
+}
+
+test('discovers review-output.json in nested artifact paths', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  writeNestedChunk(chunksDir, 0, validChunk);
+  const result = runMerge(tmpDir, {});
+  assert.strictEqual(result.exitCode, 0);
+  const merged = readMerged(tmpDir);
+  assert.ok(merged);
+  assert.strictEqual(merged.findings.length, 1);
+});
+
+test('discovers mix of flat and nested artifact paths', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  writeChunk(chunksDir, 0, validChunk);
+  writeNestedChunk(chunksDir, 1, incorrectChunk);
+  const result = runMerge(tmpDir, {});
+  assert.strictEqual(result.exitCode, 0);
+  const merged = readMerged(tmpDir);
+  assert.strictEqual(merged.overall_correctness, 'patch is incorrect');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

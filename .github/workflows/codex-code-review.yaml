@@ -183,7 +183,9 @@ jobs:
   # ── Job 3: Merge and publish PR review (write access) ──────────────
   publish:
     needs: [prepare, review]
-    if: ${{ needs.prepare.outputs.allowed == 'true' && needs.prepare.outputs.has-changes == 'true' }}
+    # Use always() so publish runs even when some review chunks fail —
+    # merge-review-chunks.js enforces EXPECTED_CHUNKS and fails closed.
+    if: ${{ always() && needs.prepare.outputs.allowed == 'true' && needs.prepare.outputs.has-changes == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -236,13 +238,11 @@ jobs:
         run: |
           if [ ! -s .codex/review-output.json ]; then
             echo "::error::Merged review output is missing or empty."
-            echo "has-review=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 1
           fi
           if ! jq . .codex/review-output.json > /dev/null 2>&1; then
             echo "::error::Merged review output is not valid JSON."
-            echo "has-review=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 1
           fi
           echo "has-review=true" >> "$GITHUB_OUTPUT"
 
