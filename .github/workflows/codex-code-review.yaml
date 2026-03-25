@@ -16,6 +16,12 @@ name: Codex code review
 #   * prepare job: contents: read only — checkout, diff, split
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
 #   * publish job: pull-requests: write only — can only post PR comments
+# - Known limitation: the publish job executes scripts from prepare artifacts
+#   (sourced from the PR head checkout). This is accepted because (a) CODEOWNERS
+#   requires code-owner approval for .github/scripts/ changes, (b) the publish
+#   token can only post PR comments — it cannot push code, merge, or access
+#   secrets, and (c) checkout in publish would require contents:read which
+#   broadens the permission surface of the write-scoped job.
 # - Fork PRs cannot access repository secrets per GitHub's security model,
 #   so untrusted forks cannot exfiltrate OPENAI_API_KEY or other secrets.
 

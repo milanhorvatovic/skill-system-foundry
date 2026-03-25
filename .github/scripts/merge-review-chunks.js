@@ -19,7 +19,7 @@ function findReviewOutputs(dir) {
   if (!fs.existsSync(dir)) return results;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('codex-review-chunk-')) continue;
+    if (!entry.isDirectory() || !/^codex-review-chunk-\d+$/.test(entry.name)) continue;
     const reviewFile = path.join(dir, entry.name, 'review-output.json');
     if (fs.existsSync(reviewFile)) {
       results.push(reviewFile);

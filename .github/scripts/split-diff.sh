@@ -34,6 +34,10 @@ if [[ "$OUTPUT_DIR" == *".."* ]]; then
   echo "::error::Refusing OUTPUT_DIR with path traversal: '$OUTPUT_DIR'"
   exit 1
 fi
+if [[ "$OUTPUT_DIR" != .codex/* ]]; then
+  echo "::error::Refusing OUTPUT_DIR outside .codex/: '$OUTPUT_DIR'"
+  exit 1
+fi
 
 rm -rf -- "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
