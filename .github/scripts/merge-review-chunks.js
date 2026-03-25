@@ -43,9 +43,11 @@ function findReviewOutputs(dir) {
 
 // Sort numerically by chunk index to ensure deterministic merge order
 // (lexicographic sort would place chunk-10 before chunk-2).
+// Matches against the full path so nested artifact extraction layouts
+// (e.g. codex-review-chunk-2/.codex/chunks/chunk-2/review-output.json)
+// still extract the correct chunk number.
 function getChunkIndex(filePath) {
-  const dirName = path.basename(path.dirname(filePath));
-  const match = /^codex-review-chunk-(\d+)$/.exec(dirName);
+  const match = /codex-review-chunk-(\d+)/.exec(filePath);
   return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
 }
 

@@ -219,6 +219,21 @@ test('discovers mix of flat and nested artifact paths', () => {
   assert.strictEqual(merged.overall_correctness, 'patch is incorrect');
 });
 
+// ── Nested chunk ordering ─────────────────────────────────────────────
+
+test('nested chunks sort numerically (chunk-2 before chunk-10)', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  const chunk2 = { ...validChunk, summary: 'chunk2-summary' };
+  const chunk10 = { ...validChunk, summary: 'chunk10-summary' };
+  writeNestedChunk(chunksDir, 2, chunk2);
+  writeNestedChunk(chunksDir, 10, chunk10);
+  const result = runMerge(tmpDir, {});
+  assert.strictEqual(result.exitCode, 0);
+  const merged = readMerged(tmpDir);
+  assert.ok(merged.summary.indexOf('chunk2-summary') < merged.summary.indexOf('chunk10-summary'),
+    `Expected chunk2 summary before chunk10 summary, got: "${merged.summary}"`);
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

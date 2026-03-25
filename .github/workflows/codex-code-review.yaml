@@ -13,7 +13,8 @@ name: Codex code review
 #   untrusted PR code and therefore requires a dedicated security review before
 #   adoption.
 # - Security boundaries are enforced by job permissions and script provenance:
-#   * prepare job: contents: read only — checkout PR head, diff, split
+#   * prepare job: contents: read only — runs PR-head scripts (diff, split,
+#     prompt assembly) with no secret access beyond the default GITHUB_TOKEN
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
 #   * publish job: contents: read + pull-requests: write — checks out base branch
 #     for trusted scripts, only data artifacts come from the PR head

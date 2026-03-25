@@ -178,6 +178,10 @@ module.exports = async function publish({ github, context, core, process }) {
   const findings = allFindings.filter(isValidFinding);
   let skippedIncomplete = allFindings.length - findings.length;
 
+  // Detect schema-incompatible payload: model returned parseable JSON with findings,
+  // but none survived validation. Show raw fallback instead of a misleading clean review.
+  const forceRawFallback = parsed !== null && parsedFindings.length > 0 && findings.length === 0;
+
   // Sort findings: P0 first, then by confidence descending within same priority
   findings.sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
@@ -403,7 +407,7 @@ module.exports = async function publish({ github, context, core, process }) {
   try {
     const commentCount = reviewComments.length;
     let body;
-    if (!parsed) {
+    if (!parsed || forceRawFallback) {
       body = buildFallbackBody();
     } else if (isFirstReview) {
       body = buildFirstReviewBody(commentCount);
@@ -434,7 +438,7 @@ module.exports = async function publish({ github, context, core, process }) {
     if (reviewComments.length > 0) {
       try {
         let body;
-        if (!parsed) {
+        if (!parsed || forceRawFallback) {
           body = buildFallbackBody();
         } else if (isFirstReview) {
           body = buildFirstReviewBody(0);

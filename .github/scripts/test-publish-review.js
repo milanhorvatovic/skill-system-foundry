@@ -551,6 +551,44 @@ async function runTests() {
       'Object without findings array should not be accepted');
   });
 
+  // ── Schema-incompatible findings trigger fallback ──────────────────
+
+  // Old-format payload: has findings array but fields are incompatible
+  // with the new schema (severity/comment instead of priority/body).
+  // All findings should be dropped by isValidFinding(), triggering the
+  // raw fallback body instead of a misleading clean review.
+  capturedReview = null;
+  const oldFormatReview = {
+    summary: 'Old format review.',
+    findings: [
+      { severity: 'high', comment: 'Something is wrong', file: 'src/main.js', line: 5 },
+      { severity: 'low', comment: 'Minor style issue', file: 'src/utils.js', line: 3 },
+    ],
+    overall_correctness: 'patch is incorrect',
+    overall_confidence_score: 0.8,
+  };
+  fs.writeFileSync(path.join(codexDir, 'review-output.json'), JSON.stringify(oldFormatReview));
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('schema-incompatible findings trigger raw fallback', () => {
+    assert.ok(capturedReview, 'Expected createReview to be called');
+    assert.ok(capturedReview.body.includes('Could not parse structured Codex output'),
+      'Expected fallback message when all findings are schema-incompatible');
+  });
+
+  test('schema-incompatible findings show raw JSON in fallback', () => {
+    assert.ok(capturedReview.body.includes('Old format review'),
+      'Expected raw JSON content in fallback body');
+  });
+
+  test('schema-incompatible findings have no inline comments', () => {
+    assert.ok(!capturedReview.comments || capturedReview.comments.length === 0,
+      'Expected no inline comments for schema-incompatible payload');
+  });
+
   // Restore valid review output for any subsequent tests
   fs.writeFileSync(path.join(codexDir, 'review-output.json'), JSON.stringify(reviewOutput));
 
