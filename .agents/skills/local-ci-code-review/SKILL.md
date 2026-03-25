@@ -38,12 +38,15 @@ List the changed files and note their types — file types determine which check
 
 ## Step 2: Load Review Context
 
-Read the review methodology and reference material:
+Read the review methodology, reference material, and file-type instruction rules:
 
 - `.github/codex/review-prompt.md` — focus areas, analysis depth, priority levels, line number rules, suggestion format, self-review checklist
-- `.github/codex/review-reference.md` — confidence scoring calibration, file-type checklists, few-shot examples, known limitations
+- `.github/codex/review-reference.md` — confidence scoring calibration, file-type checklists, few-shot examples, recurring finding patterns, known limitations
+- `.github/copilot-instructions.md` — Agent Skills format compliance, repository constraints, automated validation coverage, review focus areas
+- `.github/instructions/markdown.instructions.md` — documentation quality rules, description quality, progressive disclosure, file reference conventions
+- `.github/instructions/scripts.instructions.md` — Python script conventions, stdlib-only constraint, type hints, error handling, code organization rules
 
-These files are the authoritative source for how the review is conducted. Apply them exactly as written.
+The codex review files are the authoritative review methodology — apply them exactly as written. The instruction files provide supplementary file-type-specific rules: apply `copilot-instructions.md` to all files, `markdown.instructions.md` when the diff includes `**/*.md`, and `scripts.instructions.md` when it includes `skill-system-foundry/scripts/**/*.py`.
 
 ## Step 3: Review the Diff
 

@@ -129,6 +129,38 @@ Beyond code correctness, also evaluate:
 
 `AGENTS.md` is the authority for repository conventions. Do not duplicate its content — reference it.
 
+## Recurring CI finding patterns
+
+These patterns have been repeatedly flagged by CI reviewers. When reviewing a diff that touches related code, check whether the fix is already applied or the pattern has regressed.
+
+### NaN propagation from Number()
+
+`Number()` on `undefined`, `null`, or non-numeric strings returns `NaN`. Comparisons against `NaN` are always `false`, silently disabling guards. Verify every `Number()` call is followed by a `Number.isFinite()` or `Number.isInteger()` check before use in comparisons or arithmetic.
+
+### Environment variable validation
+
+Shell scripts must validate required variables with `${VAR:?}` at the top. JavaScript must check `process.env` values before parsing — an unset variable is `undefined`, and `Number(undefined)` is `NaN`. Validate both presence and type.
+
+### Sort comparator correctness
+
+Array `.sort()` with a numeric comparator breaks when values include `NaN` — the comparison `a - NaN` returns `NaN`, which violates the comparator contract and produces unstable ordering. Filter or validate before sorting.
+
+### Buffer and truncation arithmetic
+
+When truncating strings to fit size limits (GitHub API body limits, inline comment limits), subtract the suffix/wrapper length before slicing. A common mistake: `text.slice(0, limit)` followed by appending a suffix that pushes the total over the limit. Use `text.slice(0, Math.max(0, limit - suffix.length)) + suffix`.
+
+### Exit code semantics
+
+Scripts that validate inputs and exit must use fail-closed semantics: exit 1 on failure, exit 0 only on success. A try/catch that swallows an error and exits 0 is fail-open — downstream jobs proceed as if validation passed.
+
+### Code fence injection
+
+Untrusted content (PR titles, PR bodies) embedded in code-fenced prompt sections can break the fence if it contains backtick sequences. Use dynamic fence computation (`build_fence`) that picks a delimiter longer than any backtick run in the content, and sanitize untrusted text by neutralizing triple-backtick sequences.
+
+### Guard boundary operators
+
+Range checks (`priority >= 0 && priority <= 3`, `confidence >= 0 && confidence <= 1`) must use the correct boundary operator. `<` vs `<=` vs `!==` changes whether the boundary value is included. Verify the operator matches the documented contract.
+
 ## Known limitations — do not flag these
 
 The following are known design decisions or platform constraints. Do not report findings for these items — they have been evaluated and accepted:
