@@ -482,6 +482,53 @@ async function runTests() {
       'Footer should not include effort when CODEX_REVIEW_EFFORT is not set');
   });
 
+  // ── JSON fallback test ─────────────────────────────────────────────
+
+  // Test non-JSON response triggers fallback body
+  capturedReview = null;
+  process.env.CODEX_REVIEW_MODEL = 'test-model';
+  process.env.MIN_CONFIDENCE = '0';
+
+  // Write non-JSON review output
+  fs.writeFileSync(path.join(codexDir, 'review-output.json'), 'This is not JSON. The model returned plain text.');
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('non-JSON output triggers fallback body', () => {
+    assert.ok(capturedReview, 'Expected createReview to be called');
+    assert.ok(capturedReview.body.includes('Could not parse structured Codex output'),
+      'Expected fallback message in body');
+    assert.ok(capturedReview.body.includes('This is not JSON'),
+      'Expected raw response in fallback body');
+  });
+
+  test('non-JSON output has no inline comments', () => {
+    assert.ok(!capturedReview.comments || capturedReview.comments.length === 0,
+      'Expected no inline comments for non-JSON output');
+  });
+
+  // Test JSON wrapped in markdown code fence
+  capturedReview = null;
+  const fencedJson = '```json\n' + JSON.stringify(reviewOutput) + '\n```';
+  fs.writeFileSync(path.join(codexDir, 'review-output.json'), fencedJson);
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('fenced JSON is parsed successfully', () => {
+    assert.ok(capturedReview, 'Expected createReview to be called');
+    assert.ok(capturedReview.body.includes('Pull request overview'),
+      'Expected normal review body, not fallback');
+    assert.ok(!capturedReview.body.includes('Could not parse'),
+      'Should not show fallback message');
+  });
+
+  // Restore valid review output for any subsequent tests
+  fs.writeFileSync(path.join(codexDir, 'review-output.json'), JSON.stringify(reviewOutput));
+
   // ── Summary ───────────────────────────────────────────────────────
 
   console.log(`\n${passed} passed, ${failed} failed\n`);

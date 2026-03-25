@@ -1,11 +1,43 @@
 // Publish Codex PR review as GitHub pull request review with inline comments.
 //
 // Called from the codex-code-review workflow via actions/github-script.
-// Reads .codex/review-output.json (guaranteed valid JSON by prepare-codex-artifacts.sh)
-// and .codex/pr.diff, then posts a structured review with inline findings.
+// Reads .codex/review-output.json and .codex/pr.diff, then posts a structured
+// review with inline findings. Uses 3-tier JSON parsing with graceful fallback
+// when Codex returns non-JSON output.
 
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+
+// ── JSON parsing (3-tier fallback) ──────────────────────────────────
+
+function tryParseJson(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+function parseStructuredReview(raw) {
+  const trimmed = raw.trim();
+
+  // Strategy 1: Raw JSON
+  let parsed = tryParseJson(trimmed);
+  if (parsed && typeof parsed === 'object') return parsed;
+
+  // Strategy 2: Fenced code block (```json ... ```)
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    parsed = tryParseJson(fenced[1].trim());
+    if (parsed && typeof parsed === 'object') return parsed;
+  }
+
+  // Strategy 3: Brace extraction (first { ... last })
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    parsed = tryParseJson(trimmed.slice(firstBrace, lastBrace + 1));
+    if (parsed && typeof parsed === 'object') return parsed;
+  }
+
+  return null;
+}
 
 function parseAddedLinesByFile(diffText) {
   const addedByFile = new Map();
@@ -121,7 +153,7 @@ module.exports = async function publish({ github, context, core, process }) {
   const prHeadSha = context.payload.pull_request.head.sha;
 
   const codexReview = fs.readFileSync('.codex/review-output.json', 'utf8');
-  const parsed = JSON.parse(codexReview);
+  const parsed = parseStructuredReview(codexReview);
   const parsedFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
   const allFindings = parsedFindings.map(normalizeFinding);
   const summaryText = String(parsed?.summary || '').trim();
@@ -325,6 +357,17 @@ module.exports = async function publish({ github, context, core, process }) {
     return body.slice(0, githubMaxBodyChars - suffix.length) + suffix;
   }
 
+  function buildFallbackBody() {
+    const maxFallbackChars = 12000;
+    const raw = codexReview.trim();
+    const limited = raw.length > maxFallbackChars
+      ? `${raw.slice(0, maxFallbackChars)}\n...(truncated)`
+      : raw;
+    return raw
+      ? `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n\`\`\`\n${limited}\n\`\`\``
+      : '## Pull request overview\n\nCodex returned an empty response.';
+  }
+
   // Detect isFirstReview via pulls.listReviews
   const existingReviews = await github.paginate(github.rest.pulls.listReviews, {
     owner,
@@ -343,7 +386,9 @@ module.exports = async function publish({ github, context, core, process }) {
   try {
     const commentCount = reviewComments.length;
     let body;
-    if (isFirstReview) {
+    if (!parsed) {
+      body = buildFallbackBody();
+    } else if (isFirstReview) {
       body = buildFirstReviewBody(commentCount);
     } else {
       body = buildSubsequentReviewBody(commentCount);
@@ -372,7 +417,9 @@ module.exports = async function publish({ github, context, core, process }) {
     if (reviewComments.length > 0) {
       try {
         let body;
-        if (isFirstReview) {
+        if (!parsed) {
+          body = buildFallbackBody();
+        } else if (isFirstReview) {
           body = buildFirstReviewBody(0);
         } else {
           body = buildSubsequentReviewBody(0);

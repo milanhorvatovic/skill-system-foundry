@@ -12,16 +12,11 @@ name: Codex code review
 #   workflow from the base branch but with write access against potentially
 #   untrusted PR code and therefore requires a dedicated security review before
 #   adoption.
-# - Security boundaries are enforced by job permissions, not script provenance:
-#   * prepare job: contents: read only — checkout, diff, split
+# - Security boundaries are enforced by job permissions and script provenance:
+#   * prepare job: contents: read only — checkout PR head, diff, split
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo
-#   * publish job: pull-requests: write only — can only post PR comments
-# - Known limitation: the publish job executes scripts from prepare artifacts
-#   (sourced from the PR head checkout). This is accepted because (a) CODEOWNERS
-#   requires code-owner approval for .github/scripts/ changes, (b) the publish
-#   token can only post PR comments — it cannot push code, merge, or access
-#   secrets, and (c) checkout in publish would require contents:read which
-#   broadens the permission surface of the write-scoped job.
+#   * publish job: contents: read + pull-requests: write — checks out base branch
+#     for trusted scripts, only data artifacts come from the PR head
 # - Fork PRs cannot access repository secrets per GitHub's security model,
 #   so untrusted forks cannot exfiltrate OPENAI_API_KEY or other secrets.
 
@@ -114,8 +109,6 @@ jobs:
             .codex/chunks/
             .codex/pr.diff
             .github/codex/review-output-schema.json
-            .github/scripts/publish-review.js
-            .github/scripts/merge-review-chunks.js
           include-hidden-files: true
           retention-days: 1
 
@@ -144,14 +137,20 @@ jobs:
         with:
           name: codex-prepare
 
-      # model input is optional: action.yml has required: false, default: "".
-      # When CODEX_REVIEW_MODEL is undefined, GitHub substitutes an empty
-      # string — identical to the action's default — so the action falls
-      # back to its built-in model selection. Splitting into two conditional
-      # steps (with/without model) was evaluated and rejected because empty
-      # string and omission produce identical behavior.
-      - name: Run Codex review (chunk ${{ matrix.chunk }})
-        id: codex
+      - name: Resolve model flag
+        id: model-flag
+        env:
+          CODEX_REVIEW_MODEL: ${{ vars.CODEX_REVIEW_MODEL }}
+        run: |
+          if [ -n "$CODEX_REVIEW_MODEL" ]; then
+            echo "defined=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "defined=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Codex review with model (chunk ${{ matrix.chunk }})
+        if: ${{ steps.model-flag.outputs.defined == 'true' }}
+        id: codex-with-model
         uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -161,8 +160,19 @@ jobs:
           output-schema-file: .github/codex/review-output-schema.json
           output-file: .codex/chunks/chunk-${{ matrix.chunk }}/review-output.json
 
+      - name: Run Codex review with default model (chunk ${{ matrix.chunk }})
+        if: ${{ steps.model-flag.outputs.defined != 'true' }}
+        id: codex-default-model
+        uses: openai/codex-action@086169432f1d2ab2f4057540b1754d550f6a1189 # @v1 as 1.4
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: read-only
+          prompt-file: .codex/chunks/chunk-${{ matrix.chunk }}/prompt.txt
+          output-schema-file: .github/codex/review-output-schema.json
+          output-file: .codex/chunks/chunk-${{ matrix.chunk }}/review-output.json
+
       - name: Upload chunk review
-        if: ${{ steps.codex.outcome == 'success' }}
+        if: ${{ steps.codex-with-model.outcome == 'success' || steps.codex-default-model.outcome == 'success' }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # @v7 as 7.0.0
         with:
           name: codex-review-chunk-${{ matrix.chunk }}
@@ -177,6 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: write
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -191,6 +202,14 @@ jobs:
       GITHUB_MAX_BODY_CHARS: '65536'
 
     steps:
+      # Checkout base branch for trusted scripts — only data artifacts
+      # come from the PR head (via codex-prepare / codex-review-chunk-*).
+      - name: Checkout base branch scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # @v4 as 4.4.0
         with:
@@ -232,5 +251,5 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # @v8 as 8.0.0
         with:
           script: |
-            const publish = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/publish-review.js`)
+            const publish = require('./.github/scripts/publish-review.js')
             await publish({ github, context, core, process })
