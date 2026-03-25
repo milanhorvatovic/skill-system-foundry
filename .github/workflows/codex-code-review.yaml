@@ -1,12 +1,17 @@
 name: Codex code review
 
 # Security model:
-# - This workflow uses `on: pull_request`. For same-repo PRs, the workflow YAML
-#   is loaded from the PR branch (head). For fork PRs, secrets are not available.
+# - This workflow uses `on: pull_request`. The workflow YAML is always loaded
+#   from the base branch; changes to workflow files in the PR do not affect
+#   the running workflow. For fork PRs, secrets are not available.
 # - Protection against tampering relies on CODEOWNERS (.github/CODEOWNERS requires
 #   code-owner approval for .github/workflows/ and .github/scripts/) combined with
 #   the "Require review from Code Owners" branch protection rule. Without both, a
 #   merged PR could weaken the workflow for all subsequent PRs.
+# - We intentionally do not use `pull_request_target` here. That event runs the
+#   workflow from the base branch but with write access against potentially
+#   untrusted PR code and therefore requires a dedicated security review before
+#   adoption.
 # - Security boundaries are enforced by job permissions, not script provenance:
 #   * prepare job: contents: read only — checkout, diff, split
 #   * review job:  contents: read only — read-only sandbox, cannot modify repo

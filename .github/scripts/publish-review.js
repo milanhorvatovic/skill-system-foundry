@@ -201,7 +201,8 @@ module.exports = async function publish({ github, context, core, process }) {
       skippedTruncated += 1;
       commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}\n\n...(reasoning/suggestion truncated to fit GitHub limits)\n\n<!-- codex-inline:${signature} -->`;
       if (commentBody.length > maxInlineBodyChars) {
-        commentBody = commentBody.slice(0, maxInlineBodyChars - 50) + `\n\n...(truncated)\n\n<!-- codex-inline:${signature} -->`;
+        const truncSuffix = `\n\n...(truncated)\n\n<!-- codex-inline:${signature} -->`;
+        commentBody = commentBody.slice(0, Math.max(0, maxInlineBodyChars - truncSuffix.length)) + truncSuffix;
       }
     }
     const commentObj = {
@@ -222,10 +223,14 @@ module.exports = async function publish({ github, context, core, process }) {
   }
 
   const reviewMarker = '<!-- codex-pr-review -->';
-  const maxSummaryChars = Number(process.env.MAX_SUMMARY_CHARS);
-  const maxChangeItems = Number(process.env.MAX_CHANGE_ITEMS);
-  const maxFilesInTable = Number(process.env.MAX_FILES_IN_TABLE);
-  const maxReviewBodyChars = Number(process.env.MAX_REVIEW_BODY_CHARS);
+  const rawMaxSummary = Number(process.env.MAX_SUMMARY_CHARS);
+  const maxSummaryChars = Number.isFinite(rawMaxSummary) && rawMaxSummary > 0 ? rawMaxSummary : 4000;
+  const rawMaxChange = Number(process.env.MAX_CHANGE_ITEMS);
+  const maxChangeItems = Number.isFinite(rawMaxChange) && rawMaxChange > 0 ? rawMaxChange : 50;
+  const rawMaxFiles = Number(process.env.MAX_FILES_IN_TABLE);
+  const maxFilesInTable = Number.isFinite(rawMaxFiles) && rawMaxFiles > 0 ? rawMaxFiles : 100;
+  const rawMaxReviewBody = Number(process.env.MAX_REVIEW_BODY_CHARS);
+  const maxReviewBodyChars = Number.isFinite(rawMaxReviewBody) && rawMaxReviewBody > 0 ? rawMaxReviewBody : 60000;
 
   function buildVerdictSection() {
     const allowedVerdicts = new Set(['patch is correct', 'patch is incorrect']);

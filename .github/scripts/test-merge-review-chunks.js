@@ -150,6 +150,15 @@ test('succeeds when valid chunks == expected count', () => {
   assert.strictEqual(result.exitCode, 0);
 });
 
+test('fails when valid chunks > expected count', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  writeChunk(chunksDir, 0, validChunk);
+  writeChunk(chunksDir, 1, incorrectChunk);
+  writeChunk(chunksDir, 2, validChunk);
+  const result = runMerge(tmpDir, { EXPECTED_CHUNKS: '2' });
+  assert.strictEqual(result.exitCode, 1);
+});
+
 // ── Files deduplication ─────────────────────────────────────────────
 
 test('deduplicates files across chunks', () => {

@@ -28,7 +28,15 @@ function findReviewOutputs(dir) {
   return results;
 }
 
-const reviewFiles = findReviewOutputs(chunksDir).sort();
+// Sort numerically by chunk index to ensure deterministic merge order
+// (lexicographic sort would place chunk-10 before chunk-2).
+function getChunkIndex(filePath) {
+  const dirName = path.basename(path.dirname(filePath));
+  const match = /^codex-review-chunk-(\d+)$/.exec(dirName);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
+
+const reviewFiles = findReviewOutputs(chunksDir).sort((a, b) => getChunkIndex(a) - getChunkIndex(b));
 
 if (reviewFiles.length === 0) {
   console.error('No review-output.json files found. Failing merge.');
@@ -133,8 +141,8 @@ if (validChunks === 0) {
 // Guard: if EXPECTED_CHUNKS is set, verify all chunks were successfully merged.
 // This prevents publishing a partial review that claims full coverage.
 const expectedChunks = Number(process.env.EXPECTED_CHUNKS);
-if (Number.isInteger(expectedChunks) && expectedChunks > 0 && validChunks < expectedChunks) {
-  console.error(`Only ${validChunks} of ${expectedChunks} expected chunk(s) were valid. Failing merge to prevent partial review.`);
+if (Number.isInteger(expectedChunks) && expectedChunks > 0 && validChunks !== expectedChunks) {
+  console.error(`Expected ${expectedChunks} chunk(s) but got ${validChunks}. Failing merge to prevent inconsistent review.`);
   process.exit(1);
 }
 
