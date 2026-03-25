@@ -14,18 +14,26 @@ function tryParseJson(text) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
+// Accept only review-shaped objects: must be a non-null, non-array object
+// with at least a `findings` array. This prevents `[]`, `{}`, or other
+// valid-but-useless JSON from suppressing the fallback display.
+function isReviewShaped(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Array.isArray(value.findings);
+}
+
 function parseStructuredReview(raw) {
   const trimmed = raw.trim();
 
   // Strategy 1: Raw JSON
   let parsed = tryParseJson(trimmed);
-  if (parsed && typeof parsed === 'object') return parsed;
+  if (isReviewShaped(parsed)) return parsed;
 
   // Strategy 2: Fenced code block (```json ... ```)
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenced) {
     parsed = tryParseJson(fenced[1].trim());
-    if (parsed && typeof parsed === 'object') return parsed;
+    if (isReviewShaped(parsed)) return parsed;
   }
 
   // Strategy 3: Brace extraction (first { ... last })
@@ -33,7 +41,7 @@ function parseStructuredReview(raw) {
   const lastBrace = trimmed.lastIndexOf('}');
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     parsed = tryParseJson(trimmed.slice(firstBrace, lastBrace + 1));
-    if (parsed && typeof parsed === 'object') return parsed;
+    if (isReviewShaped(parsed)) return parsed;
   }
 
   return null;

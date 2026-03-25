@@ -526,6 +526,31 @@ async function runTests() {
       'Should not show fallback message');
   });
 
+  // Test valid JSON but not review-shaped (array, empty object) triggers fallback
+  capturedReview = null;
+  fs.writeFileSync(path.join(codexDir, 'review-output.json'), '[]');
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('JSON array triggers fallback (not review-shaped)', () => {
+    assert.ok(capturedReview.body.includes('Could not parse structured Codex output'),
+      'Array should not be accepted as review output');
+  });
+
+  capturedReview = null;
+  fs.writeFileSync(path.join(codexDir, 'review-output.json'), '{"summary": "test"}');
+
+  process.chdir(tmpDir);
+  await publish({ github: mockGithub, context: mockContext, core: mockCore, process });
+  process.chdir(originalCwd);
+
+  test('JSON object without findings triggers fallback', () => {
+    assert.ok(capturedReview.body.includes('Could not parse structured Codex output'),
+      'Object without findings array should not be accepted');
+  });
+
   // Restore valid review output for any subsequent tests
   fs.writeFileSync(path.join(codexDir, 'review-output.json'), JSON.stringify(reviewOutput));
 
