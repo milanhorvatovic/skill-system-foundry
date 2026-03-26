@@ -27,6 +27,11 @@ function findFileRecursive(dir, filename) {
 // Restricts to codex-review-chunk-\d+ directories. Searches recursively
 // within each to handle nested artifact extraction paths (e.g.
 // codex-review-chunk-0/.codex/chunks/chunk-0/review-output.json).
+//
+// Fallback: download-artifact@v8 extracts single matched artifacts
+// directly into the path without creating a per-artifact subdirectory.
+// When only one chunk exists, review-output.json lands flat in the
+// chunks directory instead of inside codex-review-chunk-0/.
 function findReviewOutputs(dir) {
   const results = [];
   if (!fs.existsSync(dir)) return results;
@@ -36,6 +41,14 @@ function findReviewOutputs(dir) {
     const found = findFileRecursive(path.join(dir, entry.name), 'review-output.json');
     if (found) {
       results.push(found);
+    }
+  }
+  // Flat extraction fallback: single-artifact download puts the file
+  // directly in the chunks directory without a subdirectory.
+  if (results.length === 0) {
+    const direct = path.join(dir, 'review-output.json');
+    if (fs.existsSync(direct)) {
+      results.push(direct);
     }
   }
   return results;
@@ -54,6 +67,16 @@ function getChunkIndex(filePath) {
 const reviewFiles = findReviewOutputs(chunksDir).sort((a, b) => getChunkIndex(a) - getChunkIndex(b));
 
 if (reviewFiles.length === 0) {
+  // Log directory contents to help diagnose download-artifact layout issues.
+  if (fs.existsSync(chunksDir)) {
+    const entries = fs.readdirSync(chunksDir, { withFileTypes: true });
+    console.error(`Contents of ${chunksDir}/ (${entries.length} entries):`);
+    for (const e of entries) {
+      console.error(`  ${e.isDirectory() ? 'd' : 'f'} ${e.name}`);
+    }
+  } else {
+    console.error(`Directory ${chunksDir} does not exist.`);
+  }
   console.error('No review-output.json files found. Failing merge.');
   process.exit(1);
 }

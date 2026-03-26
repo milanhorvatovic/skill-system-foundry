@@ -234,6 +234,37 @@ test('nested chunks sort numerically (chunk-2 before chunk-10)', () => {
     `Expected chunk2 summary before chunk10 summary, got: "${merged.summary}"`);
 });
 
+// ── Flat extraction fallback (download-artifact@v8 single match) ───────
+
+function writeFlatChunk(chunksDir, data) {
+  // Simulate download-artifact@v8 behavior when pattern matches exactly
+  // one artifact: the file is extracted directly into the path without
+  // creating a per-artifact subdirectory.
+  fs.writeFileSync(path.join(chunksDir, 'review-output.json'), JSON.stringify(data));
+}
+
+test('discovers review-output.json in flat extraction layout', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  writeFlatChunk(chunksDir, validChunk);
+  const result = runMerge(tmpDir, { EXPECTED_CHUNKS: '1' });
+  assert.strictEqual(result.exitCode, 0);
+  const merged = readMerged(tmpDir);
+  assert.ok(merged);
+  assert.strictEqual(merged.findings.length, 1);
+});
+
+test('prefers subdirectory layout over flat file', () => {
+  const { tmpDir, chunksDir } = setupChunksDir();
+  writeChunk(chunksDir, 0, validChunk);
+  // Also place a stale flat file — should be ignored
+  fs.writeFileSync(path.join(chunksDir, 'review-output.json'), '{"broken": true}');
+  const result = runMerge(tmpDir, { EXPECTED_CHUNKS: '1' });
+  assert.strictEqual(result.exitCode, 0);
+  const merged = readMerged(tmpDir);
+  assert.strictEqual(merged.findings.length, 1);
+  assert.strictEqual(merged.overall_correctness, 'patch is correct');
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
