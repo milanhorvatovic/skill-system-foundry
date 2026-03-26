@@ -1,11 +1,51 @@
 // Publish Codex PR review as GitHub pull request review with inline comments.
 //
 // Called from the codex-code-review workflow via actions/github-script.
-// Reads .codex/review-output.json (guaranteed valid JSON by prepare-codex-artifacts.sh)
-// and .codex/pr.diff, then posts a structured review with inline findings.
+// Reads .codex/review-output.json and .codex/pr.diff, then posts a structured
+// review with inline findings. Uses 3-tier JSON parsing with graceful fallback
+// when Codex returns non-JSON output.
 
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+
+// ── JSON parsing (3-tier fallback) ──────────────────────────────────
+
+function tryParseJson(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+// Accept only review-shaped objects: must be a non-null, non-array object
+// with at least a `findings` array. This prevents `[]`, `{}`, or other
+// valid-but-useless JSON from suppressing the fallback display.
+function isReviewShaped(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Array.isArray(value.findings);
+}
+
+function parseStructuredReview(raw) {
+  const trimmed = raw.trim();
+
+  // Strategy 1: Raw JSON
+  let parsed = tryParseJson(trimmed);
+  if (isReviewShaped(parsed)) return parsed;
+
+  // Strategy 2: Fenced code block (```json ... ```)
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    parsed = tryParseJson(fenced[1].trim());
+    if (isReviewShaped(parsed)) return parsed;
+  }
+
+  // Strategy 3: Brace extraction (first { ... last })
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    parsed = tryParseJson(trimmed.slice(firstBrace, lastBrace + 1));
+    if (isReviewShaped(parsed)) return parsed;
+  }
+
+  return null;
+}
 
 function parseAddedLinesByFile(diffText) {
   const addedByFile = new Map();
@@ -79,30 +119,74 @@ function escapeTableCell(text) {
 
 function normalizeFinding(finding) {
   const title = String(finding?.title || '').trim();
-  const severity = String(finding?.severity || 'medium').trim().toLowerCase();
+  const priority = Number(finding?.priority);
+  const confidenceScore = Number(finding?.confidence_score);
   const path = normalizePath(finding?.path);
   const line = Number(finding?.line);
-  const startLine = Number(finding?.startLine) || null;
-  const comment = String(finding?.comment || '').trim();
+  const rawStartLine = Number(finding?.start_line);
+  const startLine = Number.isInteger(rawStartLine) && rawStartLine > 0 ? rawStartLine : null;
+  const body = String(finding?.body || '').trim();
   const rawSuggestion = finding?.suggestion != null ? String(finding.suggestion) : '';
   const suggestion = rawSuggestion.length > 0 ? rawSuggestion : null;
-  return { title, severity, path, line, startLine, comment, suggestion };
+  const reasoning = String(finding?.reasoning || '').trim();
+  return { title, priority, confidenceScore, path, line, startLine, reasoning, body, suggestion };
+}
+
+function resolveModel(parsed, env) {
+  const envModel = String(env.CODEX_REVIEW_MODEL || '').trim();
+  const selfReported = String(parsed?.model || '').trim();
+  const raw = envModel || selfReported || 'unknown';
+  // Allowlist: keep only safe characters for Markdown rendering.
+  const matches = raw.match(/[A-Za-z0-9._: -]+/g);
+  return matches && matches.length > 0 ? matches.join(' ').slice(0, 80) : 'unknown';
+}
+
+function isValidFinding(finding) {
+  const validRange = finding.startLine === null || finding.startLine <= finding.line;
+  return finding.title && finding.path && Number.isInteger(finding.line) && finding.line > 0 && finding.body &&
+    Number.isInteger(finding.priority) && finding.priority >= 0 && finding.priority <= 3 &&
+    Number.isFinite(finding.confidenceScore) && finding.confidenceScore >= 0 && finding.confidenceScore <= 1 &&
+    validRange;
 }
 
 module.exports = async function publish({ github, context, core, process }) {
-  const maxInlineConversations = Number(process.env.MAX_INLINE_CONVERSATIONS);
-  const githubMaxBodyChars = Number(process.env.GITHUB_MAX_BODY_CHARS);
+  const rawMaxInline = Number(process.env.MAX_INLINE_CONVERSATIONS);
+  const maxInlineConversations = Number.isFinite(rawMaxInline) && rawMaxInline > 0 ? rawMaxInline : 20;
+  const rawMaxBody = Number(process.env.GITHUB_MAX_BODY_CHARS);
+  const githubMaxBodyChars = Number.isFinite(rawMaxBody) && rawMaxBody > 0 ? rawMaxBody : 65536;
+  const rawMinConfidence = Number(process.env.MIN_CONFIDENCE);
+  const minConfidence = Number.isFinite(rawMinConfidence)
+    ? Math.min(1, Math.max(0, rawMinConfidence))
+    : 0;
   const issue_number = context.payload.pull_request.number;
   const { owner, repo } = context.repo;
   const prHeadSha = context.payload.pull_request.head.sha;
 
   const codexReview = fs.readFileSync('.codex/review-output.json', 'utf8');
-  const parsed = JSON.parse(codexReview);
+  const parsed = parseStructuredReview(codexReview);
   const parsedFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
-  const findings = parsedFindings.map(normalizeFinding);
+  const allFindings = parsedFindings.map(normalizeFinding);
   const summaryText = String(parsed?.summary || '').trim();
   const changes = Array.isArray(parsed?.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean) : [];
   const files = Array.isArray(parsed?.files) ? parsed.files : [];
+  const overallCorrectness = String(parsed?.overall_correctness || '').trim();
+  const overallConfidenceScore = Number(parsed?.overall_confidence_score);
+  const model = resolveModel(parsed, process.env);
+
+  // Filter out incomplete findings before sorting so NaN values cannot
+  // cause unstable ordering in the comparator.
+  const findings = allFindings.filter(isValidFinding);
+  let skippedIncomplete = allFindings.length - findings.length;
+
+  // Detect schema-incompatible payload: model returned parseable JSON with findings,
+  // but none survived validation. Show raw fallback instead of a misleading clean review.
+  const forceRawFallback = parsed !== null && parsedFindings.length > 0 && findings.length === 0;
+
+  // Sort findings: P0 first, then by confidence descending within same priority
+  findings.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return b.confidenceScore - a.confidenceScore;
+  });
 
   const diffText = fs.readFileSync('.codex/pr.diff', 'utf8');
   const addedByFile = parseAddedLinesByFile(diffText);
@@ -110,7 +194,8 @@ module.exports = async function publish({ github, context, core, process }) {
 
   const reviewComments = [];
   let skippedInvalidLocation = 0;
-  let skippedIncomplete = 0;
+  let skippedLowConfidence = 0;
+  let skippedTruncated = 0;
 
   const existingReviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
     owner,
@@ -129,8 +214,8 @@ module.exports = async function publish({ github, context, core, process }) {
   );
 
   for (const finding of findings) {
-    if (!finding.title || !finding.path || !Number.isInteger(finding.line) || finding.line <= 0 || !finding.comment) {
-      skippedIncomplete += 1;
+    if (finding.confidenceScore < minConfidence) {
+      skippedLowConfidence += 1;
       continue;
     }
 
@@ -142,18 +227,30 @@ module.exports = async function publish({ github, context, core, process }) {
 
     const signature = crypto
       .createHash('sha256')
-      .update(`${finding.path}|${finding.line}|${finding.title}|${finding.severity}`)
+      .update(`${finding.path}|${finding.line}|${finding.title}|${finding.priority}`)
       .digest('hex')
       .slice(0, 16);
     if (existingInlineMarkers.has(signature)) {
       continue;
     }
 
-    const alertType = { high: 'CAUTION', medium: 'WARNING', low: 'NOTE' }[finding.severity] || 'WARNING';
+    const alertType = { 0: 'CAUTION', 1: 'WARNING', 2: 'NOTE', 3: 'NOTE' }[finding.priority] || 'NOTE';
     const suggestionBlock = finding.suggestion
       ? `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``
       : '';
-    const commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.comment}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+    const reasoningBlock = finding.reasoning && finding.priority > 0
+      ? `\n\n<details>\n<summary>Reasoning</summary>\n\n${finding.reasoning}\n\n</details>`
+      : '';
+    const maxInlineBodyChars = 65000;
+    let commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}${reasoningBlock}${suggestionBlock}\n\n<!-- codex-inline:${signature} -->`;
+    if (commentBody.length > maxInlineBodyChars) {
+      skippedTruncated += 1;
+      commentBody = `> [!${alertType}]\n> **${finding.title}**\n\n${finding.body}\n\n...(reasoning/suggestion truncated to fit GitHub limits)\n\n<!-- codex-inline:${signature} -->`;
+      if (commentBody.length > maxInlineBodyChars) {
+        const truncSuffix = `\n\n...(truncated)\n\n<!-- codex-inline:${signature} -->`;
+        commentBody = commentBody.slice(0, Math.max(0, maxInlineBodyChars - truncSuffix.length)) + truncSuffix;
+      }
+    }
     const commentObj = {
       path: finding.path,
       line: finding.line,
@@ -172,10 +269,25 @@ module.exports = async function publish({ github, context, core, process }) {
   }
 
   const reviewMarker = '<!-- codex-pr-review -->';
-  const maxSummaryChars = Number(process.env.MAX_SUMMARY_CHARS);
-  const maxChangeItems = Number(process.env.MAX_CHANGE_ITEMS);
-  const maxFilesInTable = Number(process.env.MAX_FILES_IN_TABLE);
-  const maxReviewBodyChars = Number(process.env.MAX_REVIEW_BODY_CHARS);
+  const rawMaxSummary = Number(process.env.MAX_SUMMARY_CHARS);
+  const maxSummaryChars = Number.isFinite(rawMaxSummary) && rawMaxSummary > 0 ? rawMaxSummary : 4000;
+  const rawMaxChange = Number(process.env.MAX_CHANGE_ITEMS);
+  const maxChangeItems = Number.isFinite(rawMaxChange) && rawMaxChange > 0 ? rawMaxChange : 50;
+  const rawMaxFiles = Number(process.env.MAX_FILES_IN_TABLE);
+  const maxFilesInTable = Number.isFinite(rawMaxFiles) && rawMaxFiles > 0 ? rawMaxFiles : 100;
+  const rawMaxReviewBody = Number(process.env.MAX_REVIEW_BODY_CHARS);
+  const maxReviewBodyChars = Number.isFinite(rawMaxReviewBody) && rawMaxReviewBody > 0 ? rawMaxReviewBody : 60000;
+
+  function buildVerdictSection() {
+    const allowedVerdicts = new Set(['patch is correct', 'patch is incorrect']);
+    if (!allowedVerdicts.has(overallCorrectness)) return '';
+    const clamped = Number.isFinite(overallConfidenceScore)
+      ? Math.max(0, Math.min(1, overallConfidenceScore))
+      : null;
+    const confidence = clamped !== null ? ` (confidence: ${clamped.toFixed(2)})` : '';
+    const verdict = overallCorrectness.charAt(0).toUpperCase() + overallCorrectness.slice(1);
+    return `> **Verdict:** ${verdict}${confidence}`;
+  }
 
   // "N out of N" format matches Copilot's review output.
   function buildReviewedLine(commentCount) {
@@ -191,6 +303,10 @@ module.exports = async function publish({ github, context, core, process }) {
         ? `${summaryText.slice(0, maxSummaryChars)}\n\n...(summary truncated)`
         : summaryText;
       sections.push(summary);
+    }
+    const verdictSection = buildVerdictSection();
+    if (verdictSection) {
+      sections.push(verdictSection);
     }
     if (changes.length > 0) {
       const limitedChanges = changes.slice(0, maxChangeItems);
@@ -222,20 +338,29 @@ module.exports = async function publish({ github, context, core, process }) {
 
   function buildSubsequentReviewBody(commentCount) {
     const reviewedLine = buildReviewedLine(commentCount);
-    return `## Pull request overview\n\n${reviewedLine}`;
+    const verdictSection = buildVerdictSection();
+    const sections = ['## Pull request overview', reviewedLine];
+    if (verdictSection) {
+      sections.push(verdictSection);
+    }
+    return sections.join('\n\n');
   }
 
-  function buildMetadataSection(skippedLoc, skippedInc, error) {
+  function buildMetadataSection(skippedLoc, skippedInc, skippedConf, skippedTrunc, error) {
     const notes = [
       skippedLoc > 0 ? `Skipped ${skippedLoc} finding(s) not on changed RIGHT-side lines.` : null,
       skippedInc > 0 ? `Skipped ${skippedInc} incomplete finding(s).` : null,
+      skippedConf > 0 ? `Skipped ${skippedConf} finding(s) below confidence threshold.` : null,
+      skippedTrunc > 0 ? `Truncated ${skippedTrunc} comment(s) to fit GitHub limits.` : null,
       error ? `Failed to post inline conversations: ${error}` : null,
     ].filter(Boolean);
     return notes.length > 0 ? `\n\n<details>\n<summary>Review metadata</summary>\n\n${notes.join('\n')}\n\n</details>` : '';
   }
 
   function buildFooter() {
-    return `\n\n---\n*Generated by [Codex Review](${process.env.RUN_URL}) using ${process.env.CODEX_MODEL}*`;
+    const effort = String(process.env.CODEX_REVIEW_EFFORT || '').trim();
+    const effortSuffix = effort ? ` (effort: ${effort})` : '';
+    return `\n\n---\n*Generated by [Codex Review](${process.env.RUN_URL}) using ${model}${effortSuffix}*`;
   }
 
   // GitHub hard limit for review body is 65,536 characters.
@@ -244,6 +369,24 @@ module.exports = async function publish({ github, context, core, process }) {
     if (body.length <= githubMaxBodyChars) return body;
     const suffix = '\n\n...(review truncated to fit GitHub limits)';
     return body.slice(0, githubMaxBodyChars - suffix.length) + suffix;
+  }
+
+  // Build a Markdown code fence that cannot be broken by backticks in content.
+  function buildSafeFence(content) {
+    const runs = content.match(/`+/g) || [];
+    const maxRun = runs.length > 0 ? Math.max(...runs.map(r => r.length)) : 0;
+    return '`'.repeat(Math.max(3, maxRun + 1));
+  }
+
+  function buildFallbackBody() {
+    const maxFallbackChars = 12000;
+    const raw = codexReview.trim();
+    const limited = raw.length > maxFallbackChars
+      ? `${raw.slice(0, maxFallbackChars)}\n...(truncated)`
+      : raw;
+    if (!raw) return '## Pull request overview\n\nCodex returned an empty response.';
+    const fence = buildSafeFence(limited);
+    return `## Pull request overview\n\nCould not parse structured Codex output. Raw response:\n\n${fence}\n${limited}\n${fence}`;
   }
 
   // Detect isFirstReview via pulls.listReviews
@@ -264,12 +407,14 @@ module.exports = async function publish({ github, context, core, process }) {
   try {
     const commentCount = reviewComments.length;
     let body;
-    if (isFirstReview) {
+    if (!parsed || forceRawFallback) {
+      body = buildFallbackBody();
+    } else if (isFirstReview) {
       body = buildFirstReviewBody(commentCount);
     } else {
       body = buildSubsequentReviewBody(commentCount);
     }
-    body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, '');
+    body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, skippedTruncated, '');
     body += buildFooter();
     body = capReviewBody(`${reviewMarker}\n\n${body}`);
 
@@ -293,12 +438,14 @@ module.exports = async function publish({ github, context, core, process }) {
     if (reviewComments.length > 0) {
       try {
         let body;
-        if (isFirstReview) {
+        if (!parsed || forceRawFallback) {
+          body = buildFallbackBody();
+        } else if (isFirstReview) {
           body = buildFirstReviewBody(0);
         } else {
           body = buildSubsequentReviewBody(0);
         }
-        body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, inlineError);
+        body += buildMetadataSection(skippedInvalidLocation, skippedIncomplete, skippedLowConfidence, skippedTruncated, inlineError);
         body += buildFooter();
         body = capReviewBody(`${reviewMarker}\n\n${body}`);
 

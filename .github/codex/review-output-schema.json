@@ -1,0 +1,105 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "changes": {
+      "description": "Short bullets describing logical changes.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "files": {
+      "description": "Files changed in this PR with descriptions.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Short description of what changed in this file.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Repo-relative file path.",
+            "type": "string"
+          }
+        },
+        "required": ["description", "path"],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "findings": {
+      "description": "Actionable findings from the review.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "Why this matters and concrete fix guidance.",
+            "type": "string"
+          },
+          "confidence_score": {
+            "description": "Confidence that this finding is a real issue (0.0 to 1.0). Range enforced at runtime; minimum/maximum omitted because the structured output API does not support them.",
+            "type": "number"
+          },
+          "line": {
+            "description": "Changed line on the RIGHT side of the diff.",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Repo-relative file path.",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority level: 0 = critical, 1 = correctness, 2 = maintainability, 3 = minor. Range enforced at runtime; minimum/maximum omitted because the structured output API does not support them.",
+            "type": "integer"
+          },
+          "reasoning": {
+            "description": "Chain-of-thought explanation: what you observed, why it is a problem, and what the impact is. Written before deciding priority and confidence.",
+            "type": "string"
+          },
+          "start_line": {
+            "description": "First line when a suggestion spans multiple consecutive lines. Must be <= line. Null when not applicable.",
+            "type": ["integer", "null"]
+          },
+          "suggestion": {
+            "description": "Exact replacement code for lines start_line..line. Null when the fix is non-trivial or ambiguous.",
+            "type": ["string", "null"]
+          },
+          "title": {
+            "description": "Short issue title.",
+            "type": "string"
+          }
+        },
+        "required": ["body", "confidence_score", "line", "path", "priority", "reasoning", "start_line", "suggestion", "title"],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "model": {
+      "description": "Self-reported model identifier.",
+      "type": "string"
+    },
+    "overall_confidence_score": {
+      "description": "Confidence in the overall correctness verdict (0.0 to 1.0). Range enforced at runtime; minimum/maximum omitted because the structured output API does not support them.",
+      "type": "number"
+    },
+    "overall_correctness": {
+      "description": "Overall verdict on the patch.",
+      "enum": ["patch is correct", "patch is incorrect"],
+      "type": "string"
+    },
+    "summary": {
+      "description": "1-5 sentence description of what the PR changes and why.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "changes",
+    "files",
+    "findings",
+    "model",
+    "overall_confidence_score",
+    "overall_correctness",
+    "summary"
+  ],
+  "type": "object"
+}

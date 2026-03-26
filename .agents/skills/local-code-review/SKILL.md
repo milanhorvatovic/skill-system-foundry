@@ -9,9 +9,12 @@ description: >
   phrases like "check this before I push," "does this look right," "run
   the checks," or "review the current branch locally." Use this skill to
   catch issues locally and avoid spending CI tokens and time on problems
-  that can be detected on the development machine. For design-level
-  criticism and constructive feedback, use the critique skill instead. For
-  human PR review process guidance, use the review skill instead.
+  that can be detected on the development machine. For a deep review
+  replicating the CI code review pipeline with confidence scoring and
+  structured findings, use the local-ci-code-review skill instead. For
+  design-level criticism and constructive feedback, use the critique skill
+  instead. For human PR review process guidance, use the review skill
+  instead.
 ---
 
 # Local Code Review Skill
@@ -45,6 +48,7 @@ List the changed files and categorize them:
 | Templates | `assets/*.md` | Placeholder markers preserved |
 | Configuration | `scripts/lib/configuration.yaml` | Key naming, inline comments, structure |
 | Shell scripts | `.github/scripts/*.sh` | strict mode, env validation, permission boundary |
+| JavaScript CI scripts | `.github/scripts/*.js` | NaN propagation, env validation, sort stability, exit codes |
 | Workflows | `.github/workflows/*.yaml` | SHA-pinned actions, permission isolation |
 | Other Markdown | `README.md`, `CONTRIBUTING.md` | Accuracy, consistency with SKILL.md |
 
@@ -128,6 +132,32 @@ Now review the diff for issues that no script can catch. This is the core of the
 **Check permission boundaries:**
 - Does the script run in the correct workflow job (read-only vs write)?
 - Are new secrets handled without echoing to logs?
+
+### JavaScript Changes
+
+**Check for NaN propagation:**
+- Trace every `Number()`, `parseInt()`, `parseFloat()` call — what happens when input is `undefined`, `null`, or a non-numeric string?
+- Verify that `Number.isFinite()` guards follow numeric parsing before the value is used in comparisons or arithmetic
+
+**Check environment variable validation:**
+- Are `process.env` values validated before use? An unset variable becomes `undefined`, and `Number(undefined)` is `NaN`
+- Check that fallback defaults handle both missing and invalid (non-numeric) values
+
+**Check sort stability:**
+- Array `.sort()` comparators must handle all value types they receive — `NaN` in a comparator breaks sort ordering
+- Verify numeric sorts use `a - b`, not the default lexicographic comparison (which places `"10"` before `"2"`)
+
+**Check buffer and truncation math:**
+- When truncating strings to fit size limits, verify the suffix length is subtracted before slicing
+- Check that `Math.max(0, ...)` guards prevent negative slice lengths
+
+**Check exit code semantics:**
+- Does `process.exit(0)` vs `process.exit(1)` match the intended behavior? A validation script that exits 0 on failure is fail-open
+- Verify that try/catch blocks do not swallow errors and exit 0 when the operation actually failed
+
+**Check guard completeness:**
+- Range checks like `x >= 0 && x <= 3` must use the correct operator — `<` vs `<=` vs `!==` changes boundary behavior
+- Verify that `Number.isInteger()` and `Number.isFinite()` are used where the contract requires integer or finite values
 
 ### Configuration Changes
 
