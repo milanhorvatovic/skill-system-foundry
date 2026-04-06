@@ -8,9 +8,9 @@ name: Codex code review
 # - We intentionally avoid `pull_request_target` — it runs with write access
 #   against potentially untrusted PR code and requires dedicated security review.
 # - Fork PRs cannot access repository secrets per GitHub's security model.
-# - Review job: contents read-only, no write access.
-# - Publish job: contents read + pull-requests write, receives only data
-#   artifacts from the review job.
+# - Prepare job: contents read-only, builds diff and prompts.
+# - Review job: contents read-only, runs Codex per chunk via matrix strategy.
+# - Publish job: contents read + pull-requests write, merges and posts review.
 
 on:
   pull_request:
@@ -25,14 +25,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review:
+  prepare:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
     outputs:
-      has-changes: ${{ steps.codex.outputs.has-changes }}
+      has-changes: ${{ steps.prepare.outputs.has-changes }}
+      chunk-count: ${{ steps.prepare.outputs.chunk-count }}
+      chunk-matrix: ${{ steps.prepare.outputs.chunk-matrix }}
+      skipped: ${{ steps.prepare.outputs.skipped }}
     steps:
       - name: Checkout PR
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
@@ -41,44 +44,51 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run Codex review
-        uses: milanhorvatovic/codex-ai-code-review-action/review@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration branch
-        id: codex
+      - name: Prepare review
+        uses: milanhorvatovic/codex-ai-code-review-action/prepare@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration
+        id: prepare
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          model: ${{ vars.CODEX_REVIEW_MODEL }}
           allowed-users: ${{ vars.CODEX_REVIEW_USERS }}
           review-reference-file: .github/codex/review-reference.md
 
-      - name: Upload review artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
-        if: ${{ steps.codex.outputs.skipped != 'true' && steps.codex.outputs.has-changes == 'true' }}
+  review:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.skipped != 'true' && needs.prepare.outputs.has-changes == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.chunk-matrix) }}
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
-          name: codex-review
-          path: |
-            .codex/review-output.json
-            .codex/pr.diff
-          include-hidden-files: true
-          retention-days: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Review chunk ${{ matrix.chunk }}
+        uses: milanhorvatovic/codex-ai-code-review-action/review@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration
+        with:
+          chunk: ${{ matrix.chunk }}
+          model: ${{ vars.CODEX_REVIEW_MODEL }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
 
   publish:
-    needs: review
-    if: ${{ needs.review.outputs.has-changes == 'true' }}
+    needs: [prepare, review]
+    if: ${{ always() && needs.prepare.outputs.skipped != 'true' && needs.prepare.outputs.has-changes == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - name: Download review artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
-        with:
-          name: codex-review
-          path: .codex/
-
       - name: Publish PR review
-        uses: milanhorvatovic/codex-ai-code-review-action/publish@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration branch
+        uses: milanhorvatovic/codex-ai-code-review-action/publish@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration
         with:
+          expected-chunks: ${{ needs.prepare.outputs.chunk-count }}
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           review-effort: ${{ vars.CODEX_REVIEW_EFFORT }}
           min-confidence: ${{ vars.CODEX_MIN_CONFIDENCE || '0' }}
