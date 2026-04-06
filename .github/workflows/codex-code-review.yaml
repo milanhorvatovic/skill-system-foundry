@@ -42,7 +42,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Codex review
-        uses: milanhorvatovic/codex-ai-code-review-action/review@2c5e023d10db0cdc877a1d46c934b132c103465d # @v1 as 1.0.4
+        uses: milanhorvatovic/codex-ai-code-review-action/review@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration branch
         id: codex
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -77,7 +77,7 @@ jobs:
           path: .codex/
 
       - name: Publish PR review
-        uses: milanhorvatovic/codex-ai-code-review-action/publish@2c5e023d10db0cdc877a1d46c934b132c103465d # @v1 as 1.0.4
+        uses: milanhorvatovic/codex-ai-code-review-action/publish@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration branch
         with:
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           review-effort: ${{ vars.CODEX_REVIEW_EFFORT }}
