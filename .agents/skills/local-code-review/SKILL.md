@@ -47,8 +47,7 @@ List the changed files and categorize them:
 | Reference docs | `references/*.md` | Conciseness, one-level-deep cross-refs, ToC if 100+ lines |
 | Templates | `assets/*.md` | Placeholder markers preserved |
 | Configuration | `scripts/lib/configuration.yaml` | Key naming, inline comments, structure |
-| Shell scripts | `.github/scripts/*.sh` | strict mode, env validation, permission boundary |
-| JavaScript CI scripts | `.github/scripts/*.js` | NaN propagation, env validation, sort stability, exit codes |
+| Shell scripts | `.github/scripts/*.sh` | strict mode, env validation |
 | Workflows | `.github/workflows/*.yaml` | SHA-pinned actions, permission isolation |
 | Other Markdown | `README.md`, `CONTRIBUTING.md` | Accuracy, consistency with SKILL.md |
 
@@ -128,36 +127,6 @@ Now review the diff for issues that no script can catch. This is the core of the
 - New environment variables used without `${VAR:?}` validation at script top
 - Missing `trap` cleanup for temporary files
 - `>` instead of `>>` for `$GITHUB_OUTPUT`
-
-**Check permission boundaries:**
-- Does the script run in the correct workflow job (read-only vs write)?
-- Are new secrets handled without echoing to logs?
-
-### JavaScript Changes
-
-**Check for NaN propagation:**
-- Trace every `Number()`, `parseInt()`, `parseFloat()` call — what happens when input is `undefined`, `null`, or a non-numeric string?
-- Verify that `Number.isFinite()` guards follow numeric parsing before the value is used in comparisons or arithmetic
-
-**Check environment variable validation:**
-- Are `process.env` values validated before use? An unset variable becomes `undefined`, and `Number(undefined)` is `NaN`
-- Check that fallback defaults handle both missing and invalid (non-numeric) values
-
-**Check sort stability:**
-- Array `.sort()` comparators must handle all value types they receive — `NaN` in a comparator breaks sort ordering
-- Verify numeric sorts use `a - b`, not the default lexicographic comparison (which places `"10"` before `"2"`)
-
-**Check buffer and truncation math:**
-- When truncating strings to fit size limits, verify the suffix length is subtracted before slicing
-- Check that `Math.max(0, ...)` guards prevent negative slice lengths
-
-**Check exit code semantics:**
-- Does `process.exit(0)` vs `process.exit(1)` match the intended behavior? A validation script that exits 0 on failure is fail-open
-- Verify that try/catch blocks do not swallow errors and exit 0 when the operation actually failed
-
-**Check guard completeness:**
-- Range checks like `x >= 0 && x <= 3` must use the correct operator — `<` vs `<=` vs `!==` changes boundary behavior
-- Verify that `Number.isInteger()` and `Number.isFinite()` are used where the contract requires integer or finite values
 
 ### Configuration Changes
 

@@ -94,11 +94,11 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │   ├── plugin.json
 │   └── marketplace.json
 └── .github/
-    ├── scripts/                     ← CI helper scripts (bash + one Node.js)
+    ├── scripts/                     ← CI helper scripts (bash + Python)
     ├── workflows/                   ← GitHub Actions CI/CD
     │   ├── python-tests.yaml        ← tests + coverage + badge update (ubuntu + windows)
     │   ├── shellcheck.yaml          ← lints .github/scripts/*.sh
-    │   ├── codex-code-review.yaml   ← two-job Codex PR review pipeline
+    │   ├── codex-code-review.yaml   ← Codex PR review via codex-ai-code-review-action
     │   └── release.yml              ← bundles zip + uploads release asset
     ├── instructions/                ← review rules for Copilot/Codex
     │   ├── markdown.instructions.md ← applies to **/*.md

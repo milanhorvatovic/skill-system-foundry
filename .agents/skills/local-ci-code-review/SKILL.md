@@ -1,13 +1,14 @@
 ---
 name: local-ci-code-review
 description: >
-  Runs the CI code review pipeline locally, replicating the automated
-  review from .github/workflows/codex-code-review.yaml without requiring
-  GitHub Actions or an external API. Triggers when asked to run the CI
-  review locally, replicate the pipeline review, do a deep code review,
-  review like the pipeline would, or check what CI would flag. Also
-  triggers on phrases like "run the CI review on this," "what would the
-  pipeline review find," "deep review this branch," or "simulate the
+  Runs a deep structured code review locally, applying the same
+  methodology used by the codex-ai-code-review-action CI pipeline —
+  priority levels, confidence scoring, data flow tracing, and structured
+  findings — without requiring GitHub Actions or an external API.
+  Triggers when asked to run the CI review locally, do a deep code
+  review, review like the pipeline would, or check what CI would flag.
+  Also triggers on phrases like "run the CI review on this," "what would
+  the pipeline review find," "deep review this branch," or "simulate the
   automated review." For running automated checks (tests, coverage,
   shellcheck), use the local-code-review skill instead. For human PR
   review process guidance, use the review skill instead.
@@ -15,7 +16,7 @@ description: >
 
 # Local CI Code Review Skill
 
-Replicates the CI code review pipeline locally. Applies the same review methodology, file-type checklists, confidence scoring, and output format defined in `.github/codex/` — executed by the local agent instead of the GitHub Actions pipeline.
+Runs a deep structured code review locally, applying the same methodology used by the `codex-ai-code-review-action` CI pipeline. Uses repository-specific guidance from `.github/codex/review-reference.md` and the review methodology defined below.
 
 ## Step 1: Identify the Changes
 
@@ -38,21 +39,20 @@ List the changed files and note their types — file types determine which check
 
 ## Step 2: Load Review Context
 
-Read the review methodology, reference material, and file-type instruction rules:
+Read the repository-specific reference material and file-type instruction rules:
 
-- `.github/codex/review-prompt.md` — focus areas, analysis depth, priority levels, line number rules, suggestion format, self-review checklist
-- `.github/codex/review-reference.md` — confidence scoring calibration, file-type checklists, few-shot examples, recurring finding patterns, known limitations
+- `.github/codex/review-reference.md` — repository-specific review guidance (conventions, Python script rules, workflow rules)
 - `.github/copilot-instructions.md` — Agent Skills format compliance, repository constraints, automated validation coverage, review focus areas
 - `.github/instructions/markdown.instructions.md` — documentation quality rules, description quality, progressive disclosure, file reference conventions
 - `.github/instructions/scripts.instructions.md` — Python script conventions, stdlib-only constraint, type hints, error handling, code organization rules
 
-The codex review files are the authoritative review methodology — apply them exactly as written. The instruction files provide supplementary file-type-specific rules: apply `copilot-instructions.md` to all files, `markdown.instructions.md` when the diff includes `**/*.md`, and `scripts.instructions.md` when it includes `skill-system-foundry/scripts/**/*.py`.
+The review reference file provides repository-specific conventions — apply them alongside the methodology defined in this skill. The instruction files provide supplementary file-type-specific rules: apply `copilot-instructions.md` to all files, `markdown.instructions.md` when the diff includes `**/*.md`, and `scripts.instructions.md` when it includes `skill-system-foundry/scripts/**/*.py`.
 
 ## Step 3: Review the Diff
 
 Apply the review methodology from the loaded context. For each changed file:
 
-1. **Identify the file type** and select the matching checklist from the reference material (Python, Shell, JavaScript, Markdown, Workflow YAML).
+1. **Identify the file type** and select the matching checklist from the reference material (Python, Shell, Markdown, Workflow YAML).
 2. **Trace data flow** — follow values from input through parsing, transformation, and use.
 3. **Check execution order** — verify validation happens before use.
 4. **Verify edge cases** — empty arrays, zero, negatives, boundaries, missing optional fields.
