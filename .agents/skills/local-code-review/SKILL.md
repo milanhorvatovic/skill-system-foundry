@@ -128,6 +128,10 @@ Now review the diff for issues that no script can catch. This is the core of the
 - Missing `trap` cleanup for temporary files
 - `>` instead of `>>` for `$GITHUB_OUTPUT`
 
+**Check permission boundaries:**
+- Does the script run in a job with appropriately scoped permissions?
+- Are secrets handled without echoing to logs?
+
 ### Configuration Changes
 
 **Check `configuration.yaml`:**

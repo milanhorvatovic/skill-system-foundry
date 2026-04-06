@@ -94,6 +94,8 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │   ├── plugin.json
 │   └── marketplace.json
 └── .github/
+    ├── codex/                       ← Codex review configuration
+    │   └── review-reference.md      ← repository-specific review guidance
     ├── scripts/                     ← CI helper scripts (bash + Python)
     ├── workflows/                   ← GitHub Actions CI/CD
     │   ├── python-tests.yaml        ← tests + coverage + badge update (ubuntu + windows)
