@@ -51,6 +51,15 @@ jobs:
           allowed-users: ${{ vars.CODEX_REVIEW_USERS }}
           review-reference-file: .github/codex/review-reference.md
 
+      - name: Upload prepare artifacts
+        if: ${{ steps.prepare.outputs.skipped != 'true' && steps.prepare.outputs.has-changes == 'true' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # @v7 as 7.0.0
+        with:
+          name: codex-prepare
+          path: .codex/
+          include-hidden-files: true
+          retention-days: 1
+
   review:
     needs: prepare
     if: ${{ needs.prepare.outputs.skipped != 'true' && needs.prepare.outputs.has-changes == 'true' }}
@@ -88,6 +97,7 @@ jobs:
       - name: Publish PR review
         uses: milanhorvatovic/codex-ai-code-review-action/publish@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration
         with:
+          github-token: ${{ github.token }}
           expected-chunks: ${{ needs.prepare.outputs.chunk-count }}
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           review-effort: ${{ vars.CODEX_REVIEW_EFFORT }}
