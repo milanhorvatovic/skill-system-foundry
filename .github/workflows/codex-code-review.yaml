@@ -94,6 +94,12 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - name: Download review artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
+        with:
+          path: .codex/
+          merge-multiple: true
+
       - name: Publish PR review
         uses: milanhorvatovic/codex-ai-code-review-action/publish@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration
         with:
