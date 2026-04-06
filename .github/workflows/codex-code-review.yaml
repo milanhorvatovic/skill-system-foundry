@@ -48,7 +48,7 @@ jobs:
         uses: milanhorvatovic/codex-ai-code-review-action/prepare@10963e520adfc069726e98ecdc9c6eb530947928 # feat/codex-action-migration
         id: prepare
         with:
-          allowed-users: ${{ vars.CODEX_REVIEW_USERS }}
+          allow-users: ${{ vars.CODEX_REVIEW_USERS }}
           review-reference-file: .github/codex/review-reference.md
 
       - name: Upload prepare artifacts
