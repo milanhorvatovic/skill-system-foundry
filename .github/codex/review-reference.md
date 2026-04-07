@@ -38,4 +38,4 @@ Beyond code correctness, also evaluate:
 - **Architecture justification** — do structural changes follow the two-layer architecture (skills and roles) documented in `AGENTS.md`?
 - **Convention compliance** — does the change follow the constraints listed above?
 
-`AGENTS.md` is the authority for repository conventions. Do not duplicate its content — reference it.
+`AGENTS.md` is the authority for repository conventions. The constraints above are derived from `AGENTS.md` and included here because this file is injected into the review prompt.

@@ -3,14 +3,16 @@ name: Codex code review
 # Security model:
 # - Uses `on: pull_request` so workflow YAML is always loaded from the base
 #   branch; PR-head changes to workflow files do not affect the running workflow.
-# - CODEOWNERS requires code-owner approval for .github/ changes, preventing
-#   unauthorized modifications to workflows and review configuration.
+# - CODEOWNERS requires code-owner approval for .github/ paths (workflows,
+#   scripts, codex config), preventing unauthorized modifications.
 # - We intentionally avoid `pull_request_target` — it runs with write access
 #   against potentially untrusted PR code and requires dedicated security review.
 # - Fork PRs cannot access repository secrets per GitHub's security model.
 # - Prepare job: contents read-only, builds diff and prompts.
 # - Review job: contents read-only, runs Codex per chunk via matrix strategy.
-# - Publish job: contents read + pull-requests write, merges and posts review.
+# - Publish job: contents read + pull-requests write. Runs the SHA-pinned
+#   codex-ai-code-review-action/publish action to post review comments.
+#   Only data artifacts from the prepare and review jobs are consumed.
 
 on:
   pull_request:
