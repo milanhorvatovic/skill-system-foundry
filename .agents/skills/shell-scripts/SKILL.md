@@ -7,7 +7,7 @@ description: >
   modifying GitHub Actions workflows that call shell scripts, or working
   with CI automation scripts. Also triggers when asked to add a new CI
   helper script, fix shellcheck violations, handle GitHub Actions
-  environment variables, or work with CI automation.
+  environment variables, or write new .sh scripts for CI.
   Use this skill for any shell scripting work in the repository.
 ---
 

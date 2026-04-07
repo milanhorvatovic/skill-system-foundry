@@ -11,8 +11,8 @@ These constraints are non-negotiable across the entire codebase. Flag violations
 - **`os.path` only** — do not use `pathlib`. Do not mix the two.
 - **`encoding="utf-8"` on all `open()` calls.**
 - **Type hints on all function signatures** — use builtin generics (`list`, `dict`, `tuple`) and `X | None`.
-- **Validation rules in YAML** — limits, patterns, and reserved words live in `scripts/lib/configuration.yaml`. Never hardcode validation rules in Python.
-- **Error levels from constants** — use `LEVEL_FAIL`, `LEVEL_WARN`, `LEVEL_INFO` from `lib/constants.py`, never hardcode strings.
+- **Validation rules in YAML** — limits, patterns, and reserved words live in `skill-system-foundry/scripts/lib/configuration.yaml`. Never hardcode validation rules in Python.
+- **Error levels from constants** — use `LEVEL_FAIL`, `LEVEL_WARN`, `LEVEL_INFO` from `skill-system-foundry/scripts/lib/constants.py`, never hardcode strings.
 - **Validation functions return `(errors, passes)` tuples** — never raise exceptions for validation failures.
 - **Actions pinned to commit SHAs** — not tags.
 
@@ -21,8 +21,8 @@ These constraints are non-negotiable across the entire codebase. Flag violations
 Apply these in addition to the standard Python checklist:
 
 - Verify library modules (`skill-system-foundry/scripts/lib/*.py`) do not call `print()` or `sys.exit()` — those belong only in entry points and `reporting.py`.
-- Check that validation rules come from `configuration.yaml` via `constants.py`, not hardcoded values.
-- Verify error levels use `LEVEL_FAIL`, `LEVEL_WARN`, `LEVEL_INFO` from `lib/constants.py`, not hardcoded strings.
+- Check that validation rules come from `configuration.yaml` via `constants.py` (both in `skill-system-foundry/scripts/lib/`), not hardcoded values.
+- Verify error levels use `LEVEL_FAIL`, `LEVEL_WARN`, `LEVEL_INFO` from `skill-system-foundry/scripts/lib/constants.py`, not hardcoded strings.
 
 ## Workflow YAML (`.github/workflows/*.yaml`)
 
