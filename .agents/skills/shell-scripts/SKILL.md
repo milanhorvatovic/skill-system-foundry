@@ -7,7 +7,7 @@ description: >
   modifying GitHub Actions workflows that call shell scripts, or working
   with CI automation scripts. Also triggers when asked to add a new CI
   helper script, fix shellcheck violations, handle GitHub Actions
-  environment variables, or manage the Codex code review pipeline.
+  environment variables, or write new .sh scripts for CI.
   Use this skill for any shell scripting work in the repository.
 ---
 
@@ -15,22 +15,19 @@ description: >
 
 Enforces quality, safety, and consistency for all shell scripts under `.github/scripts/` in the Skill System Foundry repository.
 
-These scripts are CI helpers called by GitHub Actions workflows. They handle PR diffs, allowlist checks, coverage badge updates, Codex review artifact preparation, and PR comment publishing. They run in ephemeral CI environments and must be reliable, secure, and shellcheck-clean.
+These scripts are CI helpers called by GitHub Actions workflows. They handle coverage badge updates and per-file coverage checks. They run in ephemeral CI environments and must be reliable, secure, and shellcheck-clean.
 
 ## Directory Layout
 
 ```
 .github/
 ├── scripts/
-│   ├── build-pr-diff.sh            ← builds unified diff for Codex review
-│   ├── check-allowlist.sh          ← gates Codex review by author/secret checks
-│   ├── prepare-codex-artifacts.sh  ← validates and saves Codex review JSON
-│   ├── update-coverage-badge.sh    ← pushes coverage.json to orphan badges branch
-│   └── publish-review.js           ← posts PR review comments (Node.js)
+│   ├── check-per-file-coverage.py  ← enforces per-file branch coverage minimum
+│   └── update-coverage-badge.sh    ← pushes coverage.json to orphan badges branch
 ├── workflows/
 │   ├── python-tests.yaml           ← runs tests, coverage, badge update
 │   ├── shellcheck.yaml             ← lints all .sh files with shellcheck
-│   ├── codex-code-review.yaml      ← two-job Codex PR review pipeline
+│   ├── codex-code-review.yaml      ← Codex PR review via codex-ai-code-review-action
 │   └── release.yml                 ← bundles and uploads release assets
 ├── instructions/
 │   ├── markdown.instructions.md    ← Markdown review rules
@@ -146,10 +143,10 @@ echo "::error::CODEX_REVIEW_USERS repository variable is not set."
 
 ## Workflow Security Model
 
-The repository uses a two-job architecture for permission isolation:
+The repository uses permission isolation across workflow jobs:
 
-1. **Review job** — `contents: read` only. Runs third-party actions (Codex) in a read-only sandbox. Cannot modify the repo.
-2. **Publish job** — `pull-requests: write` only. Receives artifacts and posts PR comments. No checkout, no third-party actions.
+- **Read-only jobs** — `contents: read` only. Cannot modify the repo.
+- **Write jobs** — scoped to the minimum permission needed (e.g. `pull-requests: write`).
 
 When adding new scripts:
 - Determine which permission boundary the script belongs in

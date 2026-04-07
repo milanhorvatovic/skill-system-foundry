@@ -2,6 +2,7 @@
 # Works in combination with the "Require review from Code Owners"
 # branch protection rule on the default branch.
 
+/.github/codex/        @milanhorvatovic
 /.github/instructions/ @milanhorvatovic
 /.github/scripts/      @milanhorvatovic
 /.github/workflows/    @milanhorvatovic
