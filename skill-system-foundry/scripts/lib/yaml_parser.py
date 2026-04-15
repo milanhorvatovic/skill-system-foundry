@@ -7,10 +7,13 @@ strings — no type coercion for booleans, numbers, or null.
 """
 
 
-def parse_yaml_subset(text: str) -> dict:
+def parse_yaml_subset(text: str, findings: list[str] | None = None) -> dict:
     """Parse a limited YAML subset into a Python dict.
 
     Raises ValueError on structural parse failures.
+
+    If *findings* is a list, plain-scalar warnings/errors are appended
+    to it.  If ``None`` (the default), findings are silently discarded.
     """
     if not text or not text.strip():
         return {}
@@ -28,7 +31,8 @@ def parse_yaml_subset(text: str) -> dict:
     if not lines:
         return {}
 
-    result, _ = _parse_structure(lines, 0, lines[0][0])
+    _findings: list[str] = findings if findings is not None else []
+    result, _ = _parse_structure(lines, 0, lines[0][0], _findings)
     return result if isinstance(result, dict) else {}
 
 
@@ -55,16 +59,147 @@ def _unquote(s: str) -> str:
     return s
 
 
-def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int) -> tuple[dict | list, int]:
+def _is_block_scalar_header(s: str) -> bool:
+    """Return ``True`` if *s* is a valid YAML 1.2.2 block scalar header.
+
+    Matches ``[|>]`` optionally followed by a chomping modifier (``-``
+    or ``+``) and/or an indentation indicator (``1``–``9``) in either
+    order.  Digit ``0`` is excluded per Section 8.1.1.
+    """
+    if not s or s[0] not in ("|", ">"):
+        return False
+    rest = s[1:]
+    if not rest:
+        return True
+    if len(rest) == 1:
+        return rest in "-+123456789"
+    if len(rest) == 2:
+        return (
+            (rest[0] in "-+" and rest[1] in "123456789")
+            or (rest[0] in "123456789" and rest[1] in "-+")
+        )
+    return False
+
+
+def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
+    """Append findings for unquoted plain scalar values that diverge from strict YAML 1.2."""
+    if not value:
+        return
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return
+
+    from .constants import LEVEL_FAIL, LEVEL_WARN
+
+    ch = value[0]
+
+    # Leading-character checks (at most one finding).
+    if ch in ("[", "]", "{", "}", ","):
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            f"'{ch}' (flow indicator) — strict parsers will reject this; "
+            "wrap value in double quotes"
+        )
+    elif ch == "*":
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            "'*' (alias indicator) — strict parsers will reject this; "
+            "wrap value in double quotes"
+        )
+    elif ch in ("@", "`"):
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            f"'{ch}' (reserved character) — strict parsers will reject "
+            "this; wrap value in double quotes"
+        )
+    elif ch == "%":
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            "'%' (directive indicator) — strict parsers will reject this; "
+            "wrap value in double quotes"
+        )
+    elif ch == "-":
+        if len(value) == 1 or value[1] in (" ", "\t"):
+            findings.append(
+                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+                "'-' followed by whitespace, or is '-' alone (block sequence "
+                "entry) — strict parsers will reject this; wrap value in "
+                "double quotes"
+            )
+    elif ch == "?":
+        if len(value) == 1 or value[1] in (" ", "\t"):
+            findings.append(
+                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+                "'?' followed by whitespace, or is '?' alone (explicit "
+                "mapping key) — strict parsers will reject this; wrap value "
+                "in double quotes"
+            )
+    elif ch == "&":
+        if len(value) == 1 or value[1] in (" ", "\t"):
+            findings.append(
+                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+                "'&' (anchor indicator) — strict parsers will reject this; "
+                "wrap value in double quotes"
+            )
+        else:
+            findings.append(
+                f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "
+                "'&' (anchor name consumed by strict parsers, value becomes "
+                "null) — wrap value in double quotes"
+            )
+    elif ch == "|":
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            "'|' followed by text (invalid block scalar header) — strict "
+            "parsers will reject this; wrap value in double quotes"
+        )
+    elif ch == ">":
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            "'>' followed by text (invalid block scalar header) — strict "
+            "parsers will reject this; wrap value in double quotes"
+        )
+    elif ch == "!":
+        findings.append(
+            f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "
+            "'!' (tag indicator consumed by strict parsers, silently "
+            "altering the value) — wrap value in double quotes"
+        )
+    elif ch in ("'", '"'):
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            f"'{ch}' (unterminated quote — no matching closing quote) — "
+            "close the quote or wrap in double quotes"
+        )
+
+    # Colon scan — break on first match.
+    for i, c in enumerate(value):
+        if c == ":":
+            if i == len(value) - 1:
+                findings.append(
+                    f"{LEVEL_FAIL}: [spec] '{key}': unquoted value ends "
+                    "with ':' — strict parsers treat this as a mapping "
+                    "key; wrap value in double quotes"
+                )
+                break
+            if value[i + 1] in (" ", "\t"):
+                findings.append(
+                    f"{LEVEL_FAIL}: [spec] '{key}': unquoted value "
+                    "contains ': ' — strict parsers treat this as a "
+                    "mapping key; wrap value in double quotes"
+                )
+                break
+
+
+def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str]) -> tuple[dict | list, int]:
     """Dispatch to mapping or list parser based on the first token."""
     if start >= len(lines):
         return {}, start
     if lines[start][1].startswith("- "):
-        return _parse_list(lines, start, base_indent)
-    return _parse_mapping(lines, start, base_indent)
+        return _parse_list(lines, start, base_indent, findings)
+    return _parse_mapping(lines, start, base_indent, findings)
 
 
-def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int) -> tuple[dict, int]:
+def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str]) -> tuple[dict, int]:
     """Parse ``key: value`` pairs at *base_indent*."""
     result = {}
     i = start
@@ -84,7 +219,7 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int) -
         key = content[:colon].strip()
         after = content[colon + 1 :].strip()
 
-        if after in (">", ">-", "|", "|-"):
+        if _is_block_scalar_header(after):
             # Block scalar — collect indented continuation lines.
             fold = after.startswith(">")
             i += 1
@@ -98,19 +233,20 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int) -
             # Nested structure (mapping or list).
             i += 1
             if i < len(lines) and lines[i][0] > base_indent:
-                nested, i = _parse_structure(lines, i, lines[i][0])
+                nested, i = _parse_structure(lines, i, lines[i][0], findings)
                 result[key] = nested
             else:
                 result[key] = ""
 
         else:
+            _check_plain_scalar(key, after, findings)
             result[key] = _unquote(after)
             i += 1
 
     return result, i
 
 
-def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int) -> tuple[list, int]:
+def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str]) -> tuple[list, int]:
     """Parse ``- item`` entries at *base_indent*."""
     result = []
     i = start
@@ -125,7 +261,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int) -> t
 
         colon_pos = item_text.find(":")
         if colon_pos < 0:
-            # Simple scalar list item.
+            # Simple scalar list item — no key name available for findings.
             result.append(_unquote(item_text))
             continue
 
@@ -134,12 +270,14 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int) -> t
         first_val = item_text[colon_pos + 1 :].strip()
 
         if first_val:
+            if not _is_block_scalar_header(first_val):
+                _check_plain_scalar(first_key, first_val, findings)
             item_dict = {first_key: _unquote(first_val)}
         else:
             # Value is a nested structure on subsequent lines.
             item_dict = {}
             if i < len(lines) and lines[i][0] > base_indent:
-                nested, i = _parse_structure(lines, i, lines[i][0])
+                nested, i = _parse_structure(lines, i, lines[i][0], findings)
                 item_dict[first_key] = nested
             else:
                 item_dict[first_key] = ""
@@ -154,7 +292,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int) -> t
             sub_key = cc[:sub_colon].strip()
             sub_val = cc[sub_colon + 1 :].strip()
 
-            if sub_val in (">", ">-", "|", "|-"):
+            if _is_block_scalar_header(sub_val):
                 fold = sub_val.startswith(">")
                 i += 1
                 scalar_lines = []
@@ -167,11 +305,12 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int) -> t
             elif sub_val == "":
                 i += 1
                 if i < len(lines) and lines[i][0] > ci:
-                    nested, i = _parse_structure(lines, i, lines[i][0])
+                    nested, i = _parse_structure(lines, i, lines[i][0], findings)
                     item_dict[sub_key] = nested
                 else:
                     item_dict[sub_key] = ""
             else:
+                _check_plain_scalar(sub_key, sub_val, findings)
                 item_dict[sub_key] = _unquote(sub_val)
                 i += 1
 

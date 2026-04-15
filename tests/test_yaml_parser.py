@@ -23,6 +23,8 @@ from lib.yaml_parser import (
     parse_yaml_subset,
     _strip_inline_comment,
     _unquote,
+    _is_block_scalar_header,
+    _check_plain_scalar,
     _parse_structure,
     _parse_mapping,
     _parse_list,
@@ -304,27 +306,27 @@ class ParseStructureTests(unittest.TestCase):
     def test_dispatches_to_mapping(self) -> None:
         """Lines starting with a key dispatch to _parse_mapping."""
         lines = [(0, "key: value")]
-        result, end = _parse_structure(lines, 0, 0)
+        result, end = _parse_structure(lines, 0, 0, [])
         self.assertEqual(result, {"key": "value"})
         self.assertEqual(end, 1)
 
     def test_dispatches_to_list(self) -> None:
         """Lines starting with '- ' dispatch to _parse_list."""
         lines = [(0, "- item1"), (0, "- item2")]
-        result, end = _parse_structure(lines, 0, 0)
+        result, end = _parse_structure(lines, 0, 0, [])
         self.assertEqual(result, ["item1", "item2"])
         self.assertEqual(end, 2)
 
     def test_start_beyond_lines_returns_empty_dict(self) -> None:
         """Start index beyond available lines returns an empty dict."""
         lines = [(0, "key: value")]
-        result, end = _parse_structure(lines, 5, 0)
+        result, end = _parse_structure(lines, 5, 0, [])
         self.assertEqual(result, {})
         self.assertEqual(end, 5)
 
     def test_empty_lines_returns_empty_dict(self) -> None:
         """An empty lines list returns an empty dict."""
-        result, end = _parse_structure([], 0, 0)
+        result, end = _parse_structure([], 0, 0, [])
         self.assertEqual(result, {})
         self.assertEqual(end, 0)
 
@@ -340,42 +342,42 @@ class ParseMappingBasicTests(unittest.TestCase):
     def test_single_pair(self) -> None:
         """A single key-value pair is parsed correctly."""
         lines = [(0, "name: test")]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"name": "test"})
         self.assertEqual(end, 1)
 
     def test_multiple_pairs(self) -> None:
         """Multiple key-value pairs at the same indent are parsed."""
         lines = [(0, "a: 1"), (0, "b: 2"), (0, "c: 3")]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"a": "1", "b": "2", "c": "3"})
         self.assertEqual(end, 3)
 
     def test_stops_at_lower_indent(self) -> None:
         """Parsing stops when indent drops below base_indent."""
         lines = [(2, "inner: val"), (0, "outer: val")]
-        result, end = _parse_mapping(lines, 0, 2)
+        result, end = _parse_mapping(lines, 0, 2, [])
         self.assertEqual(result, {"inner": "val"})
         self.assertEqual(end, 1)
 
     def test_stops_at_higher_indent(self) -> None:
         """Parsing stops when indent exceeds base_indent (unexpected)."""
         lines = [(0, "a: 1"), (4, "b: 2")]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"a": "1"})
         self.assertEqual(end, 1)
 
     def test_line_without_colon_skipped(self) -> None:
         """Lines without a colon are skipped."""
         lines = [(0, "no-colon-here"), (0, "key: value")]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"key": "value"})
         self.assertEqual(end, 2)
 
     def test_empty_value_after_colon(self) -> None:
         """A key with no value and no nested content returns empty string."""
         lines = [(0, "key:")]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"key": ""})
         self.assertEqual(end, 1)
 
@@ -395,7 +397,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
             (2, "This is a long"),
             (2, "description text."),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(
             result, {"description": "This is a long description text."}
         )
@@ -408,7 +410,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
             (2, "Line one"),
             (2, "line two."),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"description": "Line one line two."})
         self.assertEqual(end, 3)
 
@@ -420,7 +422,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
             (2, "beta"),
             (2, "gamma"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"text": "alpha beta gamma"})
         self.assertEqual(end, 4)
 
@@ -431,7 +433,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
             (2, "folded line"),
             (0, "next: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"desc": "folded line", "next": "value"})
         self.assertEqual(end, 3)
 
@@ -441,7 +443,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
             (0, "desc: >"),
             (0, "next: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"desc": "", "next": "value"})
         self.assertEqual(end, 2)
 
@@ -451,7 +453,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
             (0, "desc: >-"),
             (0, "next: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"desc": "", "next": "value"})
         self.assertEqual(end, 2)
 
@@ -460,7 +462,7 @@ class ParseMappingFoldedBlockTests(unittest.TestCase):
         lines = [
             (0, "desc: >"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"desc": ""})
         self.assertEqual(end, 1)
 
@@ -480,7 +482,7 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
             (2, "echo hello"),
             (2, "echo world"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"script": "echo hello\necho world"})
         self.assertEqual(end, 3)
 
@@ -491,7 +493,7 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
             (2, "line one"),
             (2, "line two"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"script": "line one\nline two"})
         self.assertEqual(end, 3)
 
@@ -501,7 +503,7 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
             (0, "cmd: |"),
             (2, "single line"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"cmd": "single line"})
         self.assertEqual(end, 2)
 
@@ -512,7 +514,7 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
             (2, "echo hello"),
             (0, "next: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"script": "echo hello", "next": "value"})
         self.assertEqual(end, 3)
 
@@ -522,7 +524,7 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
             (0, "script: |"),
             (0, "next: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"script": "", "next": "value"})
         self.assertEqual(end, 2)
 
@@ -532,7 +534,7 @@ class ParseMappingLiteralBlockTests(unittest.TestCase):
             (0, "script: |-"),
             (0, "next: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"script": "", "next": "value"})
         self.assertEqual(end, 2)
 
@@ -551,7 +553,7 @@ class ParseMappingNestedTests(unittest.TestCase):
             (0, "parent:"),
             (2, "child: value"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"parent": {"child": "value"}})
         self.assertEqual(end, 2)
 
@@ -562,7 +564,7 @@ class ParseMappingNestedTests(unittest.TestCase):
             (2, "level2:"),
             (4, "level3: deep"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(
             result, {"level1": {"level2": {"level3": "deep"}}}
         )
@@ -575,7 +577,7 @@ class ParseMappingNestedTests(unittest.TestCase):
             (2, "child: value"),
             (0, "sibling: other"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(
             result, {"parent": {"child": "value"}, "sibling": "other"}
         )
@@ -589,7 +591,7 @@ class ParseMappingNestedTests(unittest.TestCase):
             (2, "b: 2"),
             (2, "c: 3"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(
             result, {"parent": {"a": "1", "b": "2", "c": "3"}}
         )
@@ -601,7 +603,7 @@ class ParseMappingNestedTests(unittest.TestCase):
             (0, "empty:"),
             (0, "next: val"),
         ]
-        result, end = _parse_mapping(lines, 0, 0)
+        result, end = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"empty": "", "next": "val"})
         self.assertEqual(end, 2)
 
@@ -617,35 +619,35 @@ class ParseListSimpleTests(unittest.TestCase):
     def test_single_item(self) -> None:
         """A single list item is parsed correctly."""
         lines = [(0, "- item1")]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, ["item1"])
         self.assertEqual(end, 1)
 
     def test_multiple_items(self) -> None:
         """Multiple list items are parsed correctly."""
         lines = [(0, "- alpha"), (0, "- beta"), (0, "- gamma")]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, ["alpha", "beta", "gamma"])
         self.assertEqual(end, 3)
 
     def test_quoted_items(self) -> None:
         """Quoted list items have quotes stripped."""
         lines = [(0, '- "quoted"'), (0, "- 'single'")]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, ["quoted", "single"])
         self.assertEqual(end, 2)
 
     def test_stops_at_different_indent(self) -> None:
         """List parsing stops when indent changes."""
         lines = [(2, "- inner"), (0, "- outer")]
-        result, end = _parse_list(lines, 0, 2)
+        result, end = _parse_list(lines, 0, 2, [])
         self.assertEqual(result, ["inner"])
         self.assertEqual(end, 1)
 
     def test_stops_at_non_list_line(self) -> None:
         """List parsing stops at a line that does not start with '- '."""
         lines = [(0, "- item"), (0, "key: value")]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, ["item"])
         self.assertEqual(end, 1)
 
@@ -661,14 +663,14 @@ class ParseListDictItemTests(unittest.TestCase):
     def test_single_dict_item(self) -> None:
         """A list item with key: value creates a dict entry."""
         lines = [(0, "- name: alpha")]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, [{"name": "alpha"}])
         self.assertEqual(end, 1)
 
     def test_multiple_dict_items(self) -> None:
         """Multiple list items with key: value create dict entries."""
         lines = [(0, "- name: alpha"), (0, "- name: beta")]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, [{"name": "alpha"}, {"name": "beta"}])
         self.assertEqual(end, 2)
 
@@ -679,7 +681,7 @@ class ParseListDictItemTests(unittest.TestCase):
             (2, "version: 1.0"),
             (2, "author: test"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(
             result,
             [{"name": "alpha", "version": "1.0", "author": "test"}],
@@ -694,7 +696,7 @@ class ParseListDictItemTests(unittest.TestCase):
             (0, "- name: beta"),
             (2, "version: 2"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(
             result,
             [
@@ -710,7 +712,7 @@ class ParseListDictItemTests(unittest.TestCase):
             (0, "- parent:"),
             (4, "child: nested"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, [{"parent": {"child": "nested"}}])
         self.assertEqual(end, 2)
 
@@ -720,7 +722,7 @@ class ParseListDictItemTests(unittest.TestCase):
             (0, "- key:"),
             (0, "- other: val"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, [{"key": ""}, {"other": "val"}])
         self.assertEqual(end, 2)
 
@@ -741,7 +743,7 @@ class ParseListNestedTests(unittest.TestCase):
             (4, "A long"),
             (4, "description."),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(
             result,
             [{"name": "alpha", "description": "A long description."}],
@@ -756,7 +758,7 @@ class ParseListNestedTests(unittest.TestCase):
             (4, "echo hello"),
             (4, "echo world"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(
             result,
             [{"name": "alpha", "script": "echo hello\necho world"}],
@@ -771,7 +773,7 @@ class ParseListNestedTests(unittest.TestCase):
             (4, "timeout: 30"),
             (4, "retries: 3"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(
             result,
             [{"name": "alpha", "config": {"timeout": "30", "retries": "3"}}],
@@ -784,7 +786,7 @@ class ParseListNestedTests(unittest.TestCase):
             (0, "- name: alpha"),
             (2, "extra:"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         self.assertEqual(result, [{"name": "alpha", "extra": ""}])
         self.assertEqual(end, 2)
 
@@ -802,7 +804,7 @@ class ParseListNestedTests(unittest.TestCase):
                     (4, "line one"),
                     (4, "line two"),
                 ]
-                result, end = _parse_list(lines, 0, 0)
+                result, end = _parse_list(lines, 0, 0, [])
                 if is_folded:
                     expected_val = "line one line two"
                 else:
@@ -818,7 +820,7 @@ class ParseListNestedTests(unittest.TestCase):
             (0, "- name: alpha"),
             (2, "no-colon-here"),
         ]
-        result, end = _parse_list(lines, 0, 0)
+        result, end = _parse_list(lines, 0, 0, [])
         # The continuation loop breaks when sub_colon < 0, so only
         # the first key from the '- ' line is captured.
         self.assertEqual(result, [{"name": "alpha"}])
@@ -903,6 +905,427 @@ class ParseYamlSubsetFullDocumentTests(unittest.TestCase):
             result,
             {"level1": {"level2": {"level3": {"key": "deep-value"}}}},
         )
+
+
+# ===================================================================
+# _is_block_scalar_header
+# ===================================================================
+
+
+class IsBlockScalarHeaderTests(unittest.TestCase):
+    """Tests for _is_block_scalar_header."""
+
+    def test_bare_pipe(self) -> None:
+        self.assertTrue(_is_block_scalar_header("|"))
+
+    def test_bare_greater(self) -> None:
+        self.assertTrue(_is_block_scalar_header(">"))
+
+    def test_strip_chomping(self) -> None:
+        for header in ("|-", ">-"):
+            with self.subTest(header=header):
+                self.assertTrue(_is_block_scalar_header(header))
+
+    def test_keep_chomping(self) -> None:
+        for header in ("|+", ">+"):
+            with self.subTest(header=header):
+                self.assertTrue(_is_block_scalar_header(header))
+
+    def test_indentation_indicator(self) -> None:
+        for digit in "123456789":
+            for prefix in ("|", ">"):
+                with self.subTest(header=prefix + digit):
+                    self.assertTrue(_is_block_scalar_header(prefix + digit))
+
+    def test_chomping_then_digit(self) -> None:
+        for header in ("|-1", "|+9", ">-5", ">+3"):
+            with self.subTest(header=header):
+                self.assertTrue(_is_block_scalar_header(header))
+
+    def test_digit_then_chomping(self) -> None:
+        for header in ("|1-", "|9+", ">5-", ">3+"):
+            with self.subTest(header=header):
+                self.assertTrue(_is_block_scalar_header(header))
+
+    def test_digit_zero_excluded(self) -> None:
+        for header in ("|0", ">0", "|-0", "|0-", ">+0", ">0+"):
+            with self.subTest(header=header):
+                self.assertFalse(_is_block_scalar_header(header))
+
+    def test_too_long(self) -> None:
+        for header in ("|1-x", ">+9z", "|-99"):
+            with self.subTest(header=header):
+                self.assertFalse(_is_block_scalar_header(header))
+
+    def test_wrong_first_char(self) -> None:
+        for header in ("x", "-", "+", "1", ""):
+            with self.subTest(header=header):
+                self.assertFalse(_is_block_scalar_header(header))
+
+    def test_pipe_with_text(self) -> None:
+        self.assertFalse(_is_block_scalar_header("|text"))
+
+    def test_greater_with_text(self) -> None:
+        self.assertFalse(_is_block_scalar_header(">text"))
+
+
+# ===================================================================
+# _check_plain_scalar — Leading-Character Checks
+# ===================================================================
+
+
+class CheckPlainScalarEmptyAndQuotedTests(unittest.TestCase):
+    """Tests for _check_plain_scalar early returns."""
+
+    def test_empty_value_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "", findings)
+        self.assertEqual(findings, [])
+
+    def test_properly_quoted_single_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "'hello world'", findings)
+        self.assertEqual(findings, [])
+
+    def test_properly_quoted_double_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", '"hello world"', findings)
+        self.assertEqual(findings, [])
+
+    def test_safe_plain_scalar_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "just a normal value", findings)
+        self.assertEqual(findings, [])
+
+
+class CheckPlainScalarFlowIndicatorTests(unittest.TestCase):
+    """Tests for flow indicator detection."""
+
+    def test_flow_indicators_fail(self) -> None:
+        for ch in ("[", "]", "{", "}", ","):
+            with self.subTest(ch=ch):
+                findings: list[str] = []
+                _check_plain_scalar("key", ch + "value", findings)
+                self.assertEqual(len(findings), 1)
+                self.assertIn("FAIL", findings[0])
+                self.assertIn("flow indicator", findings[0])
+
+
+class CheckPlainScalarAliasTests(unittest.TestCase):
+    """Tests for alias indicator detection."""
+
+    def test_asterisk_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "*alias", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("alias indicator", findings[0])
+
+
+class CheckPlainScalarReservedTests(unittest.TestCase):
+    """Tests for reserved character detection."""
+
+    def test_at_sign_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "@text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("reserved character", findings[0])
+
+    def test_backtick_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "`text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("reserved character", findings[0])
+
+
+class CheckPlainScalarDirectiveTests(unittest.TestCase):
+    """Tests for directive indicator detection."""
+
+    def test_percent_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "%directive", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("directive indicator", findings[0])
+
+
+class CheckPlainScalarDashTests(unittest.TestCase):
+    """Tests for block sequence entry detection."""
+
+    def test_dash_alone_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "-", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("block sequence entry", findings[0])
+
+    def test_dash_space_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "- text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_dash_tab_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "-\ttext", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_dash_text_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "-text", findings)
+        self.assertEqual(findings, [])
+
+
+class CheckPlainScalarQuestionTests(unittest.TestCase):
+    """Tests for explicit mapping key detection."""
+
+    def test_question_alone_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "?", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("explicit mapping key", findings[0])
+
+    def test_question_space_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "? text", findings)
+        self.assertEqual(len(findings), 1)
+
+    def test_question_text_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "?text", findings)
+        self.assertEqual(findings, [])
+
+
+class CheckPlainScalarAnchorTests(unittest.TestCase):
+    """Tests for anchor indicator three-way split."""
+
+    def test_ampersand_alone_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "&", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("anchor indicator", findings[0])
+
+    def test_ampersand_space_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "& text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_ampersand_tab_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "&\ttext", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_ampersand_text_warn(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "&text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("anchor name consumed", findings[0])
+
+
+class CheckPlainScalarBlockScalarTests(unittest.TestCase):
+    """Tests for invalid block scalar header detection."""
+
+    def test_pipe_text_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "|text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("block scalar header", findings[0])
+
+    def test_greater_text_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", ">text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("block scalar header", findings[0])
+
+
+class CheckPlainScalarTagTests(unittest.TestCase):
+    """Tests for tag indicator detection."""
+
+    def test_exclamation_alone_warn(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "!", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("tag indicator", findings[0])
+
+    def test_exclamation_text_warn(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "!text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+
+    def test_double_exclamation_warn(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "!!text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+
+
+class CheckPlainScalarUnterminatedQuoteTests(unittest.TestCase):
+    """Tests for unterminated quote detection."""
+
+    def test_single_unterminated_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "'text", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("unterminated quote", findings[0])
+
+    def test_double_unterminated_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", '"text', findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("unterminated quote", findings[0])
+
+    def test_mismatched_quotes_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "'text\"", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+
+# ===================================================================
+# _check_plain_scalar — Colon Scan
+# ===================================================================
+
+
+class CheckPlainScalarColonTests(unittest.TestCase):
+    """Tests for colon-in-value detection."""
+
+    def test_colon_space_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "text: more", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("': '", findings[0])
+
+    def test_colon_tab_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "text:\tmore", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_trailing_colon_fail(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "text:", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("ends with ':'", findings[0])
+
+    def test_colon_no_space_no_findings(self) -> None:
+        findings: list[str] = []
+        _check_plain_scalar("key", "text:more", findings)
+        self.assertEqual(findings, [])
+
+    def test_colon_scan_breaks_on_first(self) -> None:
+        """Multiple colon-space patterns produce only one finding."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "a: b: c", findings)
+        colon_findings = [f for f in findings if "': '" in f]
+        self.assertEqual(len(colon_findings), 1)
+
+
+# ===================================================================
+# _check_plain_scalar — Multiple Findings Per Value
+# ===================================================================
+
+
+class CheckPlainScalarMultipleFindingsTests(unittest.TestCase):
+    """Tests for values producing both a leading-char and a colon finding."""
+
+    def test_bracket_and_colon(self) -> None:
+        """[Beta] Use when the user wants to: inspect — two findings."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "[Beta] Use when the user wants to: inspect", findings)
+        self.assertEqual(len(findings), 2)
+        self.assertIn("flow indicator", findings[0])
+        self.assertIn("': '", findings[1])
+
+
+# ===================================================================
+# parse_yaml_subset — Findings Propagation
+# ===================================================================
+
+
+class ParseYamlSubsetFindingsTests(unittest.TestCase):
+    """Tests for findings parameter on parse_yaml_subset."""
+
+    def test_findings_none_default(self) -> None:
+        """Calling without findings works (backwards-compatible)."""
+        result = parse_yaml_subset("key: value")
+        self.assertEqual(result, {"key": "value"})
+
+    def test_findings_collected(self) -> None:
+        """Findings are appended to the provided list."""
+        findings: list[str] = []
+        result = parse_yaml_subset("key: [value", findings)
+        self.assertEqual(result, {"key": "[value"})
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_no_findings_for_safe_values(self) -> None:
+        findings: list[str] = []
+        parse_yaml_subset("key: safe value", findings)
+        self.assertEqual(findings, [])
+
+    def test_findings_from_nested_mapping(self) -> None:
+        text = "outer:\n  inner: [bad"
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+
+    def test_findings_from_list_dict_item(self) -> None:
+        text = "items:\n  - name: *alias"
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("alias indicator", findings[0])
+
+
+# ===================================================================
+# _parse_mapping — Extended Block Scalar Headers
+# ===================================================================
+
+
+class ParseMappingExtendedBlockScalarTests(unittest.TestCase):
+    """Tests for extended block scalar header recognition."""
+
+    def test_keep_chomping_pipe(self) -> None:
+        lines = [(0, "key: |+"), (2, "line one"), (2, "line two")]
+        result, _ = _parse_mapping(lines, 0, 0, [])
+        self.assertEqual(result, {"key": "line one\nline two"})
+
+    def test_keep_chomping_folded(self) -> None:
+        lines = [(0, "key: >+"), (2, "line one"), (2, "line two")]
+        result, _ = _parse_mapping(lines, 0, 0, [])
+        self.assertEqual(result, {"key": "line one line two"})
+
+    def test_indentation_indicator(self) -> None:
+        lines = [(0, "key: |2"), (2, "indented")]
+        result, _ = _parse_mapping(lines, 0, 0, [])
+        self.assertEqual(result, {"key": "indented"})
+
+    def test_combined_chomping_digit(self) -> None:
+        lines = [(0, "key: |-4"), (2, "content")]
+        result, _ = _parse_mapping(lines, 0, 0, [])
+        self.assertEqual(result, {"key": "content"})
+
+    def test_digit_then_chomping(self) -> None:
+        lines = [(0, "key: |4-"), (2, "content")]
+        result, _ = _parse_mapping(lines, 0, 0, [])
+        self.assertEqual(result, {"key": "content"})
 
 
 # ===================================================================

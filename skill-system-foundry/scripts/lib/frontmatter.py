@@ -25,10 +25,13 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str]:
     body = content[end + 3 :].strip()
 
     try:
-        frontmatter = parse_yaml_subset(frontmatter_str)
+        findings: list[str] = []
+        frontmatter = parse_yaml_subset(frontmatter_str, findings)
     except (ValueError, KeyError) as e:
         return {"_parse_error": str(e)}, body
 
+    if findings:
+        frontmatter["_scalar_warnings"] = findings
     return frontmatter, body
 
 

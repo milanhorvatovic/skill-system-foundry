@@ -402,6 +402,9 @@ def validate_skill(
         errors.append(f"{LEVEL_FAIL}: [spec] YAML parse error: {frontmatter['_parse_error']}")
         return errors, passes
 
+    if frontmatter:
+        errors.extend(frontmatter.pop("_scalar_warnings", []))
+
     # Determine the skill root for reference resolution.
     # For regular skills, skill_path is the root (contains SKILL.md).
     # For capabilities, walk upward to find the containing skill root.
