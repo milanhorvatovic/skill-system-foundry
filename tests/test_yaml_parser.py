@@ -1329,6 +1329,129 @@ class ParseMappingExtendedBlockScalarTests(unittest.TestCase):
 
 
 # ===================================================================
+# _parse_list — Simple Scalar Item Plain Scalar Checks
+# ===================================================================
+
+
+class ParseListSimpleItemScalarCheckTests(unittest.TestCase):
+    """Tests for _check_plain_scalar on simple list items."""
+
+    def test_flow_indicator_detected(self) -> None:
+        """A simple list item starting with '[' produces a finding."""
+        findings: list[str] = []
+        _parse_list([(0, "- [value")], 0, 0, findings, "tools")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("FAIL", findings[0])
+        self.assertIn("flow indicator", findings[0])
+
+    def test_key_format_with_parent(self) -> None:
+        """Finding key uses parent_key[index] format."""
+        findings: list[str] = []
+        _parse_list([(0, "- *ref")], 0, 0, findings, "items")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'items[0]'", findings[0])
+
+    def test_key_format_sequential_indices(self) -> None:
+        """Multiple items get sequential indices."""
+        findings: list[str] = []
+        _parse_list(
+            [(0, "- safe"), (0, "- [bad1"), (0, "- ok"), (0, "- [bad2")],
+            0, 0, findings, "vals",
+        )
+        self.assertEqual(len(findings), 2)
+        self.assertIn("'vals[1]'", findings[0])
+        self.assertIn("'vals[3]'", findings[1])
+
+    def test_key_format_without_parent(self) -> None:
+        """Bare list (no parent key) uses [index] format."""
+        findings: list[str] = []
+        _parse_list([(0, "- [bad")], 0, 0, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'[0]'", findings[0])
+
+    def test_safe_item_no_findings(self) -> None:
+        """A normal plain scalar list item produces no findings."""
+        findings: list[str] = []
+        _parse_list([(0, "- normal value")], 0, 0, findings, "items")
+        self.assertEqual(findings, [])
+
+    def test_quoted_item_no_findings(self) -> None:
+        """A properly quoted list item produces no findings."""
+        findings: list[str] = []
+        _parse_list([(0, '- "[special"')], 0, 0, findings, "items")
+        self.assertEqual(findings, [])
+
+    def test_block_scalar_header_skipped(self) -> None:
+        """Valid block scalar headers are not flagged."""
+        for header in ("|", ">", "|-", ">+", "|2", ">-4"):
+            with self.subTest(header=header):
+                findings: list[str] = []
+                _parse_list([(0, f"- {header}")], 0, 0, findings, "items")
+                self.assertEqual(findings, [])
+
+    def test_reserved_char_detected(self) -> None:
+        findings: list[str] = []
+        _parse_list([(0, "- @mention")], 0, 0, findings, "vals")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("reserved character", findings[0])
+
+    def test_tag_indicator_warn(self) -> None:
+        findings: list[str] = []
+        _parse_list([(0, "- !tagged")], 0, 0, findings, "vals")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("tag indicator", findings[0])
+
+    def test_anchor_text_warn(self) -> None:
+        findings: list[str] = []
+        _parse_list([(0, "- &anchor")], 0, 0, findings, "vals")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("anchor name consumed", findings[0])
+
+    def test_unterminated_quote_detected(self) -> None:
+        findings: list[str] = []
+        _parse_list([(0, "- 'unclosed")], 0, 0, findings, "vals")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("unterminated quote", findings[0])
+
+
+class ParseListParentKeyPropagationTests(unittest.TestCase):
+    """Tests for parent_key propagation through nested structures."""
+
+    def test_mapping_to_list_propagation(self) -> None:
+        """Parent key flows from _parse_mapping through _parse_structure to _parse_list."""
+        text = "tools:\n  - [bad"
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'tools[0]'", findings[0])
+
+    def test_nested_mapping_list_propagation(self) -> None:
+        """Parent key flows through two levels of nesting."""
+        text = "outer:\n  inner:\n    - *alias"
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'inner[0]'", findings[0])
+
+    def test_list_dict_nested_list_propagation(self) -> None:
+        """Parent key flows from a dict-in-list nested structure."""
+        text = "items:\n  - sub:\n    - [bad"
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'sub[0]'", findings[0])
+
+    def test_top_level_list_no_parent(self) -> None:
+        """Top-level list items use bare [index] when no parent key exists."""
+        findings: list[str] = []
+        _parse_structure([(0, "- [bad")], 0, 0, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'[0]'", findings[0])
+
+
+# ===================================================================
 # Integration — Real configuration.yaml
 # ===================================================================
 

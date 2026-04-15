@@ -190,12 +190,12 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
                 break
 
 
-def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str]) -> tuple[dict | list, int]:
+def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str], parent_key: str = "") -> tuple[dict | list, int]:
     """Dispatch to mapping or list parser based on the first token."""
     if start >= len(lines):
         return {}, start
     if lines[start][1].startswith("- "):
-        return _parse_list(lines, start, base_indent, findings)
+        return _parse_list(lines, start, base_indent, findings, parent_key)
     return _parse_mapping(lines, start, base_indent, findings)
 
 
@@ -233,7 +233,7 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, f
             # Nested structure (mapping or list).
             i += 1
             if i < len(lines) and lines[i][0] > base_indent:
-                nested, i = _parse_structure(lines, i, lines[i][0], findings)
+                nested, i = _parse_structure(lines, i, lines[i][0], findings, key)
                 result[key] = nested
             else:
                 result[key] = ""
@@ -246,7 +246,7 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, f
     return result, i
 
 
-def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str]) -> tuple[list, int]:
+def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str], parent_key: str = "") -> tuple[list, int]:
     """Parse ``- item`` entries at *base_indent*."""
     result = []
     i = start
@@ -261,7 +261,11 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
 
         colon_pos = item_text.find(":")
         if colon_pos < 0:
-            # Simple scalar list item — no key name available for findings.
+            # Simple scalar list item — use parent_key[index] as the
+            # finding key so the user knows which list and position.
+            if not _is_block_scalar_header(item_text):
+                item_key = f"{parent_key}[{len(result)}]" if parent_key else f"[{len(result)}]"
+                _check_plain_scalar(item_key, item_text, findings)
             result.append(_unquote(item_text))
             continue
 
@@ -277,7 +281,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             # Value is a nested structure on subsequent lines.
             item_dict = {}
             if i < len(lines) and lines[i][0] > base_indent:
-                nested, i = _parse_structure(lines, i, lines[i][0], findings)
+                nested, i = _parse_structure(lines, i, lines[i][0], findings, first_key)
                 item_dict[first_key] = nested
             else:
                 item_dict[first_key] = ""
@@ -305,7 +309,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             elif sub_val == "":
                 i += 1
                 if i < len(lines) and lines[i][0] > ci:
-                    nested, i = _parse_structure(lines, i, lines[i][0], findings)
+                    nested, i = _parse_structure(lines, i, lines[i][0], findings, sub_key)
                     item_dict[sub_key] = nested
                 else:
                     item_dict[sub_key] = ""
