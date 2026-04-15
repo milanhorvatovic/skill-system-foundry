@@ -21,6 +21,7 @@ if SCRIPTS_DIR not in sys.path:
 
 from lib.yaml_parser import (
     parse_yaml_subset,
+    suggest_quoted_form,
     _strip_inline_comment,
     _unquote,
     _is_block_scalar_header,
@@ -970,6 +971,50 @@ class IsBlockScalarHeaderTests(unittest.TestCase):
 
 
 # ===================================================================
+# suggest_quoted_form
+# ===================================================================
+
+
+class SuggestQuotedFormTests(unittest.TestCase):
+    """Tests for suggest_quoted_form quoting decision tree."""
+
+    def test_no_quotes_returns_double_quoted(self) -> None:
+        """Value without quotes gets wrapped in double quotes."""
+        value = "hello world"
+        result = suggest_quoted_form(value)
+        self.assertEqual(result, '"' + value + '"')
+
+    def test_double_quote_in_value_returns_single_quoted(self) -> None:
+        """Value containing double quotes gets wrapped in single quotes."""
+        value = 'Parses "quoted" tokens'
+        result = suggest_quoted_form(value)
+        self.assertEqual(result, "'" + value + "'")
+
+    def test_single_quote_in_value_returns_double_quoted(self) -> None:
+        """Value containing single quotes gets wrapped in double quotes."""
+        value = "it's working"
+        result = suggest_quoted_form(value)
+        self.assertEqual(result, '"' + value + '"')
+
+    def test_both_quotes_returns_none(self) -> None:
+        """Value containing both quote types returns None (needs block scalar)."""
+        value = """both 'single' and "double" quotes"""
+        result = suggest_quoted_form(value)
+        self.assertIsNone(result)
+
+    def test_empty_value_returns_double_quoted(self) -> None:
+        """Empty value gets wrapped in double quotes."""
+        result = suggest_quoted_form("")
+        self.assertEqual(result, '""')
+
+    def test_special_chars_in_value(self) -> None:
+        """Value with YAML special characters gets wrapped correctly."""
+        value = "[Beta] Use when: inspecting"
+        result = suggest_quoted_form(value)
+        self.assertEqual(result, '"' + value + '"')
+
+
+# ===================================================================
 # _check_plain_scalar — Leading-Character Checks
 # ===================================================================
 
@@ -1130,6 +1175,34 @@ class CheckPlainScalarAnchorTests(unittest.TestCase):
         self.assertIn("anchor name consumed", findings[0])
 
 
+class CheckPlainScalarAnchorSubcaseTests(unittest.TestCase):
+    """Tests for anchor indicator WARN sub-cases (null vs value-shift)."""
+
+    def test_anchor_name_only_null(self) -> None:
+        """&anchor with no remaining text reports value becomes null."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "&anchor", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("value becomes null", findings[0])
+
+    def test_anchor_name_with_space_text_shifts(self) -> None:
+        """&ref text reports remaining text becomes the value."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "&ref Validates skill directories", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("remaining text becomes the value", findings[0])
+
+    def test_anchor_name_with_tab_text_shifts(self) -> None:
+        """&ref<tab>text reports remaining text becomes the value."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "&ref\tValidates", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("remaining text becomes the value", findings[0])
+
+
 class CheckPlainScalarBlockScalarTests(unittest.TestCase):
     """Tests for invalid block scalar header detection."""
 
@@ -1251,6 +1324,51 @@ class CheckPlainScalarMultipleFindingsTests(unittest.TestCase):
         self.assertEqual(len(findings), 2)
         self.assertIn("flow indicator", findings[0])
         self.assertIn("': '", findings[1])
+
+
+# ===================================================================
+# _check_plain_scalar — Context-Sensitive Quote Advice
+# ===================================================================
+
+
+class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
+    """Tests for context-sensitive quoting advice in finding messages."""
+
+    def test_default_advice_double_quotes(self) -> None:
+        """Values without special quote chars get double-quote advice."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "[value", findings)
+        self.assertIn("wrap value in double quotes", findings[0])
+
+    def test_advice_single_quotes_when_value_has_double(self) -> None:
+        """Values containing double quotes get single-quote advice."""
+        findings: list[str] = []
+        _check_plain_scalar("key", '[parses "quoted" tokens', findings)
+        self.assertIn("wrap value in single quotes", findings[0])
+
+    def test_advice_block_scalar_when_both_quotes(self) -> None:
+        """Values with both quote types get block scalar advice."""
+        findings: list[str] = []
+        _check_plain_scalar("key", """[both 'single' and "double" here""", findings)
+        self.assertIn("block scalar", findings[0])
+
+    def test_colon_advice_adapts_to_content(self) -> None:
+        """Colon-space findings also adapt advice to value content."""
+        findings: list[str] = []
+        _check_plain_scalar("key", 'parses "quoted": tokens', findings)
+        self.assertIn("wrap value in single quotes", findings[0])
+
+    def test_unterminated_single_gets_double_advice(self) -> None:
+        """Unterminated single quote suggests double quotes."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "'unterminated", findings)
+        self.assertIn("wrap value in double quotes", findings[0])
+
+    def test_unterminated_double_gets_single_advice(self) -> None:
+        """Unterminated double quote suggests single quotes."""
+        findings: list[str] = []
+        _check_plain_scalar("key", '"unterminated', findings)
+        self.assertIn("wrap value in single quotes", findings[0])
 
 
 # ===================================================================

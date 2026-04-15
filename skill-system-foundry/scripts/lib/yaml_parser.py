@@ -81,6 +81,33 @@ def _is_block_scalar_header(s: str) -> bool:
     return False
 
 
+def suggest_quoted_form(value: str) -> str | None:
+    """Return *value* wrapped in the safest divergence-free quote style.
+
+    Implements the quoting decision tree from the resolution guide:
+
+    - Double quotes when the value contains no ``"`` characters
+      (recommended default — handles every problematic pattern)
+    - Single quotes when the value contains ``"`` but no ``'``
+    - ``None`` when the value contains both quote types (use a block
+      scalar ``>-`` instead — cannot be expressed as an inline fix)
+    """
+    if '"' not in value:
+        return '"' + value + '"'
+    if "'" not in value:
+        return "'" + value + "'"
+    return None
+
+
+def _quote_advice(value: str) -> str:
+    """Return human-readable quoting advice for a plain scalar value."""
+    if '"' not in value:
+        return "wrap value in double quotes"
+    if "'" not in value:
+        return "wrap value in single quotes"
+    return "use a block scalar (>-) — value contains both quote types"
+
+
 def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
     """Append findings for unquoted plain scalar values that diverge from strict YAML 1.2."""
     if not value:
@@ -90,6 +117,7 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
 
     from .constants import LEVEL_FAIL, LEVEL_WARN
 
+    advice = _quote_advice(value)
     ch = value[0]
 
     # Leading-character checks (at most one finding).
@@ -97,78 +125,88 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             f"'{ch}' (flow indicator) — strict parsers will reject this; "
-            "wrap value in double quotes"
+            f"{advice}"
         )
     elif ch == "*":
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             "'*' (alias indicator) — strict parsers will reject this; "
-            "wrap value in double quotes"
+            f"{advice}"
         )
     elif ch in ("@", "`"):
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             f"'{ch}' (reserved character) — strict parsers will reject "
-            "this; wrap value in double quotes"
+            f"this; {advice}"
         )
     elif ch == "%":
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             "'%' (directive indicator) — strict parsers will reject this; "
-            "wrap value in double quotes"
+            f"{advice}"
         )
     elif ch == "-":
         if len(value) == 1 or value[1] in (" ", "\t"):
             findings.append(
                 f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
                 "'-' followed by whitespace, or is '-' alone (block sequence "
-                "entry) — strict parsers will reject this; wrap value in "
-                "double quotes"
+                f"entry) — strict parsers will reject this; {advice}"
             )
     elif ch == "?":
         if len(value) == 1 or value[1] in (" ", "\t"):
             findings.append(
                 f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
                 "'?' followed by whitespace, or is '?' alone (explicit "
-                "mapping key) — strict parsers will reject this; wrap value "
-                "in double quotes"
+                f"mapping key) — strict parsers will reject this; {advice}"
             )
     elif ch == "&":
         if len(value) == 1 or value[1] in (" ", "\t"):
             findings.append(
                 f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
                 "'&' (anchor indicator) — strict parsers will reject this; "
-                "wrap value in double quotes"
+                f"{advice}"
             )
         else:
-            findings.append(
-                f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "
-                "'&' (anchor name consumed by strict parsers, value becomes "
-                "null) — wrap value in double quotes"
+            # &<non-whitespace>... — anchor name consumed by strict parsers.
+            # Determine whether remaining content exists after the anchor name.
+            has_remaining = any(
+                value[i] in (" ", "\t") for i in range(1, len(value))
             )
+            if has_remaining:
+                findings.append(
+                    f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts "
+                    "with '&' (anchor name consumed by strict parsers, "
+                    f"remaining text becomes the value) — {advice}"
+                )
+            else:
+                findings.append(
+                    f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts "
+                    "with '&' (anchor name consumed by strict parsers, "
+                    f"value becomes null) — {advice}"
+                )
     elif ch == "|":
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             "'|' followed by text (invalid block scalar header) — strict "
-            "parsers will reject this; wrap value in double quotes"
+            f"parsers will reject this; {advice}"
         )
     elif ch == ">":
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             "'>' followed by text (invalid block scalar header) — strict "
-            "parsers will reject this; wrap value in double quotes"
+            f"parsers will reject this; {advice}"
         )
     elif ch == "!":
         findings.append(
             f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "
             "'!' (tag indicator consumed by strict parsers, silently "
-            "altering the value) — wrap value in double quotes"
+            f"altering the value) — {advice}"
         )
     elif ch in ("'", '"'):
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             f"'{ch}' (unterminated quote — no matching closing quote) — "
-            "close the quote or wrap in double quotes"
+            f"close the quote, or {advice}"
         )
 
     # Colon scan — break on first match.
@@ -178,14 +216,14 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
                 findings.append(
                     f"{LEVEL_FAIL}: [spec] '{key}': unquoted value ends "
                     "with ':' — strict parsers treat this as a mapping "
-                    "key; wrap value in double quotes"
+                    f"key; {advice}"
                 )
                 break
             if value[i + 1] in (" ", "\t"):
                 findings.append(
                     f"{LEVEL_FAIL}: [spec] '{key}': unquoted value "
                     "contains ': ' — strict parsers treat this as a "
-                    "mapping key; wrap value in double quotes"
+                    f"mapping key; {advice}"
                 )
                 break
 
