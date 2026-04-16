@@ -1754,7 +1754,7 @@ class ParseListParentKeyPropagationTests(unittest.TestCase):
         findings: list[str] = []
         parse_yaml_subset(text, findings)
         self.assertEqual(len(findings), 1)
-        self.assertIn("'sub[0]'", findings[0])
+        self.assertIn("'items[0].sub[0]'", findings[0])
 
     def test_top_level_list_no_parent(self) -> None:
         """Top-level list items use bare [index] when no parent key exists."""

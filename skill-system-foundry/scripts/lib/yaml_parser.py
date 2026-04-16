@@ -6,7 +6,7 @@ lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
 """
 
-def parse_yaml_subset(text: str, findings: list[str] | None = None) -> dict:
+def parse_yaml_subset(text: str | None, findings: list[str] | None = None) -> dict:
     """Parse a limited YAML subset into a Python dict.
 
     Raises ValueError on structural parse failures.
@@ -373,7 +373,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             # Value is a nested structure on subsequent lines.
             item_dict = {}
             if i < len(lines) and lines[i][0] > base_indent:
-                nested, i = _parse_structure(lines, i, lines[i][0], findings, first_key)
+                nested, i = _parse_structure(lines, i, lines[i][0], findings, f"{idx_prefix}.{first_key}")
                 item_dict[first_key] = nested
             else:
                 item_dict[first_key] = ""
@@ -401,7 +401,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             elif sub_val == "":
                 i += 1
                 if i < len(lines) and lines[i][0] > ci:
-                    nested, i = _parse_structure(lines, i, lines[i][0], findings, sub_key)
+                    nested, i = _parse_structure(lines, i, lines[i][0], findings, f"{idx_prefix}.{sub_key}")
                     item_dict[sub_key] = nested
                 else:
                     item_dict[sub_key] = ""
