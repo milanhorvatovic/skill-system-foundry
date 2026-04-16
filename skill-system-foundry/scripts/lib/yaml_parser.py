@@ -142,14 +142,15 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
     if ch in ind["flow"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-            f"'{ch}' (flow indicator) — strict parsers will reject this; "
-            f"{advice}"
+            f"'{ch}' (flow indicator) — strict parsers will interpret "
+            f"this as a flow collection, not a string; {advice}"
         )
     elif ch in ind["alias"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-            "'*' (alias indicator) — strict parsers will reject this; "
-            f"{advice}"
+            "'*' (alias indicator) — strict parsers will treat this as "
+            "an alias reference, changing the value or erroring if "
+            f"undefined; {advice}"
         )
     elif ch in ind["reserved"]:
         findings.append(

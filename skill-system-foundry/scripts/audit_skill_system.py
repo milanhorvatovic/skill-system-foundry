@@ -244,6 +244,12 @@ def audit_skill_system(
     for cap in capabilities:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
         fm, _, scalar_findings = load_frontmatter(cap_md)
+        if fm and "_parse_error" in fm:
+            errors.append(
+                f"{LEVEL_FAIL}: {cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD} "
+                f"frontmatter parse error: {fm['_parse_error']}"
+            )
+            continue
         for f in scalar_findings:
             level, _, detail = f.partition(": ")
             errors.append(f"{level}: {cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD} {detail}")
