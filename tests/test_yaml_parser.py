@@ -22,7 +22,6 @@ if SCRIPTS_DIR not in sys.path:
 from lib.yaml_parser import (
     parse_yaml_subset,
     suggest_quoted_form,
-    _escape_double_quoted_yaml,
     _strip_inline_comment,
     _unquote,
     _is_block_scalar_header,
@@ -975,43 +974,6 @@ class IsBlockScalarHeaderTests(unittest.TestCase):
 
 
 # ===================================================================
-# _escape_double_quoted_yaml
-# ===================================================================
-
-
-class EscapeDoubleQuotedYamlTests(unittest.TestCase):
-    """Tests for _escape_double_quoted_yaml YAML escaping."""
-
-    def test_no_special_chars(self) -> None:
-        """Plain text passes through unchanged."""
-        self.assertEqual(_escape_double_quoted_yaml("hello"), "hello")
-
-    def test_backslash_escaped(self) -> None:
-        """Backslashes are doubled."""
-        self.assertEqual(_escape_double_quoted_yaml("C:\\temp"), "C:\\\\temp")
-
-    def test_double_quote_escaped(self) -> None:
-        """Double quotes are backslash-escaped."""
-        self.assertEqual(_escape_double_quoted_yaml('say "hi"'), 'say \\"hi\\"')
-
-    def test_tab_escaped(self) -> None:
-        """Literal tab characters are escaped."""
-        self.assertEqual(_escape_double_quoted_yaml("a\tb"), "a\\tb")
-
-    def test_newline_escaped(self) -> None:
-        """Literal newlines are escaped."""
-        self.assertEqual(_escape_double_quoted_yaml("a\nb"), "a\\nb")
-
-    def test_carriage_return_escaped(self) -> None:
-        """Literal carriage returns are escaped."""
-        self.assertEqual(_escape_double_quoted_yaml("a\rb"), "a\\rb")
-
-    def test_backslash_and_quote_combined(self) -> None:
-        """Backslash before a double quote is escaped correctly."""
-        self.assertEqual(_escape_double_quoted_yaml('path\\"end'), 'path\\\\\\"end')
-
-
-# ===================================================================
 # suggest_quoted_form
 # ===================================================================
 
@@ -1263,21 +1225,37 @@ class CheckPlainScalarAnchorSubcaseTests(unittest.TestCase):
 
 
 class CheckPlainScalarBlockScalarTests(unittest.TestCase):
-    """Tests for invalid block scalar header detection."""
+    """Tests for block scalar header detection."""
 
     def test_pipe_text_fail(self) -> None:
+        """Text after | is truly invalid — strict parsers reject it."""
         findings: list[str] = []
         _check_plain_scalar("key", "|text", findings)
         self.assertEqual(len(findings), 1)
         self.assertIn("FAIL", findings[0])
-        self.assertIn("block scalar header", findings[0])
+        self.assertIn("invalid block scalar header", findings[0])
+        self.assertIn("reject", findings[0])
 
     def test_greater_text_fail(self) -> None:
+        """Text after > is truly invalid — strict parsers reject it."""
         findings: list[str] = []
         _check_plain_scalar("key", ">text", findings)
         self.assertEqual(len(findings), 1)
         self.assertIn("FAIL", findings[0])
-        self.assertIn("block scalar header", findings[0])
+        self.assertIn("invalid block scalar header", findings[0])
+        self.assertIn("reject", findings[0])
+
+    def test_indentation_indicator_message(self) -> None:
+        """Headers with indentation indicators get misparsed message."""
+        for header in ("|2", ">4", "|3-", ">+9", "|-5", ">7+"):
+            with self.subTest(header=header):
+                findings: list[str] = []
+                _check_plain_scalar("key", header, findings)
+                self.assertEqual(len(findings), 1)
+                self.assertIn("FAIL", findings[0])
+                self.assertIn("indentation indicator", findings[0])
+                self.assertIn("misparsed", findings[0])
+                self.assertNotIn("reject", findings[0])
 
 
 class CheckPlainScalarTagTests(unittest.TestCase):

@@ -6,9 +6,6 @@ lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
 """
 
-from .constants import LEVEL_FAIL, LEVEL_WARN
-
-
 def parse_yaml_subset(text: str, findings: list[str] | None = None) -> dict:
     """Parse a limited YAML subset into a Python dict.
 
@@ -79,22 +76,6 @@ def _is_block_scalar_header(s: str) -> bool:
     return False
 
 
-def _escape_double_quoted_yaml(value: str) -> str:
-    """Escape *value* for use inside a YAML double-quoted scalar.
-
-    YAML double-quoted scalars interpret backslash sequences (``\\n``,
-    ``\\t``, ``\\\"``, etc.), so literal backslashes and embedded double
-    quotes must be escaped.
-    """
-    return (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-
-
 def suggest_quoted_form(value: str) -> str | None:
     """Return *value* wrapped in the safest divergence-free quote style.
 
@@ -138,7 +119,10 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
     # Lazy import — loaded after all modules are fully initialised, which
     # avoids the circular dependency (constants imports yaml_parser to
     # parse configuration.yaml at module-load time).
-    from .constants import PLAIN_SCALAR_INDICATORS, PLAIN_SCALAR_CONTEXT_WHITESPACE
+    from .constants import (
+        LEVEL_FAIL, LEVEL_WARN,
+        PLAIN_SCALAR_INDICATORS, PLAIN_SCALAR_CONTEXT_WHITESPACE,
+    )
 
     ind = PLAIN_SCALAR_INDICATORS
     ws = PLAIN_SCALAR_CONTEXT_WHITESPACE
@@ -211,11 +195,31 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
                     f"value becomes null) — {advice}"
                 )
     elif ch in ind["block_scalar"]:
-        findings.append(
-            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-            f"'{ch}' followed by text (invalid block scalar header) — strict "
-            f"parsers will reject this; {advice}"
-        )
+        # Distinguish valid YAML 1.2 headers with indentation indicators
+        # (which this parser does not support) from truly invalid text.
+        rest = value[1:]
+        is_unsupported_header = False
+        if len(rest) == 1 and rest.isdigit() and rest != "0":
+            is_unsupported_header = True
+        elif len(rest) == 2:
+            c1, c2 = rest[0], rest[1]
+            is_unsupported_header = (
+                (c1.isdigit() and c1 != "0" and c2 in "-+")
+                or (c1 in "-+" and c2.isdigit() and c2 != "0")
+            )
+        if is_unsupported_header:
+            findings.append(
+                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+                f"'{ch}' (strict parsers interpret this as a block scalar "
+                "header; this parser does not support indentation indicators, "
+                f"so the value will be misparsed); {advice}"
+            )
+        else:
+            findings.append(
+                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+                f"'{ch}' followed by text (invalid block scalar header) — "
+                f"strict parsers will reject this; {advice}"
+            )
     elif ch in ind["tag"]:
         findings.append(
             f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "

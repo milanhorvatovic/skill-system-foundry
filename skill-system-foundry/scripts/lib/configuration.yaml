@@ -137,7 +137,9 @@ plain_scalar:
     # FAIL — invalid block scalar headers (followed by text)
     block_scalar: "|>"
     # FAIL — unterminated quotes
-    quote: '"
+    # Quote indicators (' and ") are defined in constants.py because
+    # representing both characters in a single YAML scalar is not
+    # possible without escape processing.
     # WARN — silently consumed by strict parsers
     tag: "!"
   # Whitespace characters that activate context-sensitive indicators

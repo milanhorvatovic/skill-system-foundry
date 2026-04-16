@@ -11,9 +11,7 @@ Consumers import everything from this module:
 import os
 import re
 
-# Error-level string constants — defined before the yaml_parser import
-# so that yaml_parser can import them without a circular dependency
-# (this module imports yaml_parser to parse configuration.yaml).
+# Error-level string constants.
 LEVEL_FAIL = "FAIL"
 LEVEL_WARN = "WARN"
 LEVEL_INFO = "INFO"
@@ -133,6 +131,10 @@ RECOGNIZED_DIRS = frozenset(_skill["recognized_subdirectories"])
 # --- Plain Scalar Divergence Detection ---
 _plain_scalar = _config["plain_scalar"]
 PLAIN_SCALAR_INDICATORS = _plain_scalar["indicators"]
+# Quote indicator characters (single and double quotes) — defined in
+# Python because representing both quote characters in a single YAML
+# scalar is not possible without escape processing.
+PLAIN_SCALAR_INDICATORS["quote"] = "'\""
 # Whitespace that activates context-sensitive indicators (space + tab).
 # Defined in Python because the tab character cannot be reliably stored
 # in configuration.yaml (the parser does not process escape sequences).
