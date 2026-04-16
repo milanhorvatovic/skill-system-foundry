@@ -1,7 +1,7 @@
 """Lightweight YAML-subset parser (no external dependencies).
 
 Handles the subset of YAML used by this framework: key-value pairs,
-folded/literal block scalars (> | >- |-), nested mappings, scalar
+folded/literal block scalars (> | >- |- |+ >+), nested mappings, scalar
 lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
 """
@@ -109,12 +109,12 @@ def suggest_quoted_form(value: str) -> str | None:
 def _quote_advice(value: str) -> str:
     """Return human-readable quoting advice for a plain scalar value."""
     if "\n" in value or "\r" in value:
-        return "use a block scalar (>-) — value contains line breaks"
+        return "use a literal block scalar (|-) — value contains line breaks"
     if "'" not in value:
         return "wrap value in single quotes"
     if '"' not in value and "\\" not in value:
         return "wrap value in double quotes"
-    return "use a block scalar (>-) — value contains characters that require escape processing in quoted forms"
+    return "use a block scalar (|- preserves newlines; >- folds them) — value contains characters that require escape processing in quoted forms"
 
 
 def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> None:
@@ -186,10 +186,15 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
             )
         else:
             # &<non-whitespace>... — anchor name consumed by strict parsers.
-            # Determine whether remaining content exists after the anchor name.
-            has_remaining = any(
-                value[i] in ws for i in range(1, len(value))
-            )
+            # Determine whether non-whitespace content exists after the
+            # anchor name.  The anchor name ends at the first whitespace
+            # character; anything beyond that (ignoring trailing spaces)
+            # is the remaining scalar value.
+            has_remaining = False
+            for j, c in enumerate(value[1:], start=1):
+                if c in ws:
+                    has_remaining = any(k not in ws for k in value[j + 1:])
+                    break
             if has_remaining:
                 findings.append(
                     f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts "

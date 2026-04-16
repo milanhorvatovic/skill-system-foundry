@@ -1223,6 +1223,22 @@ class CheckPlainScalarAnchorSubcaseTests(unittest.TestCase):
         self.assertIn("WARN", findings[0])
         self.assertIn("remaining text becomes the value", findings[0])
 
+    def test_anchor_trailing_whitespace_only_null(self) -> None:
+        """&anchor followed by only whitespace reports value becomes null."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "&anchor ", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("value becomes null", findings[0])
+
+    def test_anchor_trailing_multiple_spaces_null(self) -> None:
+        """&anchor followed by multiple spaces reports value becomes null."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "&anchor   ", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("WARN", findings[0])
+        self.assertIn("value becomes null", findings[0])
+
 
 class CheckPlainScalarBlockScalarTests(unittest.TestCase):
     """Tests for block scalar header detection."""
