@@ -328,12 +328,23 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
 
         colon_pos = item_text.find(":")
         if colon_pos < 0:
-            # Simple scalar list item — use parent_key[index] as the
-            # finding key so the user knows which list and position.
-            if not _is_block_scalar_header(item_text):
+            # Simple scalar list item.
+            if _is_block_scalar_header(item_text):
+                # Block scalar — consume indented continuation lines.
+                fold = item_text.startswith(">")
+                scalar_lines = []
+                while i < len(lines) and lines[i][0] > base_indent:
+                    scalar_lines.append(lines[i][1])
+                    i += 1
+                result.append(
+                    " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
+                )
+            else:
+                # Plain scalar — use parent_key[index] as the finding
+                # key so the user knows which list and position.
                 item_key = f"{parent_key}[{len(result)}]" if parent_key else f"[{len(result)}]"
                 _check_plain_scalar(item_key, item_text, findings)
-            result.append(_unquote(item_text))
+                result.append(_unquote(item_text))
             continue
 
         # Dict item inside a list (``- key: value`` with possible continuations).
@@ -346,10 +357,12 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             if _is_block_scalar_header(first_val):
                 fold = first_val.startswith(">")
                 scalar_lines = []
-                # Scope collection to the block scalar's own content
-                # indent (first continuation line) so sibling keys at
-                # the item-content indent are not consumed.
-                if i < len(lines) and lines[i][0] > base_indent:
+                # Block scalar content must be indented deeper than
+                # the mapping key column (base_indent + 2, accounting
+                # for the "- " prefix).  This prevents sibling keys
+                # at the item-content indent from being consumed when
+                # the block scalar has no content lines.
+                if i < len(lines) and lines[i][0] > base_indent + 2:
                     content_indent = lines[i][0]
                     while i < len(lines) and lines[i][0] >= content_indent:
                         scalar_lines.append(lines[i][1])

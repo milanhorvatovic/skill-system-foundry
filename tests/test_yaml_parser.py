@@ -1574,13 +1574,26 @@ class ParseListSimpleItemScalarCheckTests(unittest.TestCase):
         _parse_list([(0, '- "[special"')], 0, 0, findings, "items")
         self.assertEqual(findings, [])
 
-    def test_block_scalar_header_skipped(self) -> None:
-        """Valid block scalar headers are not flagged."""
+    def test_block_scalar_header_parsed(self) -> None:
+        """Block scalar headers are parsed (no findings, empty value without continuation)."""
         for header in ("|", ">", "|-", ">+", "|2", ">-4"):
             with self.subTest(header=header):
                 findings: list[str] = []
-                _parse_list([(0, f"- {header}")], 0, 0, findings, "items")
+                result, _ = _parse_list([(0, f"- {header}")], 0, 0, findings, "items")
                 self.assertEqual(findings, [])
+                self.assertEqual(result, [""])
+
+    def test_simple_list_folded_block_scalar(self) -> None:
+        """Simple list item with folded block scalar collects continuation lines."""
+        lines = [(0, "- >"), (4, "line one"), (4, "line two")]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(result, ["line one line two"])
+
+    def test_simple_list_literal_block_scalar(self) -> None:
+        """Simple list item with literal block scalar preserves newlines."""
+        lines = [(0, "- |"), (4, "line one"), (4, "line two")]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(result, ["line one\nline two"])
 
     def test_reserved_char_detected(self) -> None:
         findings: list[str] = []
@@ -1649,6 +1662,17 @@ class ParseListDictItemBlockScalarTests(unittest.TestCase):
         result, _ = _parse_list(lines, 0, 0, [], "items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["desc"], "line one line two")
+        self.assertEqual(result[0]["name"], "test")
+
+    def test_block_scalar_empty_content_with_sibling(self) -> None:
+        """Empty block scalar does not consume sibling keys."""
+        lines = [
+            (0, "- desc: >"),
+            (2, "name: test"),
+        ]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["desc"], "")
         self.assertEqual(result[0]["name"], "test")
 
     def test_block_scalar_sibling_keys_integration(self) -> None:
