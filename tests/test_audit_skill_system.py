@@ -270,6 +270,24 @@ class AuditSpecComplianceTests(unittest.TestCase):
         fm_fails = [e for e in fail_errors if "frontmatter" in e]
         self.assertGreaterEqual(len(fm_fails), 1)
 
+    def test_skill_parse_error_returns_single_fail(self) -> None:
+        """A skill with a YAML parse error returns one FAIL, not cascading errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\ndescription: Demo.\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        parse_fails = [e for e in fail_errors if "parse error" in e.lower()]
+        self.assertGreaterEqual(len(parse_fails), 1)
+        # Must not cascade into missing-name / missing-description errors.
+        name_fails = [e for e in fail_errors if "missing" in e.lower() and "name" in e.lower()]
+        desc_fails = [e for e in fail_errors if "missing" in e.lower() and "description" in e.lower()]
+        self.assertEqual(name_fails, [])
+        self.assertEqual(desc_fails, [])
+
     def test_skill_missing_name_field_returns_fail(self) -> None:
         """A skill without a name field returns a FAIL."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -838,6 +856,22 @@ class AuditCapabilityEntryNamingTests(unittest.TestCase):
             if "capability.md" in e or "SKILL.md" in e
         ]
         self.assertEqual(naming_fails, [])
+
+    def test_capability_parse_error_returns_fail(self) -> None:
+        """A capability with malformed frontmatter returns a FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            # Unterminated frontmatter — missing closing ---
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "---\nname: my-cap\ndescription: Broken.\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        parse_fails = [e for e in fail_errors if "parse error" in e.lower()]
+        self.assertGreaterEqual(len(parse_fails), 1)
 
 
 class AuditManifestTests(unittest.TestCase):
