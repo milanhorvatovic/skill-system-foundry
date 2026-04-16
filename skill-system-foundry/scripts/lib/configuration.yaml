@@ -136,16 +136,19 @@ plain_scalar:
     anchor: "&"
     # FAIL — invalid block scalar headers (followed by text)
     block_scalar: "|>"
-    # FAIL — unterminated quotes
-    # Quote indicators (' and ") are defined in constants.py because
-    # representing both characters in a single YAML scalar is not
-    # possible without escape processing.
+    # FAIL — unterminated quotes (split into two entries because both
+    # characters cannot coexist in a single YAML scalar without escape
+    # processing; constants.py concatenates them at load time)
+    quote_single: "'"
+    quote_double: '"'
     # WARN — silently consumed by strict parsers
     tag: "!"
-  # Whitespace characters that activate context-sensitive indicators
-  # are defined in constants.py (PLAIN_SCALAR_CONTEXT_WHITESPACE)
-  # because the tab character cannot be reliably stored in this
-  # YAML format (the parser does not process escape sequences).
+  # Characters that activate context-sensitive indicators (space and
+  # tab).  Tab is stored as the token "TAB" because the subset parser
+  # does not process escape sequences; constants.py decodes it.
+  context_whitespace:
+    - " "
+    - TAB
 
 # ============================================================
 # Codex Configuration (agents/openai.yaml)

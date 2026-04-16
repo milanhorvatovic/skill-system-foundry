@@ -131,14 +131,18 @@ RECOGNIZED_DIRS = frozenset(_skill["recognized_subdirectories"])
 # --- Plain Scalar Divergence Detection ---
 _plain_scalar = _config["plain_scalar"]
 PLAIN_SCALAR_INDICATORS = _plain_scalar["indicators"]
-# Quote indicator characters (single and double quotes) — defined in
-# Python because representing both quote characters in a single YAML
-# scalar is not possible without escape processing.
-PLAIN_SCALAR_INDICATORS["quote"] = "'\""
-# Whitespace that activates context-sensitive indicators (space + tab).
-# Defined in Python because the tab character cannot be reliably stored
-# in configuration.yaml (the parser does not process escape sequences).
-PLAIN_SCALAR_CONTEXT_WHITESPACE = " \t"
+# Combine separate quote entries into one string (both characters
+# cannot coexist in a single YAML scalar without escape processing).
+PLAIN_SCALAR_INDICATORS["quote"] = (
+    PLAIN_SCALAR_INDICATORS.pop("quote_single")
+    + PLAIN_SCALAR_INDICATORS.pop("quote_double")
+)
+# Decode context whitespace from YAML list (tab is stored as the
+# token "TAB" because the subset parser does not process escapes).
+_WS_DECODE = {"TAB": "\t"}
+PLAIN_SCALAR_CONTEXT_WHITESPACE = "".join(
+    _WS_DECODE.get(ch, ch) for ch in _plain_scalar["context_whitespace"]
+)
 
 # --- Dependency Direction ---
 _dep = _config["dependency_direction"]
@@ -182,6 +186,6 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
-del _allowed_tools, _metadata, _plain_scalar
+del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
