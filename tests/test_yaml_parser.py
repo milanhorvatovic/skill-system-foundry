@@ -1479,12 +1479,18 @@ class ParseMappingExtendedBlockScalarTests(unittest.TestCase):
     def test_keep_chomping_pipe(self) -> None:
         lines = [(0, "key: |+"), (2, "line one"), (2, "line two")]
         result, _ = _parse_mapping(lines, 0, 0, [])
-        self.assertEqual(result, {"key": "line one\nline two"})
+        self.assertEqual(result, {"key": "line one\nline two\n"})
 
     def test_keep_chomping_folded(self) -> None:
         lines = [(0, "key: >+"), (2, "line one"), (2, "line two")]
         result, _ = _parse_mapping(lines, 0, 0, [])
-        self.assertEqual(result, {"key": "line one line two"})
+        self.assertEqual(result, {"key": "line one line two\n"})
+
+    def test_keep_chomping_no_content_lines(self) -> None:
+        """Keep chomping with no content lines produces empty string."""
+        lines = [(0, "key: |+")]
+        result, _ = _parse_mapping(lines, 0, 0, [])
+        self.assertEqual(result, {"key": ""})
 
     def test_indentation_indicator_treated_as_plain(self) -> None:
         """Headers with indentation indicators are treated as plain scalars."""
@@ -1746,7 +1752,7 @@ class ParseListParentKeyPropagationTests(unittest.TestCase):
         findings: list[str] = []
         parse_yaml_subset(text, findings)
         self.assertEqual(len(findings), 1)
-        self.assertIn("'inner[0]'", findings[0])
+        self.assertIn("'outer.inner[0]'", findings[0])
 
     def test_list_dict_nested_list_propagation(self) -> None:
         """Parent key flows from a dict-in-list nested structure."""
@@ -1762,6 +1768,38 @@ class ParseListParentKeyPropagationTests(unittest.TestCase):
         _parse_structure([(0, "- [bad")], 0, 0, findings)
         self.assertEqual(len(findings), 1)
         self.assertIn("'[0]'", findings[0])
+
+
+class ParseMappingQualifiedKeyTests(unittest.TestCase):
+    """Tests for dotted parent_key propagation in _parse_mapping."""
+
+    def test_flat_mapping_uses_bare_key(self) -> None:
+        """Top-level mapping findings show bare key name."""
+        findings: list[str] = []
+        parse_yaml_subset("name: *alias", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'name'", findings[0])
+
+    def test_nested_mapping_uses_dotted_key(self) -> None:
+        """Nested mapping findings show parent.key path."""
+        findings: list[str] = []
+        parse_yaml_subset("metadata:\n  version: *alias", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'metadata.version'", findings[0])
+
+    def test_deeply_nested_mapping_uses_full_path(self) -> None:
+        """Three-level nesting shows full dotted path."""
+        findings: list[str] = []
+        parse_yaml_subset("a:\n  b:\n    c: *alias", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'a.b.c'", findings[0])
+
+    def test_mapping_to_list_preserves_dotted_prefix(self) -> None:
+        """Dotted mapping prefix flows into list item keys."""
+        findings: list[str] = []
+        parse_yaml_subset("a:\n  b:\n    - *alias", findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'a.b[0]'", findings[0])
 
 
 # ===================================================================

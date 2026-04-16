@@ -76,6 +76,14 @@ def _is_block_scalar_header(s: str) -> bool:
     return False
 
 
+def _assemble_block_scalar(header: str, lines: list[str]) -> str:
+    """Join block scalar *lines* according to *header* style and chomping."""
+    text = " ".join(lines) if header.startswith(">") else "\n".join(lines)
+    if "+" in header and lines:
+        text += "\n"
+    return text
+
+
 def suggest_quoted_form(value: str) -> str | None:
     """Return *value* wrapped in the safest divergence-free quote style.
 
@@ -259,10 +267,10 @@ def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int,
         return {}, start
     if lines[start][1].startswith("- "):
         return _parse_list(lines, start, base_indent, findings, parent_key)
-    return _parse_mapping(lines, start, base_indent, findings)
+    return _parse_mapping(lines, start, base_indent, findings, parent_key)
 
 
-def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str] | None) -> tuple[dict, int]:
+def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str] | None, parent_key: str = "") -> tuple[dict, int]:
     """Parse ``key: value`` pairs at *base_indent*."""
     result = {}
     i = start
@@ -280,29 +288,29 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, f
             continue
 
         key = content[:colon].strip()
+        qualified_key = f"{parent_key}.{key}" if parent_key else key
         after = content[colon + 1 :].strip()
 
         if _is_block_scalar_header(after):
             # Block scalar — collect indented continuation lines.
-            fold = after.startswith(">")
             i += 1
             scalar_lines = []
             while i < len(lines) and lines[i][0] > base_indent:
                 scalar_lines.append(lines[i][1])
                 i += 1
-            result[key] = " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
+            result[key] = _assemble_block_scalar(after, scalar_lines)
 
         elif after == "":
             # Nested structure (mapping or list).
             i += 1
             if i < len(lines) and lines[i][0] > base_indent:
-                nested, i = _parse_structure(lines, i, lines[i][0], findings, key)
+                nested, i = _parse_structure(lines, i, lines[i][0], findings, qualified_key)
                 result[key] = nested
             else:
                 result[key] = ""
 
         else:
-            _check_plain_scalar(key, after, findings)
+            _check_plain_scalar(qualified_key, after, findings)
             result[key] = _unquote(after)
             i += 1
 
@@ -327,14 +335,11 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             # Simple scalar list item.
             if _is_block_scalar_header(item_text):
                 # Block scalar — consume indented continuation lines.
-                fold = item_text.startswith(">")
                 scalar_lines = []
                 while i < len(lines) and lines[i][0] > base_indent:
                     scalar_lines.append(lines[i][1])
                     i += 1
-                result.append(
-                    " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
-                )
+                result.append(_assemble_block_scalar(item_text, scalar_lines))
             else:
                 # Plain scalar — use parent_key[index] as the finding
                 # key so the user knows which list and position.
@@ -351,7 +356,6 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
 
         if first_val:
             if _is_block_scalar_header(first_val):
-                fold = first_val.startswith(">")
                 scalar_lines = []
                 # Block scalar content must be indented deeper than
                 # the mapping key column (base_indent + 2, accounting
@@ -364,7 +368,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
                         scalar_lines.append(lines[i][1])
                         i += 1
                 item_dict = {
-                    first_key: " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
+                    first_key: _assemble_block_scalar(first_val, scalar_lines)
                 }
             else:
                 _check_plain_scalar(f"{idx_prefix}.{first_key}", first_val, findings)
@@ -389,15 +393,12 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             sub_val = cc[sub_colon + 1 :].strip()
 
             if _is_block_scalar_header(sub_val):
-                fold = sub_val.startswith(">")
                 i += 1
                 scalar_lines = []
                 while i < len(lines) and lines[i][0] > ci:
                     scalar_lines.append(lines[i][1])
                     i += 1
-                item_dict[sub_key] = (
-                    " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
-                )
+                item_dict[sub_key] = _assemble_block_scalar(sub_val, scalar_lines)
             elif sub_val == "":
                 i += 1
                 if i < len(lines) and lines[i][0] > ci:
