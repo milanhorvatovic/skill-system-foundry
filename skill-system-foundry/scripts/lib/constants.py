@@ -11,6 +11,7 @@ Consumers import everything from this module:
 import os
 import re
 
+from .levels import LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO
 from .yaml_parser import parse_yaml_subset
 
 # ===================================================================
@@ -35,10 +36,8 @@ FILE_CODEX_CONFIG = "agents/openai.yaml"
 FILE_GITKEEP = ".gitkeep"
 EXT_MARKDOWN = ".md"
 
-# Error Level Prefixes
-LEVEL_FAIL = "FAIL"
-LEVEL_WARN = "WARN"
-LEVEL_INFO = "INFO"
+# Error Level Prefixes (imported from levels.py to avoid circular dependency)
+# LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO — imported at the top of this file
 
 # JSON Output
 JSON_SCHEMA_VERSION = 1

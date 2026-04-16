@@ -6,11 +6,12 @@ from .yaml_parser import parse_yaml_subset
 def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     """Extract YAML frontmatter from a SKILL.md file.
 
-    Returns ``(frontmatter_dict, body_string, scalar_warnings)``.
-    *scalar_warnings* contains plain-scalar divergence findings
-    collected during parsing (empty list when none).  If no frontmatter
-    is found, returns ``(None, full_content, [])``.  Parse errors are
-    returned as a dict with a ``_parse_error`` key.
+    Returns ``(frontmatter_dict, body_string, scalar_findings)``.
+    *scalar_findings* contains plain-scalar divergence findings
+    (FAIL and WARN level) collected during parsing (empty list when
+    none).  If no frontmatter is found, returns
+    ``(None, full_content, [])``.  Parse errors are returned as a dict
+    with a ``_parse_error`` key.
     """
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()

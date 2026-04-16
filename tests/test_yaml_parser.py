@@ -22,6 +22,7 @@ if SCRIPTS_DIR not in sys.path:
 from lib.yaml_parser import (
     parse_yaml_subset,
     suggest_quoted_form,
+    _escape_double_quoted_yaml,
     _strip_inline_comment,
     _unquote,
     _is_block_scalar_header,
@@ -971,6 +972,43 @@ class IsBlockScalarHeaderTests(unittest.TestCase):
 
 
 # ===================================================================
+# _escape_double_quoted_yaml
+# ===================================================================
+
+
+class EscapeDoubleQuotedYamlTests(unittest.TestCase):
+    """Tests for _escape_double_quoted_yaml YAML escaping."""
+
+    def test_no_special_chars(self) -> None:
+        """Plain text passes through unchanged."""
+        self.assertEqual(_escape_double_quoted_yaml("hello"), "hello")
+
+    def test_backslash_escaped(self) -> None:
+        """Backslashes are doubled."""
+        self.assertEqual(_escape_double_quoted_yaml("C:\\temp"), "C:\\\\temp")
+
+    def test_double_quote_escaped(self) -> None:
+        """Double quotes are backslash-escaped."""
+        self.assertEqual(_escape_double_quoted_yaml('say "hi"'), 'say \\"hi\\"')
+
+    def test_tab_escaped(self) -> None:
+        """Literal tab characters are escaped."""
+        self.assertEqual(_escape_double_quoted_yaml("a\tb"), "a\\tb")
+
+    def test_newline_escaped(self) -> None:
+        """Literal newlines are escaped."""
+        self.assertEqual(_escape_double_quoted_yaml("a\nb"), "a\\nb")
+
+    def test_carriage_return_escaped(self) -> None:
+        """Literal carriage returns are escaped."""
+        self.assertEqual(_escape_double_quoted_yaml("a\rb"), "a\\rb")
+
+    def test_backslash_and_quote_combined(self) -> None:
+        """Backslash before a double quote is escaped correctly."""
+        self.assertEqual(_escape_double_quoted_yaml('path\\"end'), 'path\\\\\\"end')
+
+
+# ===================================================================
 # suggest_quoted_form
 # ===================================================================
 
@@ -996,11 +1034,11 @@ class SuggestQuotedFormTests(unittest.TestCase):
         result = suggest_quoted_form(value)
         self.assertEqual(result, '"' + value + '"')
 
-    def test_both_quotes_returns_none(self) -> None:
-        """Value containing both quote types returns None (needs block scalar)."""
+    def test_both_quotes_returns_escaped_double(self) -> None:
+        """Value containing both quote types returns escaped double-quoted form."""
         value = """both 'single' and "double" quotes"""
         result = suggest_quoted_form(value)
-        self.assertIsNone(result)
+        self.assertEqual(result, '"both \'single\' and \\"double\\" quotes"')
 
     def test_empty_value_returns_double_quoted(self) -> None:
         """Empty value gets wrapped in double quotes."""
@@ -1012,6 +1050,24 @@ class SuggestQuotedFormTests(unittest.TestCase):
         value = "[Beta] Use when: inspecting"
         result = suggest_quoted_form(value)
         self.assertEqual(result, '"' + value + '"')
+
+    def test_backslash_no_single_quote_returns_single(self) -> None:
+        """Value with backslash and no single quotes gets single-quoted."""
+        result = suggest_quoted_form("C:\\temp")
+        self.assertEqual(result, "'C:\\temp'")
+
+    def test_backslash_with_single_quote_returns_escaped_double(self) -> None:
+        """Value with backslash and single quote but no double quote gets escaped double."""
+        result = suggest_quoted_form("it's C:\\temp")
+        self.assertEqual(result, '"it\'s C:\\\\temp"')
+
+    def test_newline_returns_none(self) -> None:
+        """Value with newline returns None (needs block scalar)."""
+        self.assertIsNone(suggest_quoted_form("line1\nline2"))
+
+    def test_carriage_return_returns_none(self) -> None:
+        """Value with carriage return returns None (needs block scalar)."""
+        self.assertIsNone(suggest_quoted_form("line1\rline2"))
 
 
 # ===================================================================
@@ -1288,6 +1344,7 @@ class CheckPlainScalarColonTests(unittest.TestCase):
         _check_plain_scalar("key", "text:\tmore", findings)
         self.assertEqual(len(findings), 1)
         self.assertIn("FAIL", findings[0])
+        self.assertIn("':\\t'", findings[0])
 
     def test_trailing_colon_fail(self) -> None:
         findings: list[str] = []
@@ -1346,11 +1403,11 @@ class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
         _check_plain_scalar("key", '[parses "quoted" tokens', findings)
         self.assertIn("wrap value in single quotes", findings[0])
 
-    def test_advice_block_scalar_when_both_quotes(self) -> None:
-        """Values with both quote types get block scalar advice."""
+    def test_advice_escape_when_both_quotes(self) -> None:
+        """Values with both quote types get escaped double-quote advice."""
         findings: list[str] = []
         _check_plain_scalar("key", """[both 'single' and "double" here""", findings)
-        self.assertIn("block scalar", findings[0])
+        self.assertIn("wrap value in double quotes", findings[0])
 
     def test_colon_advice_adapts_to_content(self) -> None:
         """Colon-space findings also adapt advice to value content."""
@@ -1369,6 +1426,24 @@ class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
         findings: list[str] = []
         _check_plain_scalar("key", '"unterminated', findings)
         self.assertIn("wrap value in single quotes", findings[0])
+
+    def test_backslash_value_gets_single_quote_advice(self) -> None:
+        """Values with backslash and no single quotes get single-quote advice."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "[C:\\temp", findings)
+        self.assertIn("wrap value in single quotes", findings[0])
+
+    def test_backslash_with_double_quote_gets_escape_advice(self) -> None:
+        """Values with backslash and double quote but no single gets double-quote + escape advice."""
+        findings: list[str] = []
+        _check_plain_scalar("key", '*path "C:\\temp"', findings)
+        self.assertIn("wrap value in single quotes", findings[0])
+
+    def test_backslash_with_only_single_quote_gets_escape_advice(self) -> None:
+        """Values with backslash and single quote (no double) get escape-aware advice."""
+        findings: list[str] = []
+        _check_plain_scalar("key", "[it's C:\\temp", findings)
+        self.assertIn("escape backslashes", findings[0])
 
 
 # ===================================================================
@@ -1562,6 +1637,26 @@ class ParseListDictItemBlockScalarTests(unittest.TestCase):
         lines = [(0, "- desc: |")]
         result, _ = _parse_list(lines, 0, 0, [], "items")
         self.assertEqual(result[0], {"desc": ""})
+
+    def test_block_scalar_does_not_consume_sibling_keys(self) -> None:
+        """Block scalar in first_val stops at sibling key indent."""
+        lines = [
+            (0, "- desc: >"),
+            (4, "line one"),
+            (4, "line two"),
+            (2, "name: test"),
+        ]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["desc"], "line one line two")
+        self.assertEqual(result[0]["name"], "test")
+
+    def test_block_scalar_sibling_keys_integration(self) -> None:
+        """Full integration: block scalar + sibling key parsed correctly."""
+        text = "items:\n  - desc: >\n      folded text\n    name: test"
+        result = parse_yaml_subset(text)
+        self.assertEqual(result["items"][0]["desc"], "folded text")
+        self.assertEqual(result["items"][0]["name"], "test")
 
     def test_block_scalar_via_parse_yaml_subset(self) -> None:
         """Full integration: block scalar in list dict item parsed correctly."""

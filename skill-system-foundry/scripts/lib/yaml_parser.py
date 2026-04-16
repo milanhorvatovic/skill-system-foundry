@@ -6,6 +6,8 @@ lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
 """
 
+from .levels import LEVEL_FAIL, LEVEL_WARN
+
 
 def parse_yaml_subset(text: str, findings: list[str] | None = None) -> dict:
     """Parse a limited YAML subset into a Python dict.
@@ -81,31 +83,59 @@ def _is_block_scalar_header(s: str) -> bool:
     return False
 
 
+def _escape_double_quoted_yaml(value: str) -> str:
+    """Escape *value* for use inside a YAML double-quoted scalar.
+
+    YAML double-quoted scalars interpret backslash sequences (``\\n``,
+    ``\\t``, ``\\\"``, etc.), so literal backslashes and embedded double
+    quotes must be escaped.
+    """
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
 def suggest_quoted_form(value: str) -> str | None:
     """Return *value* wrapped in the safest divergence-free quote style.
 
     Implements the quoting decision tree from the resolution guide:
 
-    - Double quotes when the value contains no ``"`` characters
-      (recommended default — handles every problematic pattern)
-    - Single quotes when the value contains ``"`` but no ``'``
-    - ``None`` when the value contains both quote types (use a block
-      scalar ``>-`` instead — cannot be expressed as an inline fix)
+    - ``None`` when the value contains line breaks (use a block scalar
+      ``>-`` instead)
+    - Single quotes when the value contains backslashes and no ``'``
+      (YAML single quotes do not interpret escape sequences)
+    - Double quotes with escaping when no ``"`` is present
+    - Single quotes when no ``'`` is present
+    - Double quotes with full escaping as fallback
     """
+    if "\n" in value or "\r" in value:
+        return None
+    if "\\" in value and "'" not in value:
+        return "'" + value + "'"
     if '"' not in value:
-        return '"' + value + '"'
+        return '"' + _escape_double_quoted_yaml(value) + '"'
     if "'" not in value:
         return "'" + value + "'"
-    return None
+    return '"' + _escape_double_quoted_yaml(value) + '"'
 
 
 def _quote_advice(value: str) -> str:
     """Return human-readable quoting advice for a plain scalar value."""
+    if "\n" in value or "\r" in value:
+        return "use a block scalar (>-) — value contains line breaks"
+    if "\\" in value and "'" not in value:
+        return "wrap value in single quotes"
     if '"' not in value:
+        if "\\" in value:
+            return "wrap value in double quotes and escape backslashes"
         return "wrap value in double quotes"
     if "'" not in value:
         return "wrap value in single quotes"
-    return "use a block scalar (>-) — value contains both quote types"
+    return "wrap value in double quotes and escape internal double quotes"
 
 
 def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
@@ -114,8 +144,6 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
         return
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         return
-
-    from .constants import LEVEL_FAIL, LEVEL_WARN
 
     advice = _quote_advice(value)
     ch = value[0]
@@ -220,9 +248,10 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
                 )
                 break
             if value[i + 1] in (" ", "\t"):
+                separator = repr(":" + value[i + 1])
                 findings.append(
                     f"{LEVEL_FAIL}: [spec] '{key}': unquoted value "
-                    "contains ': ' — strict parsers treat this as a "
+                    f"contains {separator} — strict parsers treat this as a "
                     f"mapping key; {advice}"
                 )
                 break
@@ -317,9 +346,14 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
             if _is_block_scalar_header(first_val):
                 fold = first_val.startswith(">")
                 scalar_lines = []
-                while i < len(lines) and lines[i][0] > base_indent:
-                    scalar_lines.append(lines[i][1])
-                    i += 1
+                # Scope collection to the block scalar's own content
+                # indent (first continuation line) so sibling keys at
+                # the item-content indent are not consumed.
+                if i < len(lines) and lines[i][0] > base_indent:
+                    content_indent = lines[i][0]
+                    while i < len(lines) and lines[i][0] >= content_indent:
+                        scalar_lines.append(lines[i][1])
+                        i += 1
                 item_dict = {
                     first_key: " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
                 }
