@@ -1414,8 +1414,8 @@ class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
         _check_plain_scalar("key", "[C:\\temp", findings)
         self.assertIn("wrap value in single quotes", findings[0])
 
-    def test_backslash_with_double_quote_gets_escape_advice(self) -> None:
-        """Values with backslash and double quote but no single gets double-quote + escape advice."""
+    def test_backslash_with_double_quote_gets_single_quote_advice(self) -> None:
+        """Values with backslash and double quote but no single quote get single-quote advice."""
         findings: list[str] = []
         _check_plain_scalar("key", '*path "C:\\temp"', findings)
         self.assertIn("wrap value in single quotes", findings[0])
