@@ -110,7 +110,7 @@ def prevalidate(
     # Default target is Claude.ai to preserve existing behavior.
     # Callers can override bundle_target to relax or change this behavior.
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
-    frontmatter, _body = load_frontmatter(skill_md)
+    frontmatter, _body, _warnings = load_frontmatter(skill_md)
     if frontmatter and "description" in frontmatter:
         desc = str(frontmatter["description"])
         if len(desc) > BUNDLE_DESCRIPTION_MAX_LENGTH:

@@ -194,13 +194,13 @@ def audit_skill_system(
 
     for skill in registered_skills:
         skill_md = os.path.join(skill["path"], FILE_SKILL_MD)
-        fm, body = load_frontmatter(skill_md)
+        fm, body, scalar_warnings = load_frontmatter(skill_md)
 
         if fm is None:
             errors.append(f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} has no frontmatter")
             continue
 
-        errors.extend(fm.pop("_scalar_warnings", []))
+        errors.extend(scalar_warnings)
 
         if "name" not in fm:
             errors.append(f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} missing 'name' field")
@@ -233,9 +233,8 @@ def audit_skill_system(
 
     for cap in capabilities:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
-        fm, _ = load_frontmatter(cap_md)
-        if fm:
-            errors.extend(fm.pop("_scalar_warnings", []))
+        fm, _, scalar_warnings = load_frontmatter(cap_md)
+        errors.extend(scalar_warnings)
         if fm and "name" in fm and "description" in fm:
             errors.append(
                 f"{LEVEL_INFO}: {cap['parent']}/capabilities/{cap['name']} has full "

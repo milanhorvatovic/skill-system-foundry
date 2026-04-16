@@ -3,23 +3,25 @@
 from .yaml_parser import parse_yaml_subset
 
 
-def load_frontmatter(filepath: str) -> tuple[dict | None, str]:
+def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     """Extract YAML frontmatter from a SKILL.md file.
 
-    Returns (frontmatter_dict, body_string). If no frontmatter is found,
-    returns (None, full_content). Parse errors are returned as a dict
-    with a '_parse_error' key.
+    Returns ``(frontmatter_dict, body_string, scalar_warnings)``.
+    *scalar_warnings* contains plain-scalar divergence findings
+    collected during parsing (empty list when none).  If no frontmatter
+    is found, returns ``(None, full_content, [])``.  Parse errors are
+    returned as a dict with a ``_parse_error`` key.
     """
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
     if not content.startswith("---"):
-        return None, content
+        return None, content, []
 
     try:
         end = content.index("---", 3)
     except ValueError:
-        return {"_parse_error": "No closing '---' delimiter in frontmatter"}, content[3:]
+        return {"_parse_error": "No closing '---' delimiter in frontmatter"}, content[3:], []
 
     frontmatter_str = content[3:end].strip()
     body = content[end + 3 :].strip()
@@ -28,11 +30,9 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str]:
         findings: list[str] = []
         frontmatter = parse_yaml_subset(frontmatter_str, findings)
     except (ValueError, KeyError) as e:
-        return {"_parse_error": str(e)}, body
+        return {"_parse_error": str(e)}, body, []
 
-    if findings:
-        frontmatter["_scalar_warnings"] = findings
-    return frontmatter, body
+    return frontmatter, body, findings
 
 
 def count_body_lines(body: str) -> int:

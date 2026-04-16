@@ -1534,6 +1534,82 @@ class ParseListSimpleItemScalarCheckTests(unittest.TestCase):
         self.assertIn("unterminated quote", findings[0])
 
 
+class ParseListDictItemBlockScalarTests(unittest.TestCase):
+    """Tests for block scalar handling in list dict items (- key: | / >)."""
+
+    def test_folded_block_scalar_first_val(self) -> None:
+        """A dict-in-list item with folded block scalar collects continuation lines."""
+        lines = [(0, "- desc: >"), (4, "line one"), (4, "line two")]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], {"desc": "line one line two"})
+
+    def test_literal_block_scalar_first_val(self) -> None:
+        """A dict-in-list item with literal block scalar preserves newlines."""
+        lines = [(0, "- desc: |"), (4, "line one"), (4, "line two")]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], {"desc": "line one\nline two"})
+
+    def test_block_scalar_with_chomp(self) -> None:
+        """Chomp modifier on block scalar header works in list dict items."""
+        lines = [(0, "- desc: >-"), (4, "content")]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(result[0], {"desc": "content"})
+
+    def test_block_scalar_no_continuation(self) -> None:
+        """Block scalar header with no continuation lines yields empty string."""
+        lines = [(0, "- desc: |")]
+        result, _ = _parse_list(lines, 0, 0, [], "items")
+        self.assertEqual(result[0], {"desc": ""})
+
+    def test_block_scalar_via_parse_yaml_subset(self) -> None:
+        """Full integration: block scalar in list dict item parsed correctly."""
+        text = "items:\n  - name: test\n    desc: >\n      folded text here"
+        result = parse_yaml_subset(text)
+        self.assertEqual(result["items"][0]["desc"], "folded text here")
+
+
+class ParseListDictItemFindingKeyTests(unittest.TestCase):
+    """Tests for indexed finding keys in dict-in-list items."""
+
+    def test_first_key_includes_index(self) -> None:
+        """Dict-in-list first key findings use parent[index].key format."""
+        findings: list[str] = []
+        _parse_list([(0, "- name: *alias")], 0, 0, findings, "items")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'items[0].name'", findings[0])
+
+    def test_continuation_key_includes_index(self) -> None:
+        """Dict-in-list continuation key findings use parent[index].key format."""
+        findings: list[str] = []
+        _parse_list(
+            [(0, "- name: ok"), (4, "desc: [bad")],
+            0, 0, findings, "items",
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'items[0].desc'", findings[0])
+
+    def test_sequential_dict_items_get_indices(self) -> None:
+        """Multiple dict-in-list items get correct sequential indices."""
+        findings: list[str] = []
+        _parse_list(
+            [(0, "- name: *a"), (0, "- name: ok"), (0, "- name: *b")],
+            0, 0, findings, "vals",
+        )
+        self.assertEqual(len(findings), 2)
+        self.assertIn("'vals[0].name'", findings[0])
+        self.assertIn("'vals[2].name'", findings[1])
+
+    def test_indexed_key_via_parse_yaml_subset(self) -> None:
+        """Full integration: dict-in-list finding key includes index."""
+        text = "items:\n  - name: *alias"
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("'items[0].name'", findings[0])
+
+
 class ParseListParentKeyPropagationTests(unittest.TestCase):
     """Tests for parent_key propagation through nested structures."""
 

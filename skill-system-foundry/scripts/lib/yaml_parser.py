@@ -310,11 +310,22 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
         # Dict item inside a list (``- key: value`` with possible continuations).
         first_key = item_text[:colon_pos].strip()
         first_val = item_text[colon_pos + 1 :].strip()
+        # Build indexed prefix for finding keys: parent_key[index].field
+        idx_prefix = f"{parent_key}[{len(result)}]" if parent_key else f"[{len(result)}]"
 
         if first_val:
-            if not _is_block_scalar_header(first_val):
-                _check_plain_scalar(first_key, first_val, findings)
-            item_dict = {first_key: _unquote(first_val)}
+            if _is_block_scalar_header(first_val):
+                fold = first_val.startswith(">")
+                scalar_lines = []
+                while i < len(lines) and lines[i][0] > base_indent:
+                    scalar_lines.append(lines[i][1])
+                    i += 1
+                item_dict = {
+                    first_key: " ".join(scalar_lines) if fold else "\n".join(scalar_lines)
+                }
+            else:
+                _check_plain_scalar(f"{idx_prefix}.{first_key}", first_val, findings)
+                item_dict = {first_key: _unquote(first_val)}
         else:
             # Value is a nested structure on subsequent lines.
             item_dict = {}
@@ -352,7 +363,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
                 else:
                     item_dict[sub_key] = ""
             else:
-                _check_plain_scalar(sub_key, sub_val, findings)
+                _check_plain_scalar(f"{idx_prefix}.{sub_key}", sub_val, findings)
                 item_dict[sub_key] = _unquote(sub_val)
                 i += 1
 

@@ -392,7 +392,7 @@ def validate_skill(
         return errors, passes
 
     # Parse frontmatter
-    frontmatter, body = load_frontmatter(skill_md)
+    frontmatter, body, scalar_warnings = load_frontmatter(skill_md)
 
     if frontmatter is None and not is_capability:
         errors.append(f"{LEVEL_FAIL}: [spec] No YAML frontmatter found (must start with ---)")
@@ -402,8 +402,7 @@ def validate_skill(
         errors.append(f"{LEVEL_FAIL}: [spec] YAML parse error: {frontmatter['_parse_error']}")
         return errors, passes
 
-    if frontmatter:
-        errors.extend(frontmatter.pop("_scalar_warnings", []))
+    errors.extend(scalar_warnings)
 
     # Determine the skill root for reference resolution.
     # For regular skills, skill_path is the root (contains SKILL.md).
