@@ -11,7 +11,13 @@ Consumers import everything from this module:
 import os
 import re
 
-from .levels import LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO
+# Error-level string constants — defined before the yaml_parser import
+# so that yaml_parser can import them without a circular dependency
+# (this module imports yaml_parser to parse configuration.yaml).
+LEVEL_FAIL = "FAIL"
+LEVEL_WARN = "WARN"
+LEVEL_INFO = "INFO"
+
 from .yaml_parser import parse_yaml_subset
 
 # ===================================================================
@@ -36,8 +42,8 @@ FILE_CODEX_CONFIG = "agents/openai.yaml"
 FILE_GITKEEP = ".gitkeep"
 EXT_MARKDOWN = ".md"
 
-# Error Level Prefixes (imported from levels.py to avoid circular dependency)
-# LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO — imported at the top of this file
+# Error Level Prefixes — defined at the top of this file (before the
+# yaml_parser import) so both this module and yaml_parser can use them.
 
 # JSON Output
 JSON_SCHEMA_VERSION = 1
@@ -124,6 +130,14 @@ KNOWN_SPDX_LICENSES = frozenset(_skill["license"]["known_spdx"])
 # Recognized skill subdirectories
 RECOGNIZED_DIRS = frozenset(_skill["recognized_subdirectories"])
 
+# --- Plain Scalar Divergence Detection ---
+_plain_scalar = _config["plain_scalar"]
+PLAIN_SCALAR_INDICATORS = _plain_scalar["indicators"]
+# Whitespace that activates context-sensitive indicators (space + tab).
+# Defined in Python because the tab character cannot be reliably stored
+# in configuration.yaml (the parser does not process escape sequences).
+PLAIN_SCALAR_CONTEXT_WHITESPACE = " \t"
+
 # --- Dependency Direction ---
 _dep = _config["dependency_direction"]
 RE_ROLES_REF = re.compile(_dep["roles_ref_pattern"])
@@ -166,6 +180,6 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _config_path, _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
-del _allowed_tools, _metadata
+del _allowed_tools, _metadata, _plain_scalar
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps

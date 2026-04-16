@@ -933,21 +933,24 @@ class IsBlockScalarHeaderTests(unittest.TestCase):
             with self.subTest(header=header):
                 self.assertTrue(_is_block_scalar_header(header))
 
-    def test_indentation_indicator(self) -> None:
+    def test_indentation_indicator_rejected(self) -> None:
+        """Indentation indicators are rejected (parser does not honour them)."""
         for digit in "123456789":
             for prefix in ("|", ">"):
                 with self.subTest(header=prefix + digit):
-                    self.assertTrue(_is_block_scalar_header(prefix + digit))
+                    self.assertFalse(_is_block_scalar_header(prefix + digit))
 
-    def test_chomping_then_digit(self) -> None:
+    def test_chomping_then_digit_rejected(self) -> None:
+        """Chomping+digit combinations are rejected."""
         for header in ("|-1", "|+9", ">-5", ">+3"):
             with self.subTest(header=header):
-                self.assertTrue(_is_block_scalar_header(header))
+                self.assertFalse(_is_block_scalar_header(header))
 
-    def test_digit_then_chomping(self) -> None:
+    def test_digit_then_chomping_rejected(self) -> None:
+        """Digit+chomping combinations are rejected."""
         for header in ("|1-", "|9+", ">5-", ">3+"):
             with self.subTest(header=header):
-                self.assertTrue(_is_block_scalar_header(header))
+                self.assertFalse(_is_block_scalar_header(header))
 
     def test_digit_zero_excluded(self) -> None:
         for header in ("|0", ">0", "|-0", "|0-", ">+0", ">0+"):
@@ -1016,11 +1019,11 @@ class EscapeDoubleQuotedYamlTests(unittest.TestCase):
 class SuggestQuotedFormTests(unittest.TestCase):
     """Tests for suggest_quoted_form quoting decision tree."""
 
-    def test_no_quotes_returns_double_quoted(self) -> None:
-        """Value without quotes gets wrapped in double quotes."""
+    def test_no_quotes_returns_single_quoted(self) -> None:
+        """Value without quotes gets wrapped in single quotes (preferred)."""
         value = "hello world"
         result = suggest_quoted_form(value)
-        self.assertEqual(result, '"' + value + '"')
+        self.assertEqual(result, "'" + value + "'")
 
     def test_double_quote_in_value_returns_single_quoted(self) -> None:
         """Value containing double quotes gets wrapped in single quotes."""
@@ -1029,37 +1032,37 @@ class SuggestQuotedFormTests(unittest.TestCase):
         self.assertEqual(result, "'" + value + "'")
 
     def test_single_quote_in_value_returns_double_quoted(self) -> None:
-        """Value containing single quotes gets wrapped in double quotes."""
+        """Value containing single quotes and no backslashes returns double quotes."""
         value = "it's working"
         result = suggest_quoted_form(value)
         self.assertEqual(result, '"' + value + '"')
 
-    def test_both_quotes_returns_escaped_double(self) -> None:
-        """Value containing both quote types returns escaped double-quoted form."""
+    def test_both_quotes_returns_none(self) -> None:
+        """Value containing both quote types returns None (needs block scalar)."""
         value = """both 'single' and "double" quotes"""
         result = suggest_quoted_form(value)
-        self.assertEqual(result, '"both \'single\' and \\"double\\" quotes"')
+        self.assertIsNone(result)
 
-    def test_empty_value_returns_double_quoted(self) -> None:
-        """Empty value gets wrapped in double quotes."""
+    def test_empty_value_returns_single_quoted(self) -> None:
+        """Empty value gets wrapped in single quotes (preferred)."""
         result = suggest_quoted_form("")
-        self.assertEqual(result, '""')
+        self.assertEqual(result, "''")
 
     def test_special_chars_in_value(self) -> None:
         """Value with YAML special characters gets wrapped correctly."""
         value = "[Beta] Use when: inspecting"
         result = suggest_quoted_form(value)
-        self.assertEqual(result, '"' + value + '"')
+        self.assertEqual(result, "'" + value + "'")
 
     def test_backslash_no_single_quote_returns_single(self) -> None:
         """Value with backslash and no single quotes gets single-quoted."""
         result = suggest_quoted_form("C:\\temp")
         self.assertEqual(result, "'C:\\temp'")
 
-    def test_backslash_with_single_quote_returns_escaped_double(self) -> None:
-        """Value with backslash and single quote but no double quote gets escaped double."""
+    def test_backslash_with_single_quote_returns_none(self) -> None:
+        """Value with backslash and single quote returns None (needs block scalar)."""
         result = suggest_quoted_form("it's C:\\temp")
-        self.assertEqual(result, '"it\'s C:\\\\temp"')
+        self.assertIsNone(result)
 
     def test_newline_returns_none(self) -> None:
         """Value with newline returns None (needs block scalar)."""
@@ -1391,11 +1394,11 @@ class CheckPlainScalarMultipleFindingsTests(unittest.TestCase):
 class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
     """Tests for context-sensitive quoting advice in finding messages."""
 
-    def test_default_advice_double_quotes(self) -> None:
-        """Values without special quote chars get double-quote advice."""
+    def test_default_advice_single_quotes(self) -> None:
+        """Values without single quotes get single-quote advice (preferred)."""
         findings: list[str] = []
         _check_plain_scalar("key", "[value", findings)
-        self.assertIn("wrap value in double quotes", findings[0])
+        self.assertIn("wrap value in single quotes", findings[0])
 
     def test_advice_single_quotes_when_value_has_double(self) -> None:
         """Values containing double quotes get single-quote advice."""
@@ -1403,11 +1406,11 @@ class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
         _check_plain_scalar("key", '[parses "quoted" tokens', findings)
         self.assertIn("wrap value in single quotes", findings[0])
 
-    def test_advice_escape_when_both_quotes(self) -> None:
-        """Values with both quote types get escaped double-quote advice."""
+    def test_advice_block_scalar_when_both_quotes(self) -> None:
+        """Values with both quote types get block scalar advice."""
         findings: list[str] = []
         _check_plain_scalar("key", """[both 'single' and "double" here""", findings)
-        self.assertIn("wrap value in double quotes", findings[0])
+        self.assertIn("block scalar", findings[0])
 
     def test_colon_advice_adapts_to_content(self) -> None:
         """Colon-space findings also adapt advice to value content."""
@@ -1439,11 +1442,11 @@ class CheckPlainScalarQuoteAdviceTests(unittest.TestCase):
         _check_plain_scalar("key", '*path "C:\\temp"', findings)
         self.assertIn("wrap value in single quotes", findings[0])
 
-    def test_backslash_with_only_single_quote_gets_escape_advice(self) -> None:
-        """Values with backslash and single quote (no double) get escape-aware advice."""
+    def test_backslash_with_single_quote_gets_block_scalar_advice(self) -> None:
+        """Values with backslash and single quote get block scalar advice."""
         findings: list[str] = []
         _check_plain_scalar("key", "[it's C:\\temp", findings)
-        self.assertIn("escape backslashes", findings[0])
+        self.assertIn("block scalar", findings[0])
 
 
 # ===================================================================
@@ -1505,20 +1508,30 @@ class ParseMappingExtendedBlockScalarTests(unittest.TestCase):
         result, _ = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"key": "line one line two"})
 
-    def test_indentation_indicator(self) -> None:
+    def test_indentation_indicator_treated_as_plain(self) -> None:
+        """Headers with indentation indicators are treated as plain scalars."""
+        findings: list[str] = []
         lines = [(0, "key: |2"), (2, "indented")]
-        result, _ = _parse_mapping(lines, 0, 0, [])
-        self.assertEqual(result, {"key": "indented"})
+        result, _ = _parse_mapping(lines, 0, 0, findings)
+        self.assertEqual(result, {"key": "|2"})
+        self.assertEqual(len(findings), 1)
+        self.assertIn("block scalar", findings[0])
 
-    def test_combined_chomping_digit(self) -> None:
+    def test_combined_chomping_digit_treated_as_plain(self) -> None:
+        """Chomping+digit headers are treated as plain scalars."""
+        findings: list[str] = []
         lines = [(0, "key: |-4"), (2, "content")]
-        result, _ = _parse_mapping(lines, 0, 0, [])
-        self.assertEqual(result, {"key": "content"})
+        result, _ = _parse_mapping(lines, 0, 0, findings)
+        self.assertEqual(result, {"key": "|-4"})
+        self.assertEqual(len(findings), 1)
 
-    def test_digit_then_chomping(self) -> None:
+    def test_digit_then_chomping_treated_as_plain(self) -> None:
+        """Digit+chomping headers are treated as plain scalars."""
+        findings: list[str] = []
         lines = [(0, "key: |4-"), (2, "content")]
-        result, _ = _parse_mapping(lines, 0, 0, [])
-        self.assertEqual(result, {"key": "content"})
+        result, _ = _parse_mapping(lines, 0, 0, findings)
+        self.assertEqual(result, {"key": "|4-"})
+        self.assertEqual(len(findings), 1)
 
 
 # ===================================================================
@@ -1575,13 +1588,22 @@ class ParseListSimpleItemScalarCheckTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_block_scalar_header_parsed(self) -> None:
-        """Block scalar headers are parsed (no findings, empty value without continuation)."""
-        for header in ("|", ">", "|-", ">+", "|2", ">-4"):
+        """Supported block scalar headers are parsed (no findings)."""
+        for header in ("|", ">", "|-", ">+"):
             with self.subTest(header=header):
                 findings: list[str] = []
                 result, _ = _parse_list([(0, f"- {header}")], 0, 0, findings, "items")
                 self.assertEqual(findings, [])
                 self.assertEqual(result, [""])
+
+    def test_block_scalar_header_with_digit_treated_as_plain(self) -> None:
+        """Headers with digits are treated as plain scalars and produce findings."""
+        for header in ("|2", ">-4"):
+            with self.subTest(header=header):
+                findings: list[str] = []
+                result, _ = _parse_list([(0, f"- {header}")], 0, 0, findings, "items")
+                self.assertEqual(len(findings), 1)
+                self.assertIn("block scalar", findings[0])
 
     def test_simple_list_folded_block_scalar(self) -> None:
         """Simple list item with folded block scalar collects continuation lines."""

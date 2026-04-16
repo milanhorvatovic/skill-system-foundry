@@ -200,7 +200,10 @@ def audit_skill_system(
             errors.append(f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} has no frontmatter")
             continue
 
-        errors.extend(scalar_findings)
+        for f in scalar_findings:
+            level, _, detail = f.partition(": ")
+            errors.append(f"{level}: {skill['name']}/{FILE_SKILL_MD} {detail}")
+
 
         if "name" not in fm:
             errors.append(f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} missing 'name' field")
@@ -234,7 +237,9 @@ def audit_skill_system(
     for cap in capabilities:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
         fm, _, scalar_findings = load_frontmatter(cap_md)
-        errors.extend(scalar_findings)
+        for f in scalar_findings:
+            level, _, detail = f.partition(": ")
+            errors.append(f"{level}: {cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD} {detail}")
         if fm and "name" in fm and "description" in fm:
             errors.append(
                 f"{LEVEL_INFO}: {cap['parent']}/capabilities/{cap['name']} has full "

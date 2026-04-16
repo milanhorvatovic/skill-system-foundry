@@ -118,6 +118,34 @@ skill:
     - agents
 
 # ============================================================
+# Plain Scalar Divergence Detection
+# ============================================================
+# YAML 1.2 indicator character categories for _check_plain_scalar.
+# Characters in each set trigger findings when they appear at the
+# start of an unquoted value (or in the colon-scan for separators).
+plain_scalar:
+  indicators:
+    # Unconditional FAIL — always rejected by strict parsers
+    flow: "[]{},"
+    alias: "*"
+    reserved: "@`"
+    directive: "%"
+    # Context-sensitive FAIL — only when followed by whitespace
+    block_entry: "-"
+    mapping_key: "?"
+    anchor: "&"
+    # FAIL — invalid block scalar headers (followed by text)
+    block_scalar: "|>"
+    # FAIL — unterminated quotes
+    quote: '"
+    # WARN — silently consumed by strict parsers
+    tag: "!"
+  # Whitespace characters that activate context-sensitive indicators
+  # are defined in constants.py (PLAIN_SCALAR_CONTEXT_WHITESPACE)
+  # because the tab character cannot be reliably stored in this
+  # YAML format (the parser does not process escape sequences).
+
+# ============================================================
 # Codex Configuration (agents/openai.yaml)
 # ============================================================
 codex_config:

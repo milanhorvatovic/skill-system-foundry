@@ -6,7 +6,7 @@ lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
 """
 
-from .levels import LEVEL_FAIL, LEVEL_WARN
+from .constants import LEVEL_FAIL, LEVEL_WARN
 
 
 def parse_yaml_subset(text: str, findings: list[str] | None = None) -> dict:
@@ -33,8 +33,7 @@ def parse_yaml_subset(text: str, findings: list[str] | None = None) -> dict:
     if not lines:
         return {}
 
-    _findings: list[str] = findings if findings is not None else []
-    result, _ = _parse_structure(lines, 0, lines[0][0], _findings)
+    result, _ = _parse_structure(lines, 0, lines[0][0], findings)
     return result if isinstance(result, dict) else {}
 
 
@@ -62,11 +61,13 @@ def _unquote(s: str) -> str:
 
 
 def _is_block_scalar_header(s: str) -> bool:
-    """Return ``True`` if *s* is a valid YAML 1.2.2 block scalar header.
+    """Return ``True`` if *s* is a block scalar header this parser supports.
 
     Matches ``[|>]`` optionally followed by a chomping modifier (``-``
-    or ``+``) and/or an indentation indicator (``1``–``9``) in either
-    order.  Digit ``0`` is excluded per Section 8.1.1.
+    or ``+``).  Indentation indicators (``1``–``9``) are **not**
+    accepted because the block-scalar collection logic does not honour
+    them — accepting headers with digits would silently produce
+    different values compared to strict YAML 1.2 parsers.
     """
     if not s or s[0] not in ("|", ">"):
         return False
@@ -74,12 +75,7 @@ def _is_block_scalar_header(s: str) -> bool:
     if not rest:
         return True
     if len(rest) == 1:
-        return rest in "-+123456789"
-    if len(rest) == 2:
-        return (
-            (rest[0] in "-+" and rest[1] in "123456789")
-            or (rest[0] in "123456789" and rest[1] in "-+")
-        )
+        return rest in "-+"
     return False
 
 
@@ -102,93 +98,95 @@ def _escape_double_quoted_yaml(value: str) -> str:
 def suggest_quoted_form(value: str) -> str | None:
     """Return *value* wrapped in the safest divergence-free quote style.
 
-    Implements the quoting decision tree from the resolution guide:
+    The decision tree avoids escape-dependent recommendations — only
+    quote styles that both this parser and strict YAML 1.2 parsers
+    interpret identically are suggested:
 
-    - ``None`` when the value contains line breaks (use a block scalar
-      ``>-`` instead)
-    - Single quotes when the value contains backslashes and no ``'``
-      (YAML single quotes do not interpret escape sequences)
-    - Double quotes with escaping when no ``"`` is present
-    - Single quotes when no ``'`` is present
-    - Double quotes with full escaping as fallback
+    - ``None`` when the value contains line breaks or both quote types
+      or backslashes that would need escaping (use a block scalar)
+    - Single quotes when the value contains no ``'`` (YAML single
+      quotes do not interpret escape sequences)
+    - Double quotes when the value contains no ``"`` and no ``\\``
     """
     if "\n" in value or "\r" in value:
         return None
-    if "\\" in value and "'" not in value:
-        return "'" + value + "'"
-    if '"' not in value:
-        return '"' + _escape_double_quoted_yaml(value) + '"'
     if "'" not in value:
         return "'" + value + "'"
-    return '"' + _escape_double_quoted_yaml(value) + '"'
+    if '"' not in value and "\\" not in value:
+        return '"' + value + '"'
+    return None
 
 
 def _quote_advice(value: str) -> str:
     """Return human-readable quoting advice for a plain scalar value."""
     if "\n" in value or "\r" in value:
         return "use a block scalar (>-) — value contains line breaks"
-    if "\\" in value and "'" not in value:
-        return "wrap value in single quotes"
-    if '"' not in value:
-        if "\\" in value:
-            return "wrap value in double quotes and escape backslashes"
-        return "wrap value in double quotes"
     if "'" not in value:
         return "wrap value in single quotes"
-    return "wrap value in double quotes and escape internal double quotes"
+    if '"' not in value and "\\" not in value:
+        return "wrap value in double quotes"
+    return "use a block scalar (>-) — value contains characters that require escape processing in quoted forms"
 
 
-def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
+def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> None:
     """Append findings for unquoted plain scalar values that diverge from strict YAML 1.2."""
-    if not value:
+    if findings is None or not value:
         return
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         return
+
+    # Lazy import — loaded after all modules are fully initialised, which
+    # avoids the circular dependency (constants imports yaml_parser to
+    # parse configuration.yaml at module-load time).
+    from .constants import PLAIN_SCALAR_INDICATORS, PLAIN_SCALAR_CONTEXT_WHITESPACE
+
+    ind = PLAIN_SCALAR_INDICATORS
+    ws = PLAIN_SCALAR_CONTEXT_WHITESPACE
 
     advice = _quote_advice(value)
     ch = value[0]
 
     # Leading-character checks (at most one finding).
-    if ch in ("[", "]", "{", "}", ","):
+    if ch in ind["flow"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             f"'{ch}' (flow indicator) — strict parsers will reject this; "
             f"{advice}"
         )
-    elif ch == "*":
+    elif ch in ind["alias"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             "'*' (alias indicator) — strict parsers will reject this; "
             f"{advice}"
         )
-    elif ch in ("@", "`"):
+    elif ch in ind["reserved"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             f"'{ch}' (reserved character) — strict parsers will reject "
             f"this; {advice}"
         )
-    elif ch == "%":
+    elif ch in ind["directive"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             "'%' (directive indicator) — strict parsers will reject this; "
             f"{advice}"
         )
-    elif ch == "-":
-        if len(value) == 1 or value[1] in (" ", "\t"):
+    elif ch in ind["block_entry"]:
+        if len(value) == 1 or value[1] in ws:
             findings.append(
                 f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
                 "'-' followed by whitespace, or is '-' alone (block sequence "
                 f"entry) — strict parsers will reject this; {advice}"
             )
-    elif ch == "?":
-        if len(value) == 1 or value[1] in (" ", "\t"):
+    elif ch in ind["mapping_key"]:
+        if len(value) == 1 or value[1] in ws:
             findings.append(
                 f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
                 "'?' followed by whitespace, or is '?' alone (explicit "
                 f"mapping key) — strict parsers will reject this; {advice}"
             )
-    elif ch == "&":
-        if len(value) == 1 or value[1] in (" ", "\t"):
+    elif ch in ind["anchor"]:
+        if len(value) == 1 or value[1] in ws:
             findings.append(
                 f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
                 "'&' (anchor indicator) — strict parsers will reject this; "
@@ -198,7 +196,7 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
             # &<non-whitespace>... — anchor name consumed by strict parsers.
             # Determine whether remaining content exists after the anchor name.
             has_remaining = any(
-                value[i] in (" ", "\t") for i in range(1, len(value))
+                value[i] in ws for i in range(1, len(value))
             )
             if has_remaining:
                 findings.append(
@@ -212,25 +210,19 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
                     "with '&' (anchor name consumed by strict parsers, "
                     f"value becomes null) — {advice}"
                 )
-    elif ch == "|":
+    elif ch in ind["block_scalar"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-            "'|' followed by text (invalid block scalar header) — strict "
+            f"'{ch}' followed by text (invalid block scalar header) — strict "
             f"parsers will reject this; {advice}"
         )
-    elif ch == ">":
-        findings.append(
-            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-            "'>' followed by text (invalid block scalar header) — strict "
-            f"parsers will reject this; {advice}"
-        )
-    elif ch == "!":
+    elif ch in ind["tag"]:
         findings.append(
             f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "
             "'!' (tag indicator consumed by strict parsers, silently "
             f"altering the value) — {advice}"
         )
-    elif ch in ("'", '"'):
+    elif ch in ind["quote"]:
         findings.append(
             f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
             f"'{ch}' (unterminated quote — no matching closing quote) — "
@@ -247,7 +239,7 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
                     f"key; {advice}"
                 )
                 break
-            if value[i + 1] in (" ", "\t"):
+            if value[i + 1] in ws:
                 separator = repr(":" + value[i + 1])
                 findings.append(
                     f"{LEVEL_FAIL}: [spec] '{key}': unquoted value "
@@ -257,7 +249,7 @@ def _check_plain_scalar(key: str, value: str, findings: list[str]) -> None:
                 break
 
 
-def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str], parent_key: str = "") -> tuple[dict | list, int]:
+def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str] | None, parent_key: str = "") -> tuple[dict | list, int]:
     """Dispatch to mapping or list parser based on the first token."""
     if start >= len(lines):
         return {}, start
@@ -266,7 +258,7 @@ def _parse_structure(lines: list[tuple[int, str]], start: int, base_indent: int,
     return _parse_mapping(lines, start, base_indent, findings)
 
 
-def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str]) -> tuple[dict, int]:
+def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str] | None) -> tuple[dict, int]:
     """Parse ``key: value`` pairs at *base_indent*."""
     result = {}
     i = start
@@ -313,7 +305,7 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, f
     return result, i
 
 
-def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str], parent_key: str = "") -> tuple[list, int]:
+def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, findings: list[str] | None, parent_key: str = "") -> tuple[list, int]:
     """Parse ``- item`` entries at *base_indent*."""
     result = []
     i = start
