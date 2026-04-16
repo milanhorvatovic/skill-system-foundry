@@ -123,7 +123,7 @@ The parser deliberately excludes full YAML 1.2 compliance: it does not process e
 
 To bridge the gap between this lenient parser and strict YAML 1.2 parsers (such as the `yaml` npm package used by the `skills` CLI), the parser includes **plain scalar divergence detection**. During parsing, it checks unquoted values for patterns that would cause strict parsers to reject the frontmatter (FAIL) or silently misinterpret field values (WARN). The `validate_skill.py` script surfaces these findings so authors can fix portability issues before they reach consumers.
 
-For the full details — pattern categories, quoting strategies, edge cases, and verification methods — see the [YAML Compliance](https://github.com/milanhorvatovic/skill-system-foundry/wiki/YAML-Compliance) and [Quoting Guide](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Quoting-Guide) wiki pages.
+For the full details — pattern categories, quoting strategies, edge cases, and verification methods — see [Learn More](#learn-more).
 
 **Dependencies:** None — all scripts use the Python standard library only.
 

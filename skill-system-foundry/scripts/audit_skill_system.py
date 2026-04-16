@@ -200,6 +200,13 @@ def audit_skill_system(
             errors.append(f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} has no frontmatter")
             continue
 
+        if "_parse_error" in fm:
+            errors.append(
+                f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} YAML parse error: "
+                f"{fm['_parse_error']}"
+            )
+            continue
+
         for f in scalar_findings:
             level, _, detail = f.partition(": ")
             errors.append(f"{level}: {skill['name']}/{FILE_SKILL_MD} {detail}")
