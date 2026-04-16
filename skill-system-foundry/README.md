@@ -115,6 +115,16 @@ Scripts handle deterministic, repeatable tasks that should not be left to the mo
 | `scaffold.py`             | Creates new components from templates with proper directory structure and placeholder content |
 | `bundle.py`               | Bundles a skill into a self-contained zip bundle: validates, resolves external references, rewrites paths, creates bundle |
 
+#### YAML Parser
+
+The `yaml_parser.py` module is a lightweight YAML-subset parser built entirely on the Python standard library — no external dependencies. It handles the subset of YAML used by skill frontmatter: key-value pairs, folded and literal block scalars, nested mappings, scalar lists, and lists of mappings. All values are returned as strings with no type coercion.
+
+The parser deliberately excludes full YAML 1.2 compliance: it does not process escape sequences inside quoted scalars, does not resolve anchors or aliases, and does not coerce types (booleans, numbers, null). These exclusions are a direct consequence of the stdlib-only constraint and the limited YAML subset that skill frontmatter actually uses.
+
+To bridge the gap between this lenient parser and strict YAML 1.2 parsers (such as the `yaml` npm package used by the `skills` CLI), the parser includes **plain scalar divergence detection**. During parsing, it checks unquoted values for patterns that would cause strict parsers to reject the frontmatter (FAIL) or silently misinterpret field values (WARN). The `validate_skill.py` script surfaces these findings so authors can fix portability issues before they reach consumers.
+
+For the full details — pattern categories, quoting strategies, edge cases, and verification methods — see the [YAML Compliance](https://github.com/milanhorvatovic/skill-system-foundry/wiki/YAML-Compliance) and [Quoting Guide](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Quoting-Guide) wiki pages.
+
 **Dependencies:** None — all scripts use the Python standard library only.
 
 ## Usage
@@ -174,5 +184,7 @@ For supplementary context beyond this skill documentation:
 | Token economy and design principles | [Design Principles](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Design-Principles) |
 | Tool landscape and discovery paths | [Supported Tools](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Supported-Tools) |
 | Project layout and deployment strategy | [Project Integration](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Project-Integration) |
+| YAML parser scope and divergence detection | [YAML Compliance](https://github.com/milanhorvatovic/skill-system-foundry/wiki/YAML-Compliance) |
+| Quoting styles, fix examples, and verification | [Quoting Guide](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Quoting-Guide) |
 | Key terms defined | [Glossary](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Glossary) |
 | Guided examples | [Walkthroughs](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Walkthroughs) |
