@@ -636,7 +636,7 @@ class InlineCommentTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.MANIFEST_WITH_COMMENTS)
-            updated, warning, created = update_manifest_for_skill(path, "added")
+            updated, warning, created, _findings = update_manifest_for_skill(path, "added")
             self.assertTrue(updated)
             self.assertIsNone(warning)
             self.assertFalse(created)
@@ -649,7 +649,7 @@ class InlineCommentTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.MANIFEST_WITH_COMMENTS)
-            updated, warning, created = update_manifest_for_role(
+            updated, warning, created, _findings = update_manifest_for_role(
                 path, "dev-group", "added-role",
             )
             self.assertTrue(updated)
@@ -665,7 +665,7 @@ class InlineCommentTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.MANIFEST_WITH_COMMENTS)
-            updated, warning, _ = update_manifest_for_skill(path, "existing")
+            updated, warning, _, _findings = update_manifest_for_skill(path, "existing")
             self.assertFalse(updated)
             self.assertIn("already exists", warning)
 
@@ -903,7 +903,7 @@ class UpdateManifestForSkillTests(unittest.TestCase):
     def test_creates_manifest_and_appends(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
-            updated, warning, created = update_manifest_for_skill(path, "my-skill")
+            updated, warning, created, _findings = update_manifest_for_skill(path, "my-skill")
             self.assertTrue(updated)
             self.assertIsNone(warning)
             self.assertTrue(created)
@@ -914,7 +914,7 @@ class UpdateManifestForSkillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
             scaffold_empty_manifest(path)
-            updated, warning, created = update_manifest_for_skill(path, "my-skill")
+            updated, warning, created, _findings = update_manifest_for_skill(path, "my-skill")
             self.assertTrue(updated)
             self.assertIsNone(warning)
             self.assertFalse(created)
@@ -924,7 +924,7 @@ class UpdateManifestForSkillTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(SAMPLE_MANIFEST)
-            updated, warning, created = update_manifest_for_skill(
+            updated, warning, created, _findings = update_manifest_for_skill(
                 path, "existing-skill",
             )
             self.assertFalse(updated)
@@ -937,7 +937,7 @@ class UpdateManifestForSkillTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("skills:\n  - item1\n  - item2\n")
-            updated, warning, created = update_manifest_for_skill(path, "x")
+            updated, warning, created, _findings = update_manifest_for_skill(path, "x")
             self.assertFalse(updated)
             self.assertIsNotNone(warning)
             self.assertIn("skipping manifest update", warning)
@@ -947,7 +947,7 @@ class UpdateManifestForSkillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
             scaffold_empty_manifest(path)
-            updated, warning, created = update_manifest_for_skill(
+            updated, warning, created, _findings = update_manifest_for_skill(
                 path, "my-router", router=True,
             )
             self.assertTrue(updated)
@@ -961,7 +961,7 @@ class UpdateManifestForSkillTests(unittest.TestCase):
             # Create empty file
             with open(path, "w", encoding="utf-8") as f:
                 f.write("")
-            updated, warning, created = update_manifest_for_skill(path, "my-skill")
+            updated, warning, created, _findings = update_manifest_for_skill(path, "my-skill")
             self.assertTrue(updated)
             self.assertIsNone(warning)
             self.assertTrue(created)  # Should report created_manifest=True
@@ -979,7 +979,7 @@ class UpdateManifestForRoleTests(unittest.TestCase):
     def test_creates_manifest_and_appends(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
-            updated, warning, created = update_manifest_for_role(
+            updated, warning, created, _findings = update_manifest_for_role(
                 path, "my-group", "my-role",
             )
             self.assertTrue(updated)
@@ -992,7 +992,7 @@ class UpdateManifestForRoleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
             scaffold_empty_manifest(path)
-            updated, warning, created = update_manifest_for_role(
+            updated, warning, created, _findings = update_manifest_for_role(
                 path, "grp", "new-role",
             )
             self.assertTrue(updated)
@@ -1004,7 +1004,7 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(SAMPLE_MANIFEST)
-            updated, warning, created = update_manifest_for_role(
+            updated, warning, created, _findings = update_manifest_for_role(
                 path, "dev-group", "existing-role",
             )
             self.assertFalse(updated)
@@ -1017,7 +1017,7 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("roles: not-a-mapping\n")
-            updated, warning, created = update_manifest_for_role(
+            updated, warning, created, _findings = update_manifest_for_role(
                 path, "grp", "r",
             )
             self.assertFalse(updated)
@@ -1031,7 +1031,7 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("skills:\n\nroles:\n  my-group: not-a-list\n")
-            updated, warning, created = update_manifest_for_role(
+            updated, warning, created, _findings = update_manifest_for_role(
                 path, "my-group", "new-role",
             )
             self.assertFalse(updated)
@@ -1046,7 +1046,7 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             # Create empty file
             with open(path, "w", encoding="utf-8") as f:
                 f.write("")
-            updated, warning, created = update_manifest_for_role(path, "my-group", "my-role")
+            updated, warning, created, _findings = update_manifest_for_role(path, "my-group", "my-role")
             self.assertTrue(updated)
             self.assertIsNone(warning)
             self.assertTrue(created)  # Should report created_manifest=True
@@ -1056,6 +1056,120 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             self.assertIn("# Skill System Manifest", text)
             self.assertIn("skills:", text)
             self.assertIn("roles:", text)
+
+
+class ReadManifestFindingsTests(unittest.TestCase):
+    """``read_manifest`` threads divergence findings to the caller."""
+
+    def test_clean_manifest_produces_no_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            findings: list[str] = []
+            read_manifest(path, findings)
+        self.assertEqual(findings, [])
+
+    def test_divergent_value_surfaces_finding(self) -> None:
+        """An unquoted ``: ``-bearing value produces a FAIL finding."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            findings: list[str] = []
+            read_manifest(path, findings)
+        self.assertTrue(any("': '" in f for f in findings))
+        self.assertTrue(any(f.startswith("FAIL: ") for f in findings))
+
+    def test_findings_default_none_does_not_raise(self) -> None:
+        """Callers that omit *findings* keep the old behaviour."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            manifest = read_manifest(path)
+        self.assertIn("skills", manifest)
+
+    def test_structural_failure_does_not_populate_findings(self) -> None:
+        """``ManifestParseError`` fires before findings are collected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("- top: level\n- is: a list\n")
+            findings: list[str] = []
+            with self.assertRaises(ManifestParseError):
+                read_manifest(path, findings)
+        self.assertEqual(findings, [])
+
+
+class UpdateManifestFindingsTests(unittest.TestCase):
+    """``update_manifest_for_*`` returns findings as the 4th tuple slot."""
+
+    def test_update_for_skill_returns_findings_on_divergent_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            updated, warning, created, findings = update_manifest_for_skill(
+                path, "added",
+            )
+        self.assertTrue(updated)
+        self.assertIsNone(warning)
+        self.assertFalse(created)
+        self.assertTrue(findings)
+        self.assertTrue(any(f.startswith("FAIL: ") for f in findings))
+
+    def test_update_for_role_returns_findings_on_divergent_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                    "roles:\n"
+                    "  dev-group:\n"
+                    "    - name: existing-role\n"
+                    "      path: roles/dev-group/existing-role.md\n"
+                )
+            updated, warning, created, findings = update_manifest_for_role(
+                path, "dev-group", "new-role",
+            )
+        self.assertTrue(updated)
+        self.assertIsNone(warning)
+        self.assertFalse(created)
+        self.assertTrue(findings)
+
+    def test_update_for_skill_structural_failure_returns_empty_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("- top: level\n")
+            updated, warning, created, findings = update_manifest_for_skill(
+                path, "x",
+            )
+        self.assertFalse(updated)
+        self.assertIsNotNone(warning)
+        self.assertEqual(findings, [])
+
+    def test_update_for_skill_clean_manifest_no_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            _, _, _, findings = update_manifest_for_skill(path, "added")
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":

@@ -261,9 +261,15 @@ def scaffold_skill(
     # --- Manifest update ---
     manifest_updated = False
     manifest_warning: str | None = None
+    manifest_findings: list[str] = []
 
     if update_manifest:
-        manifest_updated, manifest_warning, created_manifest = update_manifest_for_skill(
+        (
+            manifest_updated,
+            manifest_warning,
+            created_manifest,
+            manifest_findings,
+        ) = update_manifest_for_skill(
             manifest_path, name, router=router,
         )
         if created_manifest and not json_output:
@@ -274,6 +280,9 @@ def scaffold_skill(
             print(f"  {LEVEL_WARN}: {manifest_warning}")
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
+        if manifest_findings and not json_output:
+            for f in manifest_findings:
+                print(f"  {f}")
 
     if json_output:
         result_dict: dict = {
@@ -289,6 +298,8 @@ def scaffold_skill(
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
                 result_dict["manifest_warning"] = manifest_warning
+            if manifest_findings:
+                result_dict["manifest_findings"] = manifest_findings
         return result_dict
 
     print(f"\n\u2713 Skill '{name}' scaffolded at {skill_path}")
@@ -554,9 +565,15 @@ def scaffold_role(
     # --- Manifest update ---
     manifest_updated = False
     manifest_warning: str | None = None
+    manifest_findings: list[str] = []
 
     if update_manifest:
-        manifest_updated, manifest_warning, created_manifest = update_manifest_for_role(
+        (
+            manifest_updated,
+            manifest_warning,
+            created_manifest,
+            manifest_findings,
+        ) = update_manifest_for_role(
             manifest_path, group, name,
         )
         if created_manifest and not json_output:
@@ -567,6 +584,9 @@ def scaffold_role(
             print(f"  {LEVEL_WARN}: {manifest_warning}")
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
+        if manifest_findings and not json_output:
+            for f in manifest_findings:
+                print(f"  {f}")
 
     if json_output:
         result_dict: dict = {
@@ -582,6 +602,8 @@ def scaffold_role(
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
                 result_dict["manifest_warning"] = manifest_warning
+            if manifest_findings:
+                result_dict["manifest_findings"] = manifest_findings
         return result_dict
 
     print(f"\n\u2713 Role '{name}' scaffolded at {role_path}")

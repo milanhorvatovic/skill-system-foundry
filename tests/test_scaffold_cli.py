@@ -2017,5 +2017,97 @@ class ParseOptionalDirsDeduplicationTests(unittest.TestCase):
         self.assertEqual(dirs[0], DIR_REFERENCES)
 
 
+# ===================================================================
+# Manifest divergence findings (issue #89 stage 2)
+# ===================================================================
+
+
+class ManifestFindingsSurfacedTests(unittest.TestCase):
+    """--update-manifest surfaces divergences in the existing manifest."""
+
+    def _write_divergent_manifest(self, tmpdir: str) -> str:
+        path = os.path.join(tmpdir, "manifest.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                "skills:\n"
+                "  demo:\n"
+                "    canonical: skills/demo/SKILL.md\n"
+                "    note: runs tasks: quickly\n"
+                "\nroles:\n"
+            )
+        return path
+
+    def test_text_mode_prints_findings_for_skill_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_divergent_manifest(tmpdir)
+            proc = _run(
+                ["skill", "added", "--update-manifest", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("FAIL:", proc.stdout)
+            self.assertIn("': '", proc.stdout)
+
+    def test_json_mode_includes_manifest_findings_for_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_divergent_manifest(tmpdir)
+            proc = _run(
+                [
+                    "skill", "added", "--update-manifest", "--json",
+                    "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertIn("manifest_findings", data)
+            self.assertTrue(
+                any("FAIL" in f for f in data["manifest_findings"])
+            )
+
+    def test_clean_manifest_omits_findings_key_in_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# Manifest\n\nskills:\n\nroles:\n")
+            proc = _run(
+                [
+                    "skill", "added", "--update-manifest", "--json",
+                    "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertNotIn("manifest_findings", data)
+
+    def test_json_mode_includes_manifest_findings_for_role(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                    "\nroles:\n"
+                    "  dev-group:\n"
+                    "    - name: existing\n"
+                    "      path: roles/dev-group/existing.md\n"
+                )
+            proc = _run(
+                [
+                    "role", "dev-group", "added", "--update-manifest",
+                    "--json", "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["success"])
+            self.assertIn("manifest_findings", data)
+
+
 if __name__ == "__main__":
     unittest.main()

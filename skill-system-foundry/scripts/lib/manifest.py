@@ -20,11 +20,16 @@ class ManifestParseError(Exception):
     """Raised when a manifest file cannot be parsed."""
 
 
-def read_manifest(path: str) -> dict:
+def read_manifest(path: str, findings: list[str] | None = None) -> dict:
     """Read and parse a ``manifest.yaml`` file.
 
     Returns the parsed manifest as a dict.  Returns an empty dict
     when the file does not exist or is empty.
+
+    If *findings* is a list, plain-scalar divergence findings
+    produced by the YAML subset parser are appended to it on the
+    successful parse path.  Structural failures raise
+    ``ManifestParseError`` without touching *findings*.
 
     Raises:
         ManifestParseError: When the file exists but contains
@@ -53,7 +58,7 @@ def read_manifest(path: str) -> dict:
                 f"Failed to parse {path}: top-level YAML must be a mapping"
             )
 
-        manifest = parse_yaml_subset(text)
+        manifest = parse_yaml_subset(text, findings)
         if not isinstance(manifest, dict):
             raise ManifestParseError(
                 f"Failed to parse {path}: top-level YAML must be a mapping"
@@ -249,13 +254,15 @@ def update_manifest_for_skill(
     name: str,
     *,
     router: bool = False,
-) -> tuple[bool, str | None, bool]:
+) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a skill entry.
 
-    Returns ``(updated, warning, created_manifest)`` where *updated*
-    is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update, and
-    *created_manifest* is True when a new manifest file was scaffolded.
+    Returns ``(updated, warning, created_manifest, findings)`` where
+    *updated* is True when the manifest was modified, *warning* is a
+    human-readable message when a conflict prevented the update,
+    *created_manifest* is True when a new manifest file was
+    scaffolded, and *findings* is a list of plain-scalar divergence
+    findings produced while reading the existing manifest.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -267,34 +274,37 @@ def update_manifest_for_skill(
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
+    findings: list[str] = []
     try:
-        manifest = read_manifest(manifest_path)
+        manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
         warning = f"{exc} — skipping manifest update"
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
     if has_skill_conflict(manifest, name):
         warning = (
             f"Skill '{name}' already exists in "
             f"{manifest_path} — skipping manifest update"
         )
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
     append_skill_entry(manifest_path, name, router=router)
-    return True, None, created_manifest
+    return True, None, created_manifest, findings
 
 
 def update_manifest_for_role(
     manifest_path: str,
     group: str,
     name: str,
-) -> tuple[bool, str | None, bool]:
+) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a role entry.
 
-    Returns ``(updated, warning, created_manifest)`` where *updated*
-    is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update, and
-    *created_manifest* is True when a new manifest file was scaffolded.
+    Returns ``(updated, warning, created_manifest, findings)`` where
+    *updated* is True when the manifest was modified, *warning* is a
+    human-readable message when a conflict prevented the update,
+    *created_manifest* is True when a new manifest file was
+    scaffolded, and *findings* is a list of plain-scalar divergence
+    findings produced while reading the existing manifest.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -306,21 +316,22 @@ def update_manifest_for_role(
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
+    findings: list[str] = []
     try:
-        manifest = read_manifest(manifest_path)
+        manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
         warning = f"{exc} — skipping manifest update"
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
     if has_role_conflict(manifest, group, name):
         warning = (
             f"Role '{name}' in group '{group}' already exists in "
             f"{manifest_path} — skipping manifest update"
         )
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
     append_role_entry(manifest_path, group, name)
-    return True, None, created_manifest
+    return True, None, created_manifest, findings
 
 
 def scaffold_empty_manifest(manifest_path: str) -> None:
