@@ -2250,6 +2250,35 @@ class ScaffoldBadNameReparseTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(skill_md))
 
 
+class ScaffoldWarningsDedupeTests(unittest.TestCase):
+    """Scaffold merges read-time + emit-time findings without duplicates."""
+
+    def test_repeated_finding_surfaces_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            proc = _run(
+                [
+                    "skill", "added", "--update-manifest", "--json",
+                    "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+        warnings = data.get("warnings", [])
+        # The pre-existing divergence is seen by read_manifest and again
+        # by the emit-site re-parse; dedupe keeps it once.
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("': '", warnings[0])
+
+
 class CollectFrontmatterFindingsTests(unittest.TestCase):
     """``_collect_frontmatter_findings`` helper edge cases."""
 

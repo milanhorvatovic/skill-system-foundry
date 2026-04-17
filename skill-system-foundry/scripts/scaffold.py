@@ -104,6 +104,23 @@ def validate_name(name: str, json_output: bool = False) -> bool:
     return not any(e.startswith(LEVEL_FAIL) for e in errors)
 
 
+def _dedupe_preserving_order(items: list[str]) -> list[str]:
+    """Return *items* with duplicates removed, keeping first-seen order.
+
+    Read-time and emit-time manifest passes surface the same divergence
+    when an existing divergence survives the append; deduping here
+    keeps CI logs and JSON output clean without discarding distinct
+    findings.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
 def _collect_frontmatter_findings(path: str) -> list[str]:
     """Return plain-scalar divergence findings from the written entry file.
 
@@ -303,7 +320,7 @@ def scaffold_skill(
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
         if manifest_findings and not json_output:
-            for f in manifest_findings:
+            for f in _dedupe_preserving_order(list(manifest_findings)):
                 print(f"  {f}")
 
     if json_output:
@@ -320,7 +337,9 @@ def scaffold_skill(
         # warnings array so consumers see one list with level prefixes
         # intact (FAIL:/WARN:/INFO:) — matches the errors-array
         # convention in validate_skill / audit_skill_system JSON output.
-        combined_warnings = list(frontmatter_findings) + list(manifest_findings)
+        combined_warnings = _dedupe_preserving_order(
+            list(frontmatter_findings) + list(manifest_findings)
+        )
         if combined_warnings:
             result_dict["warnings"] = combined_warnings
         if update_manifest:
@@ -621,7 +640,7 @@ def scaffold_role(
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
         if manifest_findings and not json_output:
-            for f in manifest_findings:
+            for f in _dedupe_preserving_order(list(manifest_findings)):
                 print(f"  {f}")
 
     if json_output:
@@ -634,8 +653,9 @@ def scaffold_role(
             "path": os.path.abspath(role_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
-        if manifest_findings:
-            result_dict["warnings"] = list(manifest_findings)
+        deduped = _dedupe_preserving_order(list(manifest_findings))
+        if deduped:
+            result_dict["warnings"] = deduped
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
