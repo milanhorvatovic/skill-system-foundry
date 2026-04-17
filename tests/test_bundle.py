@@ -1199,7 +1199,7 @@ class PrevalidateGuardTests(unittest.TestCase):
 
 
 # ===================================================================
-# Copy OSError Wrapping
+# Markdown Rewrite Fast-Path
 # ===================================================================
 
 
@@ -1220,6 +1220,11 @@ class RewriteMarkdownPathsEmptyMapTests(unittest.TestCase):
                     bundle_dir, tmpdir, None, file_mapping,
                 )
         self.assertEqual(count, 0)
+
+
+# ===================================================================
+# Copy OSError Wrapping
+# ===================================================================
 
 
 class CopyOSErrorTests(unittest.TestCase):
