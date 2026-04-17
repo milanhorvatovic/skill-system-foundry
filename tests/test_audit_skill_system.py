@@ -1458,6 +1458,35 @@ class MainFunctionInProcessTests(unittest.TestCase):
             self.assertIn("===", output)
 
 
+class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
+    """``audit_skill_system --json`` surfaces manifest findings in the errors array."""
+
+    def test_divergent_manifest_appears_in_json_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "skills"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, "manifest.yaml"), "w", encoding="utf-8",
+            ) as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            proc = _run([tmpdir, "--json"], cwd=REPO_ROOT)
+            data = json.loads(proc.stdout)
+        # Schema preserved: no new top-level keys introduced.
+        self.assertEqual(
+            set(data.keys()),
+            {"tool", "path", "success", "counts", "summary", "errors", "version"},
+        )
+        manifest_fails = [
+            entry for entry in data["errors"].get("failures", [])
+            if "[spec] manifest.yaml" in entry and "': '" in entry
+        ]
+        self.assertEqual(len(manifest_fails), 1)
+
+
 class AuditManifestScalarFindingsTests(unittest.TestCase):
     """``audit_skill_system`` surfaces manifest.yaml plain-scalar divergences."""
 

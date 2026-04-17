@@ -2705,6 +2705,35 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
         self.assertEqual(key_infos, [])
 
 
+class CodexFindingsJsonSchemaTests(unittest.TestCase):
+    """``validate_skill --json`` surfaces Codex findings in the errors array."""
+
+    def test_divergent_codex_config_appears_in_json_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "agents", "openai.yaml"),
+                "interface:\n"
+                "  display_name: Demo\n"
+                "  default_prompt: runs tasks: quickly\n",
+            )
+            proc = _run([skill_dir, "--json"], cwd=REPO_ROOT)
+            data = json.loads(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("errors", data)
+        # Schema preserved: no new top-level keys introduced.
+        self.assertEqual(
+            set(data.keys()),
+            {"tool", "path", "type", "success", "summary", "errors", "version"},
+        )
+        codex_fails = [
+            entry for entry in data["errors"].get("failures", [])
+            if "[platform: OpenAI]" in entry and "': '" in entry
+        ]
+        self.assertEqual(len(codex_fails), 1)
+
+
 class CodexConfigFindingsPropagationTests(unittest.TestCase):
     """Codex plain-scalar findings reach ``validate_skill`` output."""
 

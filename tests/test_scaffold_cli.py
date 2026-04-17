@@ -2048,7 +2048,7 @@ class ManifestFindingsSurfacedTests(unittest.TestCase):
             self.assertIn("FAIL:", proc.stdout)
             self.assertIn("': '", proc.stdout)
 
-    def test_json_mode_includes_manifest_findings_for_skill(self) -> None:
+    def test_json_mode_includes_warnings_for_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             self._write_divergent_manifest(tmpdir)
             proc = _run(
@@ -2061,12 +2061,10 @@ class ManifestFindingsSurfacedTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             data = json.loads(proc.stdout)
             self.assertTrue(data["success"])
-            self.assertIn("manifest_findings", data)
-            self.assertTrue(
-                any("FAIL" in f for f in data["manifest_findings"])
-            )
+            self.assertIn("warnings", data)
+            self.assertTrue(any("FAIL" in f for f in data["warnings"]))
 
-    def test_clean_manifest_omits_findings_key_in_json(self) -> None:
+    def test_clean_manifest_omits_warnings_key_in_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
@@ -2080,9 +2078,9 @@ class ManifestFindingsSurfacedTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             data = json.loads(proc.stdout)
-            self.assertNotIn("manifest_findings", data)
+            self.assertNotIn("warnings", data)
 
-    def test_json_mode_includes_manifest_findings_for_role(self) -> None:
+    def test_json_mode_includes_warnings_for_role(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "manifest.yaml")
             with open(path, "w", encoding="utf-8") as f:
@@ -2106,7 +2104,7 @@ class ManifestFindingsSurfacedTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             data = json.loads(proc.stdout)
             self.assertTrue(data["success"])
-            self.assertIn("manifest_findings", data)
+            self.assertIn("warnings", data)
 
 
 # ===================================================================
@@ -2125,7 +2123,7 @@ class ScaffoldFrontmatterReparseTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             data = json.loads(proc.stdout)
-            self.assertNotIn("frontmatter_findings", data)
+            self.assertNotIn("warnings", data)
 
     def test_capability_template_substitution_produces_no_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2142,7 +2140,7 @@ class ScaffoldFrontmatterReparseTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             data = json.loads(proc.stdout)
-            self.assertNotIn("frontmatter_findings", data)
+            self.assertNotIn("warnings", data)
 
     def test_divergent_frontmatter_surfaced_in_json(self) -> None:
         """Mock the re-parse helper to exercise the surfacing path."""
@@ -2158,7 +2156,7 @@ class ScaffoldFrontmatterReparseTests(unittest.TestCase):
                     "demo-skill", root=tmpdir, json_output=True,
                 )
         self.assertIsNotNone(result)
-        self.assertEqual(result["frontmatter_findings"], sample)
+        self.assertEqual(result["warnings"], sample)
 
     def test_divergent_frontmatter_surfaced_in_text_mode(self) -> None:
         """Text-mode scaffold prints findings after Created line."""
@@ -2197,7 +2195,59 @@ class ScaffoldFrontmatterReparseTests(unittest.TestCase):
                     "demo-domain", "demo-cap", root=tmpdir, json_output=True,
                 )
         self.assertIsNotNone(result)
-        self.assertEqual(result["frontmatter_findings"], sample)
+        self.assertEqual(result["warnings"], sample)
+
+
+class ScaffoldBadNameReparseTests(unittest.TestCase):
+    """Bypassing validate_name, the re-parse catches literal divergent names.
+
+    The re-parse path is defense-in-depth; validate_name normally
+    rejects these names upfront, but these tests exercise the real
+    pipeline with validate_name patched to pass, so the rendered
+    frontmatter is what actually exercises _collect_frontmatter_findings.
+    """
+
+    def test_name_with_colon_space_triggers_real_finding(self) -> None:
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("scaffold.validate_name", return_value=True):
+                from scaffold import scaffold_skill
+                result = scaffold_skill(
+                    "foo: bar", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        warnings = result.get("warnings", [])
+        self.assertTrue(
+            any("': '" in w and w.startswith("FAIL") for w in warnings),
+            msg=f"expected ': ' FAIL in warnings, got: {warnings}",
+        )
+
+    def test_name_with_leading_dash_space_triggers_real_finding(self) -> None:
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("scaffold.validate_name", return_value=True):
+                from scaffold import scaffold_skill
+                result = scaffold_skill(
+                    "- foo", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        warnings = result.get("warnings", [])
+        self.assertTrue(
+            any("block sequence" in w.lower() or "'-'" in w for w in warnings),
+            msg=f"expected block-entry finding in warnings, got: {warnings}",
+        )
+
+    def test_bad_name_file_remains_on_disk(self) -> None:
+        """Re-parse warnings do not delete the scaffolded file."""
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("scaffold.validate_name", return_value=True):
+                from scaffold import scaffold_skill
+                scaffold_skill("foo: bar", root=tmpdir, json_output=True)
+            skill_md = os.path.join(
+                tmpdir, "skills", "foo: bar", "SKILL.md",
+            )
+            self.assertTrue(os.path.isfile(skill_md))
 
 
 class CollectFrontmatterFindingsTests(unittest.TestCase):

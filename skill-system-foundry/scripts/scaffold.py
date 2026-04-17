@@ -316,14 +316,17 @@ def scaffold_skill(
             "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
         }
-        if frontmatter_findings:
-            result_dict["frontmatter_findings"] = frontmatter_findings
+        # All plain-scalar divergence findings merge into a single
+        # warnings array so consumers see one list with level prefixes
+        # intact (FAIL:/WARN:/INFO:) — matches the errors-array
+        # convention in validate_skill / audit_skill_system JSON output.
+        combined_warnings = list(frontmatter_findings) + list(manifest_findings)
+        if combined_warnings:
+            result_dict["warnings"] = combined_warnings
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
                 result_dict["manifest_warning"] = manifest_warning
-            if manifest_findings:
-                result_dict["manifest_findings"] = manifest_findings
         return result_dict
 
     print(f"\n\u2713 Skill '{name}' scaffolded at {skill_path}")
@@ -473,7 +476,7 @@ def scaffold_capability(
             "created": [os.path.abspath(p) for p in created_paths],
         }
         if frontmatter_findings:
-            result_dict["frontmatter_findings"] = frontmatter_findings
+            result_dict["warnings"] = list(frontmatter_findings)
         if update_manifest:
             result_dict["manifest_updated"] = False
             result_dict["manifest_warning"] = cap_manifest_msg
@@ -631,12 +634,12 @@ def scaffold_role(
             "path": os.path.abspath(role_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
+        if manifest_findings:
+            result_dict["warnings"] = list(manifest_findings)
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
                 result_dict["manifest_warning"] = manifest_warning
-            if manifest_findings:
-                result_dict["manifest_findings"] = manifest_findings
         return result_dict
 
     print(f"\n\u2713 Role '{name}' scaffolded at {role_path}")
