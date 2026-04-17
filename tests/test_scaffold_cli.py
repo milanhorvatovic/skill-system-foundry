@@ -2205,8 +2205,17 @@ class ScaffoldBadNameReparseTests(unittest.TestCase):
     rejects these names upfront, but these tests exercise the real
     pipeline with validate_name patched to pass, so the rendered
     frontmatter is what actually exercises _collect_frontmatter_findings.
+
+    Colon-bearing names are skipped on Windows because ``:`` is
+    reserved in NTFS paths — the filesystem rejects the directory
+    before our re-parse runs.  The ``- foo`` case is POSIX-and-NTFS
+    compatible and runs everywhere.
     """
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "':' is not a valid Windows path character; tested on POSIX only.",
+    )
     def test_name_with_colon_space_triggers_real_finding(self) -> None:
         from unittest import mock
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2237,6 +2246,10 @@ class ScaffoldBadNameReparseTests(unittest.TestCase):
             msg=f"expected block-entry finding in warnings, got: {warnings}",
         )
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "':' is not a valid Windows path character; tested on POSIX only.",
+    )
     def test_bad_name_file_remains_on_disk(self) -> None:
         """Re-parse warnings do not delete the scaffolded file."""
         from unittest import mock
