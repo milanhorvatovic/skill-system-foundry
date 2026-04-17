@@ -38,6 +38,7 @@ from lib.validation import (
 )
 from lib.codex_config import validate_codex_config
 from lib.constants import (
+    CONFIG_PATH,
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
     RE_XML_TAG, RE_FIRST_PERSON, RE_FIRST_PERSON_PLURAL,
@@ -47,7 +48,32 @@ from lib.constants import (
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    get_config_findings,
 )
+
+
+def _collect_foundry_config_findings(skill_path: str) -> list[str]:
+    """Return configuration.yaml divergence findings when *skill_path* is the foundry.
+
+    Detects the foundry by comparing ``<skill_path>/scripts/lib/configuration.yaml``
+    against the absolute path that ``constants.py`` loaded at import.  When
+    the paths match, each finding is retagged with a ``[foundry]`` prefix
+    and the relative config file path for reporting.  Third-party skills
+    never trigger this check because their configuration file (if any)
+    lives at a different absolute path.
+    """
+    candidate = os.path.abspath(
+        os.path.join(skill_path, "scripts", "lib", "configuration.yaml")
+    )
+    if candidate != CONFIG_PATH:
+        return []
+    retagged: list[str] = []
+    for f in get_config_findings():
+        level, _, detail = f.partition(": ")
+        retagged.append(
+            f"{level}: [foundry] scripts/lib/configuration.yaml {detail}"
+        )
+    return retagged
 
 
 def find_skill_root(start_dir: str) -> str | None:
@@ -403,6 +429,11 @@ def validate_skill(
         return errors, passes
 
     errors.extend(scalar_findings)
+
+    # When validating the foundry itself, surface divergences detected
+    # during configuration.yaml load so the meta-skill's own config is
+    # held to the same standard as integrator skills.
+    errors.extend(_collect_foundry_config_findings(skill_path))
 
     # Determine the skill root for reference resolution.
     # For regular skills, skill_path is the root (contains SKILL.md).

@@ -1458,5 +1458,40 @@ class MainFunctionInProcessTests(unittest.TestCase):
             self.assertIn("===", output)
 
 
+class AuditFoundryConfigFindingsTests(unittest.TestCase):
+    """``audit_skill_system`` surfaces configuration.yaml findings for the foundry."""
+
+    def test_non_foundry_system_root_does_not_surface_findings(self) -> None:
+        """Arbitrary system roots never pull in configuration.yaml findings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            errors = audit_skill_system(tmpdir, verbose=False)
+        foundry_errors = [e for e in errors if "[foundry]" in e and "configuration.yaml" in e]
+        self.assertEqual(foundry_errors, [])
+
+    def test_foundry_system_root_clean_config_no_findings(self) -> None:
+        """The shipped foundry config is clean, so no findings surface today."""
+        foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
+        errors = audit_skill_system(foundry_path, verbose=False)
+        config_findings = [
+            e for e in errors
+            if "[foundry]" in e and "scripts/lib/configuration.yaml" in e
+        ]
+        self.assertEqual(config_findings, [])
+
+    def test_foundry_system_root_retags_patched_findings(self) -> None:
+        """When findings exist they surface with a ``[foundry]`` tag."""
+        foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
+        sample = ["FAIL: [spec] 'skill.name': unquoted value starts with '-' …"]
+        with mock.patch(
+            "audit_skill_system.get_config_findings", return_value=sample,
+        ):
+            errors = audit_skill_system(foundry_path, verbose=False)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [foundry] scripts/lib/configuration.yaml")
+        ]
+        self.assertEqual(len(tagged), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
