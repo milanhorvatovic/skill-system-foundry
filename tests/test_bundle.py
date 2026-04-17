@@ -20,6 +20,7 @@ from lib.bundling import (
     _copy_inlined_skills,
     _copy_skill,
     _rewrite_markdown_content,
+    _rewrite_markdown_paths,
     _rewrite_reference_target,
     create_bundle,
     postvalidate,
@@ -1139,6 +1140,49 @@ class PrevalidateGuardTests(unittest.TestCase):
         self.assertTrue(any(e.startswith(LEVEL_FAIL) and "Invalid bundle_target" in e for e in errors))
         self.assertIsNone(result)
 
+    def test_skill_without_description_skips_length_check(self) -> None:
+        """Frontmatter without ``description`` skips the length-enforcement branch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n---\n",
+            )
+            # Skip the spec check so the description-length branch is
+            # reached.  Normally validate_skill would FAIL on missing
+            # description and prevalidate would exit earlier.
+            with mock.patch(
+                "validate_skill.validate_skill", return_value=([], []),
+            ):
+                errors, warnings, result = prevalidate(skill_dir, None)
+        # No description-length FAIL/WARN should appear since there is
+        # nothing to measure.
+        self.assertEqual(
+            [e for e in errors + warnings if "Description is" in e],
+            [],
+        )
+
+    def test_non_fail_spec_messages_surfaced_as_warnings(self) -> None:
+        """WARN/INFO from validate_skill flow into prevalidate warnings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+            # A broken reference is a WARN, not a FAIL — exercises the
+            # else-branch at bundling.py:107 where spec_errors are copied
+            # into warnings.
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\ndescription: x\n---\n\n"
+                "See [g](references/missing.md).\n",
+            )
+            errors, warnings, result = prevalidate(skill_dir, system_root)
+        # Broken intra-skill refs are WARNs surfaced from validate_skill.
+        self.assertTrue(
+            any("does not exist" in w for w in warnings),
+            msg=f"warnings={warnings}",
+        )
+
     def test_spec_failures_aggregated_in_prevalidate(self) -> None:
         """Missing SKILL.md yields spec FAILs that prevalidate surfaces."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1157,6 +1201,25 @@ class PrevalidateGuardTests(unittest.TestCase):
 # ===================================================================
 # Copy OSError Wrapping
 # ===================================================================
+
+
+class RewriteMarkdownPathsEmptyMapTests(unittest.TestCase):
+    """Ensure the empty-rewrite-map fast-path in ``_rewrite_markdown_paths``."""
+
+    def test_empty_rewrite_map_skips_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            write_text(os.path.join(bundle_dir, "SKILL.md"), "# x\n")
+            file_mapping = {
+                "/unused/ext.md": "references/ext.md",
+            }
+            with mock.patch(
+                "lib.bundling._build_rewrite_map", return_value={},
+            ):
+                count = _rewrite_markdown_paths(
+                    bundle_dir, tmpdir, None, file_mapping,
+                )
+        self.assertEqual(count, 0)
 
 
 class CopyOSErrorTests(unittest.TestCase):
@@ -1298,6 +1361,50 @@ class RelpathValueErrorFallbackTests(unittest.TestCase):
                 reverse_mapping={},
             )
         self.assertTrue(result)
+
+    def test_build_rewrite_map_with_empty_skill_files(self) -> None:
+        """The ``if skill_files:`` False branch skips the alias-map block."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            bundle_file = os.path.join(bundle_dir, "SKILL.md")
+            skill_path = os.path.join(tmpdir, "skill")
+            os.makedirs(bundle_dir)
+            os.makedirs(skill_path)
+            write_text(bundle_file, "# x\n")
+
+            result = _build_rewrite_map(
+                bundle_file=bundle_file,
+                bundle_dir=bundle_dir,
+                skill_path=skill_path,
+                system_root=None,
+                file_mapping={},
+                reverse_mapping={},
+                skill_files={},
+            )
+        self.assertEqual(result, {})
+
+    def test_build_rewrite_map_with_skill_files_no_system_root(self) -> None:
+        """With skill_files present but no system_root, the system-rel block is skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            bundle_file = os.path.join(bundle_dir, "SKILL.md")
+            skill_path = os.path.join(tmpdir, "skill")
+            os.makedirs(bundle_dir)
+            os.makedirs(skill_path)
+            write_text(bundle_file, "# x\n")
+            skill_files = {
+                os.path.join(skill_path, "nested", "f.md"): "nested/f.md",
+            }
+            result = _build_rewrite_map(
+                bundle_file=bundle_file,
+                bundle_dir=bundle_dir,
+                skill_path=skill_path,
+                system_root=None,
+                file_mapping={},
+                reverse_mapping={},
+                skill_files=skill_files,
+            )
+        self.assertNotEqual(result, {})
 
     def test_build_rewrite_map_swallows_valueerror_in_alias_block(self) -> None:
         """Skill-internal alias relpath ValueErrors must be swallowed."""
@@ -1477,6 +1584,33 @@ class PostValidateCoverageTests(unittest.TestCase):
             )
             errors = postvalidate(bundle_dir)
         self.assertEqual(errors, [])
+
+    def test_backtick_reference_to_existing_file_is_accepted(self) -> None:
+        """A backtick pointing to an existing in-bundle file produces no error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: a\n---\n\nSee `refs/guide.md` for details.\n",
+            )
+            write_text(
+                os.path.join(bundle_dir, "refs", "guide.md"), "# Guide\n",
+            )
+            errors = postvalidate(bundle_dir)
+        self.assertEqual(errors, [])
+
+    def test_multiple_backticks_on_same_line_each_checked(self) -> None:
+        """Multiple backtick references on one line each iterate the inner loop."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: a\n---\n\n"
+                "See `refs/missing-a.md` and `refs/missing-b.md` today.\n",
+            )
+            errors = postvalidate(bundle_dir)
+        unresolved = [e for e in errors if "Unresolved backtick reference" in e]
+        self.assertEqual(len(unresolved), 2)
 
     def test_backtick_query_only_path_is_skipped(self) -> None:
         """A backtick whose clean path strips to empty exits early."""

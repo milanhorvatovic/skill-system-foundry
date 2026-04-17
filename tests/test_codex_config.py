@@ -938,6 +938,26 @@ class IsValidRelativePathEdgeTests(unittest.TestCase):
     def test_empty_string_rejected(self) -> None:
         self.assertFalse(_is_valid_relative_path(""))
 
+    def test_valid_icon_large_path_emits_pass(self) -> None:
+        config = 'interface:\n  icon_large: "./assets/big.svg"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        icon_large_passes = [p for p in passes if "icon_large" in p]
+        self.assertEqual(len(icon_large_passes), 1)
+
+    def test_invalid_icon_large_path_returns_warn(self) -> None:
+        config = 'interface:\n  icon_large: "/abs/icon.svg"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "icon_large" in e
+            and "relative path" in e
+        ]
+        self.assertEqual(len(warns), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
