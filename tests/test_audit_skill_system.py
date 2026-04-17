@@ -1458,6 +1458,46 @@ class MainFunctionInProcessTests(unittest.TestCase):
             self.assertIn("===", output)
 
 
+class AuditManifestScalarFindingsTests(unittest.TestCase):
+    """``audit_skill_system`` surfaces manifest.yaml plain-scalar divergences."""
+
+    def _make_deployed_system(self, tmpdir: str, manifest_body: str) -> None:
+        skills_dir = os.path.join(tmpdir, "skills")
+        os.makedirs(skills_dir, exist_ok=True)
+        manifest_path = os.path.join(tmpdir, "manifest.yaml")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(manifest_body)
+
+    def test_divergent_manifest_surfaces_tagged_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deployed_system(
+                tmpdir,
+                "skills:\n"
+                "  demo:\n"
+                "    canonical: skills/demo/SKILL.md\n"
+                "    note: runs tasks: quickly\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [spec] manifest.yaml") and "': '" in e
+        ]
+        self.assertEqual(len(tagged), 1)
+
+    def test_clean_manifest_produces_no_scalar_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deployed_system(
+                tmpdir,
+                "skills:\n"
+                "  demo:\n"
+                "    canonical: skills/demo/SKILL.md\n"
+                "    type: standalone\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        scalar = [e for e in errors if "[spec] manifest.yaml" in e]
+        self.assertEqual(scalar, [])
+
+
 class AuditFoundryConfigFindingsTests(unittest.TestCase):
     """``audit_skill_system`` surfaces configuration.yaml findings for the foundry."""
 

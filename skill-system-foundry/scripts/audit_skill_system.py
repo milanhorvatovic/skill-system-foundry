@@ -412,7 +412,15 @@ def audit_skill_system(
             if verbose:
                 print(f"  \u2713 {FILE_MANIFEST} exists")
             try:
-                manifest = parse_yaml_subset(read_file(manifest_path))
+                scalar_findings: list[str] = []
+                manifest = parse_yaml_subset(
+                    read_file(manifest_path), scalar_findings,
+                )
+                for finding in scalar_findings:
+                    level, _, detail = finding.partition(": ")
+                    errors.append(
+                        f"{level}: [spec] {FILE_MANIFEST} {detail}"
+                    )
                 if manifest and isinstance(manifest.get("skills"), dict):
                     for skill_name, skill_def in manifest["skills"].items():
                         skill_dir = os.path.join(
