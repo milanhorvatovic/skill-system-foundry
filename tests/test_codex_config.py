@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from helpers import write_text, write_skill_md
 
@@ -19,7 +20,12 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.codex_config import validate_codex_config
+from lib.codex_config import (
+    validate_codex_config,
+    _validate_interface,
+    _validate_tool_entry,
+    _is_valid_relative_path,
+)
 from lib.constants import (
     CODEX_MAX_DISPLAY_NAME_LENGTH,
     CODEX_MAX_SHORT_DESCRIPTION_LENGTH,
@@ -700,6 +706,257 @@ class CodexConfigIntegrationTests(unittest.TestCase):
             and "Non-standard" in e
         ]
         self.assertEqual(dir_warns, [])
+
+
+# ===================================================================
+# File Read Errors
+# ===================================================================
+
+
+class CodexConfigFileReadErrorTests(unittest.TestCase):
+    """Tests for OSError and YAML parse failure paths."""
+
+    def test_oserror_on_read_returns_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, "interface:\n  display_name: x\n")
+            with mock.patch("builtins.open", side_effect=OSError("EIO")):
+                errors, passes = validate_codex_config(tmpdir)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(LEVEL_WARN, errors[0])
+        self.assertIn("cannot read", errors[0])
+        self.assertEqual(passes, [])
+
+    def test_yaml_parse_valueerror_returns_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, "interface:\n  display_name: x\n")
+            with mock.patch(
+                "lib.codex_config.parse_yaml_subset",
+                side_effect=ValueError("bad yaml"),
+            ):
+                errors, passes = validate_codex_config(tmpdir)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(LEVEL_WARN, errors[0])
+        self.assertIn("YAML parse error", errors[0])
+        self.assertIn("bad yaml", errors[0])
+
+    def test_top_level_non_mapping_returns_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, "interface:\n  display_name: x\n")
+            with mock.patch(
+                "lib.codex_config.parse_yaml_subset",
+                return_value="a scalar",
+            ):
+                errors, passes = validate_codex_config(tmpdir)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(LEVEL_WARN, errors[0])
+        self.assertIn("top-level must be a mapping", errors[0])
+
+
+# ===================================================================
+# Section Type Errors (non-mapping for interface / policy / dependencies)
+# ===================================================================
+
+
+class CodexConfigSectionTypeTests(unittest.TestCase):
+    """Tests for non-mapping values at the interface/policy/dependencies keys."""
+
+    def test_interface_non_mapping_returns_warn(self) -> None:
+        config = 'interface: "not-a-mapping"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warn = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "'interface' should be a mapping" in e
+        ]
+        self.assertEqual(len(warn), 1)
+
+    def test_policy_non_mapping_returns_warn(self) -> None:
+        config = 'policy: "flat"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warn = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "'policy' should be a mapping" in e
+        ]
+        self.assertEqual(len(warn), 1)
+
+    def test_dependencies_non_mapping_returns_warn(self) -> None:
+        config = 'dependencies: "x"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warn = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "'dependencies' should be a mapping" in e
+        ]
+        self.assertEqual(len(warn), 1)
+
+    def test_policy_without_allow_implicit_invocation_skips_boolean_check(self) -> None:
+        config = "policy:\n  unknown_key: value\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        boolean_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "allow_implicit_invocation" in e
+        ]
+        self.assertEqual(boolean_warns, [])
+
+    def test_dependencies_without_tools_returns_no_warn(self) -> None:
+        config = "dependencies:\n  other_key: value\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        tools_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "tools" in e
+        ]
+        self.assertEqual(tools_warns, [])
+
+
+# ===================================================================
+# Interface Non-String Field Values (direct _validate_interface calls)
+# ===================================================================
+
+
+class CodexConfigInterfaceNonStringTests(unittest.TestCase):
+    """Non-string field values exercise the ``isinstance`` error branches.
+
+    YAML scalar values always parse to strings, so these branches can only
+    be hit by passing a pre-built mapping directly to ``_validate_interface``.
+    """
+
+    def test_display_name_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_interface({"display_name": 42})
+        self.assertEqual(len(errors), 1)
+        self.assertIn(LEVEL_WARN, errors[0])
+        self.assertIn("display_name", errors[0])
+        self.assertIn("should be a string", errors[0])
+
+    def test_short_description_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_interface({"short_description": ["a", "b"]})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("short_description", errors[0])
+        self.assertIn("should be a string", errors[0])
+
+    def test_icon_small_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_interface({"icon_small": 1})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("icon_small", errors[0])
+        self.assertIn("should be a string", errors[0])
+
+    def test_icon_large_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_interface({"icon_large": ["x"]})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("icon_large", errors[0])
+        self.assertIn("should be a string", errors[0])
+
+    def test_brand_color_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_interface({"brand_color": 0x10B981})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("brand_color", errors[0])
+        self.assertIn("should be a string", errors[0])
+
+    def test_default_prompt_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_interface({"default_prompt": {"nested": "x"}})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("default_prompt", errors[0])
+        self.assertIn("should be a string", errors[0])
+
+
+# ===================================================================
+# Tool Entry Non-String / Non-Mapping Branches
+# ===================================================================
+
+
+class CodexConfigToolEntryTests(unittest.TestCase):
+    """Tests for ``_validate_tool_entry`` error branches."""
+
+    def test_tool_entry_non_mapping_returns_warn(self) -> None:
+        errors, _ = _validate_tool_entry("plainstring", 0)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(LEVEL_WARN, errors[0])
+        self.assertIn("dependencies.tools[0]", errors[0])
+        self.assertIn("should be a mapping", errors[0])
+
+    def test_tool_unrecognized_keys_returns_info(self) -> None:
+        errors, _ = _validate_tool_entry(
+            {"type": "mcp", "value": "server", "wibble": "x"}, 2,
+        )
+        info_wibble = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO) and "wibble" in e
+        ]
+        self.assertEqual(len(info_wibble), 1)
+        self.assertIn("dependencies.tools[2]", info_wibble[0])
+
+    def test_tool_type_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_tool_entry({"type": 42, "value": "x"}, 0)
+        warns = [e for e in errors if "type" in e and "should be a string" in e]
+        self.assertEqual(len(warns), 1)
+
+    def test_tool_value_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_tool_entry({"type": "builtin", "value": 99}, 0)
+        warns = [e for e in errors if ".value" in e and "should be a string" in e]
+        self.assertEqual(len(warns), 1)
+
+    def test_tool_description_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_tool_entry(
+            {"type": "builtin", "value": "bash", "description": 1}, 0,
+        )
+        warns = [e for e in errors if "description" in e and "should be a string" in e]
+        self.assertEqual(len(warns), 1)
+
+    def test_tool_transport_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_tool_entry(
+            {"type": "mcp", "value": "srv", "transport": 123}, 0,
+        )
+        warns = [e for e in errors if "transport" in e and "should be a string" in e]
+        self.assertEqual(len(warns), 1)
+
+    def test_tool_url_non_string_returns_warn(self) -> None:
+        errors, _ = _validate_tool_entry(
+            {"type": "mcp", "value": "srv", "url": 77}, 0,
+        )
+        warns = [e for e in errors if "url" in e and "should be a string" in e]
+        self.assertEqual(len(warns), 1)
+
+
+# ===================================================================
+# _is_valid_relative_path edge cases
+# ===================================================================
+
+
+class IsValidRelativePathEdgeTests(unittest.TestCase):
+    """Tests for ``_is_valid_relative_path`` boundary conditions."""
+
+    def test_whitespace_only_path_rejected(self) -> None:
+        self.assertFalse(_is_valid_relative_path("   "))
+
+    def test_empty_string_rejected(self) -> None:
+        self.assertFalse(_is_valid_relative_path(""))
+
+    def test_valid_icon_large_path_emits_pass(self) -> None:
+        config = 'interface:\n  icon_large: "./assets/big.svg"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        icon_large_passes = [p for p in passes if "icon_large" in p]
+        self.assertEqual(len(icon_large_passes), 1)
+
+    def test_invalid_icon_large_path_returns_warn(self) -> None:
+        config = 'interface:\n  icon_large: "/abs/icon.svg"\n'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, passes = validate_codex_config(tmpdir)
+        warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "icon_large" in e
+            and "relative path" in e
+        ]
+        self.assertEqual(len(warns), 1)
 
 
 if __name__ == "__main__":
