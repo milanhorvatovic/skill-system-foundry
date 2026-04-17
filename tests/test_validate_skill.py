@@ -5,11 +5,15 @@ validate_skill, optional frontmatter field validation, and the
 main() CLI entry point.
 """
 
+import contextlib
+import io
+import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from helpers import write_text, write_skill_md
 
@@ -1830,6 +1834,243 @@ class MainCLITests(unittest.TestCase):
                 cwd=REPO_ROOT,
             )
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+
+# ===================================================================
+# _check_references tail branches
+# ===================================================================
+
+
+class CheckReferencesTailTests(unittest.TestCase):
+    """Tests for rarely-hit branches in the reference checker."""
+
+    def test_pure_fragment_reference_produces_no_broken_warning(self) -> None:
+        """A pure ``[text](#anchor)`` reference is skipped, not reported as broken."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nJump to [top](#overview) for details.\n",
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            body = content.split("---\n", 2)[2]
+            errors, passes = validate_body(body, skill_md, skill_dir)
+        broken = [e for e in errors if "does not exist" in e]
+        self.assertEqual(broken, [])
+
+    def test_internal_plus_external_refs_emit_combined_pass(self) -> None:
+        """A mix of valid intra-skill refs and an external ref emits the combined pass."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            # External ref: resolves outside skill_dir after normalization.
+            # The regex only captures paths starting with references/,
+            # scripts/, or assets/ — so we use a path that begins with
+            # references/ but escapes via ../../
+            write_text(os.path.join(tmpdir, "shared.md"), "# Shared\n")
+            write_skill_md(
+                skill_dir,
+                body=(
+                    "# Skill\n\n"
+                    "See [guide](references/guide.md) for details.\n"
+                    "Also see [shared](references/../../shared.md).\n"
+                ),
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            body = content.split("---\n", 2)[2]
+            errors, passes = validate_body(body, skill_md, skill_dir)
+        combined = [
+            p for p in passes
+            if "external refs excluded from nesting checks" in p
+            and "internal refs one level deep" in p
+        ]
+        self.assertEqual(len(combined), 1)
+
+
+# ===================================================================
+# main() in-process — covers CLI-entry branches for coverage
+# ===================================================================
+
+
+def _run_main(argv: list[str]) -> tuple[int, str, str]:
+    """Invoke validate_skill.main() in-process and capture streams.
+
+    Returns ``(exit_code, stdout, stderr)``.  Subprocess-based CLI tests
+    cannot contribute to coverage because the coverage session does not
+    span child Python processes.
+    """
+    import validate_skill as vs
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = 0
+    with (
+        mock.patch.object(sys, "argv", argv),
+        contextlib.redirect_stdout(stdout),
+        contextlib.redirect_stderr(stderr),
+    ):
+        try:
+            vs.main()
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 1
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
+class MainInProcessTests(unittest.TestCase):
+    """In-process coverage for the ``main()`` CLI entry point."""
+
+    def test_no_args_prints_docstring_and_exits_1(self) -> None:
+        code, out, _ = _run_main(["validate_skill.py"])
+        self.assertEqual(code, 1)
+        self.assertIn("Usage:", out)
+
+    def test_non_directory_path_text_mode_exits_1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f_path = os.path.join(tmpdir, "not-a-dir.txt")
+            write_text(f_path, "x")
+            code, out, _ = _run_main(["validate_skill.py", f_path])
+        self.assertEqual(code, 1)
+        self.assertIn("not a directory", out.lower())
+
+    def test_non_directory_path_json_mode_emits_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f_path = os.path.join(tmpdir, "not-a-dir.txt")
+            write_text(f_path, "x")
+            code, out, _ = _run_main(["validate_skill.py", f_path, "--json"])
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertEqual(payload["tool"], "validate_skill")
+        self.assertFalse(payload["success"])
+        self.assertIn("is not a directory", payload["error"])
+
+    def test_valid_skill_text_mode_prints_all_passed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            code, out, _ = _run_main(["validate_skill.py", skill_dir])
+        self.assertEqual(code, 0)
+        self.assertIn("All checks passed", out)
+
+    def test_valid_skill_verbose_prints_pass_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            code, out, _ = _run_main(["validate_skill.py", skill_dir, "--verbose"])
+        self.assertEqual(code, 0)
+        self.assertIn("\u2713", out)
+        self.assertIn("All checks passed", out)
+        self.assertIn("checks", out)
+
+    def test_valid_skill_json_non_verbose_omits_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            code, out, _ = _run_main(["validate_skill.py", skill_dir, "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["type"], "registered skill")
+        self.assertIn("summary", payload)
+        self.assertNotIn("passes", payload)
+
+    def test_valid_skill_json_verbose_includes_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--json", "--verbose"],
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertTrue(payload["success"])
+        self.assertIn("passes", payload)
+        self.assertIsInstance(payload["passes"], list)
+
+    def test_failing_skill_text_mode_exits_1_with_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n---\n\n# Skill\n",
+            )
+            code, out, _ = _run_main(["validate_skill.py", skill_dir])
+        self.assertEqual(code, 1)
+        self.assertIn("Results:", out)
+        self.assertIn("failure", out.lower())
+
+    def test_failing_skill_json_mode_exits_1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\n---\n\n# Skill\n",
+            )
+            code, out, _ = _run_main(["validate_skill.py", skill_dir, "--json"])
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertFalse(payload["success"])
+        self.assertGreaterEqual(payload["summary"]["failures"], 1)
+
+    def test_warn_only_skill_json_mode_exits_0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [gone](references/missing.md) for details.\n",
+            )
+            code, out, _ = _run_main(["validate_skill.py", skill_dir, "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertTrue(payload["success"])
+        self.assertGreaterEqual(payload["summary"]["warnings"], 1)
+
+    def test_argparse_failure_text_mode_exits_1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            code, _out, err = _run_main(
+                ["validate_skill.py", skill_dir, "--bogus"],
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("unrecognized arguments", err)
+
+    def test_argparse_failure_json_mode_emits_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            code, out, _err = _run_main(
+                ["validate_skill.py", skill_dir, "--bogus", "--json"],
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertEqual(payload["tool"], "validate_skill")
+        self.assertFalse(payload["success"])
+        self.assertIn("error", payload)
+
+    def test_missing_positional_json_mode_emits_envelope(self) -> None:
+        code, out, _err = _run_main(["validate_skill.py", "--json"])
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertFalse(payload["success"])
+        self.assertIn("error", payload)
+
+    def test_capability_mode_json_reports_capability_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap_dir = os.path.join(tmpdir, "my-cap")
+            _write_capability_md(cap_dir, body="# Cap\n")
+            code, out, _ = _run_main(
+                ["validate_skill.py", cap_dir, "--capability", "--json"],
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["type"], "capability")
 
 
 # ===================================================================
