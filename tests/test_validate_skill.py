@@ -2705,6 +2705,27 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
         self.assertEqual(key_infos, [])
 
 
+class CodexConfigFindingsPropagationTests(unittest.TestCase):
+    """Codex plain-scalar findings reach ``validate_skill`` output."""
+
+    def test_divergent_codex_config_surfaces_in_validate_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "agents", "openai.yaml"),
+                "interface:\n"
+                "  display_name: Demo\n"
+                "  default_prompt: runs tasks: quickly\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [platform: OpenAI]") and "': '" in e
+        ]
+        self.assertEqual(len(tagged), 1)
+
+
 class CollectFoundryConfigFindingsTests(unittest.TestCase):
     """``_collect_foundry_config_findings`` fires only for foundry targets."""
 

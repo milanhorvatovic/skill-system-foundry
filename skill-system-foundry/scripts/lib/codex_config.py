@@ -87,13 +87,20 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
         )
         return errors, passes
 
+    scalar_findings: list[str] = []
     try:
-        config = parse_yaml_subset(text)
+        config = parse_yaml_subset(text, scalar_findings)
     except ValueError as exc:
         errors.append(
             f"{LEVEL_WARN}: [platform: OpenAI] {FILE_CODEX_CONFIG} YAML parse error: {exc}"
         )
         return errors, passes
+
+    for finding in scalar_findings:
+        level, _, detail = finding.partition(": ")
+        errors.append(
+            f"{level}: [platform: OpenAI] {FILE_CODEX_CONFIG} {detail}"
+        )
 
     if not isinstance(config, dict):
         errors.append(

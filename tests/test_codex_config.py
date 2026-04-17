@@ -959,5 +959,41 @@ class IsValidRelativePathEdgeTests(unittest.TestCase):
         self.assertEqual(len(warns), 1)
 
 
+class CodexConfigScalarFindingsTests(unittest.TestCase):
+    """``validate_codex_config`` surfaces plain-scalar divergence findings."""
+
+    def test_divergent_value_produces_tagged_finding(self) -> None:
+        """Unquoted ``: ``-bearing value surfaces a FAIL tagged [platform: OpenAI]."""
+        config = (
+            "interface:\n"
+            "  display_name: Demo Agent\n"
+            "  default_prompt: runs tasks: quickly\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, _ = validate_codex_config(tmpdir)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [platform: OpenAI]")
+            and FILE_CODEX_CONFIG in e
+            and "': '" in e
+        ]
+        self.assertEqual(len(tagged), 1)
+
+    def test_clean_config_produces_no_scalar_findings(self) -> None:
+        config = (
+            "interface:\n"
+            '  display_name: "Demo Agent"\n'
+            '  default_prompt: "Safe prompt."\n'
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_codex_config(tmpdir, config)
+            errors, _ = validate_codex_config(tmpdir)
+        scalar_findings = [
+            e for e in errors if "': '" in e or "unquoted value" in e
+        ]
+        self.assertEqual(scalar_findings, [])
+
+
 if __name__ == "__main__":
     unittest.main()
