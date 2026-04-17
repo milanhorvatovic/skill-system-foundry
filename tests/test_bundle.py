@@ -1473,10 +1473,11 @@ class PostValidateCoverageTests(unittest.TestCase):
             )
             errors = postvalidate(bundle_dir)
         multi = [e for e in errors if "Multiple SKILL.md" in e]
-        if not multi:
-            # Case-insensitive match requires a case-insensitive lookup —
-            # on case-sensitive filesystems we compare via lower().
-            self.skipTest("case-insensitive SKILL.md detection skipped")
+        self.assertTrue(
+            multi,
+            f"Expected a multiple SKILL.md validation error for "
+            f"case-insensitive detection, got: {errors}",
+        )
         self.assertIn(LEVEL_FAIL, multi[0])
         self.assertIn("SKILL.md", multi[0])
         self.assertIn("skill.md", multi[0])

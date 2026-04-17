@@ -1848,14 +1848,9 @@ class CheckReferencesTailTests(unittest.TestCase):
         """A pure ``[text](#anchor)`` reference is skipped, not reported as broken."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
-            write_skill_md(
-                skill_dir,
-                body="# Skill\n\nJump to [top](#overview) for details.\n",
-            )
+            os.makedirs(skill_dir)
             skill_md = os.path.join(skill_dir, "SKILL.md")
-            with open(skill_md, "r", encoding="utf-8") as f:
-                content = f.read()
-            body = content.split("---\n", 2)[2]
+            body = "# Skill\n\nJump to [top](#overview) for details.\n"
             errors, passes = validate_body(body, skill_md, skill_dir)
         broken = [e for e in errors if "does not exist" in e]
         self.assertEqual(broken, [])
@@ -1873,18 +1868,12 @@ class CheckReferencesTailTests(unittest.TestCase):
             # scripts/, or assets/ — so we use a path that begins with
             # references/ but escapes via ../../
             write_text(os.path.join(tmpdir, "shared.md"), "# Shared\n")
-            write_skill_md(
-                skill_dir,
-                body=(
-                    "# Skill\n\n"
-                    "See [guide](references/guide.md) for details.\n"
-                    "Also see [shared](references/../../shared.md).\n"
-                ),
-            )
             skill_md = os.path.join(skill_dir, "SKILL.md")
-            with open(skill_md, "r", encoding="utf-8") as f:
-                content = f.read()
-            body = content.split("---\n", 2)[2]
+            body = (
+                "# Skill\n\n"
+                "See [guide](references/guide.md) for details.\n"
+                "Also see [shared](references/../../shared.md).\n"
+            )
             errors, passes = validate_body(body, skill_md, skill_dir)
         combined = [
             p for p in passes
@@ -1919,7 +1908,12 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
         try:
             vs.main()
         except SystemExit as exc:
-            code = exc.code if isinstance(exc.code, int) else 1
+            if exc.code is None:
+                code = 0
+            elif isinstance(exc.code, int):
+                code = exc.code
+            else:
+                code = 1
     return code, stdout.getvalue(), stderr.getvalue()
 
 
