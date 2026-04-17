@@ -122,16 +122,25 @@ def _dedupe_preserving_order(items: list[str]) -> list[str]:
 
 
 def _collect_frontmatter_findings(path: str) -> list[str]:
-    """Return plain-scalar divergence findings from the written entry file.
+    """Return frontmatter findings from the written entry file.
 
     Re-parses the rendered frontmatter so post-write divergences surface
     even when they would otherwise bypass validate_name's gate (template
     changes, programmatic callers, etc.).  Missing files and files
-    without frontmatter yield an empty list.
+    without frontmatter yield an empty list.  Frontmatter structural
+    parse failures are surfaced as a FAIL finding so invalid rendered
+    YAML is not silently ignored.
     """
     if not os.path.isfile(path):
         return []
-    _fm, _body, findings = load_frontmatter(path)
+    frontmatter, _body, findings = load_frontmatter(path)
+    parse_error = (
+        frontmatter.get("_parse_error")
+        if isinstance(frontmatter, dict)
+        else None
+    )
+    if parse_error:
+        return [f"{LEVEL_FAIL}: Invalid frontmatter in {path}: {parse_error}"]
     return findings
 
 

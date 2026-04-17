@@ -13,6 +13,7 @@ from .constants import (
     DIR_ROLES,
     FILE_SKILL_MD,
     EXT_MARKDOWN,
+    LEVEL_FAIL,
 )
 
 
@@ -191,11 +192,14 @@ def append_skill_entry(
     findings: list[str] = []
     try:
         parse_yaml_subset(text, findings)
-    except ValueError:
-        # Structural failures are already caught by read_manifest on
-        # the next read cycle; here we only care about plain-scalar
-        # divergences the caller would not otherwise see.
-        pass
+    except ValueError as exc:
+        # Surface emit-site structural corruption immediately — the
+        # manifest has already been written and callers need to know
+        # the file is no longer parseable.
+        findings.append(
+            f"{LEVEL_FAIL}: manifest emit produced unparseable YAML "
+            f"at {manifest_path}: {exc}"
+        )
     return findings
 
 
@@ -269,8 +273,11 @@ def append_role_entry(
     findings: list[str] = []
     try:
         parse_yaml_subset(text, findings)
-    except ValueError:
-        pass
+    except ValueError as exc:
+        findings.append(
+            f"{LEVEL_FAIL}: manifest emit produced unparseable YAML "
+            f"at {manifest_path}: {exc}"
+        )
     return findings
 
 
@@ -287,7 +294,9 @@ def update_manifest_for_skill(
     human-readable message when a conflict prevented the update,
     *created_manifest* is True when a new manifest file was
     scaffolded, and *findings* is a list of plain-scalar divergence
-    findings produced while reading the existing manifest.
+    findings produced while reading the existing manifest plus any
+    additional findings returned by ``append_skill_entry`` after the
+    new entry is written.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -330,7 +339,9 @@ def update_manifest_for_role(
     human-readable message when a conflict prevented the update,
     *created_manifest* is True when a new manifest file was
     scaffolded, and *findings* is a list of plain-scalar divergence
-    findings produced while reading the existing manifest.
+    findings produced while reading the existing manifest plus any
+    additional findings returned by ``append_role_entry`` after the
+    new entry is written.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.

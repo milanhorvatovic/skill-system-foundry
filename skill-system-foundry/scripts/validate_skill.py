@@ -70,6 +70,7 @@ def _collect_foundry_config_findings(skill_path: str) -> list[str]:
     retagged: list[str] = []
     for f in get_config_findings():
         level, _, detail = f.partition(": ")
+        detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
         retagged.append(
             f"{level}: [foundry] scripts/lib/configuration.yaml {detail}"
         )

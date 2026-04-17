@@ -178,6 +178,7 @@ def audit_skill_system(
     if candidate_config == CONFIG_PATH:
         for f in get_config_findings():
             level, _, detail = f.partition(": ")
+            detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
             errors.append(
                 f"{level}: [foundry] scripts/lib/configuration.yaml {detail}"
             )
@@ -418,6 +419,7 @@ def audit_skill_system(
                 )
                 for finding in scalar_findings:
                     level, _, detail = finding.partition(": ")
+                    detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
                     errors.append(
                         f"{level}: [spec] {FILE_MANIFEST} {detail}"
                     )

@@ -98,6 +98,7 @@ def validate_codex_config(skill_path: str) -> tuple[list[str], list[str]]:
 
     for finding in scalar_findings:
         level, _, detail = finding.partition(": ")
+        detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
         errors.append(
             f"{level}: [platform: OpenAI] {FILE_CODEX_CONFIG} {detail}"
         )
