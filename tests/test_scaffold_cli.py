@@ -2109,5 +2109,131 @@ class ManifestFindingsSurfacedTests(unittest.TestCase):
             self.assertIn("manifest_findings", data)
 
 
+# ===================================================================
+# Frontmatter re-parse (issue #89 stage 6)
+# ===================================================================
+
+
+class ScaffoldFrontmatterReparseTests(unittest.TestCase):
+    """Scaffold re-parses the written entry file for divergences."""
+
+    def test_skill_template_substitution_produces_no_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                ["skill", "demo-skill", "--json", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertNotIn("frontmatter_findings", data)
+
+    def test_capability_template_substitution_produces_no_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _run(
+                ["skill", "demo-domain", "--router", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            proc = _run(
+                [
+                    "capability", "demo-domain", "demo-cap",
+                    "--json", "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertNotIn("frontmatter_findings", data)
+
+    def test_divergent_frontmatter_surfaced_in_json(self) -> None:
+        """Mock the re-parse helper to exercise the surfacing path."""
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample = ["FAIL: [spec] 'name': unquoted value … contains ': '"]
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_skill
+                result = scaffold_skill(
+                    "demo-skill", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["frontmatter_findings"], sample)
+
+    def test_divergent_frontmatter_surfaced_in_text_mode(self) -> None:
+        """Text-mode scaffold prints findings after Created line."""
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample = ["FAIL: [spec] 'name': unquoted value … contains ': '"]
+            buf = io.StringIO()
+            with (
+                mock.patch(
+                    "scaffold._collect_frontmatter_findings",
+                    return_value=sample,
+                ),
+                redirect_stdout(buf),
+            ):
+                from scaffold import scaffold_skill
+                scaffold_skill("demo-skill", root=tmpdir, json_output=False)
+            self.assertIn("FAIL:", buf.getvalue())
+            self.assertIn("': '", buf.getvalue())
+
+    def test_capability_divergent_frontmatter_surfaced_in_json(self) -> None:
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _run(
+                ["skill", "demo-domain", "--router", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            sample = ["WARN: [spec] 'name': unquoted value starts with '&'"]
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_capability
+                result = scaffold_capability(
+                    "demo-domain", "demo-cap", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["frontmatter_findings"], sample)
+
+
+class CollectFrontmatterFindingsTests(unittest.TestCase):
+    """``_collect_frontmatter_findings`` helper edge cases."""
+
+    def test_missing_file_returns_empty(self) -> None:
+        from scaffold import _collect_frontmatter_findings
+        with tempfile.TemporaryDirectory() as tmpdir:
+            findings = _collect_frontmatter_findings(
+                os.path.join(tmpdir, "nope.md"),
+            )
+        self.assertEqual(findings, [])
+
+    def test_file_without_frontmatter_returns_empty(self) -> None:
+        from scaffold import _collect_frontmatter_findings
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "note.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# Just markdown\n")
+            findings = _collect_frontmatter_findings(path)
+        self.assertEqual(findings, [])
+
+    def test_divergent_frontmatter_surfaces_finding(self) -> None:
+        from scaffold import _collect_frontmatter_findings
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "bad.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "---\n"
+                    "name: demo\n"
+                    "description: runs tasks: quickly\n"
+                    "---\n\n# Body\n",
+                )
+            findings = _collect_frontmatter_findings(path)
+        self.assertTrue(any("': '" in f for f in findings))
+
+
 if __name__ == "__main__":
     unittest.main()

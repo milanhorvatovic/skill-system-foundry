@@ -39,6 +39,7 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
+from lib.frontmatter import load_frontmatter
 from lib.reporting import to_json_output
 from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
@@ -101,6 +102,20 @@ def validate_name(name: str, json_output: bool = False) -> bool:
                 message = e
             print(f"{level}: {message}")
     return not any(e.startswith(LEVEL_FAIL) for e in errors)
+
+
+def _collect_frontmatter_findings(path: str) -> list[str]:
+    """Return plain-scalar divergence findings from the written entry file.
+
+    Re-parses the rendered frontmatter so post-write divergences surface
+    even when they would otherwise bypass validate_name's gate (template
+    changes, programmatic callers, etc.).  Missing files and files
+    without frontmatter yield an empty list.
+    """
+    if not os.path.isfile(path):
+        return []
+    _fm, _body, findings = load_frontmatter(path)
+    return findings
 
 
 def read_template(template_name: str) -> str:
@@ -258,6 +273,13 @@ def scaffold_skill(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Frontmatter re-parse of the written entry file ---
+    skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
+    frontmatter_findings = _collect_frontmatter_findings(skill_md_full_path)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
+
     # --- Manifest update ---
     manifest_updated = False
     manifest_warning: str | None = None
@@ -294,6 +316,8 @@ def scaffold_skill(
             "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
         }
+        if frontmatter_findings:
+            result_dict["frontmatter_findings"] = frontmatter_findings
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
@@ -424,6 +448,13 @@ def scaffold_capability(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Frontmatter re-parse of the written entry file ---
+    cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
+    frontmatter_findings = _collect_frontmatter_findings(cap_md_full_path)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
+
     # Capabilities are not added to the manifest directly — they
     # belong under their parent skill's ``capabilities:`` list.
     cap_manifest_msg = (
@@ -441,6 +472,8 @@ def scaffold_capability(
             "path": os.path.abspath(cap_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
+        if frontmatter_findings:
+            result_dict["frontmatter_findings"] = frontmatter_findings
         if update_manifest:
             result_dict["manifest_updated"] = False
             result_dict["manifest_warning"] = cap_manifest_msg
