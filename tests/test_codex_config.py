@@ -719,7 +719,7 @@ class CodexConfigFileReadErrorTests(unittest.TestCase):
     def test_oserror_on_read_returns_warn(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_codex_config(tmpdir, "interface:\n  display_name: x\n")
-            with mock.patch("lib.codex_config.open", side_effect=OSError("EIO")):
+            with mock.patch("builtins.open", side_effect=OSError("EIO")):
                 errors, passes = validate_codex_config(tmpdir)
         self.assertEqual(len(errors), 1)
         self.assertIn(LEVEL_WARN, errors[0])
