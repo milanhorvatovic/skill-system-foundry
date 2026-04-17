@@ -123,12 +123,16 @@ def append_skill_entry(
     name: str,
     *,
     router: bool = False,
-) -> None:
+) -> list[str]:
     """Append a skill entry to the ``skills:`` section of *manifest_path*.
 
     Uses text-based insertion since the YAML parser is read-only.
     The entry is appended after the last non-blank line in the
     ``skills:`` block.
+
+    Returns a list of plain-scalar divergence findings produced by
+    re-parsing the post-write manifest text; empty when the emitted
+    YAML is clean.
     """
     with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
@@ -184,15 +188,29 @@ def append_skill_entry(
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(text)
 
+    findings: list[str] = []
+    try:
+        parse_yaml_subset(text, findings)
+    except ValueError:
+        # Structural failures are already caught by read_manifest on
+        # the next read cycle; here we only care about plain-scalar
+        # divergences the caller would not otherwise see.
+        pass
+    return findings
+
 
 def append_role_entry(
     manifest_path: str,
     group: str,
     name: str,
-) -> None:
+) -> list[str]:
     """Append a role entry to the ``roles:`` section of *manifest_path*.
 
     Creates the group sub-key if it does not exist.
+
+    Returns a list of plain-scalar divergence findings produced by
+    re-parsing the post-write manifest text; empty when the emitted
+    YAML is clean.
     """
     with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
@@ -248,6 +266,13 @@ def append_role_entry(
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(text)
 
+    findings: list[str] = []
+    try:
+        parse_yaml_subset(text, findings)
+    except ValueError:
+        pass
+    return findings
+
 
 def update_manifest_for_skill(
     manifest_path: str,
@@ -288,7 +313,8 @@ def update_manifest_for_skill(
         )
         return False, warning, created_manifest, findings
 
-    append_skill_entry(manifest_path, name, router=router)
+    emit_findings = append_skill_entry(manifest_path, name, router=router)
+    findings.extend(emit_findings)
     return True, None, created_manifest, findings
 
 
@@ -330,7 +356,8 @@ def update_manifest_for_role(
         )
         return False, warning, created_manifest, findings
 
-    append_role_entry(manifest_path, group, name)
+    emit_findings = append_role_entry(manifest_path, group, name)
+    findings.extend(emit_findings)
     return True, None, created_manifest, findings
 
 

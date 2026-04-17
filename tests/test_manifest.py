@@ -1107,6 +1107,72 @@ class ReadManifestFindingsTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class AppendEntryEmitFindingsTests(unittest.TestCase):
+    """Emit helpers re-parse the post-write manifest for divergences."""
+
+    def test_append_skill_entry_returns_empty_for_clean_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            findings = append_skill_entry(path, "new-skill")
+        self.assertEqual(findings, [])
+
+    def test_append_skill_entry_surfaces_pre_existing_divergence(self) -> None:
+        """Re-parse catches divergences already present in the manifest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            findings = append_skill_entry(path, "added")
+        self.assertTrue(any("': '" in f for f in findings))
+
+    def test_append_role_entry_returns_empty_for_clean_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            findings = append_role_entry(path, "dev-group", "new-role")
+        self.assertEqual(findings, [])
+
+    def test_append_role_entry_surfaces_pre_existing_divergence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                    "roles:\n"
+                    "  dev-group:\n"
+                    "    - name: existing\n"
+                    "      path: roles/dev-group/existing.md\n"
+                )
+            findings = append_role_entry(path, "dev-group", "added")
+        self.assertTrue(any("': '" in f for f in findings))
+
+
+class ScaffoldEmptyManifestStaticTests(unittest.TestCase):
+    """The static scaffold body round-trips cleanly through the parser."""
+
+    def test_scaffold_produces_no_divergences(self) -> None:
+        from lib.yaml_parser import parse_yaml_subset
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            scaffold_empty_manifest(path)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        findings: list[str] = []
+        parse_yaml_subset(text, findings)
+        self.assertEqual(findings, [])
+
+
 class UpdateManifestFindingsTests(unittest.TestCase):
     """``update_manifest_for_*`` returns findings as the 4th tuple slot."""
 
