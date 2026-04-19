@@ -1,8 +1,8 @@
 """SKILL.md frontmatter extraction and body utilities.
 
 Line endings in the on-disk file are normalized to LF immediately after
-``f.read()`` (G48) so the returned ``body`` is LF-only regardless of how
-the file was checked out — the prose-YAML extractor and any other body
+``f.read()`` so the returned ``body`` is LF-only regardless of how the
+file was checked out — the prose-YAML extractor and any other body
 consumer can split on ``\\n`` without ferrying the original endings
 through downstream processors.
 """

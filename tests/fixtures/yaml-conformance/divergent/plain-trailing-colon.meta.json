@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Trailing ':' on an unquoted value reads as a mapping key.",
+  "substring_rationale": "Stable phrasing for the trailing-colon branch."
+}

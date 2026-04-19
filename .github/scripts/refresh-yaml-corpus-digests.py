@@ -4,19 +4,19 @@ Walks ``tests/fixtures/yaml-conformance/`` for ``*.lf.yaml``,
 ``*.crlf.yaml``, and ``*.mixed.yaml`` files, computes their SHA-256
 hex digest, and writes the result to ``digests.txt`` in
 ``sha256sum``-compatible format (``<digest>  <relative-path>``), sorted
-by path ascending (G133).
+by path ascending so re-runs produce byte-identical output.
 
 Lifecycle: committed permanently as a re-runnable contributor utility
-(G27) — every PR touching corpus fixtures regenerates the manifest
-before committing.
+— every PR touching corpus fixtures regenerates the manifest before
+committing.
 
-Atomic write (G90): the new manifest is written to a temp file in the
-same directory and renamed via ``os.replace`` so a mid-write crash
-cannot corrupt the in-tree manifest.
+Atomic write: the new manifest is written to a temp file in the same
+directory and renamed via ``os.replace`` so a mid-write crash cannot
+corrupt the in-tree manifest.
 
-Whitespace rejection (G132): corpus paths may not contain whitespace —
-the ``sha256sum`` line format splits on the first run of whitespace,
-so embedded spaces or tabs in a path would silently mis-parse.  This
+Whitespace rejection: corpus paths may not contain whitespace — the
+``sha256sum`` line format splits on the first run of whitespace, so
+embedded spaces or tabs in a path would silently mis-parse.  This
 script aborts with a clear error if it encounters such a path.
 """
 
@@ -59,7 +59,7 @@ def collect_manifest(corpus_root: str) -> str:
             rel = os.path.relpath(full, corpus_root).replace(os.sep, "/")
             if any(ch.isspace() for ch in rel):
                 raise ValueError(
-                    f"corpus path contains whitespace (G132): {rel!r}"
+                    f"corpus path contains whitespace: {rel!r}"
                 )
             rows.append((rel, _hash_file(full)))
     rows.sort(key=lambda r: r[0])

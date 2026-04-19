@@ -1,11 +1,11 @@
 """Tests for ``.github/scripts/preflight-yaml-upgrade.py``.
 
-Covers (G89/G103/G126):
+Covers:
 - Crafted fixture per construct-id is flagged with the right token.
-- Frontmatter-less Markdown is a no-op (G41).
+- Frontmatter-less Markdown is a no-op.
 - ``--json`` output shape: list of ``{file, construct_id, position}``
   dicts; empty list on clean.
-- Exit code 0 on clean, non-zero on any hit (G89).
+- Exit code 0 on clean, non-zero on any hit.
 - The shipped repo's tracked content is currently clean.
 """
 
@@ -69,7 +69,7 @@ class ScanYamlTextConstructTests(unittest.TestCase):
 
 
 class ExtractFrontmatterTests(unittest.TestCase):
-    """Frontmatter-less Markdown returns ``None`` (G41)."""
+    """Frontmatter-less Markdown returns ``None``."""
 
     def test_no_frontmatter_returns_none(self) -> None:
         self.assertIsNone(preflight.extract_frontmatter("# heading\n\nbody\n"))
@@ -119,7 +119,7 @@ class ScanFileFrontmatterPositionTests(unittest.TestCase):
 
 
 class MainExitCodeTests(unittest.TestCase):
-    """G89 — exit 0 on clean, non-zero on hits.  G103 — JSON shape."""
+    """Exit 0 on clean, non-zero on hits; JSON shape pinned."""
 
     def test_clean_repo_exits_zero(self) -> None:
         # The shipped tracked content must remain clean before commit 6.

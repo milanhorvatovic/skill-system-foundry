@@ -62,7 +62,7 @@ class _CorpusBuilder:
 
 
 class ParseDigestsFileTests(unittest.TestCase):
-    """``parse_digests_file`` honours the ``sha256sum`` shape (G40)."""
+    """``parse_digests_file`` honours the ``sha256sum`` shape."""
 
     def test_simple_two_lines(self) -> None:
         text = "abc  supported/a.lf.yaml\ndef  rejected/b.lf.yaml\n"
@@ -242,6 +242,36 @@ class CheckParityTests(unittest.TestCase):
     def test_mismatch_detected(self) -> None:
         errs = runner.check_parity(["key: a\n", "key: b\n"])
         self.assertEqual(len(errs), 1)
+
+
+class MalformedSidecarTests(unittest.TestCase):
+    """A sidecar that fails to parse surfaces as a loud failure."""
+
+    def test_malformed_expected_json_fails_case(self) -> None:
+        b = _CorpusBuilder()
+        try:
+            for s in (".lf.yaml", ".crlf.yaml", ".mixed.yaml"):
+                b.write_variant(
+                    "supported", "k", s, "key: value\n"
+                )
+            # Corrupt the expected-side sidecar.
+            _write(
+                os.path.join(b.root, "supported", "k.expected.json"),
+                "{ this is not json",
+            )
+            _write(
+                os.path.join(b.root, "supported", "k.meta.json"),
+                json.dumps({"origin": "original", "rationale": "x"}),
+            )
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            messages = summary["failures"][0]["messages"]
+            self.assertTrue(
+                any("sidecar parse error" in m for m in messages),
+                messages,
+            )
+        finally:
+            b.cleanup()
 
 
 class RunCaseAndCorpusTests(unittest.TestCase):

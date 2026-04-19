@@ -1,6 +1,6 @@
 """Tests for ``skill-system-foundry/scripts/yaml_conformance_report.py``.
 
-Covers (G33/G71/G127/G145):
+Covers:
 - Clean corpus → exit 0, JSON shape pinned (``corpus.total/passed/...``).
 - Synthetic failing corpus → non-zero exit, failure surfaced in output.
 - Default mode is human; ``--json`` is explicit.

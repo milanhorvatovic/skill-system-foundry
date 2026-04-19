@@ -1,8 +1,8 @@
 """Preflight scanner for the YAML 1.2.2 grammar-gap upgrade.
 
 Walks every tracked YAML file and every frontmatter block in every
-tracked Markdown file (G49 / G91 — no directory exclusions, including
-``.agents/`` and ``assets/``).  Reports any input that would trip the
+tracked Markdown file (no directory exclusions — ``.agents/`` and
+``assets/`` are scanned too).  Reports any input that would trip the
 three new ``ValueError`` paths once the parser hardening lands:
 
   - ``anchor-with-trailing-in-key`` — ``&name key:`` syntax.
@@ -10,7 +10,7 @@ three new ``ValueError`` paths once the parser hardening lands:
     digit indentation indicator (``key: |2``, ``key: >-3``, etc.).
   - ``tag-in-mapping-key`` — ``!tag key:`` syntax.
 
-Output (G103, G142):
+Output:
   * Default ``human`` mode: one ``FAIL: <construct-id> at <file>
     [<position>]`` line per hit.  ``<position>`` is the literal string
     ``"frontmatter"`` for Markdown frontmatter blocks or ``"line N"``
@@ -18,7 +18,7 @@ Output (G103, G142):
   * ``--json`` mode: a JSON list of ``{"file", "construct_id",
     "position"}`` dicts, sorted by ``(file, position)``.
 
-Exit code (G89): 0 on zero hits, 1 on any hit.
+Exit code: 0 on zero hits, 1 on any hit.
 """
 
 import argparse
@@ -115,8 +115,8 @@ def scan_yaml_text(text: str, position_for_line: callable) -> list[dict]:
 def extract_frontmatter(text: str) -> str | None:
     """Return the YAML frontmatter block of *text* or ``None`` if absent.
 
-    Markdown without frontmatter is a documented no-op (G41) — the
-    caller should treat ``None`` as "skip silently."
+    Markdown without frontmatter is a documented no-op — the caller
+    should treat ``None`` as "skip silently."
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---"):

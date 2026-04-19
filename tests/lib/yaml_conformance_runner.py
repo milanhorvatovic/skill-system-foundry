@@ -1,6 +1,6 @@
 """Shared helpers for the YAML 1.2.2 conformance corpus harness.
 
-Two consumers (extracted upfront per G66/G76):
+Two consumers:
 
 - ``tests/test_yaml_conformance.py`` — runs the full corpus as part of
   the unittest suite and surfaces failures via ``self.fail(...)``.
@@ -10,8 +10,8 @@ Two consumers (extracted upfront per G66/G76):
 This module is pure data — no test framework dependencies — so callers
 control how failures surface.
 
-Package layout note (deviation from G76)
-----------------------------------------
+Package layout note
+-------------------
 ``tests/lib/`` is intentionally **not** a Python package — there is no
 ``__init__.py``.  Adding one would shadow ``skill-system-foundry/
 scripts/lib`` (the canonical ``lib`` package every test imports from
@@ -19,16 +19,15 @@ via sys.path injection), breaking the entire suite.  Consumers import
 this module by adding ``tests/lib`` to ``sys.path`` instead of using
 ``from tests.lib.yaml_conformance_runner import ...``.
 
-Sorted iteration (G72): ``os.walk`` is wrapped to sort directory and
+Sorted iteration: ``os.walk`` is wrapped to sort directory and
 filename order, ensuring byte-identical output across platforms with
 different filesystem ordering.
 
-Digest manifest format (G40): ``digests.txt`` follows the standard
+Digest manifest format: ``digests.txt`` follows the standard
 ``sha256sum`` shape (``<hex-digest>  <relative-path>``).  Lines split
 on the first run of whitespace; the right half is the path verbatim
 so paths with embedded ``=`` etc. survive.  Whitespace-in-paths is
-forbidden by curation convention (G132) so the simple split is
-unambiguous.
+forbidden by curation convention so the simple split is unambiguous.
 """
 
 import hashlib
@@ -93,7 +92,7 @@ def _strip_variant_suffix(rel: str) -> str:
 
 
 def _walk_sorted(root: str):
-    """``os.walk`` with sorted dirnames + filenames at every level (G72)."""
+    """``os.walk`` with sorted dirnames + filenames at every level."""
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
         filenames.sort()
@@ -113,8 +112,8 @@ def discover_fixtures(corpus_root: str) -> dict[str, list[dict]]:
             "meta": "<bucket>/.../base.meta.json" | None,
         }
 
-    Raises ``ValueError`` for unknown top-level directories (G100) and
-    for orphan sidecars with no matching fixture (G55).
+    Raises ``ValueError`` for unknown top-level directories and for
+    orphan sidecars with no matching fixture.
     """
     result: dict[str, list[dict]] = {b: [] for b in BUCKETS}
     if not os.path.isdir(corpus_root):
@@ -222,7 +221,7 @@ def check_variant_parse(
 
 
 def check_parity(variant_texts: list[str]) -> list[str]:
-    """Confirm every variant of a base parses to the same dict (G122)."""
+    """Confirm every variant of a base parses to the same dict."""
     if len(variant_texts) <= 1:
         return []
     parsed_dicts = [parse_yaml_subset(t, []) for t in variant_texts]
@@ -323,7 +322,7 @@ def run_case(
 
 
 def run_corpus(corpus_root: str) -> dict:
-    """Run the full corpus and return summary dict (G127 shape)."""
+    """Run the full corpus and return the summary dict."""
     digests: dict[str, str] = {}
     digests_path = os.path.join(corpus_root, "digests.txt")
     if os.path.isfile(digests_path):

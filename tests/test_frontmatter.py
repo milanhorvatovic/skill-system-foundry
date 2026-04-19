@@ -1,9 +1,9 @@
 """Tests for lib/frontmatter.py.
 
-Covers ``load_frontmatter`` round-trip behavior with the line-ending
-normalization added per G48 — the same on-disk content with LF, CRLF,
-or mixed terminators must yield byte-identical frontmatter dicts and
-LF-only body strings.
+Covers ``load_frontmatter`` round-trip behavior with line-ending
+normalization — the same on-disk content with LF, CRLF, or mixed
+terminators must yield byte-identical frontmatter dicts and LF-only
+body strings.
 """
 
 import os
@@ -30,7 +30,7 @@ def _write_bytes(content_bytes: bytes) -> str:
 
 
 class LoadFrontmatterLineEndingsTests(unittest.TestCase):
-    """G48 — line-ending normalization on file ingestion."""
+    """Line-ending normalization on file ingestion."""
 
     LF_CONTENT = (
         "---\n"

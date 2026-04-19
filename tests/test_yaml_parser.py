@@ -1262,7 +1262,7 @@ class CheckPlainScalarBlockScalarTests(unittest.TestCase):
         self.assertIn("reject", findings[0])
 
     def test_indentation_indicator_raises_pinned_message(self) -> None:
-        """Indent-indicator block-scalar headers raise the pinned ValueError (G46)."""
+        """Indent-indicator block-scalar headers raise the pinned ValueError."""
         for header in ("|2", ">4", "|3-", ">+9", "|-5", ">7+"):
             with self.subTest(header=header):
                 with self.assertRaises(ValueError) as ctx:
@@ -1273,7 +1273,7 @@ class CheckPlainScalarBlockScalarTests(unittest.TestCase):
                 self.assertIn("§8.1.1", str(ctx.exception))
 
     def test_indentation_indicator_raises_without_findings_list(self) -> None:
-        """Raise fires regardless of whether the caller passed findings (G46)."""
+        """Raise fires regardless of whether the caller passed findings."""
         with self.assertRaises(ValueError):
             _check_plain_scalar("key", "|2", None)
 
@@ -1593,7 +1593,7 @@ class ParseListSimpleItemScalarCheckTests(unittest.TestCase):
                 self.assertEqual(result, [""])
 
     def test_block_scalar_header_with_digit_raises(self) -> None:
-        """Headers with digit indentation indicators raise ValueError (G46)."""
+        """Headers with digit indentation indicators raise ValueError."""
         for header in ("|2", ">-4"):
             with self.subTest(header=header):
                 with self.assertRaises(ValueError) as ctx:
@@ -1935,7 +1935,7 @@ class ConfigurationYamlIntegrationTests(unittest.TestCase):
 
 
 class GrammarGapUpgradeTests(unittest.TestCase):
-    """G46 — three pinned ``ValueError`` paths for the grammar gaps."""
+    """Three pinned ``ValueError`` paths for the grammar gaps."""
 
     def test_anchor_with_trailing_key_raises(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -1988,7 +1988,7 @@ class GrammarGapUpgradeTests(unittest.TestCase):
 
 
 class ParseYamlSubsetLineEndingNormalizationTests(unittest.TestCase):
-    """LF / CRLF / CR / mixed inputs produce identical parsed output (G37/G48)."""
+    """LF / CRLF / CR / mixed inputs produce identical parsed output."""
 
     BASE = "key: value\nblock: |\n  line1\n  line2\nlist:\n  - a\n  - b\n"
 

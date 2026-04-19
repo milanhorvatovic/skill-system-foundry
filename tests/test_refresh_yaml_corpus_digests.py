@@ -1,6 +1,6 @@
 """Tests for ``.github/scripts/refresh-yaml-corpus-digests.py``.
 
-Covers (G27/G90/G132):
+Covers:
 - Pass path: unchanged corpus → zero diff.
 - Drift path: changed fixture → regenerated digest, ``--check`` fails.
 - ``--check`` mode both branches.

@@ -17,8 +17,8 @@ For any input the parser produces one of three outcomes:
 3. **Raise ``ValueError``.** Used for structural failures and the three
    pinned grammar gaps below.
 
-Pinned ``ValueError`` message format (G46)
-------------------------------------------
+Pinned ``ValueError`` message format
+------------------------------------
 ``"unsupported YAML 1.2.2 construct: <construct-id> (spec §<n.n>)"``
 
 The three canonical ``<construct-id>`` tokens (mirrored in
@@ -40,7 +40,7 @@ Line-ending contract (YAML 1.2.2 §5.4)
 **Input:** ``parse_yaml_subset`` accepts text with LF, CRLF, CR, or
 mixed line terminators.  Normalization happens at the top of the
 function (defense in depth — text-ingestion boundaries elsewhere
-in the codebase normalize too, per G48).
+in the codebase normalize too).
 
 **Output:** every string returned by the parser — including block-scalar
 contents — uses **LF-only** line terminators regardless of the input
@@ -85,7 +85,7 @@ def parse_yaml_subset(text: str | None, findings: list[str] | None = None) -> di
 def _raise_unsupported(construct_id: str, spec_section: str) -> None:
     """Raise ``ValueError`` with the pinned grammar-gap message format.
 
-    Format pinned by G46 so corpus fixtures can substring-match on the
+    Format is pinned so corpus fixtures can substring-match on the
     ``<construct-id>`` token without coupling to surrounding wording.
     """
     raise ValueError(
@@ -97,7 +97,7 @@ def _raise_unsupported(construct_id: str, spec_section: str) -> None:
 def _check_mapping_key_construct(key: str) -> None:
     """Raise on the two grammar gaps that surface in mapping-key position.
 
-    "Mapping-key position" per G62 means the token appears before the
+    "Mapping-key position" means the token appears before the
     first ``:`` on a logical line, outside any flow collection or block
     scalar.  Both ``_parse_mapping`` and the dict-item branch of
     ``_parse_list`` invoke this after extracting *key*.
@@ -228,8 +228,8 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
     """Append findings for unquoted plain scalar values that diverge from strict YAML 1.2.
 
     Raises ``ValueError`` (independent of *findings*) when *value* is a
-    block-scalar header carrying an indentation indicator — see G46 for
-    the pinned message format.
+    block-scalar header carrying an indentation indicator — emits the
+    pinned ``unsupported YAML 1.2.2 construct: …`` message format.
     """
     if not value:
         return
@@ -237,7 +237,7 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
         return
 
     # Indent-indicator block-scalar headers raise unconditionally so the
-    # parse-time outcome bucket (G46) does not depend on whether the
+    # parse-time outcome bucket does not depend on whether the
     # caller passed a findings list.
     if _is_indent_indicator_header(value):
         _raise_unsupported("indent-indicator-block-scalar", "8.1.1")

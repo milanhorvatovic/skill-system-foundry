@@ -25,7 +25,7 @@ _CORPUS_ROOT = os.path.abspath(
 
 
 class CorpusLayoutTests(unittest.TestCase):
-    """Three-bucket layout (G100) and required infrastructure files."""
+    """Three-bucket layout and required infrastructure files."""
 
     def test_corpus_root_exists(self) -> None:
         self.assertTrue(
@@ -78,7 +78,7 @@ class CorpusRunPerCaseTests(unittest.TestCase):
 
 
 class CorpusSummaryShapeTests(unittest.TestCase):
-    """``run_corpus`` returns the pinned summary shape (G127)."""
+    """``run_corpus`` returns the pinned summary shape."""
 
     def test_summary_keys_and_types(self) -> None:
         summary = runner.run_corpus(_CORPUS_ROOT)

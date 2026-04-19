@@ -12,8 +12,8 @@ Usage::
     python scripts/yaml_conformance_report.py --json
     python scripts/yaml_conformance_report.py --corpus-root tests/fixtures/yaml-conformance
 
-Exit code (G71): 0 on all-pass, 1 on any failure.  Output mode (G145):
-human by default, ``--json`` for machine consumption.
+Exit code: 0 on all-pass, 1 on any failure.  Output mode: human by
+default, ``--json`` for machine consumption.
 """
 
 import argparse
