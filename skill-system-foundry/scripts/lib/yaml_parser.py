@@ -5,6 +5,36 @@ folded/literal block scalars (> | >- |- |+ >+), nested mappings, scalar
 lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
 
+Outcome buckets
+---------------
+For any input the parser produces one of three outcomes:
+
+1. **Parse cleanly.** Example: ``key: value\\n``.
+2. **Emit a finding** (``FAIL`` / ``WARN`` / ``INFO`` strings appended
+   to the optional *findings* list — see ``_check_plain_scalar``).
+   Example: ``key: *alias\\n`` emits ``FAIL: [spec] 'key': unquoted
+   value starts with '*' …``.
+3. **Raise ``ValueError``.** Used for structural failures and the three
+   pinned grammar gaps below.
+
+Pinned ``ValueError`` message format (G46)
+------------------------------------------
+``"unsupported YAML 1.2.2 construct: <construct-id> (spec §<n.n>)"``
+
+The three canonical ``<construct-id>`` tokens (mirrored in
+``configuration.yaml`` under ``yaml_conformance.construct_ids``):
+
+- ``anchor-with-trailing-in-key`` — anchor properties followed by
+  trailing key text in mapping-key position (e.g. ``&a key:``); spec §6.9.
+- ``indent-indicator-block-scalar`` — block scalar header carrying an
+  indentation indicator (e.g. ``key: |2``); spec §8.1.1.
+- ``tag-in-mapping-key`` — tag indicator in mapping-key position
+  (e.g. ``!!str key:``); spec §6.9.
+
+Plain-scalar usage of anchor / tag indicators in **value** position
+remains a ``WARN`` finding rather than a raise — only the mapping-key
+position is upgraded.
+
 Line-ending contract (YAML 1.2.2 §5.4)
 --------------------------------------
 **Input:** ``parse_yaml_subset`` accepts text with LF, CRLF, CR, or
@@ -50,6 +80,44 @@ def parse_yaml_subset(text: str | None, findings: list[str] | None = None) -> di
 
     result, _ = _parse_structure(lines, 0, lines[0][0], findings)
     return result if isinstance(result, dict) else {}
+
+
+def _raise_unsupported(construct_id: str, spec_section: str) -> None:
+    """Raise ``ValueError`` with the pinned grammar-gap message format.
+
+    Format pinned by G46 so corpus fixtures can substring-match on the
+    ``<construct-id>`` token without coupling to surrounding wording.
+    """
+    raise ValueError(
+        f"unsupported YAML 1.2.2 construct: {construct_id} "
+        f"(spec §{spec_section})"
+    )
+
+
+def _check_mapping_key_construct(key: str) -> None:
+    """Raise on the two grammar gaps that surface in mapping-key position.
+
+    "Mapping-key position" per G62 means the token appears before the
+    first ``:`` on a logical line, outside any flow collection or block
+    scalar.  Both ``_parse_mapping`` and the dict-item branch of
+    ``_parse_list`` invoke this after extracting *key*.
+
+    Bare ``&anchor`` (no trailing text) is left to the existing
+    plain-scalar value check; only the trailing-text variant raises.
+    """
+    if not key:
+        return
+    head = key[0]
+    if head == "&":
+        rest = key[1:]
+        for i, ch in enumerate(rest):
+            if ch in (" ", "\t"):
+                if rest[i:].strip():
+                    _raise_unsupported("anchor-with-trailing-in-key", "6.9")
+                return
+        return
+    if head == "!":
+        _raise_unsupported("tag-in-mapping-key", "6.9")
 
 
 def _strip_inline_comment(text: str) -> str:
@@ -135,11 +203,46 @@ def _quote_advice(value: str) -> str:
     return "use a block scalar (|- preserves newlines; >- folds them) — value contains characters that require escape processing in quoted forms"
 
 
+def _is_indent_indicator_header(value: str) -> bool:
+    """Return ``True`` when *value* is a block-scalar header carrying a
+    YAML 1.2 indentation indicator (``|2``, ``|2-``, ``|-2``, ``>+3``…).
+
+    Bare ``|`` / ``>`` and bare chomping headers (``|-``, ``>+``) are
+    handled by ``_is_block_scalar_header`` and remain supported.
+    """
+    if not value or value[0] not in ("|", ">"):
+        return False
+    rest = value[1:]
+    if len(rest) == 1:
+        return rest.isdigit() and rest != "0"
+    if len(rest) == 2:
+        c1, c2 = rest[0], rest[1]
+        return (
+            (c1.isdigit() and c1 != "0" and c2 in "-+")
+            or (c1 in "-+" and c2.isdigit() and c2 != "0")
+        )
+    return False
+
+
 def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> None:
-    """Append findings for unquoted plain scalar values that diverge from strict YAML 1.2."""
-    if findings is None or not value:
+    """Append findings for unquoted plain scalar values that diverge from strict YAML 1.2.
+
+    Raises ``ValueError`` (independent of *findings*) when *value* is a
+    block-scalar header carrying an indentation indicator — see G46 for
+    the pinned message format.
+    """
+    if not value:
         return
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return
+
+    # Indent-indicator block-scalar headers raise unconditionally so the
+    # parse-time outcome bucket (G46) does not depend on whether the
+    # caller passed a findings list.
+    if _is_indent_indicator_header(value):
+        _raise_unsupported("indent-indicator-block-scalar", "8.1.1")
+
+    if findings is None:
         return
 
     # Lazy import — loaded after all modules are fully initialised, which
@@ -227,31 +330,14 @@ def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> Non
                     f"value becomes null) — {advice}"
                 )
     elif ch in ind["block_scalar"]:
-        # Distinguish valid YAML 1.2 headers with indentation indicators
-        # (which this parser does not support) from truly invalid text.
-        rest = value[1:]
-        is_unsupported_header = False
-        if len(rest) == 1 and rest.isdigit() and rest != "0":
-            is_unsupported_header = True
-        elif len(rest) == 2:
-            c1, c2 = rest[0], rest[1]
-            is_unsupported_header = (
-                (c1.isdigit() and c1 != "0" and c2 in "-+")
-                or (c1 in "-+" and c2.isdigit() and c2 != "0")
-            )
-        if is_unsupported_header:
-            findings.append(
-                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-                f"'{ch}' (strict parsers interpret this as a block scalar "
-                "header; this parser does not support indentation indicators, "
-                f"so the value will be misparsed); {advice}"
-            )
-        else:
-            findings.append(
-                f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
-                f"'{ch}' followed by text (invalid block scalar header) — "
-                f"strict parsers will reject this; {advice}"
-            )
+        # Indent-indicator headers (``|2``, ``>+3``, …) raise earlier in
+        # this function; reaching here means ``|abc`` / ``>foo`` style —
+        # text in the header position that strict parsers reject.
+        findings.append(
+            f"{LEVEL_FAIL}: [spec] '{key}': unquoted value starts with "
+            f"'{ch}' followed by text (invalid block scalar header) — "
+            f"strict parsers will reject this; {advice}"
+        )
     elif ch in ind["tag"]:
         findings.append(
             f"{LEVEL_WARN}: [spec] '{key}': unquoted value starts with "
@@ -312,6 +398,7 @@ def _parse_mapping(lines: list[tuple[int, str]], start: int, base_indent: int, f
             continue
 
         key = content[:colon].strip()
+        _check_mapping_key_construct(key)
         qualified_key = f"{parent_key}.{key}" if parent_key else key
         after = content[colon + 1 :].strip()
 
@@ -374,6 +461,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
 
         # Dict item inside a list (``- key: value`` with possible continuations).
         first_key = item_text[:colon_pos].strip()
+        _check_mapping_key_construct(first_key)
         first_val = item_text[colon_pos + 1 :].strip()
         # Build indexed prefix for finding keys: parent_key[index].field
         idx_prefix = f"{parent_key}[{len(result)}]" if parent_key else f"[{len(result)}]"
@@ -414,6 +502,7 @@ def _parse_list(lines: list[tuple[int, str]], start: int, base_indent: int, find
                 break
 
             sub_key = cc[:sub_colon].strip()
+            _check_mapping_key_construct(sub_key)
             sub_val = cc[sub_colon + 1 :].strip()
 
             if _is_block_scalar_header(sub_val):
