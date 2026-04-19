@@ -231,25 +231,40 @@ class ValidateProseYamlTests(unittest.TestCase):
         findings = prose_yaml.validate_prose_yaml("doc.md", text)
         self.assertEqual(findings, [])
 
-    def test_unterminated_frontmatter_skips_prose_scan(self) -> None:
-        # Malformed frontmatter (no closing ``---``) must not cause
-        # fences inside that block to be validated as body content —
-        # the file's frontmatter parse error is surfaced separately by
-        # the main validator.
+    def test_unterminated_opener_still_scans_body_fences(self) -> None:
+        # A file that opens with ``---`` but has no closing delimiter
+        # is ambiguous — it could be malformed frontmatter, or a
+        # thematic break at line 1.  The prose check stays
+        # conservative and scans the full text so body-level divergent
+        # fences still reach the validator.  ``load_frontmatter``
+        # surfaces the parse error separately when intent was
+        # frontmatter.
         text = (
             "---\n"
-            "name: demo\n"
-            "description: |\n"
-            "  ```yaml\n"
-            "  bad: *alias\n"
-            "  ```\n"
-            "# No closing delimiter below this line.\n"
+            "some prose without a closing delimiter\n"
             "```yaml\n"
-            "also: *alias\n"
+            "bad: *alias\n"
             "```\n"
         )
         findings = prose_yaml.validate_prose_yaml("doc.md", text)
-        self.assertEqual(findings, [])
+        self.assertEqual(len(findings), 1)
+
+    def test_prose_block_between_dashes_not_stripped(self) -> None:
+        # A doc that starts with a thematic break ``---`` followed by
+        # plain prose and another ``---`` must not have that leading
+        # block silently stripped — ``parse_yaml_subset`` returns
+        # ``{}`` for prose, but an empty parsed mapping is not enough
+        # evidence that the block is real frontmatter.
+        text = (
+            "---\n"
+            "Just a paragraph, not YAML.\n"
+            "---\n"
+            "```yaml\n"
+            "bad: *alias\n"
+            "```\n"
+        )
+        findings = prose_yaml.validate_prose_yaml("doc.md", text)
+        self.assertEqual(len(findings), 1)
 
     def test_empty_frontmatter_is_stripped(self) -> None:
         # A ``---\\n---\\n`` block is still frontmatter for scope

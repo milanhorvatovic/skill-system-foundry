@@ -48,24 +48,28 @@ def _strip_frontmatter(markdown_text: str) -> str:
     if frontmatter_raw is None:
         return markdown_text
     if body_raw is None:
-        # Opener present but no closing delimiter — the frontmatter
-        # block is malformed.  Skip prose scanning entirely rather
-        # than letting fences inside that block leak into body
-        # validation.  The frontmatter parse error is surfaced
-        # separately by ``load_frontmatter``.
-        return ""
+        # Opener present but no closing delimiter.  The block is
+        # ambiguous — malformed frontmatter vs a thematic break at
+        # line 1 of a file that happens not to have another ``---``.
+        # Stay conservative and scan the original text so body fences
+        # still reach the validator; ``load_frontmatter`` surfaces the
+        # parse error separately when frontmatter was in fact intended.
+        return markdown_text
+    frontmatter_str = frontmatter_raw.strip()
+    if frontmatter_str == "":
+        # Explicitly-empty frontmatter (``---\\n---\\n``) is still
+        # frontmatter for scope purposes — strip it.
+        return body_raw
     try:
-        parsed = parse_yaml_subset(frontmatter_raw.strip(), [])
+        parsed = parse_yaml_subset(frontmatter_str, [])
     except (ValueError, KeyError):
-        # Content between the two ``---`` lines is not valid YAML —
-        # most likely a thematic break with prose in between rather
-        # than real frontmatter.  Leave the source untouched.
         return markdown_text
-    if not isinstance(parsed, dict):
+    # ``parse_yaml_subset`` returns ``{}`` for prose-like content too
+    # (lines with no ``key:`` pairs), so an empty dict is not enough
+    # evidence that the block is frontmatter.  Require at least one
+    # parsed key before stripping.
+    if not isinstance(parsed, dict) or not parsed:
         return markdown_text
-    # Empty frontmatter (``---\\n---\\n``) parses to ``{}`` and is
-    # still a frontmatter block for scope purposes — strip it so its
-    # absence / presence does not change prose-scan results.
     return body_raw
 
 
