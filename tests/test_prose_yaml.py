@@ -223,6 +223,21 @@ class ValidateProseYamlTests(unittest.TestCase):
             "synthetic structural failure", findings[0]["message"]
         )
 
+    def test_thematic_break_is_not_stripped_as_frontmatter(self) -> None:
+        # A Markdown thematic break (``---`` at column 0) at the top of
+        # a file must not be misread as frontmatter — otherwise an
+        # arbitrary chunk of the body would silently skip validation.
+        text = (
+            "---\n"
+            "\n"
+            "After the break, a divergent fence:\n"
+            "---\n"
+            "```yaml\nbad: *alias\n```\n"
+        )
+        findings = prose_yaml.validate_prose_yaml("doc.md", text)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["block_ordinal"], 1)
+
     def test_frontmatter_yaml_fence_not_scanned(self) -> None:
         # A ```yaml fence embedded inside a folded description in the
         # frontmatter must not be validated as body content.

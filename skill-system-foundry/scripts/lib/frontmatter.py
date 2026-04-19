@@ -3,6 +3,26 @@
 from .yaml_parser import parse_yaml_subset
 
 
+def split_frontmatter(content: str) -> tuple[str | None, str]:
+    """Split *content* into ``(frontmatter_text, body_text)``.
+
+    Returns ``(None, content)`` when the text does not start with the
+    ``---`` open marker.  When the open marker is present but the
+    closing marker is missing, returns ``(content[3:], "")`` so the
+    caller can surface the malformed block as a structured finding.
+
+    This is the one true frontmatter splitter: ``load_frontmatter`` and
+    the prose-YAML check both use it so delimiter rules cannot drift.
+    """
+    if not content.startswith("---"):
+        return None, content
+    try:
+        end = content.index("---", 3)
+    except ValueError:
+        return content[3:], ""
+    return content[3:end], content[end + 3:]
+
+
 def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     """Extract YAML frontmatter from a SKILL.md file.
 
@@ -16,16 +36,18 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
-    if not content.startswith("---"):
+    frontmatter_raw, body_raw = split_frontmatter(content)
+    if frontmatter_raw is None:
         return None, content, []
+    if body_raw == "":
+        return (
+            {"_parse_error": "No closing '---' delimiter in frontmatter"},
+            frontmatter_raw,
+            [],
+        )
 
-    try:
-        end = content.index("---", 3)
-    except ValueError:
-        return {"_parse_error": "No closing '---' delimiter in frontmatter"}, content[3:], []
-
-    frontmatter_str = content[3:end].strip()
-    body = content[end + 3 :].strip()
+    frontmatter_str = frontmatter_raw.strip()
+    body = body_raw.strip()
 
     try:
         findings: list[str] = []

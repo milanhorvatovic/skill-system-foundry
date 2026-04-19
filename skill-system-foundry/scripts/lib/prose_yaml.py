@@ -22,6 +22,7 @@ from .constants import (
     LEVEL_FAIL, LEVEL_INFO, LEVEL_WARN,
     PROSE_YAML_IN_SCOPE_GLOBS, PROSE_YAML_OPT_OUT_MARKER,
 )
+from .frontmatter import split_frontmatter
 from .reporting import parse_finding_string, to_posix
 from .yaml_parser import parse_yaml_subset
 
@@ -34,21 +35,32 @@ def _strip_frontmatter(markdown_text: str) -> str:
 
     The prose-YAML check promises that frontmatter is not scanned —
     without this, a ``yaml`` fence embedded in a folded description
-    would be validated as if it were body content.  We only recognise
-    the canonical ``---``-on-its-own-line form that ``load_frontmatter``
-    already handles elsewhere.
+    would be validated as if it were body content.
+
+    Delegates to :func:`lib.frontmatter.split_frontmatter` so delimiter
+    rules stay in sync with ``load_frontmatter``.  To avoid misreading
+    a Markdown thematic break (``---`` at column 0) as frontmatter,
+    the candidate block is validated by ``parse_yaml_subset`` — only
+    content that parses as a YAML mapping is treated as frontmatter
+    and stripped.
     """
-    if not markdown_text.startswith("---"):
+    frontmatter_raw, body_raw = split_frontmatter(markdown_text)
+    if frontmatter_raw is None:
         return markdown_text
-    lines = markdown_text.split("\n")
-    if not lines or lines[0].strip() != "---":
+    if body_raw == "":
+        # No closing delimiter — leave the text untouched so existing
+        # error handling paths (unterminated fences, frontmatter
+        # _parse_error) still fire on the original content.
         return markdown_text
-    for idx in range(1, len(lines)):
-        if lines[idx].strip() == "---":
-            return "\n".join(lines[idx + 1:])
-    # No closing fence — be conservative and return the original text
-    # so existing error handling (unterminated fences) still fires.
-    return markdown_text
+    try:
+        parsed = parse_yaml_subset(frontmatter_raw.strip(), [])
+    except (ValueError, KeyError):
+        return markdown_text
+    if not isinstance(parsed, dict) or not parsed:
+        # A thematic break produces empty/non-mapping content between
+        # the two ``---`` lines; refuse to strip in that case.
+        return markdown_text
+    return body_raw
 
 
 def extract_yaml_fences(markdown_text: str) -> list[dict]:
