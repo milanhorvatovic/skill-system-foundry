@@ -23,6 +23,7 @@ Skill System Foundry maintains these principles as a unified reference because t
 
 ## Table of Contents
 
+- [Line wrapping](#line-wrapping)
 - [Conciseness](#conciseness)
 - [Writing Descriptions](#writing-descriptions)
 - [Degrees of Freedom](#degrees-of-freedom)
@@ -34,6 +35,12 @@ Skill System Foundry maintains these principles as a unified reference because t
 - [Evaluation and Iteration](#evaluation-and-iteration)
 
 ---
+
+## Line wrapping
+
+Do not hard-wrap prose to a fixed column width. One paragraph is one logical line; the renderer (GitHub, the IDE preview, or the consumer's terminal) handles wrapping. Hard-wrapped paragraphs produce noisy diffs when a single word changes mid-paragraph and force every editor to honour the same column limit.
+
+Lists, tables, code fences, and frontmatter values keep their natural line structure (one item per line, one fence per line, etc.). The rule applies to flowing prose only.
 
 ## Conciseness
 

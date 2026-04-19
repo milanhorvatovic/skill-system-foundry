@@ -14,6 +14,7 @@ Review changes as a **documentation quality reviewer**, ensuring all Markdown fi
 - **Actionable over explanatory** — prefer decision checklists, quick references, and step-by-step workflows over narrative prose
 - **Don't repeat yourself** — each piece of knowledge should have a single authoritative location. If the same concept appears in multiple files, one file should own the definition and others should reference it. Do not copy content between `SKILL.md`, reference files, templates, or `CONTRIBUTING.md`
 - **Simplicity** — prefer the simplest phrasing that conveys the full meaning. Avoid nested qualifications, double negatives, and multi-clause sentences when a direct statement works
+- **Do not hard-wrap prose** — one paragraph is one logical line; let the renderer handle wrapping. Hard-wrapping produces noisy diffs when a single word changes mid-paragraph and forces every editor to honour the same column limit. Lists, tables, code fences, and frontmatter values keep their natural line structure (one item per line)
 
 ## Description Quality
 
@@ -86,6 +87,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 - Missing table of contents in files over 100 lines
 - Placeholder markers removed or overwritten in template files
 - Multi-line `description` without folded block scalar (`>`) or unquoted value containing special characters (`:`, `#`, `{`, `}`)
+- Hard-wrapped prose lines instead of one-paragraph-per-line — defer wrapping to the renderer
 
 ---
 

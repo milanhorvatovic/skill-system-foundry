@@ -42,6 +42,12 @@ Do not explain general programming concepts, standard library APIs, or well-know
 
 Each piece of knowledge has a single authoritative location. If the same concept appears in multiple files, one file owns the definition and others reference it. Do not copy content between `SKILL.md`, reference files, templates, or `CONTRIBUTING.md`.
 
+### Line Wrapping
+
+Do not hard-wrap prose lines to a fixed width. One paragraph is one logical line — let the renderer (GitHub, the IDE preview, or the consumer's terminal) handle wrapping. Hard-wrapped paragraphs produce noisy diffs when a single word changes mid-paragraph and force every editor to honour the same column limit.
+
+Lists, tables, code fences, and frontmatter values keep their natural line structure (one item per line, one fence per line, etc.). Wrapping rules apply to flowing prose only.
+
 ## Frontmatter Rules
 
 ### Required Fields
@@ -155,3 +161,4 @@ When creating or editing any Markdown file, verify:
 - Unquoted value containing special characters (`:`, `#`, `{`, `}`)
 - Missing table of contents in files over 100 lines
 - Placeholder markers removed from templates
+- Hard-wrapped prose lines instead of one-paragraph-per-line
