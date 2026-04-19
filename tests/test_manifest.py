@@ -26,7 +26,9 @@ from lib.manifest import (
     scaffold_empty_manifest,
     update_manifest_for_skill,
     update_manifest_for_role,
+    has_emit_corruption,
 )
+from lib.manifest import _collect_emit_findings  # internal helper exercised in tests
 
 
 SAMPLE_MANIFEST = """\
@@ -1236,6 +1238,76 @@ class UpdateManifestFindingsTests(unittest.TestCase):
                 f.write(SAMPLE_MANIFEST)
             _, _, _, findings = update_manifest_for_skill(path, "added")
         self.assertEqual(findings, [])
+
+
+class EmitFindingsShapeValidationTests(unittest.TestCase):
+    """``_collect_emit_findings`` flags manifest-shape violations as emit corruption."""
+
+    def test_clean_manifest_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            findings = _collect_emit_findings(path)
+        self.assertEqual(findings, [])
+
+    def test_skills_as_scalar_returns_emit_corruption(self) -> None:
+        """A post-write manifest where ``skills`` is a scalar surfaces FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills: scalar-not-a-mapping\nroles:\n")
+            findings = _collect_emit_findings(path)
+        self.assertTrue(has_emit_corruption(findings))
+        self.assertTrue(any("'skills'" in f for f in findings))
+
+    def test_role_group_as_scalar_returns_emit_corruption(self) -> None:
+        """A role group that is a scalar instead of a list surfaces FAIL."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "roles:\n"
+                    "  group: scalar-not-a-list\n"
+                )
+            findings = _collect_emit_findings(path)
+        self.assertTrue(has_emit_corruption(findings))
+
+    def test_pre_existing_divergence_does_not_signal_emit_corruption(self) -> None:
+        """Plain-scalar findings on a parseable manifest are not emit corruption."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            findings = _collect_emit_findings(path)
+        self.assertFalse(has_emit_corruption(findings))
+        self.assertTrue(any("': '" in f for f in findings))
+
+
+class HasEmitCorruptionTests(unittest.TestCase):
+    """``has_emit_corruption`` distinguishes emit failure from divergences."""
+
+    def test_empty_findings_returns_false(self) -> None:
+        self.assertFalse(has_emit_corruption([]))
+
+    def test_only_plain_scalar_findings_returns_false(self) -> None:
+        findings = ["FAIL: [spec] 'note': unquoted value … contains ': '"]
+        self.assertFalse(has_emit_corruption(findings))
+
+    def test_emit_marker_returns_true(self) -> None:
+        findings = [
+            "FAIL: manifest emit produced unparseable YAML: "
+            "Failed to parse /tmp/m.yaml: 'skills' must be a mapping"
+        ]
+        self.assertTrue(has_emit_corruption(findings))
 
 
 if __name__ == "__main__":

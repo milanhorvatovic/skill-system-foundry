@@ -2197,6 +2197,190 @@ class ScaffoldFrontmatterReparseTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["warnings"], sample)
 
+    def test_role_template_substitution_produces_no_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                [
+                    "role", "demo-group", "demo-role",
+                    "--json", "--root", tmpdir,
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertNotIn("warnings", data)
+
+    def test_role_divergent_frontmatter_surfaced_in_json(self) -> None:
+        """scaffold_role surfaces frontmatter findings parallel to skill/capability."""
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample = ["FAIL: [spec] 'name': unquoted value … contains ': '"]
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_role
+                result = scaffold_role(
+                    "demo-group", "demo-role", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["warnings"], sample)
+
+    def test_role_divergent_frontmatter_surfaced_in_text_mode(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sample = ["FAIL: [spec] 'name': unquoted value … contains ': '"]
+            buf = io.StringIO()
+            with (
+                mock.patch(
+                    "scaffold._collect_frontmatter_findings",
+                    return_value=sample,
+                ),
+                redirect_stdout(buf),
+            ):
+                from scaffold import scaffold_role
+                scaffold_role(
+                    "demo-group", "demo-role", root=tmpdir, json_output=False,
+                )
+            self.assertIn("FAIL:", buf.getvalue())
+            self.assertIn("': '", buf.getvalue())
+
+
+class ScaffoldEmitCorruptionTests(unittest.TestCase):
+    """Scaffold treats manifest emit corruption as a hard failure."""
+
+    def test_skill_emit_corruption_returns_success_false_in_json(self) -> None:
+        from unittest import mock
+        emit_finding = (
+            "FAIL: manifest emit produced unparseable YAML: "
+            "Failed to parse /tmp/m.yaml: 'skills' must be a mapping"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold.update_manifest_for_skill",
+                return_value=(
+                    False,
+                    "Manifest update wrote an invalid manifest at /tmp/m.yaml",
+                    False,
+                    [emit_finding],
+                ),
+            ):
+                from scaffold import scaffold_skill
+                result = scaffold_skill(
+                    "demo-skill",
+                    root=tmpdir,
+                    json_output=True,
+                    update_manifest=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn(emit_finding, result["warnings"])
+
+    def test_skill_emit_corruption_exits_one_in_text_mode(self) -> None:
+        from unittest import mock
+        emit_finding = (
+            "FAIL: manifest emit produced unparseable YAML: "
+            "Failed to parse /tmp/m.yaml: 'skills' must be a mapping"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold.update_manifest_for_skill",
+                return_value=(
+                    False,
+                    "Manifest update wrote an invalid manifest at /tmp/m.yaml",
+                    False,
+                    [emit_finding],
+                ),
+            ):
+                from scaffold import scaffold_skill
+                with self.assertRaises(SystemExit) as ctx:
+                    scaffold_skill(
+                        "demo-skill",
+                        root=tmpdir,
+                        json_output=False,
+                        update_manifest=True,
+                    )
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_role_emit_corruption_returns_success_false_in_json(self) -> None:
+        from unittest import mock
+        emit_finding = (
+            "FAIL: manifest emit produced unparseable YAML: "
+            "Failed to parse /tmp/m.yaml: 'roles' must be a mapping"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold.update_manifest_for_role",
+                return_value=(
+                    False,
+                    "Manifest update wrote an invalid manifest at /tmp/m.yaml",
+                    False,
+                    [emit_finding],
+                ),
+            ):
+                from scaffold import scaffold_role
+                result = scaffold_role(
+                    "demo-group", "demo-role",
+                    root=tmpdir,
+                    json_output=True,
+                    update_manifest=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertIn(emit_finding, result["warnings"])
+
+    def test_role_emit_corruption_exits_one_in_text_mode(self) -> None:
+        from unittest import mock
+        emit_finding = (
+            "FAIL: manifest emit produced unparseable YAML: "
+            "Failed to parse /tmp/m.yaml: 'roles' must be a mapping"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold.update_manifest_for_role",
+                return_value=(
+                    False,
+                    "Manifest update wrote an invalid manifest at /tmp/m.yaml",
+                    False,
+                    [emit_finding],
+                ),
+            ):
+                from scaffold import scaffold_role
+                with self.assertRaises(SystemExit) as ctx:
+                    scaffold_role(
+                        "demo-group", "demo-role",
+                        root=tmpdir,
+                        json_output=False,
+                        update_manifest=True,
+                    )
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_name_conflict_warning_remains_warn_level(self) -> None:
+        """Pre-existing name conflict still surfaces as WARN, not FAIL."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "skills:\n"
+                    "  demo-skill:\n"
+                    "    canonical: skills/demo-skill/SKILL.md\n"
+                    "    type: standalone\n"
+                )
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                from scaffold import scaffold_skill
+                scaffold_skill(
+                    "demo-skill", root=tmpdir,
+                    json_output=False, update_manifest=True,
+                )
+            output = buf.getvalue()
+        self.assertIn("WARN:", output)
+        self.assertNotIn("FAIL:", output)
+
 
 class ScaffoldBadNameReparseTests(unittest.TestCase):
     """Bypassing validate_name, the re-parse catches literal divergent names.

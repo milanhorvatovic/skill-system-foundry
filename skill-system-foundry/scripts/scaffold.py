@@ -45,6 +45,7 @@ from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
     update_manifest_for_skill,
     update_manifest_for_role,
+    has_emit_corruption,
 )
 from lib.constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
@@ -310,6 +311,7 @@ def scaffold_skill(
     manifest_updated = False
     manifest_warning: str | None = None
     manifest_findings: list[str] = []
+    manifest_emit_corrupted = False
 
     if update_manifest:
         (
@@ -320,12 +322,14 @@ def scaffold_skill(
         ) = update_manifest_for_skill(
             manifest_path, name, router=router,
         )
+        manifest_emit_corrupted = has_emit_corruption(manifest_findings)
         if created_manifest and not json_output:
             print(f"  Created: {manifest_path}")
         if created_manifest:
             created_paths.append(manifest_path)
         if manifest_warning and not json_output:
-            print(f"  {LEVEL_WARN}: {manifest_warning}")
+            level = LEVEL_FAIL if manifest_emit_corrupted else LEVEL_WARN
+            print(f"  {level}: {manifest_warning}")
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
         if manifest_findings and not json_output:
@@ -337,7 +341,7 @@ def scaffold_skill(
             "tool": "scaffold",
             "component": "skill",
             "name": name,
-            "success": True,
+            "success": not manifest_emit_corrupted,
             "path": os.path.abspath(skill_path),
             "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
@@ -363,6 +367,8 @@ def scaffold_skill(
         print(f"  Next: edit {skill_md_path} and update {manifest_path}")
     else:
         print(f"  Next: edit {skill_md_path}")
+    if manifest_emit_corrupted:
+        sys.exit(1)
     return None
 
 
@@ -626,10 +632,17 @@ def scaffold_role(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Frontmatter re-parse of the written role file ---
+    frontmatter_findings = _collect_frontmatter_findings(role_path)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
+
     # --- Manifest update ---
     manifest_updated = False
     manifest_warning: str | None = None
     manifest_findings: list[str] = []
+    manifest_emit_corrupted = False
 
     if update_manifest:
         (
@@ -640,12 +653,14 @@ def scaffold_role(
         ) = update_manifest_for_role(
             manifest_path, group, name,
         )
+        manifest_emit_corrupted = has_emit_corruption(manifest_findings)
         if created_manifest and not json_output:
             print(f"  Created: {manifest_path}")
         if created_manifest:
             created_paths.append(manifest_path)
         if manifest_warning and not json_output:
-            print(f"  {LEVEL_WARN}: {manifest_warning}")
+            level = LEVEL_FAIL if manifest_emit_corrupted else LEVEL_WARN
+            print(f"  {level}: {manifest_warning}")
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
         if manifest_findings and not json_output:
@@ -658,13 +673,15 @@ def scaffold_role(
             "component": "role",
             "name": name,
             "group": group,
-            "success": True,
+            "success": not manifest_emit_corrupted,
             "path": os.path.abspath(role_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
-        deduped = _dedupe_preserving_order(list(manifest_findings))
-        if deduped:
-            result_dict["warnings"] = deduped
+        combined_warnings = _dedupe_preserving_order(
+            list(frontmatter_findings) + list(manifest_findings)
+        )
+        if combined_warnings:
+            result_dict["warnings"] = combined_warnings
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
@@ -675,6 +692,8 @@ def scaffold_role(
     print(f"  Next: edit {role_path}")
     if not update_manifest:
         print(f"  Next: update {manifest_path}")
+    if manifest_emit_corrupted:
+        sys.exit(1)
     return None
 
 
