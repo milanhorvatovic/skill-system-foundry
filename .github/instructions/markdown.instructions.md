@@ -99,6 +99,8 @@ When reviewing Markdown that contains ```` ```yaml ```` fenced code blocks insid
 - Confirm the fence shape matches: three backticks, lowercase `yaml` token, no whitespace between backticks and `yaml`, opener at byte offset 0.
 - Avoid embedding column-0 ```` ``` ```` lines inside YAML block scalars — the extractor terminates the fence at the first column-0 ```` ``` ```` per CommonMark.
 
+For the parser's supported surface and the three pinned grammar-gap rejections, see `skill-system-foundry/references/yaml-support.md`.
+
 ---
 
 **Remember:** Review as a documentation quality reviewer. Prioritize conciseness, structural clarity, and consistency.

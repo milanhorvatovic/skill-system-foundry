@@ -155,6 +155,8 @@ The `--allow-nested-references` flag is needed because this meta-skill intention
 | `--allow-nested-references` | Suppresses the nested-reference depth warning. Required for skills that intentionally cross-reference their own reference files. | Any meta-skill or template-rich skill where reference graphs span more than one level. |
 | `--verbose` | Prints per-file progress messages for the prose check (`Checking prose YAML: <path> (<N> fences)`) and shows passing checks otherwise. Silent under `--json`. | Local debugging / triage. |
 
+In addition, `python scripts/yaml_conformance_report.py` runs the YAML 1.2.2 conformance corpus and emits the same `yaml_conformance.corpus` JSON slot for tooling consumers; exit 0 on all-pass, non-zero on any failure.
+
 ### Linting Shell Scripts
 
 ```bash
