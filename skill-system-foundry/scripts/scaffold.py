@@ -39,11 +39,13 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
+from lib.frontmatter import load_frontmatter
 from lib.reporting import to_json_output
 from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
     update_manifest_for_skill,
     update_manifest_for_role,
+    has_emit_corruption,
 )
 from lib.constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
@@ -101,6 +103,68 @@ def validate_name(name: str, json_output: bool = False) -> bool:
                 message = e
             print(f"{level}: {message}")
     return not any(e.startswith(LEVEL_FAIL) for e in errors)
+
+
+def _dedupe_preserving_order(items: list[str]) -> list[str]:
+    """Return *items* with duplicates removed, keeping first-seen order.
+
+    Read-time and emit-time manifest passes surface the same divergence
+    when an existing divergence survives the append; deduping here
+    keeps CI logs and JSON output clean without discarding distinct
+    findings.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+# Sentinel used by frontmatter parse-error findings so scaffold can
+# distinguish a structural parse failure (hard failure: success=False,
+# exit 1) from plain-scalar divergences (warnings only).
+_FRONTMATTER_PARSE_ERROR_MARKER = "Invalid frontmatter in"
+
+
+def _has_frontmatter_parse_error(findings: list[str]) -> bool:
+    """Return True when *findings* contains a frontmatter parse-error marker.
+
+    Distinguishes structural frontmatter parse failures (surfaced via
+    ``_FRONTMATTER_PARSE_ERROR_MARKER``) from plain-scalar divergences
+    that may also carry a ``FAIL`` level — only the former should
+    promote scaffold to a hard failure.
+    """
+    marker = f"{LEVEL_FAIL}: {_FRONTMATTER_PARSE_ERROR_MARKER}"
+    return any(f.startswith(marker) for f in findings)
+
+
+def _collect_frontmatter_findings(path: str) -> list[str]:
+    """Return frontmatter findings from the written entry file.
+
+    Re-parses the rendered frontmatter so post-write divergences surface
+    even when they would otherwise bypass validate_name's gate (template
+    changes, programmatic callers, etc.).  Missing files and files
+    without frontmatter yield an empty list.  Frontmatter structural
+    parse failures are surfaced as a FAIL finding tagged with
+    ``_FRONTMATTER_PARSE_ERROR_MARKER`` so callers can promote them to
+    a hard failure via :func:`_has_frontmatter_parse_error`.
+    """
+    if not os.path.isfile(path):
+        return []
+    frontmatter, _body, findings = load_frontmatter(path)
+    parse_error = (
+        frontmatter.get("_parse_error")
+        if isinstance(frontmatter, dict)
+        else None
+    )
+    if parse_error:
+        return [
+            f"{LEVEL_FAIL}: {_FRONTMATTER_PARSE_ERROR_MARKER} "
+            f"{path}: {parse_error}"
+        ]
+    return findings
 
 
 def read_template(template_name: str) -> str:
@@ -258,33 +322,64 @@ def scaffold_skill(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Frontmatter re-parse of the written entry file ---
+    skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
+    frontmatter_findings = _collect_frontmatter_findings(skill_md_full_path)
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
+
     # --- Manifest update ---
     manifest_updated = False
     manifest_warning: str | None = None
+    manifest_findings: list[str] = []
+    manifest_emit_corrupted = False
 
     if update_manifest:
-        manifest_updated, manifest_warning, created_manifest = update_manifest_for_skill(
+        (
+            manifest_updated,
+            manifest_warning,
+            created_manifest,
+            manifest_findings,
+        ) = update_manifest_for_skill(
             manifest_path, name, router=router,
         )
+        manifest_emit_corrupted = has_emit_corruption(manifest_findings)
         if created_manifest and not json_output:
             print(f"  Created: {manifest_path}")
         if created_manifest:
             created_paths.append(manifest_path)
         if manifest_warning and not json_output:
-            print(f"  {LEVEL_WARN}: {manifest_warning}")
+            level = LEVEL_FAIL if manifest_emit_corrupted else LEVEL_WARN
+            print(f"  {level}: {manifest_warning}")
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
+        if manifest_findings and not json_output:
+            for f in _dedupe_preserving_order(list(manifest_findings)):
+                print(f"  {f}")
+
+    hard_failure = manifest_emit_corrupted or frontmatter_parse_error
 
     if json_output:
         result_dict: dict = {
             "tool": "scaffold",
             "component": "skill",
             "name": name,
-            "success": True,
+            "success": not hard_failure,
             "path": os.path.abspath(skill_path),
             "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
         }
+        # All plain-scalar divergence findings merge into a single
+        # warnings array so consumers see one list with level prefixes
+        # intact (FAIL:/WARN:/INFO:) — matches the errors-array
+        # convention in validate_skill / audit_skill_system JSON output.
+        combined_warnings = _dedupe_preserving_order(
+            list(frontmatter_findings) + list(manifest_findings)
+        )
+        if combined_warnings:
+            result_dict["warnings"] = combined_warnings
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
@@ -297,6 +392,8 @@ def scaffold_skill(
         print(f"  Next: edit {skill_md_path} and update {manifest_path}")
     else:
         print(f"  Next: edit {skill_md_path}")
+    if hard_failure:
+        sys.exit(1)
     return None
 
 
@@ -413,6 +510,14 @@ def scaffold_capability(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Frontmatter re-parse of the written entry file ---
+    cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
+    frontmatter_findings = _collect_frontmatter_findings(cap_md_full_path)
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
+
     # Capabilities are not added to the manifest directly — they
     # belong under their parent skill's ``capabilities:`` list.
     cap_manifest_msg = (
@@ -426,10 +531,12 @@ def scaffold_capability(
             "component": "capability",
             "name": name,
             "domain": domain,
-            "success": True,
+            "success": not frontmatter_parse_error,
             "path": os.path.abspath(cap_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
+        if frontmatter_findings:
+            result_dict["warnings"] = list(frontmatter_findings)
         if update_manifest:
             result_dict["manifest_updated"] = False
             result_dict["manifest_warning"] = cap_manifest_msg
@@ -443,6 +550,8 @@ def scaffold_capability(
         print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
     else:
         print(f"  Next: update {manifest_path}")
+    if frontmatter_parse_error:
+        sys.exit(1)
     return None
 
 
@@ -551,22 +660,43 @@ def scaffold_role(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
+    # --- Frontmatter re-parse of the written role file ---
+    frontmatter_findings = _collect_frontmatter_findings(role_path)
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
+
     # --- Manifest update ---
     manifest_updated = False
     manifest_warning: str | None = None
+    manifest_findings: list[str] = []
+    manifest_emit_corrupted = False
 
     if update_manifest:
-        manifest_updated, manifest_warning, created_manifest = update_manifest_for_role(
+        (
+            manifest_updated,
+            manifest_warning,
+            created_manifest,
+            manifest_findings,
+        ) = update_manifest_for_role(
             manifest_path, group, name,
         )
+        manifest_emit_corrupted = has_emit_corruption(manifest_findings)
         if created_manifest and not json_output:
             print(f"  Created: {manifest_path}")
         if created_manifest:
             created_paths.append(manifest_path)
         if manifest_warning and not json_output:
-            print(f"  {LEVEL_WARN}: {manifest_warning}")
+            level = LEVEL_FAIL if manifest_emit_corrupted else LEVEL_WARN
+            print(f"  {level}: {manifest_warning}")
         if manifest_updated and not json_output:
             print(f"  Updated: {manifest_path}")
+        if manifest_findings and not json_output:
+            for f in _dedupe_preserving_order(list(manifest_findings)):
+                print(f"  {f}")
+
+    hard_failure = manifest_emit_corrupted or frontmatter_parse_error
 
     if json_output:
         result_dict: dict = {
@@ -574,10 +704,15 @@ def scaffold_role(
             "component": "role",
             "name": name,
             "group": group,
-            "success": True,
+            "success": not hard_failure,
             "path": os.path.abspath(role_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
+        combined_warnings = _dedupe_preserving_order(
+            list(frontmatter_findings) + list(manifest_findings)
+        )
+        if combined_warnings:
+            result_dict["warnings"] = combined_warnings
         if update_manifest:
             result_dict["manifest_updated"] = manifest_updated
             if manifest_warning:
@@ -588,6 +723,8 @@ def scaffold_role(
     print(f"  Next: edit {role_path}")
     if not update_manifest:
         print(f"  Next: update {manifest_path}")
+    if hard_failure:
+        sys.exit(1)
     return None
 
 

@@ -1458,5 +1458,109 @@ class MainFunctionInProcessTests(unittest.TestCase):
             self.assertIn("===", output)
 
 
+class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
+    """``audit_skill_system --json`` surfaces manifest findings in the errors array."""
+
+    def test_divergent_manifest_appears_in_json_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "skills"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, "manifest.yaml"), "w", encoding="utf-8",
+            ) as f:
+                f.write(
+                    "skills:\n"
+                    "  demo:\n"
+                    "    canonical: skills/demo/SKILL.md\n"
+                    "    note: runs tasks: quickly\n"
+                )
+            proc = _run([tmpdir, "--json"], cwd=REPO_ROOT)
+            data = json.loads(proc.stdout)
+        # Schema preserved: no new top-level keys introduced.
+        self.assertEqual(
+            set(data.keys()),
+            {"tool", "path", "success", "counts", "summary", "errors", "version"},
+        )
+        manifest_fails = [
+            entry for entry in data["errors"].get("failures", [])
+            if "[spec] manifest.yaml" in entry and "': '" in entry
+        ]
+        self.assertEqual(len(manifest_fails), 1)
+
+
+class AuditManifestScalarFindingsTests(unittest.TestCase):
+    """``audit_skill_system`` surfaces manifest.yaml plain-scalar divergences."""
+
+    def _make_deployed_system(self, tmpdir: str, manifest_body: str) -> None:
+        skills_dir = os.path.join(tmpdir, "skills")
+        os.makedirs(skills_dir, exist_ok=True)
+        manifest_path = os.path.join(tmpdir, "manifest.yaml")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(manifest_body)
+
+    def test_divergent_manifest_surfaces_tagged_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deployed_system(
+                tmpdir,
+                "skills:\n"
+                "  demo:\n"
+                "    canonical: skills/demo/SKILL.md\n"
+                "    note: runs tasks: quickly\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [spec] manifest.yaml") and "': '" in e
+        ]
+        self.assertEqual(len(tagged), 1)
+
+    def test_clean_manifest_produces_no_scalar_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_deployed_system(
+                tmpdir,
+                "skills:\n"
+                "  demo:\n"
+                "    canonical: skills/demo/SKILL.md\n"
+                "    type: standalone\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        scalar = [e for e in errors if "[spec] manifest.yaml" in e]
+        self.assertEqual(scalar, [])
+
+
+class AuditFoundryConfigFindingsTests(unittest.TestCase):
+    """``audit_skill_system`` surfaces configuration.yaml findings for the foundry."""
+
+    def test_non_foundry_system_root_does_not_surface_findings(self) -> None:
+        """Arbitrary system roots never pull in configuration.yaml findings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            errors = audit_skill_system(tmpdir, verbose=False)
+        foundry_errors = [e for e in errors if "[foundry]" in e and "configuration.yaml" in e]
+        self.assertEqual(foundry_errors, [])
+
+    def test_foundry_system_root_clean_config_no_findings(self) -> None:
+        """The shipped foundry config is clean, so no findings surface today."""
+        foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
+        errors = audit_skill_system(foundry_path, verbose=False)
+        config_findings = [
+            e for e in errors
+            if "[foundry]" in e and "scripts/lib/configuration.yaml" in e
+        ]
+        self.assertEqual(config_findings, [])
+
+    def test_foundry_system_root_retags_patched_findings(self) -> None:
+        """When findings exist they surface with a ``[foundry]`` tag."""
+        foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
+        sample = ["FAIL: [spec] 'skill.name': unquoted value starts with '-' …"]
+        with mock.patch(
+            "lib.constants.get_config_findings", return_value=sample,
+        ):
+            errors = audit_skill_system(foundry_path, verbose=False)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [foundry] scripts/lib/configuration.yaml")
+        ]
+        self.assertEqual(len(tagged), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

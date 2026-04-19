@@ -47,6 +47,7 @@ from lib.constants import (
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    collect_foundry_config_findings,
 )
 
 
@@ -403,6 +404,11 @@ def validate_skill(
         return errors, passes
 
     errors.extend(scalar_findings)
+
+    # When validating the foundry itself, surface divergences detected
+    # during configuration.yaml load so the meta-skill's own config is
+    # held to the same standard as integrator skills.
+    errors.extend(collect_foundry_config_findings(skill_path))
 
     # Determine the skill root for reference resolution.
     # For regular skills, skill_path is the root (contains SKILL.md).

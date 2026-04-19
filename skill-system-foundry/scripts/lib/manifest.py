@@ -13,18 +13,44 @@ from .constants import (
     DIR_ROLES,
     FILE_SKILL_MD,
     EXT_MARKDOWN,
+    LEVEL_FAIL,
 )
+
+__all__ = [
+    "ManifestParseError",
+    "read_manifest",
+    "has_skill_conflict",
+    "has_role_conflict",
+    "append_skill_entry",
+    "append_role_entry",
+    "update_manifest_for_skill",
+    "update_manifest_for_role",
+    "scaffold_empty_manifest",
+    "has_emit_corruption",
+]
 
 
 class ManifestParseError(Exception):
     """Raised when a manifest file cannot be parsed."""
 
 
-def read_manifest(path: str) -> dict:
+# Sentinel used by append helpers to mark post-write structural
+# corruption so ``update_manifest_for_*`` can distinguish emit
+# failure from pre-existing plain-scalar divergences that also
+# carry a FAIL level.
+_EMIT_CORRUPTION_MARKER = "manifest emit produced unparseable YAML"
+
+
+def read_manifest(path: str, findings: list[str] | None = None) -> dict:
     """Read and parse a ``manifest.yaml`` file.
 
     Returns the parsed manifest as a dict.  Returns an empty dict
     when the file does not exist or is empty.
+
+    If *findings* is a list, plain-scalar divergence findings
+    produced by the YAML subset parser are appended to it on the
+    successful parse path.  Structural failures raise
+    ``ManifestParseError`` without touching *findings*.
 
     Raises:
         ManifestParseError: When the file exists but contains
@@ -36,6 +62,11 @@ def read_manifest(path: str) -> dict:
         text = f.read()
     if not text.strip():
         return {}
+    # When the caller asks for findings, collect them into a local list
+    # and only extend the caller-provided list on the success path so
+    # structural failures never mutate it.  When findings is None,
+    # avoid allocating and skip plain-scalar checks entirely.
+    local_findings: list[str] | None = [] if findings is not None else None
     try:
         # Collect all top-level content lines for validation
         top_level_lines = [
@@ -53,7 +84,7 @@ def read_manifest(path: str) -> dict:
                 f"Failed to parse {path}: top-level YAML must be a mapping"
             )
 
-        manifest = parse_yaml_subset(text)
+        manifest = parse_yaml_subset(text, local_findings)
         if not isinstance(manifest, dict):
             raise ManifestParseError(
                 f"Failed to parse {path}: top-level YAML must be a mapping"
@@ -84,11 +115,14 @@ def read_manifest(path: str) -> dict:
                         f"Failed to parse {path}: "
                         f"role group '{group_name}' must be a list"
                     )
-        return manifest
     except ValueError as exc:
         raise ManifestParseError(
             f"Failed to parse {path}: {exc}"
         ) from exc
+
+    if findings is not None and local_findings:
+        findings.extend(local_findings)
+    return manifest
 
 
 def has_skill_conflict(manifest: dict, name: str) -> bool:
@@ -118,12 +152,18 @@ def append_skill_entry(
     name: str,
     *,
     router: bool = False,
-) -> None:
+) -> list[str]:
     """Append a skill entry to the ``skills:`` section of *manifest_path*.
 
     Uses text-based insertion since the YAML parser is read-only.
     The entry is appended after the last non-blank line in the
     ``skills:`` block.
+
+    Returns a list of findings produced by re-validating the post-write
+    manifest with :func:`read_manifest`: plain-scalar divergences when
+    the emitted YAML is parseable, or a single FAIL entry tagged with
+    ``_EMIT_CORRUPTION_MARKER`` when the emit step produced
+    structurally invalid YAML or violated manifest-shape invariants.
     """
     with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
@@ -179,15 +219,23 @@ def append_skill_entry(
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(text)
 
+    return _collect_emit_findings(manifest_path)
+
 
 def append_role_entry(
     manifest_path: str,
     group: str,
     name: str,
-) -> None:
+) -> list[str]:
     """Append a role entry to the ``roles:`` section of *manifest_path*.
 
     Creates the group sub-key if it does not exist.
+
+    Returns a list of findings produced by re-validating the post-write
+    manifest with :func:`read_manifest`: plain-scalar divergences when
+    the emitted YAML is parseable, or a single FAIL entry tagged with
+    ``_EMIT_CORRUPTION_MARKER`` when the emit step produced
+    structurally invalid YAML or violated manifest-shape invariants.
     """
     with open(manifest_path, "r", encoding="utf-8") as f:
         text = f.read()
@@ -243,19 +291,50 @@ def append_role_entry(
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(text)
 
+    return _collect_emit_findings(manifest_path)
+
+
+def _collect_emit_findings(manifest_path: str) -> list[str]:
+    """Re-validate the post-write manifest for divergences and shape.
+
+    Uses :func:`read_manifest` so manifest-shape invariants (top-level
+    mapping, ``skills``/``roles`` mappings, role groups as lists) are
+    enforced consistently with read-time validation — covering
+    structural corruption that ``parse_yaml_subset`` alone would miss.
+    Plain-scalar divergence findings flow through ``read_manifest``'s
+    success path; structural failures surface as a single FAIL finding
+    tagged with ``_EMIT_CORRUPTION_MARKER`` so callers can distinguish
+    emit corruption from pre-existing divergences.
+    """
+    findings: list[str] = []
+    try:
+        read_manifest(manifest_path, findings)
+    except ManifestParseError as exc:
+        findings.append(f"{LEVEL_FAIL}: {_EMIT_CORRUPTION_MARKER}: {exc}")
+    return findings
+
 
 def update_manifest_for_skill(
     manifest_path: str,
     name: str,
     *,
     router: bool = False,
-) -> tuple[bool, str | None, bool]:
+) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a skill entry.
 
-    Returns ``(updated, warning, created_manifest)`` where *updated*
-    is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update, and
-    *created_manifest* is True when a new manifest file was scaffolded.
+    Returns ``(updated, warning, created_manifest, findings)`` where
+    *updated* is True only when the skill entry was appended and the
+    emitted manifest remained structurally valid (i.e., the manifest
+    is left in a usable state), *warning* is a human-readable message
+    when a conflict prevented the update or when the emit step
+    produced structurally invalid YAML, *created_manifest* is True
+    when a new manifest file was scaffolded, and *findings* is a list
+    of plain-scalar divergence findings produced while reading the
+    existing manifest plus any additional findings returned by
+    ``append_skill_entry`` after the write attempt.  When the emitted
+    manifest fails to parse, *updated* is False even though bytes were
+    written to disk, and *warning* describes the corruption so callers
+    that ignore *findings* still see the failure.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -267,34 +346,51 @@ def update_manifest_for_skill(
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
+    findings: list[str] = []
     try:
-        manifest = read_manifest(manifest_path)
+        manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
         warning = f"{exc} — skipping manifest update"
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
     if has_skill_conflict(manifest, name):
         warning = (
             f"Skill '{name}' already exists in "
             f"{manifest_path} — skipping manifest update"
         )
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
-    append_skill_entry(manifest_path, name, router=router)
-    return True, None, created_manifest
+    emit_findings = append_skill_entry(manifest_path, name, router=router)
+    findings.extend(emit_findings)
+    if has_emit_corruption(emit_findings):
+        warning = (
+            f"Manifest update wrote an invalid manifest at {manifest_path} "
+            f"— inspect findings and repair the file"
+        )
+        return False, warning, created_manifest, findings
+    return True, None, created_manifest, findings
 
 
 def update_manifest_for_role(
     manifest_path: str,
     group: str,
     name: str,
-) -> tuple[bool, str | None, bool]:
+) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a role entry.
 
-    Returns ``(updated, warning, created_manifest)`` where *updated*
-    is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update, and
-    *created_manifest* is True when a new manifest file was scaffolded.
+    Returns ``(updated, warning, created_manifest, findings)`` where
+    *updated* is True only when the role entry was appended and the
+    emitted manifest remained structurally valid (i.e., the manifest
+    is left in a usable state), *warning* is a human-readable message
+    when a conflict prevented the update or when the emit step
+    produced structurally invalid YAML, *created_manifest* is True
+    when a new manifest file was scaffolded, and *findings* is a list
+    of plain-scalar divergence findings produced while reading the
+    existing manifest plus any additional findings returned by
+    ``append_role_entry`` after the write attempt.  When the emitted
+    manifest fails to parse, *updated* is False even though bytes were
+    written to disk, and *warning* describes the corruption so callers
+    that ignore *findings* still see the failure.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -306,21 +402,43 @@ def update_manifest_for_role(
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
+    findings: list[str] = []
     try:
-        manifest = read_manifest(manifest_path)
+        manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
         warning = f"{exc} — skipping manifest update"
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
     if has_role_conflict(manifest, group, name):
         warning = (
             f"Role '{name}' in group '{group}' already exists in "
             f"{manifest_path} — skipping manifest update"
         )
-        return False, warning, created_manifest
+        return False, warning, created_manifest, findings
 
-    append_role_entry(manifest_path, group, name)
-    return True, None, created_manifest
+    emit_findings = append_role_entry(manifest_path, group, name)
+    findings.extend(emit_findings)
+    if has_emit_corruption(emit_findings):
+        warning = (
+            f"Manifest update wrote an invalid manifest at {manifest_path} "
+            f"— inspect findings and repair the file"
+        )
+        return False, warning, created_manifest, findings
+    return True, None, created_manifest, findings
+
+
+def has_emit_corruption(findings: list[str]) -> bool:
+    """Return True when *findings* contains an emit-corruption marker.
+
+    Distinguishes post-write structural corruption (emitted by
+    ``_collect_emit_findings`` via ``_EMIT_CORRUPTION_MARKER``) from
+    pre-existing plain-scalar divergences that may also carry a
+    ``FAIL`` level.  Exposed publicly so CLI entry points
+    (e.g., ``scaffold``) can promote emit corruption to a hard
+    failure without re-implementing the marker string.
+    """
+    marker = f"{LEVEL_FAIL}: {_EMIT_CORRUPTION_MARKER}"
+    return any(finding.startswith(marker) for finding in findings)
 
 
 def scaffold_empty_manifest(manifest_path: str) -> None:

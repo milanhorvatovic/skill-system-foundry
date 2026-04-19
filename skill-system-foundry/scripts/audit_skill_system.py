@@ -69,6 +69,7 @@ from lib.constants import (
     RE_SKILL_REF, RE_CAPABILITY_REF, MIN_ROLE_SKILLS,
     SEPARATOR_WIDTH,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    collect_foundry_config_findings,
 )
 
 
@@ -166,6 +167,10 @@ def audit_skill_system(
     """
     errors: list[str] = []
     system_root = os.path.abspath(system_root)
+
+    # When auditing the foundry itself, surface configuration.yaml
+    # divergences detected at constants.py import.
+    errors.extend(collect_foundry_config_findings(system_root))
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     has_skills_dir = os.path.isdir(skills_dir)
@@ -397,7 +402,16 @@ def audit_skill_system(
             if verbose:
                 print(f"  \u2713 {FILE_MANIFEST} exists")
             try:
-                manifest = parse_yaml_subset(read_file(manifest_path))
+                scalar_findings: list[str] = []
+                manifest = parse_yaml_subset(
+                    read_file(manifest_path), scalar_findings,
+                )
+                for finding in scalar_findings:
+                    level, _, detail = finding.partition(": ")
+                    detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
+                    errors.append(
+                        f"{level}: [spec] {FILE_MANIFEST} {detail}"
+                    )
                 if manifest and isinstance(manifest.get("skills"), dict):
                     for skill_name, skill_def in manifest["skills"].items():
                         skill_dir = os.path.join(

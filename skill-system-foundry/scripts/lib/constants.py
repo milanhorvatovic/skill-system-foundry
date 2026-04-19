@@ -75,9 +75,71 @@ PH_ROLE_TITLE = "<Role Name>"
 # Validation Rules (loaded from configuration.yaml)
 # ===================================================================
 
-_config_path = os.path.join(os.path.dirname(__file__), "configuration.yaml")
-with open(_config_path, "r", encoding="utf-8") as _f:
+CONFIG_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "configuration.yaml")
+)
+
+# Config is parsed twice by design: once at module load without findings
+# (to populate the constants PLAIN_SCALAR_INDICATORS depends on), and
+# lazily on first get_config_findings() call with findings enabled.
+# Doing both in a single load would trigger a circular import because
+# _check_plain_scalar imports PLAIN_SCALAR_INDICATORS from this module.
+with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
     _config = parse_yaml_subset(_f.read())
+
+_CONFIG_FINDINGS: list[str] | None = None
+
+
+def get_config_findings() -> list[str]:
+    """Return plain-scalar divergence findings from ``configuration.yaml``.
+
+    Lazily re-parses the config with a findings list on first call
+    and caches the result.  Findings carry the ``FAIL:`` / ``WARN:``
+    prefix produced by the YAML subset parser.  Returns a copy so
+    callers cannot mutate the cached list.
+    """
+    global _CONFIG_FINDINGS
+    if _CONFIG_FINDINGS is None:
+        collected: list[str] = []
+        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+            parse_yaml_subset(fh.read(), collected)
+        _CONFIG_FINDINGS = collected
+    return list(_CONFIG_FINDINGS)
+
+
+def collect_foundry_config_findings(target_path: str) -> list[str]:
+    """Return configuration.yaml divergence findings when *target_path* is the foundry.
+
+    Shared gate + retag helper used by ``validate_skill`` and
+    ``audit_skill_system``.  Detects the foundry by comparing a
+    canonicalized ``<target_path>/scripts/lib/configuration.yaml``
+    path against the canonicalized path that ``constants.py`` loaded
+    at import — matching the ``normcase(realpath(...))`` pattern used
+    elsewhere in ``scripts/lib/`` so symlinks and case-insensitive
+    filesystems (macOS, Windows) do not silently skip the check.
+    When the paths match, each finding produced by
+    :func:`get_config_findings` has its original ``[spec]`` tag
+    stripped and is re-tagged with ``[foundry]
+    scripts/lib/configuration.yaml``.  Third-party skills never
+    trigger this check because their configuration file (if any)
+    lives at a different canonical path.
+    """
+    candidate = os.path.normcase(
+        os.path.realpath(
+            os.path.join(target_path, "scripts", "lib", "configuration.yaml")
+        )
+    )
+    config_path = os.path.normcase(os.path.realpath(CONFIG_PATH))
+    if candidate != config_path:
+        return []
+    retagged: list[str] = []
+    for f in get_config_findings():
+        level, _, detail = f.partition(": ")
+        detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
+        retagged.append(
+            f"{level}: [foundry] scripts/lib/configuration.yaml {detail}"
+        )
+    return retagged
 
 # --- Skill Validation ---
 _skill = _config["skill"]
@@ -184,7 +246,7 @@ CODEX_KNOWN_DEPENDENCIES_KEYS = frozenset(_codex["known_dependencies_keys"])
 CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 
 # Clean up private names
-del _config_path, _f, _config
+del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE
 del _dep, _role, _bundle

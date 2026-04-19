@@ -35,6 +35,7 @@ from validate_skill import (
     validate_skill,
     validate_skill_references,
 )
+from lib.constants import collect_foundry_config_findings
 from lib.validation import (
     validate_allowed_tools,
     validate_metadata,
@@ -2702,6 +2703,99 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
             if e.startswith(LEVEL_INFO) and "typo-field" in e
         ]
         self.assertEqual(key_infos, [])
+
+
+class CodexFindingsJsonSchemaTests(unittest.TestCase):
+    """``validate_skill --json`` surfaces Codex findings in the errors array."""
+
+    def test_divergent_codex_config_appears_in_json_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "agents", "openai.yaml"),
+                "interface:\n"
+                "  display_name: Demo\n"
+                "  default_prompt: runs tasks: quickly\n",
+            )
+            proc = _run([skill_dir, "--json"], cwd=REPO_ROOT)
+            data = json.loads(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertIn("errors", data)
+        # Schema preserved: no new top-level keys introduced.
+        self.assertEqual(
+            set(data.keys()),
+            {"tool", "path", "type", "success", "summary", "errors", "version"},
+        )
+        codex_fails = [
+            entry for entry in data["errors"].get("failures", [])
+            if "[platform: OpenAI]" in entry and "': '" in entry
+        ]
+        self.assertEqual(len(codex_fails), 1)
+
+
+class CodexConfigFindingsPropagationTests(unittest.TestCase):
+    """Codex plain-scalar findings reach ``validate_skill`` output."""
+
+    def test_divergent_codex_config_surfaces_in_validate_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "agents", "openai.yaml"),
+                "interface:\n"
+                "  display_name: Demo\n"
+                "  default_prompt: runs tasks: quickly\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+        tagged = [
+            e for e in errors
+            if e.startswith("FAIL: [platform: OpenAI]") and "': '" in e
+        ]
+        self.assertEqual(len(tagged), 1)
+
+
+class CollectFoundryConfigFindingsTests(unittest.TestCase):
+    """``collect_foundry_config_findings`` fires only for foundry targets."""
+
+    def test_non_foundry_path_returns_empty(self) -> None:
+        """Arbitrary skill paths never surface configuration.yaml findings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            findings = collect_foundry_config_findings(tmpdir)
+        self.assertEqual(findings, [])
+
+    def test_foundry_path_with_clean_config_returns_empty(self) -> None:
+        """The real foundry config has no divergences today."""
+        foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
+        findings = collect_foundry_config_findings(foundry_path)
+        self.assertEqual(findings, [])
+
+    def test_foundry_path_retags_findings_with_foundry_prefix(self) -> None:
+        """When divergences exist, messages are retagged ``[foundry]``."""
+        foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
+        sample = [
+            "FAIL: [spec] 'skill.name': unquoted value starts with '-' …",
+            "WARN: [spec] 'skill.description': unquoted anchor …",
+        ]
+        with mock.patch(
+            "lib.constants.get_config_findings", return_value=sample,
+        ):
+            retagged = collect_foundry_config_findings(foundry_path)
+        self.assertEqual(len(retagged), 2)
+        for line in retagged:
+            self.assertIn("[foundry] scripts/lib/configuration.yaml", line)
+        self.assertTrue(retagged[0].startswith("FAIL: "))
+        self.assertTrue(retagged[1].startswith("WARN: "))
+
+    def test_non_foundry_path_ignores_patched_findings(self) -> None:
+        """Detection gates on path equality, not on findings content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "lib.constants.get_config_findings",
+                return_value=["FAIL: [spec] 'x': bad"],
+            ):
+                findings = collect_foundry_config_findings(tmpdir)
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":
