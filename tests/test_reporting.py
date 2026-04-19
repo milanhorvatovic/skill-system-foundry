@@ -94,6 +94,12 @@ class ParseFindingStringTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             reporting.parse_finding_string("")
 
+    def test_unterminated_tag_raises(self) -> None:
+        # A body that starts with '[' but has no matching ']' is a
+        # malformed tag — producer bug — not an untagged message.
+        with self.assertRaises(ValueError):
+            reporting.parse_finding_string("FAIL: [spec malformed body")
+
 
 class ParseFindingStringRoundTripTests(unittest.TestCase):
     """Round-trip parser findings through ``parse_finding_string``."""

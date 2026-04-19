@@ -77,7 +77,9 @@ def parse_finding_string(raw: str) -> dict:
     preserved verbatim in ``message``.
 
     Raises ``ValueError`` on malformed input — missing ``": "``
-    separator or unrecognized severity token.
+    separator, unrecognized severity token, or an unmatched opening
+    ``[`` in the body (an unterminated tag is a producer bug, not a
+    zero-tag message).
     """
     sep = ": "
     sep_index = raw.find(sep)
@@ -96,9 +98,12 @@ def parse_finding_string(raw: str) -> dict:
     message = body
     if body.startswith("["):
         end = body.find("]")
-        if end > 0:
-            tag = body[: end + 1]
-            message = body[end + 1:].lstrip()
+        if end <= 0:
+            raise ValueError(
+                f"malformed finding tag (unterminated '[') in finding: {raw!r}"
+            )
+        tag = body[: end + 1]
+        message = body[end + 1:].lstrip()
     return {"severity": severity, "tag": tag, "message": message}
 
 

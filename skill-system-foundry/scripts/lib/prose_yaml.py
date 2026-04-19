@@ -55,11 +55,15 @@ def _strip_frontmatter(markdown_text: str) -> str:
     try:
         parsed = parse_yaml_subset(frontmatter_raw.strip(), [])
     except (ValueError, KeyError):
+        # Content between the two ``---`` lines is not valid YAML —
+        # most likely a thematic break with prose in between rather
+        # than real frontmatter.  Leave the source untouched.
         return markdown_text
-    if not isinstance(parsed, dict) or not parsed:
-        # A thematic break produces empty/non-mapping content between
-        # the two ``---`` lines; refuse to strip in that case.
+    if not isinstance(parsed, dict):
         return markdown_text
+    # Empty frontmatter (``---\\n---\\n``) parses to ``{}`` and is
+    # still a frontmatter block for scope purposes — strip it so its
+    # absence / presence does not change prose-scan results.
     return body_raw
 
 

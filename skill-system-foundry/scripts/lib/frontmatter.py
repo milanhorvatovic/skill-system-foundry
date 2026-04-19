@@ -6,21 +6,28 @@ from .yaml_parser import parse_yaml_subset
 def split_frontmatter(content: str) -> tuple[str | None, str]:
     """Split *content* into ``(frontmatter_text, body_text)``.
 
-    Returns ``(None, content)`` when the text does not start with the
-    ``---`` open marker.  When the open marker is present but the
-    closing marker is missing, returns ``(content[3:], "")`` so the
-    caller can surface the malformed block as a structured finding.
+    Delimiter detection is line-based: the first line must be exactly
+    ``---`` and the closing delimiter must be a standalone ``---``
+    line.  This avoids matching a ``---`` substring inside the YAML
+    value space (for example, inside a block scalar).
+
+    Returns ``(None, content)`` when the first line is not the ``---``
+    open marker.  When the open marker is present but the closing
+    marker is missing, returns the text after the opening line with an
+    empty body so the caller can surface the malformed block as a
+    structured finding.
 
     This is the one true frontmatter splitter: ``load_frontmatter`` and
     the prose-YAML check both use it so delimiter rules cannot drift.
+    CRLF input is handled transparently via ``splitlines(keepends=True)``.
     """
-    if not content.startswith("---"):
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
         return None, content
-    try:
-        end = content.index("---", 3)
-    except ValueError:
-        return content[3:], ""
-    return content[3:end], content[end + 3:]
+    for index in range(1, len(lines)):
+        if lines[index].rstrip("\r\n") == "---":
+            return "".join(lines[1:index]), "".join(lines[index + 1:])
+    return "".join(lines[1:]), ""
 
 
 def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
