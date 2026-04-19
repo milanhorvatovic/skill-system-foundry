@@ -632,8 +632,8 @@ def main() -> None:
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 
-    # Prose-YAML doc-snippet check (Deliverable A).  Always populate the
-    # yaml_conformance JSON slot (G25 / G67) so consumers don't need a
+    # Prose-YAML doc-snippet check.  Always populate the
+    # yaml_conformance JSON slot so consumers don't need a
     # nullability branch.
     prose_findings: list[dict] = []
     prose_checked = 0
