@@ -1015,19 +1015,44 @@ class CheckPerFileOverrideTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_override_miss_falls_through_to_global(self) -> None:
-        # Override is on c.py (not present); a.py and b.py use the global.
+    def test_override_targeting_unmeasured_file_raises(self) -> None:
+        # An override targeting a path the coverage data does not contain
+        # (typically because .coveragerc 'source'/'omit' excludes it, or
+        # the path is mistyped) is a dead letter that must surface as a
+        # ValueError instead of silently allowing the bar to be unenforced.
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as fh:
             fh.write(_coverage_json({"a.py": 50.0, "b.py": 80.0}))
             path = fh.name
         try:
-            failures, passes = check_per_file(
-                path, 70.0, {"c.py": 99.0}
-            )
-            self.assertEqual([f[0] for f in failures], ["a.py"])
-            self.assertEqual([p[0] for p in passes], ["b.py"])
+            with self.assertRaises(ValueError) as ctx:
+                check_per_file(path, 70.0, {"c.py": 99.0})
+            message = str(ctx.exception)
+            self.assertIn("c.py", message)
+            self.assertIn("absent from coverage data", message)
+        finally:
+            os.unlink(path)
+
+    def test_unmatched_overrides_listed_sorted(self) -> None:
+        # Multiple unmatched overrides surface together, sorted, so a
+        # CI log shows the full set in one shot rather than only the
+        # first miss.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(_coverage_json({"a.py": 90.0}))
+            path = fh.name
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                check_per_file(
+                    path,
+                    70.0,
+                    {"a.py": 80.0, "z.py": 99.0, "m.py": 90.0},
+                )
+            message = str(ctx.exception)
+            self.assertIn("m.py, z.py", message)
+            self.assertNotIn("a.py", message.split("absent")[1])
         finally:
             os.unlink(path)
 
