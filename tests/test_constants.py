@@ -90,6 +90,20 @@ class ProseYamlConfigTests(unittest.TestCase):
         )
 
 
+class YamlConformanceConfigTests(unittest.TestCase):
+    """``yaml_conformance.construct_ids`` enumeration is exposed."""
+
+    def test_construct_ids_value(self) -> None:
+        self.assertEqual(
+            constants.YAML_CONFORMANCE_CONSTRUCT_IDS,
+            (
+                "anchor-with-trailing-in-key",
+                "indent-indicator-block-scalar",
+                "tag-in-mapping-key",
+            ),
+        )
+
+
 class MissingSectionFailFastTests(unittest.TestCase):
     """Re-importing ``lib.constants`` against a config missing a
     required section raises ``RuntimeError`` at import time."""
@@ -143,6 +157,13 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(self._full_config_minus("prose_yaml"))
         self.assertIn("prose_yaml", str(ctx.exception))
+
+    def test_missing_yaml_conformance_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus("yaml_conformance")
+            )
+        self.assertIn("yaml_conformance", str(ctx.exception))
 
 
 if __name__ == "__main__":

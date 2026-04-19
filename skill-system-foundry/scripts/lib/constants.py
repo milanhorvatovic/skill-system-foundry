@@ -240,6 +240,15 @@ _prose = _config["prose_yaml"]
 PROSE_YAML_OPT_OUT_MARKER = _prose["opt_out_marker"]
 PROSE_YAML_IN_SCOPE_GLOBS = tuple(_prose["in_scope_globs"])
 
+# --- YAML Conformance (construct-id enumeration) ---
+if "yaml_conformance" not in _config:
+    raise RuntimeError(
+        "configuration.yaml is missing required section 'yaml_conformance'; "
+        "this foundry build is incomplete."
+    )
+_yaml_conf = _config["yaml_conformance"]
+YAML_CONFORMANCE_CONSTRUCT_IDS = tuple(_yaml_conf["construct_ids"])
+
 # --- Codex Configuration (agents/openai.yaml) ---
 _codex = _config["codex_config"]
 _codex_iface = _codex["interface"]
@@ -263,4 +272,4 @@ del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
-del _prose
+del _prose, _yaml_conf

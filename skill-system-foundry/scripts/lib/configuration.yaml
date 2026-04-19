@@ -170,6 +170,20 @@ prose_yaml:
     - references/**/*.md
 
 # ============================================================
+# YAML Conformance (parser hardening + corpus)
+# ============================================================
+# Canonical enumeration of the construct-id tokens used in the parser's
+# pinned ValueError message format ("unsupported YAML 1.2.2 construct:
+# <construct-id> (spec §n.n)") and matched by rejected/ corpus fixtures.
+# Adding a new rejection appends a token here and emits the same format
+# from yaml_parser.py.
+yaml_conformance:
+  construct_ids:
+    - anchor-with-trailing-in-key
+    - indent-indicator-block-scalar
+    - tag-in-mapping-key
+
+# ============================================================
 # Codex Configuration (agents/openai.yaml)
 # ============================================================
 codex_config:
