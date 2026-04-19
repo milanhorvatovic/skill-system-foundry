@@ -49,9 +49,11 @@ def read_manifest(path: str, findings: list[str] | None = None) -> dict:
         text = f.read()
     if not text.strip():
         return {}
-    # Collect findings locally and only extend the caller-provided list
-    # on the success path so structural failures never mutate it.
-    local_findings: list[str] = []
+    # When the caller asks for findings, collect them into a local list
+    # and only extend the caller-provided list on the success path so
+    # structural failures never mutate it.  When findings is None,
+    # avoid allocating and skip plain-scalar checks entirely.
+    local_findings: list[str] | None = [] if findings is not None else None
     try:
         # Collect all top-level content lines for validation
         top_level_lines = [
@@ -105,7 +107,7 @@ def read_manifest(path: str, findings: list[str] | None = None) -> dict:
             f"Failed to parse {path}: {exc}"
         ) from exc
 
-    if findings is not None:
+    if findings is not None and local_findings:
         findings.extend(local_findings)
     return manifest
 
