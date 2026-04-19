@@ -31,6 +31,15 @@ Apply these in addition to the standard workflow checklist:
 - Verify all actions are pinned to commit SHAs, not tags (e.g. `uses: actions/checkout@<sha> # @v6 as 6.0.2`).
 - Check that job permissions follow least-privilege (separate read/write jobs).
 
+## Markdown inside skills (`skill-system-foundry/**/*.md`)
+
+Apply these rules to file-reference links inside skill content (`SKILL.md`, `capabilities/**/*.md`, `references/**/*.md`). They override plain CommonMark expectations:
+
+- **Skill-root-relative paths, never parent traversals** — every markdown link target is written as if the file were standing at the skill root, regardless of the referencing file's physical location (e.g., from `capabilities/validation/capability.md` the correct link is `[...](references/authoring-principles.md)`, not `../../references/authoring-principles.md`). Do **not** flag these as broken links — the in-repo reference resolver (`lib/references.py::resolve_reference`) tries source-dir-relative first, then falls back to skill-root-relative, so skill-root paths always resolve.
+- **Forward slashes only** — no Windows-style backslashes in link targets.
+- **Role files are the exception** — files outside any `skills/` tree (the `roles/` tree) use system-root-relative paths (e.g., `skills/<domain>/SKILL.md`). Skill-internal links still use the skill-root-relative form.
+- Do flag a link as broken only after confirming the target does not exist **at the skill root** either; do not rely on `<source-dir>/<link>` existence alone.
+
 ## Review-specific focus areas
 
 Beyond code correctness, also evaluate:
