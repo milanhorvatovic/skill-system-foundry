@@ -147,6 +147,13 @@ class OptOutAdjacencyTests(unittest.TestCase):
         records = prose_yaml.extract_yaml_fences(text)
         self.assertEqual(records[0]["state"], "ignored")
 
+    def test_opt_out_marker_overrides_wrong_case(self) -> None:
+        # The opt-out marker must apply regardless of opener classification,
+        # so a wrong-case fence can be waived without surfacing an INFO.
+        text = "<!-- yaml-ignore -->\n```YAML\nbad: value\n```\n"
+        records = prose_yaml.extract_yaml_fences(text)
+        self.assertEqual(records[0]["state"], "ignored")
+
     def test_ordinal_advances_for_ignored_block(self) -> None:
         # An ignored fence still counts toward the ordinal stream so
         # the prose path's block numbering stays stable.

@@ -150,7 +150,7 @@ The `--allow-nested-references` flag is needed because this meta-skill intention
 
 | Flag | Effect | When to use |
 |---|---|---|
-| `--check-prose-yaml` | Validates ` ```yaml ` fences in `SKILL.md`, `capabilities/**/*.md`, and `references/**/*.md`. Findings route to the existing FAIL/WARN/INFO stream and the `yaml_conformance.doc_snippets` JSON slot. | When fixing or adding documentation that contains YAML examples. |
+| `--check-prose-yaml` | Validates ```` ```yaml ```` fences in `SKILL.md`, `capabilities/**/*.md`, and `references/**/*.md`. Findings route to the existing FAIL/WARN/INFO stream and the `yaml_conformance.doc_snippets` JSON slot. | When fixing or adding documentation that contains YAML examples. |
 | `--foundry-self` | Implies `--check-prose-yaml`. Runs the target skill the way the foundry runs itself. On `audit_skill_system` it is a mode switch — the prose check runs across every scanned skill. | Self-validation of the meta-skill, or to run an integrator skill with foundry-equivalent strictness. |
 | `--allow-nested-references` | Suppresses the nested-reference depth warning. Required for skills that intentionally cross-reference their own reference files. | Any meta-skill or template-rich skill where reference graphs span more than one level. |
 | `--verbose` | Prints per-file progress messages for the prose check (`Checking prose YAML: <path> (<N> fences)`) and shows passing checks otherwise. Silent under `--json`. | Local debugging / triage. |

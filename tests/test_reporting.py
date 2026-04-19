@@ -38,6 +38,12 @@ class ToPosixTests(unittest.TestCase):
     def test_empty_string_returns_empty(self) -> None:
         self.assertEqual(reporting.to_posix(""), "")
 
+    def test_windows_backslash_normalised_on_any_platform(self) -> None:
+        # Callers that cross a Windows/POSIX boundary (e.g. data read
+        # from a Windows-authored tool on a Linux runner) still get
+        # POSIX separators out.
+        self.assertEqual(reporting.to_posix("a\\b\\c"), "a/b/c")
+
 
 class ParseFindingStringTests(unittest.TestCase):
     """``parse_finding_string`` covers spec-tagged, untagged, and bad input."""

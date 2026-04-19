@@ -98,21 +98,21 @@ def extract_yaml_fences(markdown_text: str) -> list[dict]:
                 }
             )
             return records
-        if opener == "wrong-case":
+        if is_ignored:
+            records.append(
+                {
+                    "ordinal": ordinal,
+                    "text": body_text,
+                    "state": "ignored",
+                }
+            )
+        elif opener == "wrong-case":
             records.append(
                 {
                     "ordinal": ordinal,
                     "text": body_text,
                     "state": "wrong-case",
                     "language": _open_language(line),
-                }
-            )
-        elif is_ignored:
-            records.append(
-                {
-                    "ordinal": ordinal,
-                    "text": body_text,
-                    "state": "ignored",
                 }
             )
         else:

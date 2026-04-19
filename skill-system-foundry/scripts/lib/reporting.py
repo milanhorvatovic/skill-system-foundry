@@ -47,13 +47,19 @@ _SEVERITY_TO_LOWER = {
 
 
 def to_posix(path: str) -> str:
-    """Return *path* with the platform separator replaced by ``/``.
+    """Return *path* with path separators rewritten as ``/``.
 
     Used to keep the ``file`` field of structured findings consistent
-    across Linux, macOS, and Windows runners.  No path normalization or
-    canonicalization is performed — only the separator is rewritten.
+    across Linux, macOS, and Windows runners.  Both Windows-style
+    backslashes and the native ``os.sep`` are normalised so callers get
+    POSIX output regardless of which platform produced the input.  No
+    path normalization or canonicalization is performed — only
+    separator characters are rewritten.
     """
-    return path.replace(os.sep, "/")
+    path = path.replace("\\", "/")
+    if os.sep != "/":
+        path = path.replace(os.sep, "/")
+    return path
 
 
 def parse_finding_string(raw: str) -> dict:

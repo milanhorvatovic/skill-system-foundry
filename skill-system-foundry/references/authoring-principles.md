@@ -33,6 +33,7 @@ Skill System Foundry maintains these principles as a unified reference because t
 - [Scripts and Executable Code](#scripts-and-executable-code)
 - [Workflows and Feedback Loops](#workflows-and-feedback-loops)
 - [Evaluation and Iteration](#evaluation-and-iteration)
+- [Counter-example convention for prose YAML fences](#counter-example-convention-for-prose-yaml-fences)
 
 ---
 
@@ -347,7 +348,7 @@ Skills act as additions to models. What works for Opus/o3 might need more detail
 
 ## Counter-example convention for prose YAML fences
 
-Skills sometimes ship intentional examples of YAML that the in-repo parser would reject — counter-examples illustrating divergences. The doc-snippet validator (`validate_skill --check-prose-yaml`) treats every ```yaml` fence in scope as live input by default; counter-examples need an opt-out.
+Skills sometimes ship intentional examples of YAML that the in-repo parser would reject — counter-examples illustrating divergences. The doc-snippet validator (`validate_skill --check-prose-yaml`) treats every ```` ```yaml ```` fence in scope as live input by default; counter-examples need an opt-out.
 
 **Opt-out marker.** The HTML comment `<!-- yaml-ignore -->` on the line immediately above the fence-open line — with no blank line between — opts the fence out of validation. The marker is reviewer-visible by design: a waiver, not silent acceptance.
 
@@ -356,9 +357,9 @@ Skills sometimes ship intentional examples of YAML that the in-repo parser would
 - Three backticks (no more, no fewer); tilde fences are invisible.
 - Lowercase literal `yaml` immediately after the backticks (no whitespace between).
 - The opening backticks at byte offset 0 (column 0); indented fences are invisible.
-- A column-0 ` ``` ` close marker before end of file.
+- A column-0 ```` ``` ```` close marker before end of file.
 
-**Avoid column-0 ` ``` ` inside a YAML block scalar.** The markdown extractor terminates the fence at the first column-0 ` ``` ` line per CommonMark, even when that line is inside a literal-block content region. If a YAML example needs a literal triple-backtick, indent the line so it is no longer at column 0.
+**Avoid column-0 ```` ``` ```` inside a YAML block scalar.** The markdown extractor terminates the fence at the first column-0 ```` ``` ```` line per CommonMark, even when that line is inside a literal-block content region. If a YAML example needs a literal triple-backtick, indent the line so it is no longer at column 0.
 
-**Commented-out fences.** HTML comments are not parsed by the extractor — a column-0 ```yaml` line inside an `<!-- ... -->` block is still recognised. Wrap it in `<!-- yaml-ignore -->` (one fence per marker) or indent the fence to hide it.
+**Commented-out fences.** HTML comments are not parsed by the extractor — a column-0 ```` ```yaml ```` line inside an `<!-- ... -->` block is still recognised. Wrap it in `<!-- yaml-ignore -->` (one fence per marker) or indent the fence to hide it.
 
