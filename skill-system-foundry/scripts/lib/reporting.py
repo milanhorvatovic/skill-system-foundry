@@ -20,11 +20,80 @@ back to ``"errors"`` for full validation results.
 Every tool result dict includes a ``"version"`` key (injected
 automatically by ``to_json_output``) for forward-compatible schema
 evolution.
+
+Finding-string contract
+-----------------------
+Parser modules emit findings as strings shaped ``"SEVERITY: [tag] body"``
+where ``SEVERITY`` is one of ``FAIL`` / ``WARN`` / ``INFO``, ``[tag]`` is
+an optional bracketed token (e.g. ``[spec]``), and ``body`` is the
+human-readable message.  ``parse_finding_string`` consumes this shape
+without importing the producer module — it operates on the documented
+string contract only.  Any producer adding a new tag must keep the
+``"SEVERITY: [tag] body"`` shape; consumers that care about specific
+tags filter them downstream.
 """
 
 import json
+import os
 
 from .constants import ERROR_SYMBOLS, LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO, JSON_SCHEMA_VERSION
+
+
+_SEVERITY_TO_LOWER = {
+    LEVEL_FAIL: "fail",
+    LEVEL_WARN: "warn",
+    LEVEL_INFO: "info",
+}
+
+
+def to_posix(path: str) -> str:
+    """Return *path* with the platform separator replaced by ``/``.
+
+    Used to keep the ``file`` field of structured findings consistent
+    across Linux, macOS, and Windows runners.  No path normalization or
+    canonicalization is performed — only the separator is rewritten.
+    """
+    return path.replace(os.sep, "/")
+
+
+def parse_finding_string(raw: str) -> dict:
+    """Parse a parser finding string into a structured dict.
+
+    Input contract: ``"SEVERITY: [tag] body"`` where ``SEVERITY`` is one
+    of ``FAIL`` / ``WARN`` / ``INFO``.  The bracketed ``[tag]`` is
+    optional; any bracketed token is accepted verbatim (the helper is
+    tag-agnostic — see module docstring).
+
+    Returns ``{"severity": str, "tag": str, "message": str}`` where
+    ``severity`` is the lowercase form (``"fail"`` / ``"warn"`` /
+    ``"info"``) and ``tag`` includes the surrounding brackets (empty
+    string when no tag is present).  The advice tail (after ``;``) is
+    preserved verbatim in ``message``.
+
+    Raises ``ValueError`` on malformed input — missing ``": "``
+    separator or unrecognized severity token.
+    """
+    sep = ": "
+    sep_index = raw.find(sep)
+    if sep_index < 0:
+        raise ValueError(
+            f"malformed finding string (missing '{sep}' separator): {raw!r}"
+        )
+    severity_token = raw[:sep_index]
+    body = raw[sep_index + len(sep):]
+    if severity_token not in _SEVERITY_TO_LOWER:
+        raise ValueError(
+            f"unrecognized severity {severity_token!r} in finding: {raw!r}"
+        )
+    severity = _SEVERITY_TO_LOWER[severity_token]
+    tag = ""
+    message = body
+    if body.startswith("["):
+        end = body.find("]")
+        if end > 0:
+            tag = body[: end + 1]
+            message = body[end + 1:].lstrip()
+    return {"severity": severity, "tag": tag, "message": message}
 
 
 def categorize_errors(errors: list[str]) -> tuple[list[str], list[str], list[str]]:
