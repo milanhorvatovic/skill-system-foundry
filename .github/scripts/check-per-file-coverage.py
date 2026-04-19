@@ -17,6 +17,21 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _normalize_path(path: str) -> str:
+    """Canonicalise a path so lookups are robust across form variants.
+
+    Normalises ``.``, ``..`` and redundant separators via
+    ``os.path.normpath``, drops the leading ``./`` that Windows'
+    ``normpath`` leaves on and then rewrites backslashes to forward
+    slashes so the result is comparable regardless of which platform
+    produced either side of the comparison.
+    """
+    normalised = os.path.normpath(path).replace("\\", "/")
+    if normalised.startswith("./"):
+        normalised = normalised[2:]
+    return normalised
+
+
 def load_threshold(coveragerc_path: str) -> float:
     """Read ``fail_under`` from a ``.coveragerc`` file.
 
@@ -128,7 +143,9 @@ def check_per_file(
     structure is malformed (missing ``files`` dict, or a file entry lacks
     branch coverage data that can be used or computed).
     """
-    overrides = file_thresholds or {}
+    overrides = {
+        _normalize_path(k): v for k, v in (file_thresholds or {}).items()
+    }
     with open(json_path, encoding="utf-8") as fh:
         data = json.load(fh)
 
@@ -190,7 +207,7 @@ def check_per_file(
                 f"coverage.json malformed entry for '{filename}': "
                 f"branch coverage {pct:.2f}% is outside the 0–100 range"
             )
-        effective = overrides.get(filename, threshold)
+        effective = overrides.get(_normalize_path(filename), threshold)
         if pct < effective:
             failures.append((filename, pct))
         else:
@@ -250,7 +267,9 @@ def _run(args: argparse.Namespace) -> int:
     """Execute the coverage check using parsed *args*.  Returns exit code."""
     # Parse and validate per-file overrides before any coverage measurement.
     # Malformed --file-threshold is an argparse-style usage error: exit
-    # code 2, matching the contract documented on ``main``.
+    # code 2, matching the contract documented on ``main``.  Override
+    # paths are normalised up-front so ``./x.py`` and backslash forms
+    # still match the form ``coverage.json`` emits.
     file_thresholds: dict[str, float] = {}
     for raw in args.file_threshold:
         try:
@@ -258,7 +277,7 @@ def _run(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
-        file_thresholds[path] = pct
+        file_thresholds[_normalize_path(path)] = pct
 
     # Determine threshold
     if args.threshold is not None:
@@ -308,7 +327,7 @@ def _run(args: argparse.Namespace) -> int:
 
     any_override_failed = False
     for filename, pct in failures:
-        effective = file_thresholds.get(filename, threshold)
+        effective = file_thresholds.get(_normalize_path(filename), threshold)
         if effective != threshold:
             any_override_failed = True
             print(

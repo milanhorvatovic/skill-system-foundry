@@ -1131,6 +1131,25 @@ class MainFileThresholdTests(unittest.TestCase):
             import shutil
             shutil.rmtree(tmpdir)
 
+    def test_override_path_normalisation_matches_coverage_filename(self) -> None:
+        # CLI input may use different equivalent path forms than what
+        # ``coverage.json`` stores (``./x.py`` prefix, backslashes on
+        # Windows, etc.).  Normalisation must make the override apply
+        # regardless.
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"pkg/x.py": 80.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+                "--file-threshold", "./pkg/x.py=90",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
     def test_malformed_override_returns_usage_error(self) -> None:
         # Usage errors follow argparse convention and exit with code 2,
         # matching the contract documented on ``main``.

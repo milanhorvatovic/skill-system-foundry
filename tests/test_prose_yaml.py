@@ -147,6 +147,18 @@ class OptOutAdjacencyTests(unittest.TestCase):
         records = prose_yaml.extract_yaml_fences(text)
         self.assertEqual(records[0]["state"], "ignored")
 
+    def test_wrong_case_covers_arbitrary_variants(self) -> None:
+        # Any case variant of 'yaml' or 'yml' (other than the
+        # canonical lowercase 'yaml') must surface as wrong-case.
+        for token in ("YAML", "Yaml", "yAmL", "YML", "Yml", "yML"):
+            text = f"```{token}\nfoo: bar\n```\n"
+            records = prose_yaml.extract_yaml_fences(text)
+            self.assertEqual(
+                records[0]["state"], "wrong-case",
+                f"{token!r} should be classified wrong-case",
+            )
+            self.assertEqual(records[0]["language"], token)
+
     def test_opt_out_marker_overrides_wrong_case(self) -> None:
         # The opt-out marker must apply regardless of opener classification,
         # so a wrong-case fence can be waived without surfacing an INFO.

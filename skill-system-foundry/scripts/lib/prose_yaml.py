@@ -178,8 +178,10 @@ def _classify_open_line(line: str) -> str | None:
 
     ``"parsed"`` — column-0 ``` ```yaml ``` open with the literal
     lowercase token.  ``"wrong-case"`` — column-0 backtick fence open
-    with a known YAML-spelled token (``yml`` / ``YAML`` / ``Yaml``).
-    ``None`` — not an opener this extractor recognises.
+    with any case variant of ``yaml`` or ``yml`` that is not the
+    canonical lowercase ``yaml`` (e.g. ``YAML``, ``Yaml``, ``yAmL``,
+    ``YML``, ``Yml``).  ``None`` — not an opener this extractor
+    recognises.
     """
     if not line.startswith("```"):
         return None
@@ -194,7 +196,7 @@ def _classify_open_line(line: str) -> str | None:
     token = rest.split(" ", 1)[0].split("\t", 1)[0]
     if token == "yaml":
         return "parsed"
-    if token in ("yml", "YAML", "Yaml"):
+    if token.lower() in ("yaml", "yml"):
         return "wrong-case"
     return None
 
