@@ -1937,5 +1937,36 @@ class ConfigurationYamlIntegrationTests(unittest.TestCase):
         self.assertGreater(int(value), 0)
 
 
+class ParseYamlSubsetLineEndingNormalizationTests(unittest.TestCase):
+    """LF / CRLF / CR / mixed inputs produce identical parsed output (G37/G48)."""
+
+    BASE = "key: value\nblock: |\n  line1\n  line2\nlist:\n  - a\n  - b\n"
+
+    def test_lf_input_round_trips(self) -> None:
+        result = parse_yaml_subset(self.BASE)
+        self.assertEqual(result["key"], "value")
+        self.assertEqual(result["block"], "line1\nline2")
+        self.assertEqual(result["list"], ["a", "b"])
+
+    def test_crlf_input_matches_lf(self) -> None:
+        crlf = self.BASE.replace("\n", "\r\n")
+        self.assertEqual(parse_yaml_subset(crlf), parse_yaml_subset(self.BASE))
+
+    def test_cr_only_input_matches_lf(self) -> None:
+        cr = self.BASE.replace("\n", "\r")
+        self.assertEqual(parse_yaml_subset(cr), parse_yaml_subset(self.BASE))
+
+    def test_mixed_input_matches_lf(self) -> None:
+        mixed = "key: value\r\nblock: |\r  line1\n  line2\r\nlist:\n  - a\r  - b\n"
+        self.assertEqual(
+            parse_yaml_subset(mixed), parse_yaml_subset(self.BASE)
+        )
+
+    def test_block_scalar_value_is_lf_only(self) -> None:
+        crlf = self.BASE.replace("\n", "\r\n")
+        result = parse_yaml_subset(crlf)
+        self.assertNotIn("\r", result["block"])
+
+
 if __name__ == "__main__":
     unittest.main()

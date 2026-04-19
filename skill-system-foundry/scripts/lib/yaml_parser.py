@@ -4,6 +4,18 @@ Handles the subset of YAML used by this framework: key-value pairs,
 folded/literal block scalars (> | >- |- |+ >+), nested mappings, scalar
 lists, and lists of mappings.  All scalar values are returned as
 strings — no type coercion for booleans, numbers, or null.
+
+Line-ending contract (YAML 1.2.2 §5.4)
+--------------------------------------
+**Input:** ``parse_yaml_subset`` accepts text with LF, CRLF, CR, or
+mixed line terminators.  Normalization happens at the top of the
+function (defense in depth — text-ingestion boundaries elsewhere
+in the codebase normalize too, per G48).
+
+**Output:** every string returned by the parser — including block-scalar
+contents — uses **LF-only** line terminators regardless of the input
+style.  Round-trip callers that re-emit parsed values will see LF even
+if the original text used CRLF.
 """
 
 def parse_yaml_subset(text: str | None, findings: list[str] | None = None) -> dict:
@@ -13,9 +25,15 @@ def parse_yaml_subset(text: str | None, findings: list[str] | None = None) -> di
 
     If *findings* is a list, plain-scalar warnings/errors are appended
     to it.  If ``None`` (the default), findings are silently discarded.
+
+    Input line endings (LF / CRLF / CR / mixed) are normalized to LF
+    on entry; all string values returned use LF-only terminators (see
+    module docstring).
     """
     if not text or not text.strip():
         return {}
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
 
     lines = []
     for raw in text.split("\n"):
