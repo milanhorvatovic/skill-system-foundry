@@ -2803,5 +2803,104 @@ class CollectFoundryConfigFindingsTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class CheckProseYamlIntegrationTests(unittest.TestCase):
+    """End-to-end behaviour of ``--check-prose-yaml`` and ``--foundry-self``."""
+
+    def _make_skill(self, tmpdir: str, *, body: str = "") -> str:
+        skill = os.path.join(tmpdir, "demo")
+        os.makedirs(skill)
+        from helpers import write_skill_md
+        write_skill_md(
+            skill,
+            name="demo",
+            description="Demo skill for prose-YAML integration tests.",
+            body=f"# Demo\n{body}",
+        )
+        return skill
+
+    def test_flag_off_ignores_divergent_fence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(
+                tmpdir, body="\n```yaml\nbad: *alias\n```\n"
+            )
+            proc = _run([skill], cwd=REPO_ROOT)
+        # With the flag off the divergent fence does not surface.
+        self.assertEqual(proc.returncode, 0)
+        self.assertNotIn("alias indicator", proc.stdout)
+
+    def test_flag_on_surfaces_divergent_fence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(
+                tmpdir, body="\n```yaml\nbad: *alias\n```\n"
+            )
+            proc = _run([skill, "--check-prose-yaml"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("alias indicator", proc.stdout)
+        self.assertIn("block 1", proc.stdout)
+
+    def test_foundry_self_implies_prose_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(
+                tmpdir, body="\n```yaml\nbad: *alias\n```\n"
+            )
+            proc = _run([skill, "--foundry-self"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("alias indicator", proc.stdout)
+
+    def test_warn_only_fence_is_zero_exit(self) -> None:
+        # Anchor in value position is WARN, not FAIL — exit code stays 0.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(
+                tmpdir, body="\n```yaml\nkey: &alias trailing\n```\n"
+            )
+            proc = _run([skill, "--check-prose-yaml"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("anchor name consumed", proc.stdout)
+
+    def test_scope_excludes_top_level_extras(self) -> None:
+        # CLAUDE.md, CHANGELOG.md, and assets/* are out of scope; a
+        # divergent fence in those files must not surface.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(tmpdir, body="\n# clean body\n")
+            for rel in ("CLAUDE.md", "CHANGELOG.md", "assets/note.md"):
+                path = os.path.join(skill, rel)
+                os.makedirs(os.path.dirname(path) or skill, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("```yaml\nout: *alias\n```\n")
+            proc = _run(
+                [skill, "--check-prose-yaml", "--json"], cwd=REPO_ROOT
+            )
+            data = json.loads(proc.stdout)
+        slot = data["yaml_conformance"]["doc_snippets"]
+        self.assertEqual(slot["checked"], 0)
+        self.assertEqual(slot["findings"], [])
+
+    def test_scope_includes_capabilities_and_references(self) -> None:
+        # The three globs are SKILL.md + capabilities/**/*.md +
+        # references/**/*.md.  Plant a fence in each of the latter two.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(tmpdir)
+            for rel in (
+                "capabilities/foo/capability.md",
+                "references/bar.md",
+            ):
+                path = os.path.join(skill, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("```yaml\nbad: *alias\n```\n")
+            proc = _run(
+                [skill, "--check-prose-yaml", "--json"], cwd=REPO_ROOT
+            )
+            data = json.loads(proc.stdout)
+        files = {
+            f["file"]
+            for f in data["yaml_conformance"]["doc_snippets"]["findings"]
+        }
+        self.assertEqual(
+            files,
+            {"capabilities/foo/capability.md", "references/bar.md"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
