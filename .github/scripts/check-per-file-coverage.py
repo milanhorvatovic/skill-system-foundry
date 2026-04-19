@@ -304,15 +304,30 @@ def _run(args: argparse.Namespace) -> int:
     for filename, pct in passes:
         print(f"  PASS  {pct:6.1f}%  {filename}")
 
+    any_override_failed = False
     for filename, pct in failures:
-        print(f"  FAIL  {pct:6.1f}%  {filename}")
+        effective = file_thresholds.get(filename, threshold)
+        if effective != threshold:
+            any_override_failed = True
+            print(
+                f"  FAIL  {pct:6.1f}%  {filename}  "
+                f"(below override threshold {effective:.1f}%)"
+            )
+        else:
+            print(f"  FAIL  {pct:6.1f}%  {filename}")
 
     print("-" * 60)
 
     if failures:
-        print(
-            f"{len(failures)} file(s) below {threshold:.1f}% branch coverage threshold"
-        )
+        if any_override_failed:
+            print(
+                f"{len(failures)} file(s) below their branch coverage threshold "
+                f"(floor {threshold:.1f}%, plus per-file overrides)"
+            )
+        else:
+            print(
+                f"{len(failures)} file(s) below {threshold:.1f}% branch coverage threshold"
+            )
         return 1
 
     print(f"All {len(passes)} file(s) meet the {threshold:.1f}% threshold")

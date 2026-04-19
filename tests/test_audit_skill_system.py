@@ -1476,8 +1476,8 @@ class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
             proc = _run([tmpdir, "--json"], cwd=REPO_ROOT)
             data = json.loads(proc.stdout)
         # Schema preserved: known top-level keys plus the additive
-        # ``yaml_conformance`` slot from #93 (always present, zero
-        # sentinel when checks did not run).
+        # ``yaml_conformance`` slot (always present, zero sentinel when
+        # checks did not run).
         self.assertEqual(
             set(data.keys()),
             {

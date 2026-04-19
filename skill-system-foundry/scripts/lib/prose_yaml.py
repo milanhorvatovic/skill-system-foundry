@@ -26,7 +26,6 @@ from .reporting import parse_finding_string, to_posix
 from .yaml_parser import parse_yaml_subset
 
 
-_FENCE_OPEN_LITERAL = "```yaml"
 _FENCE_CLOSE_LITERAL = "```"
 
 
@@ -201,7 +200,7 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
                     ordinal,
                     "fail",
                     "[spec]",
-                    f"unterminated yaml fence (block ordinal {ordinal})",
+                    "unterminated yaml fence",
                 )
             )
             continue
@@ -284,9 +283,9 @@ def find_in_scope_files(skill_root: str) -> list[str]:
 
     Scope is the three globs from ``PROSE_YAML_IN_SCOPE_GLOBS``
     (``SKILL.md``, ``capabilities/**/*.md``, ``references/**/*.md``).
-    Returns a sorted, de-duplicated list with POSIX separators
-    preserved as on-disk; callers normalise via ``to_posix`` when
-    constructing finding paths.
+    Returns a sorted, de-duplicated list using the native path
+    separators produced on the current platform; callers normalise via
+    ``to_posix`` when constructing finding paths.
     """
     seen: set[str] = set()
     matches: list[str] = []

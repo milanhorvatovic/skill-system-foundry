@@ -2,8 +2,8 @@
 
 Covers the lazy divergence re-parse of ``configuration.yaml`` via
 ``get_config_findings``, verifies ``CONFIG_PATH`` is an absolute path
-pointing at the expected file, and pins the new ``prose_yaml`` and
-``prose_yaml`` keys.  Missing-section fail-fast is exercised by
+pointing at the expected file, and pins the ``prose_yaml`` opt-out
+marker and in-scope globs.  Missing-section fail-fast is exercised by
 re-importing ``lib.constants`` against a synthetic config file with
 the section removed.
 """

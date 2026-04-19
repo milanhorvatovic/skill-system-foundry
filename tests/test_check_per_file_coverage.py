@@ -1105,6 +1105,32 @@ class MainFileThresholdTests(unittest.TestCase):
             import shutil
             shutil.rmtree(tmpdir)
 
+    def test_override_failure_reports_override_threshold(self) -> None:
+        # When a per-file override is the reason a file fails, the
+        # output must name the override threshold (not the global
+        # floor) so the CI log is actionable.
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            buf_out: list[str] = []
+            import contextlib
+            import io
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main([
+                    "--coverage-json", json_path,
+                    "--threshold", "70",
+                    "--file-threshold", "a.py=90",
+                ])
+            buf_out.append(stdout.getvalue())
+            self.assertEqual(code, 1)
+            output = buf_out[0]
+            self.assertIn("override threshold 90.0%", output)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
     def test_malformed_override_returns_one(self) -> None:
         tmpdir = tempfile.mkdtemp()
         try:
