@@ -1552,7 +1552,7 @@ class AuditFoundryConfigFindingsTests(unittest.TestCase):
         foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
         sample = ["FAIL: [spec] 'skill.name': unquoted value starts with '-' …"]
         with mock.patch(
-            "audit_skill_system.get_config_findings", return_value=sample,
+            "lib.constants.get_config_findings", return_value=sample,
         ):
             errors = audit_skill_system(foundry_path, verbose=False)
         tagged = [

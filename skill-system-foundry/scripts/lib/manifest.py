@@ -21,6 +21,13 @@ class ManifestParseError(Exception):
     """Raised when a manifest file cannot be parsed."""
 
 
+# Sentinel used by append helpers to mark post-write structural
+# corruption so ``update_manifest_for_*`` can distinguish emit
+# failure from pre-existing plain-scalar divergences that also
+# carry a FAIL level.
+_EMIT_CORRUPTION_MARKER = "manifest emit produced unparseable YAML"
+
+
 def read_manifest(path: str, findings: list[str] | None = None) -> dict:
     """Read and parse a ``manifest.yaml`` file.
 
@@ -203,7 +210,7 @@ def append_skill_entry(
         # manifest has already been written and callers need to know
         # the file is no longer parseable.
         findings.append(
-            f"{LEVEL_FAIL}: manifest emit produced unparseable YAML "
+            f"{LEVEL_FAIL}: {_EMIT_CORRUPTION_MARKER} "
             f"at {manifest_path}: {exc}"
         )
     return findings
@@ -281,7 +288,7 @@ def append_role_entry(
         parse_yaml_subset(text, findings)
     except ValueError as exc:
         findings.append(
-            f"{LEVEL_FAIL}: manifest emit produced unparseable YAML "
+            f"{LEVEL_FAIL}: {_EMIT_CORRUPTION_MARKER} "
             f"at {manifest_path}: {exc}"
         )
     return findings
@@ -297,12 +304,15 @@ def update_manifest_for_skill(
 
     Returns ``(updated, warning, created_manifest, findings)`` where
     *updated* is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update,
+    human-readable message when a conflict prevented the update or
+    when the emit step produced structurally invalid YAML,
     *created_manifest* is True when a new manifest file was
     scaffolded, and *findings* is a list of plain-scalar divergence
     findings produced while reading the existing manifest plus any
     additional findings returned by ``append_skill_entry`` after the
-    new entry is written.
+    new entry is written.  When the emitted manifest fails to parse,
+    *updated* is False and *warning* describes the corruption so
+    callers that ignore *findings* still see the failure.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -330,6 +340,12 @@ def update_manifest_for_skill(
 
     emit_findings = append_skill_entry(manifest_path, name, router=router)
     findings.extend(emit_findings)
+    if _has_emit_corruption(emit_findings):
+        warning = (
+            f"Manifest update wrote an invalid manifest at {manifest_path} "
+            f"— inspect findings and repair the file"
+        )
+        return False, warning, created_manifest, findings
     return True, None, created_manifest, findings
 
 
@@ -342,12 +358,15 @@ def update_manifest_for_role(
 
     Returns ``(updated, warning, created_manifest, findings)`` where
     *updated* is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update,
+    human-readable message when a conflict prevented the update or
+    when the emit step produced structurally invalid YAML,
     *created_manifest* is True when a new manifest file was
     scaffolded, and *findings* is a list of plain-scalar divergence
     findings produced while reading the existing manifest plus any
     additional findings returned by ``append_role_entry`` after the
-    new entry is written.
+    new entry is written.  When the emitted manifest fails to parse,
+    *updated* is False and *warning* describes the corruption so
+    callers that ignore *findings* still see the failure.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -375,7 +394,24 @@ def update_manifest_for_role(
 
     emit_findings = append_role_entry(manifest_path, group, name)
     findings.extend(emit_findings)
+    if _has_emit_corruption(emit_findings):
+        warning = (
+            f"Manifest update wrote an invalid manifest at {manifest_path} "
+            f"— inspect findings and repair the file"
+        )
+        return False, warning, created_manifest, findings
     return True, None, created_manifest, findings
+
+
+def _has_emit_corruption(findings: list[str]) -> bool:
+    """Return True when *findings* contains an emit-corruption marker.
+
+    Distinguishes post-write structural corruption (emitted by the
+    append helpers via ``_EMIT_CORRUPTION_MARKER``) from pre-existing
+    plain-scalar divergences that may also carry a ``FAIL`` level.
+    """
+    marker = f"{LEVEL_FAIL}: {_EMIT_CORRUPTION_MARKER}"
+    return any(finding.startswith(marker) for finding in findings)
 
 
 def scaffold_empty_manifest(manifest_path: str) -> None:

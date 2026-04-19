@@ -28,7 +28,6 @@ if SCRIPTS_DIR not in sys.path:
 
 from validate_skill import (
     _build_parser,
-    _collect_foundry_config_findings,
     find_skill_root,
     validate_body,
     validate_description,
@@ -36,6 +35,7 @@ from validate_skill import (
     validate_skill,
     validate_skill_references,
 )
+from lib.constants import collect_foundry_config_findings
 from lib.validation import (
     validate_allowed_tools,
     validate_metadata,
@@ -2756,18 +2756,18 @@ class CodexConfigFindingsPropagationTests(unittest.TestCase):
 
 
 class CollectFoundryConfigFindingsTests(unittest.TestCase):
-    """``_collect_foundry_config_findings`` fires only for foundry targets."""
+    """``collect_foundry_config_findings`` fires only for foundry targets."""
 
     def test_non_foundry_path_returns_empty(self) -> None:
         """Arbitrary skill paths never surface configuration.yaml findings."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            findings = _collect_foundry_config_findings(tmpdir)
+            findings = collect_foundry_config_findings(tmpdir)
         self.assertEqual(findings, [])
 
     def test_foundry_path_with_clean_config_returns_empty(self) -> None:
         """The real foundry config has no divergences today."""
         foundry_path = os.path.join(REPO_ROOT, "skill-system-foundry")
-        findings = _collect_foundry_config_findings(foundry_path)
+        findings = collect_foundry_config_findings(foundry_path)
         self.assertEqual(findings, [])
 
     def test_foundry_path_retags_findings_with_foundry_prefix(self) -> None:
@@ -2778,9 +2778,9 @@ class CollectFoundryConfigFindingsTests(unittest.TestCase):
             "WARN: [spec] 'skill.description': unquoted anchor …",
         ]
         with mock.patch(
-            "validate_skill.get_config_findings", return_value=sample,
+            "lib.constants.get_config_findings", return_value=sample,
         ):
-            retagged = _collect_foundry_config_findings(foundry_path)
+            retagged = collect_foundry_config_findings(foundry_path)
         self.assertEqual(len(retagged), 2)
         for line in retagged:
             self.assertIn("[foundry] scripts/lib/configuration.yaml", line)
@@ -2791,10 +2791,10 @@ class CollectFoundryConfigFindingsTests(unittest.TestCase):
         """Detection gates on path equality, not on findings content."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch(
-                "validate_skill.get_config_findings",
+                "lib.constants.get_config_findings",
                 return_value=["FAIL: [spec] 'x': bad"],
             ):
-                findings = _collect_foundry_config_findings(tmpdir)
+                findings = collect_foundry_config_findings(tmpdir)
         self.assertEqual(findings, [])
 
 

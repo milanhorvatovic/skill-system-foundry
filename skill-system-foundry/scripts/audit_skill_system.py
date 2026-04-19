@@ -62,7 +62,6 @@ from lib.discovery import (
     read_file,
 )
 from lib.constants import (
-    CONFIG_PATH,
     DIR_SKILLS, DIR_CAPABILITIES, DIR_SHARED,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
@@ -70,7 +69,7 @@ from lib.constants import (
     RE_SKILL_REF, RE_CAPABILITY_REF, MIN_ROLE_SKILLS,
     SEPARATOR_WIDTH,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
-    get_config_findings,
+    collect_foundry_config_findings,
 )
 
 
@@ -170,18 +169,8 @@ def audit_skill_system(
     system_root = os.path.abspath(system_root)
 
     # When auditing the foundry itself, surface configuration.yaml
-    # divergences detected at constants.py import.  Detection matches
-    # the loaded config path against <system_root>/scripts/lib/...
-    candidate_config = os.path.abspath(
-        os.path.join(system_root, "scripts", "lib", "configuration.yaml")
-    )
-    if candidate_config == CONFIG_PATH:
-        for f in get_config_findings():
-            level, _, detail = f.partition(": ")
-            detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
-            errors.append(
-                f"{level}: [foundry] scripts/lib/configuration.yaml {detail}"
-            )
+    # divergences detected at constants.py import.
+    errors.extend(collect_foundry_config_findings(system_root))
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     has_skills_dir = os.path.isdir(skills_dir)

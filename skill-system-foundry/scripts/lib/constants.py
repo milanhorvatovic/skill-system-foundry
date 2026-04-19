@@ -106,6 +106,34 @@ def get_config_findings() -> list[str]:
         _CONFIG_FINDINGS = collected
     return list(_CONFIG_FINDINGS)
 
+
+def collect_foundry_config_findings(target_path: str) -> list[str]:
+    """Return configuration.yaml divergence findings when *target_path* is the foundry.
+
+    Shared gate + retag helper used by ``validate_skill`` and
+    ``audit_skill_system``.  Detects the foundry by comparing
+    ``<target_path>/scripts/lib/configuration.yaml`` against the
+    absolute path that ``constants.py`` loaded at import.  When the
+    paths match, each finding produced by :func:`get_config_findings`
+    has its original ``[spec]`` tag stripped and is re-tagged with
+    ``[foundry] scripts/lib/configuration.yaml``.  Third-party skills
+    never trigger this check because their configuration file (if any)
+    lives at a different absolute path.
+    """
+    candidate = os.path.abspath(
+        os.path.join(target_path, "scripts", "lib", "configuration.yaml")
+    )
+    if candidate != CONFIG_PATH:
+        return []
+    retagged: list[str] = []
+    for f in get_config_findings():
+        level, _, detail = f.partition(": ")
+        detail = detail.removeprefix("[spec] ").removeprefix("[spec]").lstrip()
+        retagged.append(
+            f"{level}: [foundry] scripts/lib/configuration.yaml {detail}"
+        )
+    return retagged
+
 # --- Skill Validation ---
 _skill = _config["skill"]
 
