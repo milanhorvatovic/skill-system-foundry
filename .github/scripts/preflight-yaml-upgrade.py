@@ -116,16 +116,19 @@ def extract_frontmatter(text: str) -> str | None:
     """Return the YAML frontmatter block of *text* or ``None`` if absent.
 
     Markdown without frontmatter is a documented no-op — the caller
-    should treat ``None`` as "skip silently."
+    should treat ``None`` as "skip silently."  Delimiter detection is
+    line-based: the first line must be exactly ``---`` and the closing
+    delimiter must be a standalone ``---`` line, so a ``---`` substring
+    inside a YAML block scalar value does not terminate the block early.
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    if not text.startswith("---"):
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\n") != "---":
         return None
-    try:
-        end = text.index("---", 3)
-    except ValueError:
-        return None
-    return text[3:end]
+    for index in range(1, len(lines)):
+        if lines[index].rstrip("\n") == "---":
+            return "".join(lines[1:index])
+    return None
 
 
 def scan_file(path: str, rel_path: str) -> list[dict]:

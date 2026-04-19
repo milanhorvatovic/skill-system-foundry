@@ -17,18 +17,20 @@ default, ``--json`` for machine consumption.
 """
 
 import argparse
-import json
 import os
 import sys
 
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
+_SCRIPTS_DIR = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
 _TESTS_LIB = os.path.join(_REPO_ROOT, "tests", "lib")
-if _TESTS_LIB not in sys.path:
-    sys.path.insert(0, _TESTS_LIB)
+for _path in (_SCRIPTS_DIR, _TESTS_LIB):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 import yaml_conformance_runner as runner  # noqa: E402
+from lib.reporting import to_json_output  # noqa: E402
 
 DEFAULT_CORPUS_ROOT = os.path.join(
     _REPO_ROOT, "tests", "fixtures", "yaml-conformance"
@@ -86,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = {"corpus": summary}
 
     if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        print(to_json_output(payload))
     else:
         print(format_human(summary))
 

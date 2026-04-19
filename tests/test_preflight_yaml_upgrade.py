@@ -84,6 +84,21 @@ class ExtractFrontmatterTests(unittest.TestCase):
         # Avoid surfacing a phantom hit when the closing --- is missing.
         self.assertIsNone(preflight.extract_frontmatter("---\nname: x\n"))
 
+    def test_block_scalar_dashes_do_not_terminate_frontmatter(self) -> None:
+        # A literal ``---`` inside a block scalar value is not a closer;
+        # detection is line-based so the embedded substring is included
+        # in the returned block, not used to slice it short.
+        text = (
+            "---\n"
+            "description: |\n"
+            "  embedded --- dashes are fine\n"
+            "---\n"
+            "body\n"
+        )
+        block = preflight.extract_frontmatter(text)
+        self.assertIsNotNone(block)
+        self.assertIn("embedded --- dashes are fine", block)
+
 
 class ScanFileFrontmatterPositionTests(unittest.TestCase):
     """Markdown hits use ``"frontmatter"`` as their position token."""
