@@ -2357,6 +2357,91 @@ class ScaffoldEmitCorruptionTests(unittest.TestCase):
                     )
         self.assertEqual(ctx.exception.code, 1)
 
+    def test_skill_frontmatter_parse_error_returns_success_false_in_json(self) -> None:
+        from unittest import mock
+        sample = ["FAIL: Invalid frontmatter in /tmp/SKILL.md: malformed YAML"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_skill
+                result = scaffold_skill(
+                    "demo-skill", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["warnings"], sample)
+
+    def test_skill_frontmatter_parse_error_exits_one_in_text_mode(self) -> None:
+        from unittest import mock
+        sample = ["FAIL: Invalid frontmatter in /tmp/SKILL.md: malformed YAML"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_skill
+                with self.assertRaises(SystemExit) as ctx:
+                    scaffold_skill(
+                        "demo-skill", root=tmpdir, json_output=False,
+                    )
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_capability_frontmatter_parse_error_returns_success_false_in_json(self) -> None:
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _run(
+                ["skill", "demo-domain", "--router", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            sample = ["FAIL: Invalid frontmatter in /tmp/cap.md: malformed YAML"]
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_capability
+                result = scaffold_capability(
+                    "demo-domain", "demo-cap", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["warnings"], sample)
+
+    def test_role_frontmatter_parse_error_returns_success_false_in_json(self) -> None:
+        from unittest import mock
+        sample = ["FAIL: Invalid frontmatter in /tmp/role.md: malformed YAML"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_role
+                result = scaffold_role(
+                    "demo-group", "demo-role",
+                    root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["warnings"], sample)
+
+    def test_plain_scalar_finding_does_not_trigger_hard_failure(self) -> None:
+        """Pre-existing divergence FAIL findings must not promote to hard fail."""
+        from unittest import mock
+        sample = ["FAIL: [spec] 'name': unquoted value … contains ': '"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "scaffold._collect_frontmatter_findings",
+                return_value=sample,
+            ):
+                from scaffold import scaffold_skill
+                result = scaffold_skill(
+                    "demo-skill", root=tmpdir, json_output=True,
+                )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["warnings"], sample)
+
     def test_name_conflict_warning_remains_warn_level(self) -> None:
         """Pre-existing name conflict still surfaces as WARN, not FAIL."""
         import io

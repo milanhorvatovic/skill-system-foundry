@@ -122,6 +122,24 @@ def _dedupe_preserving_order(items: list[str]) -> list[str]:
     return out
 
 
+# Sentinel used by frontmatter parse-error findings so scaffold can
+# distinguish a structural parse failure (hard failure: success=False,
+# exit 1) from plain-scalar divergences (warnings only).
+_FRONTMATTER_PARSE_ERROR_MARKER = "Invalid frontmatter in"
+
+
+def _has_frontmatter_parse_error(findings: list[str]) -> bool:
+    """Return True when *findings* contains a frontmatter parse-error marker.
+
+    Distinguishes structural frontmatter parse failures (surfaced via
+    ``_FRONTMATTER_PARSE_ERROR_MARKER``) from plain-scalar divergences
+    that may also carry a ``FAIL`` level — only the former should
+    promote scaffold to a hard failure.
+    """
+    marker = f"{LEVEL_FAIL}: {_FRONTMATTER_PARSE_ERROR_MARKER}"
+    return any(f.startswith(marker) for f in findings)
+
+
 def _collect_frontmatter_findings(path: str) -> list[str]:
     """Return frontmatter findings from the written entry file.
 
@@ -129,8 +147,9 @@ def _collect_frontmatter_findings(path: str) -> list[str]:
     even when they would otherwise bypass validate_name's gate (template
     changes, programmatic callers, etc.).  Missing files and files
     without frontmatter yield an empty list.  Frontmatter structural
-    parse failures are surfaced as a FAIL finding so invalid rendered
-    YAML is not silently ignored.
+    parse failures are surfaced as a FAIL finding tagged with
+    ``_FRONTMATTER_PARSE_ERROR_MARKER`` so callers can promote them to
+    a hard failure via :func:`_has_frontmatter_parse_error`.
     """
     if not os.path.isfile(path):
         return []
@@ -141,7 +160,10 @@ def _collect_frontmatter_findings(path: str) -> list[str]:
         else None
     )
     if parse_error:
-        return [f"{LEVEL_FAIL}: Invalid frontmatter in {path}: {parse_error}"]
+        return [
+            f"{LEVEL_FAIL}: {_FRONTMATTER_PARSE_ERROR_MARKER} "
+            f"{path}: {parse_error}"
+        ]
     return findings
 
 
@@ -303,6 +325,7 @@ def scaffold_skill(
     # --- Frontmatter re-parse of the written entry file ---
     skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
     frontmatter_findings = _collect_frontmatter_findings(skill_md_full_path)
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
     if frontmatter_findings and not json_output:
         for f in frontmatter_findings:
             print(f"  {f}")
@@ -336,12 +359,14 @@ def scaffold_skill(
             for f in _dedupe_preserving_order(list(manifest_findings)):
                 print(f"  {f}")
 
+    hard_failure = manifest_emit_corrupted or frontmatter_parse_error
+
     if json_output:
         result_dict: dict = {
             "tool": "scaffold",
             "component": "skill",
             "name": name,
-            "success": not manifest_emit_corrupted,
+            "success": not hard_failure,
             "path": os.path.abspath(skill_path),
             "created": [os.path.abspath(p) for p in created_paths],
             "router": router,
@@ -367,7 +392,7 @@ def scaffold_skill(
         print(f"  Next: edit {skill_md_path} and update {manifest_path}")
     else:
         print(f"  Next: edit {skill_md_path}")
-    if manifest_emit_corrupted:
+    if hard_failure:
         sys.exit(1)
     return None
 
@@ -488,6 +513,7 @@ def scaffold_capability(
     # --- Frontmatter re-parse of the written entry file ---
     cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
     frontmatter_findings = _collect_frontmatter_findings(cap_md_full_path)
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
     if frontmatter_findings and not json_output:
         for f in frontmatter_findings:
             print(f"  {f}")
@@ -505,7 +531,7 @@ def scaffold_capability(
             "component": "capability",
             "name": name,
             "domain": domain,
-            "success": True,
+            "success": not frontmatter_parse_error,
             "path": os.path.abspath(cap_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
@@ -524,6 +550,8 @@ def scaffold_capability(
         print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
     else:
         print(f"  Next: update {manifest_path}")
+    if frontmatter_parse_error:
+        sys.exit(1)
     return None
 
 
@@ -634,6 +662,7 @@ def scaffold_role(
 
     # --- Frontmatter re-parse of the written role file ---
     frontmatter_findings = _collect_frontmatter_findings(role_path)
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
     if frontmatter_findings and not json_output:
         for f in frontmatter_findings:
             print(f"  {f}")
@@ -667,13 +696,15 @@ def scaffold_role(
             for f in _dedupe_preserving_order(list(manifest_findings)):
                 print(f"  {f}")
 
+    hard_failure = manifest_emit_corrupted or frontmatter_parse_error
+
     if json_output:
         result_dict: dict = {
             "tool": "scaffold",
             "component": "role",
             "name": name,
             "group": group,
-            "success": not manifest_emit_corrupted,
+            "success": not hard_failure,
             "path": os.path.abspath(role_path),
             "created": [os.path.abspath(p) for p in created_paths],
         }
@@ -692,7 +723,7 @@ def scaffold_role(
     print(f"  Next: edit {role_path}")
     if not update_manifest:
         print(f"  Next: update {manifest_path}")
-    if manifest_emit_corrupted:
+    if hard_failure:
         sys.exit(1)
     return None
 
