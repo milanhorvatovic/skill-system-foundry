@@ -381,6 +381,26 @@ class CollectProseFindingsTests(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
 
+    def test_unreadable_file_becomes_structured_fail(self) -> None:
+        # A UTF-8 decode failure must surface as a FAIL finding rather
+        # than a raw exception that tears down the walk.
+        root = tempfile.mkdtemp()
+        try:
+            skill_md = os.path.join(root, "SKILL.md")
+            with open(skill_md, "wb") as fh:
+                fh.write(b"\xff\xfe not utf-8 at all")
+            findings, checked, per_file = prose_yaml.collect_prose_findings(root)
+            self.assertEqual(checked, 0)
+            self.assertEqual(per_file, [("SKILL.md", 0)])
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["severity"], "fail")
+            self.assertEqual(findings[0]["file"], "SKILL.md")
+            self.assertIn("could not read file", findings[0]["message"])
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+
 class FormatFindingAsStringTests(unittest.TestCase):
     """Round-trip a structured finding back into the parser-string shape."""
 

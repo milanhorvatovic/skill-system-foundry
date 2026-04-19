@@ -187,8 +187,18 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
     Frontmatter blocks are **not** scanned; this function only
     inspects fenced code in the body.
     """
+    return _validate_records(file_path, extract_yaml_fences(markdown_text))
+
+
+def _validate_records(file_path: str, records: list[dict]) -> list[dict]:
+    """Produce structured findings from already-extracted fence records.
+
+    Separated so ``collect_prose_findings`` can reuse the result of a
+    single ``extract_yaml_fences`` call instead of parsing each file
+    twice.
+    """
     findings: list[dict] = []
-    for record in extract_yaml_fences(markdown_text):
+    for record in records:
         ordinal = record["ordinal"]
         state = record["state"]
         if state == "ignored":
@@ -330,13 +340,26 @@ def collect_prose_findings(
         display_path = (
             f"{audit_prefix}/{relative}" if audit_prefix else relative
         )
-        with open(absolute, "r", encoding="utf-8") as fh:
-            text = fh.read()
+        try:
+            with open(absolute, "r", encoding="utf-8") as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            # An unreadable in-scope file must not crash the walk —
+            # surface it as a structured FAIL so the caller routes it
+            # through the existing finding stream.
+            findings.append(
+                _structured_finding(
+                    display_path, 0, "fail", "[spec]",
+                    f"could not read file for prose YAML check: {exc}",
+                )
+            )
+            per_file_counts.append((display_path, 0))
+            continue
         records = extract_yaml_fences(text)
         parsed_count = sum(1 for r in records if r["state"] == "parsed")
         checked += parsed_count
         per_file_counts.append((display_path, len(records)))
-        findings.extend(validate_prose_yaml(display_path, text))
+        findings.extend(_validate_records(display_path, records))
     return findings, checked, per_file_counts
 
 

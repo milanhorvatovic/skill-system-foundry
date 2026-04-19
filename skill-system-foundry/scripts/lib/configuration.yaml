@@ -154,8 +154,8 @@ plain_scalar:
 # Prose YAML Validation (in-Markdown ```yaml fences)
 # ============================================================
 # Settings for the doc-snippet validator (validate_prose_yaml).  See
-# references/yaml-support.md and authoring-principles.md for the
-# author-facing convention.
+# references/authoring-principles.md (section "Counter-example
+# convention for prose YAML fences") for the author-facing convention.
 prose_yaml:
   # HTML-comment marker that opts a fence out of validation when it
   # appears on the line immediately above the fence-open line (no

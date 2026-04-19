@@ -1131,7 +1131,9 @@ class MainFileThresholdTests(unittest.TestCase):
             import shutil
             shutil.rmtree(tmpdir)
 
-    def test_malformed_override_returns_one(self) -> None:
+    def test_malformed_override_returns_usage_error(self) -> None:
+        # Usage errors follow argparse convention and exit with code 2,
+        # matching the contract documented on ``main``.
         tmpdir = tempfile.mkdtemp()
         try:
             json_path = os.path.join(tmpdir, "coverage.json")
@@ -1141,7 +1143,7 @@ class MainFileThresholdTests(unittest.TestCase):
                 "--threshold", "70",
                 "--file-threshold", "a.py=ninety",
             ])
-            self.assertEqual(result, 1)
+            self.assertEqual(result, 2)
         finally:
             import shutil
             shutil.rmtree(tmpdir)

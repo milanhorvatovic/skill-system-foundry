@@ -249,13 +249,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def _run(args: argparse.Namespace) -> int:
     """Execute the coverage check using parsed *args*.  Returns exit code."""
     # Parse and validate per-file overrides before any coverage measurement.
+    # Malformed --file-threshold is an argparse-style usage error: exit
+    # code 2, matching the contract documented on ``main``.
     file_thresholds: dict[str, float] = {}
     for raw in args.file_threshold:
         try:
             path, pct = parse_file_threshold(raw)
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
-            return 1
+            return 2
         file_thresholds[path] = pct
 
     # Determine threshold

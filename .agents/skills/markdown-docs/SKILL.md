@@ -44,9 +44,7 @@ Each piece of knowledge has a single authoritative location. If the same concept
 
 ### Line Wrapping
 
-Do not hard-wrap prose lines to a fixed width. One paragraph is one logical line — let the renderer (GitHub, the IDE preview, or the consumer's terminal) handle wrapping. Hard-wrapped paragraphs produce noisy diffs when a single word changes mid-paragraph and force every editor to honour the same column limit.
-
-Lists, tables, code fences, and frontmatter values keep their natural line structure (one item per line, one fence per line, etc.). Wrapping rules apply to flowing prose only.
+Do not hard-wrap prose lines to a fixed width. See `skill-system-foundry/references/authoring-principles.md` (section "Line wrapping") for the full rule and rationale — this file intentionally does not duplicate it.
 
 ## Frontmatter Rules
 
