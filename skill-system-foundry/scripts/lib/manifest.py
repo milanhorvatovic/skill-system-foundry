@@ -42,6 +42,9 @@ def read_manifest(path: str, findings: list[str] | None = None) -> dict:
         text = f.read()
     if not text.strip():
         return {}
+    # Collect findings locally and only extend the caller-provided list
+    # on the success path so structural failures never mutate it.
+    local_findings: list[str] = []
     try:
         # Collect all top-level content lines for validation
         top_level_lines = [
@@ -59,7 +62,7 @@ def read_manifest(path: str, findings: list[str] | None = None) -> dict:
                 f"Failed to parse {path}: top-level YAML must be a mapping"
             )
 
-        manifest = parse_yaml_subset(text, findings)
+        manifest = parse_yaml_subset(text, local_findings)
         if not isinstance(manifest, dict):
             raise ManifestParseError(
                 f"Failed to parse {path}: top-level YAML must be a mapping"
@@ -90,11 +93,14 @@ def read_manifest(path: str, findings: list[str] | None = None) -> dict:
                         f"Failed to parse {path}: "
                         f"role group '{group_name}' must be a list"
                     )
-        return manifest
     except ValueError as exc:
         raise ManifestParseError(
             f"Failed to parse {path}: {exc}"
         ) from exc
+
+    if findings is not None:
+        findings.extend(local_findings)
+    return manifest
 
 
 def has_skill_conflict(manifest: dict, name: str) -> bool:
