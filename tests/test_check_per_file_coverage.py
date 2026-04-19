@@ -943,7 +943,7 @@ class MainMalformedCoverageJsonTests(unittest.TestCase):
 
 
 class ParseFileThresholdTests(unittest.TestCase):
-    """Tests for ``parse_file_threshold`` PATH=PCT parsing per G107."""
+    """Tests for ``parse_file_threshold`` PATH=PCT parsing."""
 
     def test_simple_path_and_integer(self) -> None:
         self.assertEqual(
@@ -975,7 +975,7 @@ class ParseFileThresholdTests(unittest.TestCase):
             parse_file_threshold("a.py=ninety")
 
     def test_decimal_pct_raises(self) -> None:
-        # G107 — must be integer; decimals rejected.
+        # PCT must be an integer; decimals are rejected.
         with self.assertRaises(ValueError):
             parse_file_threshold("a.py=90.5")
 

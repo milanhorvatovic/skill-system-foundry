@@ -614,8 +614,8 @@ def main() -> None:
     allow_nested_refs: bool = args.allow_nested_refs
     json_output: bool = args.json_output
     # --foundry-self is a superset trigger; passing both flags is a
-    # no-op (G58).  --foundry-self on a non-foundry target is silently
-    # equivalent to --check-prose-yaml (G8 / G55).
+    # no-op.  --foundry-self on a non-foundry target is silently
+    # equivalent to --check-prose-yaml.
     check_prose: bool = args.check_prose_yaml or args.foundry_self
 
     if not os.path.isdir(skill_path):

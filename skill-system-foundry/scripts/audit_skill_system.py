@@ -501,7 +501,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Run the doc-snippet ```yaml validation across every "
             "scanned skill (SKILL.md + capabilities/**/*.md + "
-            "references/**/*.md)."
+            "references/**/*.md).  See "
+            "references/authoring-principles.md for the convention."
         ),
     )
     parser.add_argument(
@@ -511,7 +512,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Mode switch: run every scanned skill the way the foundry "
             "runs itself.  Currently implies --check-prose-yaml across "
-            "all skills (G64)."
+            "all skills."
         ),
     )
     return parser
@@ -552,7 +553,7 @@ def main() -> None:
     verbose: bool = args.verbose
     allow_orchestration: bool = args.allow_orchestration
     json_output: bool = args.json_output
-    # G64 — --foundry-self is a mode switch across every scanned skill.
+    # --foundry-self is a mode switch across every scanned skill.
     check_prose: bool = args.check_prose_yaml or args.foundry_self
 
     if not os.path.isdir(system_root):
@@ -584,8 +585,8 @@ def main() -> None:
     )
 
     # Aggregate prose-YAML doc-snippet findings across every scanned
-    # skill (G64).  Always populate the yaml_conformance JSON slot so
-    # consumers don't need a nullability branch (G25 / G67).
+    # skill.  Always populate the yaml_conformance JSON slot so
+    # consumers don't need a nullability branch.
     prose_findings: list[dict] = []
     prose_checked = 0
     if check_prose:

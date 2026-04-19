@@ -1,18 +1,18 @@
 """Doc-snippet validation for ```yaml fences in skill prose.
 
-Scope (§4.1 of the design plan):
+Scope:
 - Extract fenced ```yaml blocks from markdown text per the strict
-  fence rules in §4.2.
+  fence rules described under ``extract_yaml_fences``.
 - Parse each block with ``parse_yaml_subset`` and convert findings to
   structured dicts via ``parse_finding_string``.
-- Frontmatter is **not** scanned (G26).  ``load_frontmatter`` already
+- Frontmatter is **not** scanned.  ``load_frontmatter`` already
   handles the ``---``-delimited block; this module only sees fenced
   code in the body.
 
-Import discipline (G112): this module imports ``parse_yaml_subset``
-from ``lib.yaml_parser`` and ``parse_finding_string`` / ``to_posix``
-from ``lib.reporting``.  ``reporting`` is a pure string helper and
-does not import this module — no cycle.
+Import discipline: this module imports ``parse_yaml_subset`` from
+``lib.yaml_parser`` and ``parse_finding_string`` / ``to_posix`` from
+``lib.reporting``.  ``reporting`` is a pure string helper and does not
+import this module — no cycle.
 """
 
 import glob
@@ -41,7 +41,7 @@ def extract_yaml_fences(markdown_text: str) -> list[dict]:
             "state":  "parsed" | "ignored" | "unterminated" | "wrong-case"
         }
 
-    Fence shape rules (§4.2 / G69 / G70):
+    Fence shape rules:
 
     - Backtick fences only.  Tilde fences are invisible.
     - Exactly three opening backticks at byte offset 0.
@@ -54,12 +54,12 @@ def extract_yaml_fences(markdown_text: str) -> list[dict]:
       at byte offset 0; if no close marker is found before EOF the
       fence is reported as ``state="unterminated"``.
 
-    Opt-out (§4.3, G42): if the line immediately above the fence-open
-    line — with no blank line between — exactly matches the configured
-    opt-out marker (whitespace around it allowed), the record's
-    ``state`` is ``"ignored"``.
+    Opt-out: if the line immediately above the fence-open line — with
+    no blank line between — exactly matches the configured opt-out
+    marker (whitespace around it allowed), the record's ``state`` is
+    ``"ignored"``.
 
-    Empty markdown input is a valid no-op — returns ``[]`` (G136).
+    Empty markdown input is a valid no-op — returns ``[]``.
     """
     if not markdown_text:
         return []
@@ -137,11 +137,11 @@ def _classify_open_line(line: str) -> str | None:
     """
     if not line.startswith("```"):
         return None
-    # Must be exactly three backticks (G69 — exclude ``` ```` ``` etc.).
+    # Must be exactly three backticks (exclude ``` ```` ``` etc.).
     if line.startswith("````"):
         return None
     rest = line[3:]
-    # No leading whitespace before the language token (G69).
+    # No leading whitespace before the language token.
     if not rest:
         return None
     # Strip info-string suffix at the first whitespace.
@@ -161,7 +161,7 @@ def _open_language(line: str) -> str:
 
 def _has_opt_out_marker(lines: list[str], fence_index: int) -> bool:
     """Return ``True`` when the line immediately above *fence_index*
-    matches the opt-out marker exactly (G42)."""
+    matches the opt-out marker exactly."""
     if fence_index == 0:
         return False
     above = lines[fence_index - 1].strip()
@@ -182,10 +182,10 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
         }
 
     *file_path* is echoed into each finding's ``file`` field verbatim
-    (G120) — callers pre-normalise to skill-root-relative POSIX form
-    (use :func:`lib.reporting.to_posix` if needed).
+    — callers pre-normalise to skill-root-relative POSIX form (use
+    :func:`lib.reporting.to_posix` if needed).
 
-    Frontmatter blocks are **not** scanned (G26); this function only
+    Frontmatter blocks are **not** scanned; this function only
     inspects fenced code in the body.
     """
     findings: list[dict] = []
@@ -267,12 +267,12 @@ def read_and_validate(path: str) -> list[dict]:
     """Convenience wrapper: read *path* (UTF-8) and validate its fences.
 
     OS errors (``FileNotFoundError``, ``PermissionError``) and decode
-    errors (``UnicodeDecodeError``) propagate unchanged (G61).  Callers
-    that want structured handling should use :func:`validate_prose_yaml`
+    errors (``UnicodeDecodeError``) propagate unchanged.  Callers that
+    want structured handling should use :func:`validate_prose_yaml`
     directly with their own I/O.
 
     The file path is normalised to POSIX separators so finding ``file``
-    fields are platform-independent (G68).
+    fields are platform-independent.
     """
     with open(path, "r", encoding="utf-8") as fh:
         text = fh.read()
@@ -286,7 +286,7 @@ def find_in_scope_files(skill_root: str) -> list[str]:
     (``SKILL.md``, ``capabilities/**/*.md``, ``references/**/*.md``).
     Returns a sorted, de-duplicated list with POSIX separators
     preserved as on-disk; callers normalise via ``to_posix`` when
-    constructing finding paths (G68 / G116).
+    constructing finding paths.
     """
     seen: set[str] = set()
     matches: list[str] = []
@@ -314,14 +314,14 @@ def collect_prose_findings(
     - ``findings`` — flat list of structured finding dicts (file paths
       already prefixed when *audit_prefix* is non-empty).
     - ``checked`` — count of fences in state ``"parsed"`` summed across
-      every in-scope file (G43).
+      every in-scope file.
     - ``per_file_counts`` — list of ``(relative_path, fence_count)``
       pairs in iteration order; verbose callers print one line per
       entry.
 
     *audit_prefix* — when set, every finding's ``file`` field becomes
     ``<audit_prefix>/<relative-path>`` so multi-skill aggregation in
-    ``audit_skill_system`` is unambiguous (G23).
+    ``audit_skill_system`` is unambiguous.
     """
     findings: list[dict] = []
     checked = 0
@@ -346,10 +346,10 @@ def format_finding_as_string(finding: dict) -> str:
 
     Reuses the existing ``SEVERITY: [tag] body`` shape so consumers
     that already iterate ``errors[]`` and call ``categorize_errors`` /
-    ``print_error_line`` work without modification.  Per G45 the body
-    is the same regardless of whether the message is key-scoped — the
-    parser's ``'key': body; advice`` chunk already begins with ``'key':``
-    when applicable, so no caller-side branching is needed.
+    ``print_error_line`` work without modification.  The body is the
+    same regardless of whether the message is key-scoped — the
+    parser's ``'key': body; advice`` chunk already begins with
+    ``'key':`` when applicable, so no caller-side branching is needed.
     """
     severity_token = {
         "fail": LEVEL_FAIL, "warn": LEVEL_WARN, "info": LEVEL_INFO,

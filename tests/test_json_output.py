@@ -716,7 +716,7 @@ class BundleJsonTests(unittest.TestCase):
 
 
 class YamlConformanceJsonSlotTests(unittest.TestCase):
-    """G25 / G67 / G114 — yaml_conformance slot is always present.
+    """The yaml_conformance slot is always present.
 
     Both ``corpus`` (zero-sentinel here — populated by the corpus
     harness which validate_skill / audit_skill_system do not run) and

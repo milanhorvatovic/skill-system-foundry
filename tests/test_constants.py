@@ -75,7 +75,7 @@ class GetConfigFindingsTests(unittest.TestCase):
 
 
 class ProseYamlConfigTests(unittest.TestCase):
-    """``prose_yaml`` keys are exposed by constants per G79/G95."""
+    """``prose_yaml`` keys are exposed by constants."""
 
     def test_opt_out_marker_value(self) -> None:
         self.assertEqual(

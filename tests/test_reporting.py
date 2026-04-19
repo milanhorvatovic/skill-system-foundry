@@ -3,9 +3,9 @@
 Covers:
 - ``to_posix`` — separator replacement on POSIX-style and
   Windows-style inputs.
-- ``parse_finding_string`` — parser-finding-string round-trip per G54
-  and malformed-input rejection per G31.  Tag-agnostic handling per G81
-  is exercised with a synthetic unrecognized tag.
+- ``parse_finding_string`` — parser-finding-string round-trip and
+  malformed-input rejection.  Tag-agnostic handling is exercised with
+  a synthetic unrecognized tag.
 """
 
 import os
@@ -69,7 +69,7 @@ class ParseFindingStringTests(unittest.TestCase):
         self.assertEqual(result["message"], "plain message body")
 
     def test_unknown_tag_preserved_verbatim(self) -> None:
-        # G81 — helper is tag-agnostic; any bracketed token survives.
+        # The helper is tag-agnostic; any bracketed token survives.
         result = reporting.parse_finding_string(
             "FAIL: [platform] something happened"
         )
@@ -90,7 +90,7 @@ class ParseFindingStringTests(unittest.TestCase):
 
 
 class ParseFindingStringRoundTripTests(unittest.TestCase):
-    """G54 — round-trip parser findings through ``parse_finding_string``."""
+    """Round-trip parser findings through ``parse_finding_string``."""
 
     def test_known_divergent_input_round_trips(self) -> None:
         # Input crafted to trip multiple plain-scalar branches in

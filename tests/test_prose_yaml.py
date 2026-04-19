@@ -1,6 +1,6 @@
 """Tests for ``lib/prose_yaml.py``.
 
-Matrix per IMPL-PLAN §4.7 / §4.2 / §4.3:
+Test matrix:
 - Known-good fence → no findings.
 - Divergent fence → expected divergence finding surfaces.
 - Strict-adjacency opt-out (both directions).
@@ -11,7 +11,7 @@ Matrix per IMPL-PLAN §4.7 / §4.2 / §4.3:
 - Column-0 ``` `` ` ``` inside block scalar terminates early.
 - Multi-fence ordinals monotonic.
 - CRLF markdown handled identically to LF.
-- Path with Windows-native separator → ``to_posix`` normalizes (G130).
+- Path with Windows-native separator → ``to_posix`` normalizes.
 """
 
 import os
@@ -104,7 +104,7 @@ class ExtractYamlFencesShapeTests(unittest.TestCase):
 
     def test_column_zero_backticks_inside_body_terminate_early(self) -> None:
         # ```yaml fence opens; the literal column-0 ``` inside the body
-        # terminates the block per CommonMark.  Documented limit (G13).
+        # terminates the block per CommonMark.  Documented limit.
         text = "```yaml\nliteral: |\n```\n  more\n```\n"
         records = prose_yaml.extract_yaml_fences(text)
         self.assertEqual(records[0]["state"], "parsed")
@@ -120,7 +120,7 @@ class ExtractYamlFencesShapeTests(unittest.TestCase):
 
 
 # ===================================================================
-# extract_yaml_fences — opt-out marker (§4.3)
+# extract_yaml_fences — opt-out marker
 # ===================================================================
 
 
@@ -235,7 +235,7 @@ class ValidateProseYamlTests(unittest.TestCase):
         self.assertEqual(findings[0]["block_ordinal"], 2)
 
     def test_file_path_echoed_verbatim(self) -> None:
-        # G120 — the function does not normalise paths; the caller does.
+        # The function does not normalise paths; the caller does.
         text = "```yaml\nbad: *alias\n```\n"
         findings = prose_yaml.validate_prose_yaml(
             "skill\\caps\\thing.md", text
@@ -259,7 +259,7 @@ class ReadAndValidateTests(unittest.TestCase):
         try:
             findings = prose_yaml.read_and_validate(path)
             self.assertEqual(len(findings), 1)
-            # G68 — file path is POSIX even when the OS uses backslashes.
+            # File path is POSIX even when the OS uses backslashes.
             self.assertNotIn("\\", findings[0]["file"])
         finally:
             os.unlink(path)
