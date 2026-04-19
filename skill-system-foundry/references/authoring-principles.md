@@ -348,7 +348,7 @@ Skills act as additions to models. What works for Opus/o3 might need more detail
 
 ## Counter-example convention for prose YAML fences
 
-Skills sometimes ship intentional examples of YAML that the in-repo parser would reject — counter-examples illustrating divergences. The doc-snippet validator (`validate_skill --check-prose-yaml`) treats every ```` ```yaml ```` fence in scope as live input by default; counter-examples need an opt-out.
+Skills sometimes ship intentional examples of YAML that the in-repo parser would reject — counter-examples illustrating divergences. The doc-snippet validator (`python scripts/validate_skill.py <skill-path> --check-prose-yaml`) treats every ```` ```yaml ```` fence in scope as live input by default; counter-examples need an opt-out.
 
 **Opt-out marker.** The HTML comment `<!-- yaml-ignore -->` on the line immediately above the fence-open line — with no blank line between — opts the fence out of validation. The marker is reviewer-visible by design: a waiver, not silent acceptance.
 

@@ -48,10 +48,11 @@ def _strip_frontmatter(markdown_text: str) -> str:
     if frontmatter_raw is None:
         return markdown_text
     if body_raw == "":
-        # No closing delimiter — leave the text untouched so existing
-        # error handling paths (unterminated fences, frontmatter
-        # _parse_error) still fire on the original content.
-        return markdown_text
+        # No closing delimiter — the frontmatter block is malformed.
+        # Skip prose scanning entirely rather than letting fences
+        # inside that block leak into body validation.  The frontmatter
+        # parse error is surfaced separately by ``load_frontmatter``.
+        return ""
     try:
         parsed = parse_yaml_subset(frontmatter_raw.strip(), [])
     except (ValueError, KeyError):
@@ -73,9 +74,12 @@ def extract_yaml_fences(markdown_text: str) -> list[dict]:
     Each record dict::
 
         {
-            "ordinal": int,   # 1-based across all matched fences
-            "text":   str,    # fence body, LF-only
-            "state":  "parsed" | "ignored" | "unterminated" | "wrong-case"
+            "ordinal":  int,   # 1-based across all matched fences
+            "text":     str,   # fence body, LF-only
+            "state":    "parsed" | "ignored" | "unterminated" | "wrong-case",
+            "language": str,   # only present when state=="wrong-case";
+                               # the literal language token the author
+                               # wrote (e.g. "YAML", "yml")
         }
 
     Fence shape rules:

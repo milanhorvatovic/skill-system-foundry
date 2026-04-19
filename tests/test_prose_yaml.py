@@ -223,6 +223,26 @@ class ValidateProseYamlTests(unittest.TestCase):
             "synthetic structural failure", findings[0]["message"]
         )
 
+    def test_unterminated_frontmatter_skips_prose_scan(self) -> None:
+        # Malformed frontmatter (no closing ``---``) must not cause
+        # fences inside that block to be validated as body content —
+        # the file's frontmatter parse error is surfaced separately by
+        # the main validator.
+        text = (
+            "---\n"
+            "name: demo\n"
+            "description: |\n"
+            "  ```yaml\n"
+            "  bad: *alias\n"
+            "  ```\n"
+            "# No closing delimiter below this line.\n"
+            "```yaml\n"
+            "also: *alias\n"
+            "```\n"
+        )
+        findings = prose_yaml.validate_prose_yaml("doc.md", text)
+        self.assertEqual(findings, [])
+
     def test_empty_frontmatter_is_stripped(self) -> None:
         # A ``---\\n---\\n`` block is still frontmatter for scope
         # purposes; fences after it are validated, fences before the
