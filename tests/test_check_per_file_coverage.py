@@ -28,6 +28,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 load_threshold = _mod.load_threshold
 check_per_file = _mod.check_per_file
+parse_file_threshold = _mod.parse_file_threshold
 main = _mod.main
 
 
@@ -931,6 +932,237 @@ class MainMalformedCoverageJsonTests(unittest.TestCase):
                 "--threshold", "70",
             ])
             self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+
+# ===================================================================
+# parse_file_threshold — argument parsing
+# ===================================================================
+
+
+class ParseFileThresholdTests(unittest.TestCase):
+    """Tests for ``parse_file_threshold`` PATH=PCT parsing."""
+
+    def test_simple_path_and_integer(self) -> None:
+        self.assertEqual(
+            parse_file_threshold("a/b.py=90"),
+            ("a/b.py", 90.0),
+        )
+
+    def test_path_with_equals_sign_uses_last(self) -> None:
+        # Splits on the LAST '='; paths may contain '='.
+        self.assertEqual(
+            parse_file_threshold("weird=name.py=85"),
+            ("weird=name.py", 85.0),
+        )
+
+    def test_zero_and_hundred_boundary(self) -> None:
+        self.assertEqual(parse_file_threshold("a.py=0"), ("a.py", 0.0))
+        self.assertEqual(parse_file_threshold("a.py=100"), ("a.py", 100.0))
+
+    def test_missing_equals_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_file_threshold("no-equals-sign")
+
+    def test_empty_path_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_file_threshold("=90")
+
+    def test_non_integer_pct_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_file_threshold("a.py=ninety")
+
+    def test_decimal_pct_raises(self) -> None:
+        # PCT must be an integer; decimals are rejected.
+        with self.assertRaises(ValueError):
+            parse_file_threshold("a.py=90.5")
+
+    def test_negative_pct_raises(self) -> None:
+        # The minus sign also defeats isdigit() — covered, but pin the
+        # shape explicitly so a future refactor can't regress it.
+        with self.assertRaises(ValueError):
+            parse_file_threshold("a.py=-1")
+
+    def test_above_100_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_file_threshold("a.py=101")
+
+
+# ===================================================================
+# check_per_file — per-file overrides
+# ===================================================================
+
+
+class CheckPerFileOverrideTests(unittest.TestCase):
+    """Tests for ``check_per_file`` honoring per-file overrides."""
+
+    def test_override_hit_promotes_threshold(self) -> None:
+        # Global threshold 70; override raises a.py to 95.  a.py at 90%
+        # now fails, b.py at 80% still passes against the global.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(_coverage_json({"a.py": 90.0, "b.py": 80.0}))
+            path = fh.name
+        try:
+            failures, passes = check_per_file(
+                path, 70.0, {"a.py": 95.0}
+            )
+            self.assertEqual([f[0] for f in failures], ["a.py"])
+            self.assertEqual([p[0] for p in passes], ["b.py"])
+        finally:
+            os.unlink(path)
+
+    def test_override_miss_falls_through_to_global(self) -> None:
+        # Override is on c.py (not present); a.py and b.py use the global.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(_coverage_json({"a.py": 50.0, "b.py": 80.0}))
+            path = fh.name
+        try:
+            failures, passes = check_per_file(
+                path, 70.0, {"c.py": 99.0}
+            )
+            self.assertEqual([f[0] for f in failures], ["a.py"])
+            self.assertEqual([p[0] for p in passes], ["b.py"])
+        finally:
+            os.unlink(path)
+
+    def test_multiple_overrides_apply_independently(self) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(
+                _coverage_json({"a.py": 92.0, "b.py": 85.0, "c.py": 75.0})
+            )
+            path = fh.name
+        try:
+            failures, passes = check_per_file(
+                path,
+                70.0,
+                {"a.py": 95.0, "b.py": 80.0},
+            )
+            self.assertEqual([f[0] for f in failures], ["a.py"])
+            self.assertEqual(
+                sorted(p[0] for p in passes),
+                ["b.py", "c.py"],
+            )
+        finally:
+            os.unlink(path)
+
+    def test_override_lower_than_global_lets_low_file_pass(self) -> None:
+        # Per-file override may also relax — a.py at 50% passes when
+        # override drops to 40%, even though the global is 70%.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(_coverage_json({"a.py": 50.0}))
+            path = fh.name
+        try:
+            failures, passes = check_per_file(
+                path, 70.0, {"a.py": 40.0}
+            )
+            self.assertEqual(failures, [])
+            self.assertEqual([p[0] for p in passes], ["a.py"])
+        finally:
+            os.unlink(path)
+
+
+class MainFileThresholdTests(unittest.TestCase):
+    """Integration tests for ``--file-threshold`` end-to-end."""
+
+    def test_repeated_overrides_pass(self) -> None:
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 92.0, "b.py": 88.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+                "--file-threshold", "a.py=90",
+                "--file-threshold", "b.py=80",
+            ])
+            self.assertEqual(result, 0)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_override_failure_returns_one(self) -> None:
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+                "--file-threshold", "a.py=90",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_override_failure_reports_override_threshold(self) -> None:
+        # When a per-file override is the reason a file fails, the
+        # output must name the override threshold (not the global
+        # floor) so the CI log is actionable.
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 80.0}))
+            buf_out: list[str] = []
+            import contextlib
+            import io
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main([
+                    "--coverage-json", json_path,
+                    "--threshold", "70",
+                    "--file-threshold", "a.py=90",
+                ])
+            buf_out.append(stdout.getvalue())
+            self.assertEqual(code, 1)
+            output = buf_out[0]
+            self.assertIn("override threshold 90.0%", output)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_override_path_normalisation_matches_coverage_filename(self) -> None:
+        # CLI input may use different equivalent path forms than what
+        # ``coverage.json`` stores (``./x.py`` prefix, backslashes on
+        # Windows, etc.).  Normalisation must make the override apply
+        # regardless.
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"pkg/x.py": 80.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+                "--file-threshold", "./pkg/x.py=90",
+            ])
+            self.assertEqual(result, 1)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir)
+
+    def test_malformed_override_returns_usage_error(self) -> None:
+        # Usage errors follow argparse convention and exit with code 2,
+        # matching the contract documented on ``main``.
+        tmpdir = tempfile.mkdtemp()
+        try:
+            json_path = os.path.join(tmpdir, "coverage.json")
+            _write(json_path, _coverage_json({"a.py": 90.0}))
+            result = main([
+                "--coverage-json", json_path,
+                "--threshold", "70",
+                "--file-threshold", "a.py=ninety",
+            ])
+            self.assertEqual(result, 2)
         finally:
             import shutil
             shutil.rmtree(tmpdir)

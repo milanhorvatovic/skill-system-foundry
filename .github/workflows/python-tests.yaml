@@ -40,7 +40,13 @@ jobs:
         run: python -m coverage json
 
       - name: Check per-file coverage
-        run: python .github/scripts/check-per-file-coverage.py
+        # Coverage thresholds are enforced against the Ubuntu run only;
+        # Windows numbers are advisory because branch coverage can vary
+        # with platform-conditional code paths.
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python .github/scripts/check-per-file-coverage.py \
+            --file-threshold skill-system-foundry/scripts/lib/prose_yaml.py=90
 
       - name: Generate coverage HTML report
         if: always() && steps.run-tests.outcome != 'skipped'

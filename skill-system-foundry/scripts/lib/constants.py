@@ -228,6 +228,18 @@ BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
 BUNDLE_VALID_TARGETS = tuple(_bundle["valid_targets"])
 BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
 
+# --- Prose YAML Validation ---
+# Fail-fast: a stale checkout missing this section produces a clear
+# error at import rather than a subtle KeyError later.
+if "prose_yaml" not in _config:
+    raise RuntimeError(
+        "configuration.yaml is missing required section 'prose_yaml'; "
+        "this foundry build is incomplete."
+    )
+_prose = _config["prose_yaml"]
+PROSE_YAML_OPT_OUT_MARKER = _prose["opt_out_marker"]
+PROSE_YAML_IN_SCOPE_GLOBS = tuple(_prose["in_scope_globs"])
+
 # --- Codex Configuration (agents/openai.yaml) ---
 _codex = _config["codex_config"]
 _codex_iface = _codex["interface"]
@@ -251,3 +263,4 @@ del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
+del _prose

@@ -1475,10 +1475,15 @@ class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
                 )
             proc = _run([tmpdir, "--json"], cwd=REPO_ROOT)
             data = json.loads(proc.stdout)
-        # Schema preserved: no new top-level keys introduced.
+        # Schema preserved: known top-level keys plus the additive
+        # ``yaml_conformance`` slot (always present, zero sentinel when
+        # checks did not run).
         self.assertEqual(
             set(data.keys()),
-            {"tool", "path", "success", "counts", "summary", "errors", "version"},
+            {
+                "tool", "path", "success", "counts", "summary",
+                "errors", "version", "yaml_conformance",
+            },
         )
         manifest_fails = [
             entry for entry in data["errors"].get("failures", [])
@@ -1560,6 +1565,67 @@ class AuditFoundryConfigFindingsTests(unittest.TestCase):
             if e.startswith("FAIL: [foundry] scripts/lib/configuration.yaml")
         ]
         self.assertEqual(len(tagged), 1)
+
+
+class AuditProseYamlAggregationTests(unittest.TestCase):
+    """``--check-prose-yaml`` and ``--foundry-self`` on audit_skill_system."""
+
+    def _build_system(self, tmpdir: str, *, planted_skills: list[str]) -> str:
+        """Plant minimal registered skills under <tmpdir>/skills/."""
+        system_root = tmpdir
+        skills_dir = os.path.join(system_root, "skills")
+        os.makedirs(skills_dir)
+        for name in planted_skills:
+            skill = os.path.join(skills_dir, name)
+            os.makedirs(skill)
+            write_skill_md(
+                skill,
+                name=name,
+                description=f"Demo skill {name} with a divergent fence.",
+                body=f"# {name}\n\n```yaml\nbad: *alias\n```\n",
+            )
+        return system_root
+
+    def test_flag_off_no_prose_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = self._build_system(tmpdir, planted_skills=["alpha"])
+            proc = _run([system_root, "--json"], cwd=REPO_ROOT)
+            data = json.loads(proc.stdout)
+        slot = data["yaml_conformance"]["doc_snippets"]
+        self.assertEqual(slot, {"checked": 0, "findings": []})
+
+    def test_foundry_self_runs_across_every_skill(self) -> None:
+        # The flag is a mode switch — every scanned skill gets the
+        # prose check, not just one named "foundry".
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = self._build_system(
+                tmpdir, planted_skills=["alpha", "beta"]
+            )
+            proc = _run(
+                [system_root, "--foundry-self", "--json"], cwd=REPO_ROOT
+            )
+            data = json.loads(proc.stdout)
+        slot = data["yaml_conformance"]["doc_snippets"]
+        self.assertEqual(slot["checked"], 2)
+        files = {f["file"] for f in slot["findings"]}
+        # Each finding's file is prefixed with skills/<name>/<rel>.
+        self.assertEqual(
+            files, {"skills/alpha/SKILL.md", "skills/beta/SKILL.md"}
+        )
+
+    def test_check_prose_yaml_alone_runs_across_every_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = self._build_system(
+                tmpdir, planted_skills=["alpha"]
+            )
+            proc = _run(
+                [system_root, "--check-prose-yaml", "--json"], cwd=REPO_ROOT
+            )
+            data = json.loads(proc.stdout)
+        findings = data["yaml_conformance"]["doc_snippets"]["findings"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["file"], "skills/alpha/SKILL.md")
+        self.assertIn("alias indicator", findings[0]["message"])
 
 
 if __name__ == "__main__":

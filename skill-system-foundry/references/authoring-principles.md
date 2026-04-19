@@ -23,6 +23,7 @@ Skill System Foundry maintains these principles as a unified reference because t
 
 ## Table of Contents
 
+- [Line wrapping](#line-wrapping)
 - [Conciseness](#conciseness)
 - [Writing Descriptions](#writing-descriptions)
 - [Degrees of Freedom](#degrees-of-freedom)
@@ -32,8 +33,15 @@ Skill System Foundry maintains these principles as a unified reference because t
 - [Scripts and Executable Code](#scripts-and-executable-code)
 - [Workflows and Feedback Loops](#workflows-and-feedback-loops)
 - [Evaluation and Iteration](#evaluation-and-iteration)
+- [Counter-example convention for prose YAML fences](#counter-example-convention-for-prose-yaml-fences)
 
 ---
+
+## Line wrapping
+
+Do not hard-wrap prose to a fixed column width. One paragraph is one logical line; the renderer (GitHub, the IDE preview, or the consumer's terminal) handles wrapping. Hard-wrapped paragraphs produce noisy diffs when a single word changes mid-paragraph and force every editor to honour the same column limit.
+
+Lists, tables, code fences, and frontmatter values keep their natural line structure (one item per line, one fence per line, etc.). The rule applies to flowing prose only.
 
 ## Conciseness
 
@@ -337,3 +345,21 @@ Watch for unexpected exploration paths, missed connections, overreliance on cert
 ### Test Across Models
 
 Skills act as additions to models. What works for Opus/o3 might need more detail for Haiku/mini. Test with all models you plan to use.
+
+## Counter-example convention for prose YAML fences
+
+Skills sometimes ship intentional examples of YAML that the in-repo parser would reject — counter-examples illustrating divergences. The doc-snippet validator (`python scripts/validate_skill.py <skill-path> --check-prose-yaml`) treats every ```` ```yaml ```` fence in scope as live input by default; counter-examples need an opt-out.
+
+**Opt-out marker.** The HTML comment `<!-- yaml-ignore -->` on the line immediately above the fence-open line — with no blank line between — opts the fence out of validation. The marker is reviewer-visible by design: a waiver, not silent acceptance.
+
+**Fence shape rules.** The validator only sees fences that match all of:
+
+- Three backticks (no more, no fewer); tilde fences are invisible.
+- Lowercase literal `yaml` immediately after the backticks (no whitespace between).
+- The opening backticks at byte offset 0 (column 0); indented fences are invisible.
+- A close marker line that is exactly ```` ``` ```` at byte offset 0 (column 0), with no trailing whitespace or other characters, before end of file.
+
+**Avoid column-0 ```` ``` ```` inside a YAML block scalar.** The markdown extractor terminates the fence at the first column-0 ```` ``` ```` line per CommonMark, even when that line is inside a literal-block content region. If a YAML example needs a literal triple-backtick, indent the line so it is no longer at column 0.
+
+**Commented-out fences.** HTML comments are not parsed by the extractor — a column-0 ```` ```yaml ```` line inside an `<!-- ... -->` block is still recognised. Wrap it in `<!-- yaml-ignore -->` (one fence per marker) or indent the fence to hide it.
+

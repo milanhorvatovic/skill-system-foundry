@@ -151,6 +151,25 @@ plain_scalar:
     - TAB
 
 # ============================================================
+# Prose YAML Validation (in-Markdown ```yaml fences)
+# ============================================================
+# Settings for the doc-snippet validator (validate_prose_yaml).  See
+# references/authoring-principles.md (section "Counter-example
+# convention for prose YAML fences") for the author-facing convention.
+prose_yaml:
+  # HTML-comment marker that opts a fence out of validation when it
+  # appears on the line immediately above the fence-open line (no
+  # blank line between).  Strict adjacency.
+  opt_out_marker: "<!-- yaml-ignore -->"
+  # Globs (relative to the skill root) that the prose check walks.
+  # Other markdown files inside the skill (CLAUDE.md, README.md,
+  # CHANGELOG.md, assets/**) are out of scope by design.
+  in_scope_globs:
+    - SKILL.md
+    - capabilities/**/*.md
+    - references/**/*.md
+
+# ============================================================
 # Codex Configuration (agents/openai.yaml)
 # ============================================================
 codex_config:

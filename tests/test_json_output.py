@@ -715,5 +715,81 @@ class BundleJsonTests(unittest.TestCase):
         self.assertIn("unrecognized arguments", data["error"])
 
 
+class YamlConformanceJsonSlotTests(unittest.TestCase):
+    """The yaml_conformance slot is always present.
+
+    Both ``corpus`` (zero-sentinel here — populated by the corpus
+    harness which validate_skill / audit_skill_system do not run) and
+    ``doc_snippets`` are present on every JSON invocation.  Numeric
+    fields are integers, not strings.
+    """
+
+    def _make_minimal_skill(self, tmpdir: str) -> str:
+        skill = os.path.join(tmpdir, "demo")
+        os.makedirs(skill)
+        write_skill_md(
+            skill,
+            name="demo",
+            description="Demo skill for json output schema tests.",
+        )
+        return skill
+
+    def test_validate_skill_zero_sentinel_when_flag_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_minimal_skill(tmpdir)
+            proc = _run(VALIDATE_SCRIPT, [skill, "--json"], cwd=REPO_ROOT)
+            data = _parse_json(proc.stdout)
+        self.assertIn("yaml_conformance", data)
+        slot = data["yaml_conformance"]
+        self.assertEqual(
+            set(slot.keys()), {"corpus", "doc_snippets"}
+        )
+        corpus = slot["corpus"]
+        self.assertEqual(
+            corpus,
+            {"total": 0, "passed": 0, "failed": 0, "failures": []},
+        )
+        for k in ("total", "passed", "failed"):
+            self.assertIsInstance(corpus[k], int)
+        snippets = slot["doc_snippets"]
+        self.assertEqual(snippets, {"checked": 0, "findings": []})
+        self.assertIsInstance(snippets["checked"], int)
+
+    def test_validate_skill_doc_snippets_populated_when_flag_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_minimal_skill(tmpdir)
+            # Add a body fence with a known divergence.
+            with open(os.path.join(skill, "SKILL.md"), "a", encoding="utf-8") as fh:
+                fh.write("\n```yaml\nbad: *alias\n```\n")
+            proc = _run(
+                VALIDATE_SCRIPT,
+                [skill, "--json", "--check-prose-yaml"],
+                cwd=REPO_ROOT,
+            )
+            data = _parse_json(proc.stdout)
+        snippets = data["yaml_conformance"]["doc_snippets"]
+        self.assertEqual(snippets["checked"], 1)
+        self.assertEqual(len(snippets["findings"]), 1)
+        finding = snippets["findings"][0]
+        self.assertEqual(finding["severity"], "fail")
+        self.assertEqual(finding["block_ordinal"], 1)
+        self.assertIsInstance(finding["block_ordinal"], int)
+        self.assertIn("alias indicator", finding["message"])
+
+    def test_audit_skill_system_zero_sentinel_when_flag_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "skills"))
+            proc = _run(AUDIT_SCRIPT, [tmpdir, "--json"], cwd=REPO_ROOT)
+            data = _parse_json(proc.stdout)
+        slot = data["yaml_conformance"]
+        self.assertEqual(
+            slot["corpus"],
+            {"total": 0, "passed": 0, "failed": 0, "failures": []},
+        )
+        self.assertEqual(
+            slot["doc_snippets"], {"checked": 0, "findings": []}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

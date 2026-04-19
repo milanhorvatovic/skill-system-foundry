@@ -17,6 +17,21 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _normalize_path(path: str) -> str:
+    """Canonicalise a path so lookups are robust across form variants.
+
+    Normalises ``.``, ``..`` and redundant separators via
+    ``os.path.normpath``, drops the leading ``./`` that Windows'
+    ``normpath`` leaves on and then rewrites backslashes to forward
+    slashes so the result is comparable regardless of which platform
+    produced either side of the comparison.
+    """
+    normalised = os.path.normpath(path).replace("\\", "/")
+    if normalised.startswith("./"):
+        normalised = normalised[2:]
+    return normalised
+
+
 def load_threshold(coveragerc_path: str) -> float:
     """Read ``fail_under`` from a ``.coveragerc`` file.
 
@@ -73,14 +88,50 @@ def load_threshold(coveragerc_path: str) -> float:
         raise SystemExit(1)
 
 
+def parse_file_threshold(raw: str) -> tuple[str, float]:
+    """Parse a single ``--file-threshold PATH=PCT`` argument.
+
+    Splits on the **last** ``=`` so path values may contain ``=``.  ``PCT``
+    must be a non-negative integer between 0 and 100 inclusive.  Raises
+    ``ValueError`` with the offending argument in the message when the
+    form is invalid (no ``=``, empty path, non-integer or out-of-range
+    percentage).
+    """
+    sep_index = raw.rfind("=")
+    if sep_index < 0:
+        raise ValueError(
+            f"--file-threshold requires PATH=PCT form: {raw!r}"
+        )
+    path = raw[:sep_index]
+    pct_text = raw[sep_index + 1:]
+    if not path:
+        raise ValueError(
+            f"--file-threshold path is empty in {raw!r}"
+        )
+    if not pct_text.isdigit():
+        raise ValueError(
+            f"--file-threshold percentage must be an integer 0-100 in {raw!r}"
+        )
+    pct = int(pct_text)
+    if pct < 0 or pct > 100:
+        raise ValueError(
+            f"--file-threshold percentage must be 0-100 in {raw!r}"
+        )
+    return path, float(pct)
+
+
 def check_per_file(
-    json_path: str, threshold: float
+    json_path: str,
+    threshold: float,
+    file_thresholds: dict[str, float] | None = None,
 ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
     """Return ``(failures, passes)`` for per-file branch coverage.
 
     *json_path* is the path to a ``coverage.json`` file produced by
     ``python -m coverage json``.  Each file's
-    ``summary.percent_branches_covered`` is compared against *threshold*.
+    ``summary.percent_branches_covered`` is compared against the
+    matching threshold: per-file overrides from *file_thresholds* take
+    precedence over the global *threshold*.
 
     When ``percent_branches_covered`` is absent (coverage < 7.7), the
     percentage is computed from ``covered_branches / num_branches``.
@@ -92,6 +143,9 @@ def check_per_file(
     structure is malformed (missing ``files`` dict, or a file entry lacks
     branch coverage data that can be used or computed).
     """
+    overrides = {
+        _normalize_path(k): v for k, v in (file_thresholds or {}).items()
+    }
     with open(json_path, encoding="utf-8") as fh:
         data = json.load(fh)
 
@@ -153,7 +207,8 @@ def check_per_file(
                 f"coverage.json malformed entry for '{filename}': "
                 f"branch coverage {pct:.2f}% is outside the 0–100 range"
             )
-        if pct < threshold:
+        effective = overrides.get(_normalize_path(filename), threshold)
+        if pct < effective:
             failures.append((filename, pct))
         else:
             passes.append((filename, pct))
@@ -194,11 +249,36 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=".coveragerc",
         help="Path to .coveragerc (default: .coveragerc)",
     )
+    parser.add_argument(
+        "--file-threshold",
+        action="append",
+        default=[],
+        metavar="PATH=PCT",
+        help=(
+            "Per-file override of the coverage threshold (repeatable). "
+            "PCT is an integer 0-100. Paths may contain '=' (split on the "
+            "last '=')."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def _run(args: argparse.Namespace) -> int:
     """Execute the coverage check using parsed *args*.  Returns exit code."""
+    # Parse and validate per-file overrides before any coverage measurement.
+    # Malformed --file-threshold is an argparse-style usage error: exit
+    # code 2, matching the contract documented on ``main``.  Override
+    # paths are normalised up-front so ``./x.py`` and backslash forms
+    # still match the form ``coverage.json`` emits.
+    file_thresholds: dict[str, float] = {}
+    for raw in args.file_threshold:
+        try:
+            path, pct = parse_file_threshold(raw)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        file_thresholds[_normalize_path(path)] = pct
+
     # Determine threshold
     if args.threshold is not None:
         threshold = args.threshold
@@ -225,7 +305,9 @@ def _run(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        failures, passes = check_per_file(args.coverage_json, threshold)
+        failures, passes = check_per_file(
+            args.coverage_json, threshold, file_thresholds
+        )
     except (OSError, json.JSONDecodeError) as exc:
         print(
             f"Error: failed to read/parse coverage.json at {args.coverage_json}: {exc}",
@@ -243,15 +325,30 @@ def _run(args: argparse.Namespace) -> int:
     for filename, pct in passes:
         print(f"  PASS  {pct:6.1f}%  {filename}")
 
+    any_override_failed = False
     for filename, pct in failures:
-        print(f"  FAIL  {pct:6.1f}%  {filename}")
+        effective = file_thresholds.get(_normalize_path(filename), threshold)
+        if effective != threshold:
+            any_override_failed = True
+            print(
+                f"  FAIL  {pct:6.1f}%  {filename}  "
+                f"(below override threshold {effective:.1f}%)"
+            )
+        else:
+            print(f"  FAIL  {pct:6.1f}%  {filename}")
 
     print("-" * 60)
 
     if failures:
-        print(
-            f"{len(failures)} file(s) below {threshold:.1f}% branch coverage threshold"
-        )
+        if any_override_failed:
+            print(
+                f"{len(failures)} file(s) below their branch coverage threshold "
+                f"(floor {threshold:.1f}%, plus per-file overrides)"
+            )
+        else:
+            print(
+                f"{len(failures)} file(s) below {threshold:.1f}% branch coverage threshold"
+            )
         return 1
 
     print(f"All {len(passes)} file(s) meet the {threshold:.1f}% threshold")

@@ -42,6 +42,10 @@ Do not explain general programming concepts, standard library APIs, or well-know
 
 Each piece of knowledge has a single authoritative location. If the same concept appears in multiple files, one file owns the definition and others reference it. Do not copy content between `SKILL.md`, reference files, templates, or `CONTRIBUTING.md`.
 
+### Line Wrapping
+
+Do not hard-wrap prose lines to a fixed width. See `skill-system-foundry/references/authoring-principles.md` (section "Line wrapping") for the full rule and rationale — this file intentionally does not duplicate it.
+
 ## Frontmatter Rules
 
 ### Required Fields
@@ -155,3 +159,4 @@ When creating or editing any Markdown file, verify:
 - Unquoted value containing special characters (`:`, `#`, `{`, `}`)
 - Missing table of contents in files over 100 lines
 - Placeholder markers removed from templates
+- Hard-wrapped prose lines instead of one-paragraph-per-line
