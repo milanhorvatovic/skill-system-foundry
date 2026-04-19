@@ -1,0 +1,17 @@
+# Scoped .gitattributes for the YAML 1.2.2 conformance corpus only (G148).
+#
+# This file currently governs ONLY the byte-exact preservation of
+# fixtures under tests/fixtures/yaml-conformance/.  Additions for other
+# repository paths are welcome, but must leave the corpus-fixture
+# attributes below untouched — these fixtures depend on git not
+# rewriting their line endings on Windows checkouts (G73).
+#
+# The ``-text`` attribute disables git's automatic line-ending
+# conversion AND tells git to treat the file as binary for diff
+# purposes.  That tradeoff is intentional: byte-exact preservation of
+# the LF / CRLF / mixed variants matters more than diff readability for
+# these fixtures.
+
+tests/fixtures/yaml-conformance/**/*.lf.yaml    -text
+tests/fixtures/yaml-conformance/**/*.crlf.yaml  -text
+tests/fixtures/yaml-conformance/**/*.mixed.yaml -text
