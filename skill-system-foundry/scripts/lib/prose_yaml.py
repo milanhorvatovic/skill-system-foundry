@@ -15,9 +15,13 @@ from ``lib.reporting``.  ``reporting`` is a pure string helper and
 does not import this module — no cycle.
 """
 
+import glob
 import os
 
-from .constants import LEVEL_FAIL, PROSE_YAML_OPT_OUT_MARKER
+from .constants import (
+    LEVEL_FAIL, LEVEL_INFO, LEVEL_WARN,
+    PROSE_YAML_IN_SCOPE_GLOBS, PROSE_YAML_OPT_OUT_MARKER,
+)
 from .reporting import parse_finding_string, to_posix
 from .yaml_parser import parse_yaml_subset
 
@@ -275,6 +279,91 @@ def read_and_validate(path: str) -> list[dict]:
     return validate_prose_yaml(to_posix(path), text)
 
 
+def find_in_scope_files(skill_root: str) -> list[str]:
+    """Return absolute paths of in-scope Markdown files under *skill_root*.
+
+    Scope is the three globs from ``PROSE_YAML_IN_SCOPE_GLOBS``
+    (``SKILL.md``, ``capabilities/**/*.md``, ``references/**/*.md``).
+    Returns a sorted, de-duplicated list with POSIX separators
+    preserved as on-disk; callers normalise via ``to_posix`` when
+    constructing finding paths (G68 / G116).
+    """
+    seen: set[str] = set()
+    matches: list[str] = []
+    for pattern in PROSE_YAML_IN_SCOPE_GLOBS:
+        for absolute in glob.glob(
+            os.path.join(skill_root, pattern), recursive=True
+        ):
+            if not os.path.isfile(absolute):
+                continue
+            if absolute in seen:
+                continue
+            seen.add(absolute)
+            matches.append(absolute)
+    matches.sort()
+    return matches
+
+
+def collect_prose_findings(
+    skill_root: str, *, audit_prefix: str = ""
+) -> tuple[list[dict], int, list[tuple[str, int]]]:
+    """Walk *skill_root* and validate every in-scope Markdown file.
+
+    Returns ``(findings, checked, per_file_counts)``:
+
+    - ``findings`` — flat list of structured finding dicts (file paths
+      already prefixed when *audit_prefix* is non-empty).
+    - ``checked`` — count of fences in state ``"parsed"`` summed across
+      every in-scope file (G43).
+    - ``per_file_counts`` — list of ``(relative_path, fence_count)``
+      pairs in iteration order; verbose callers print one line per
+      entry.
+
+    *audit_prefix* — when set, every finding's ``file`` field becomes
+    ``<audit_prefix>/<relative-path>`` so multi-skill aggregation in
+    ``audit_skill_system`` is unambiguous (G23).
+    """
+    findings: list[dict] = []
+    checked = 0
+    per_file_counts: list[tuple[str, int]] = []
+    for absolute in find_in_scope_files(skill_root):
+        relative = to_posix(os.path.relpath(absolute, skill_root))
+        display_path = (
+            f"{audit_prefix}/{relative}" if audit_prefix else relative
+        )
+        with open(absolute, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        records = extract_yaml_fences(text)
+        parsed_count = sum(1 for r in records if r["state"] == "parsed")
+        checked += parsed_count
+        per_file_counts.append((display_path, len(records)))
+        findings.extend(validate_prose_yaml(display_path, text))
+    return findings, checked, per_file_counts
+
+
+def format_finding_as_string(finding: dict) -> str:
+    """Format a structured finding dict as a parser-style finding string.
+
+    Reuses the existing ``SEVERITY: [tag] body`` shape so consumers that
+    already iterate ``errors[]`` and call ``categorize_errors`` /
+    ``print_error_line`` work without modification.  G45 — selects
+    key-scoped vs. non-key-scoped form by looking at the message body.
+    """
+    severity_token = {
+        "fail": LEVEL_FAIL, "warn": LEVEL_WARN, "info": LEVEL_INFO,
+    }[finding["severity"]]
+    tag = finding["tag"] or "[spec]"
+    file_part = finding["file"]
+    block_part = f"block {finding['block_ordinal']}"
+    msg = finding["message"]
+    if msg.startswith("'") and "':" in msg:
+        # Key-scoped — keep the original "'key': body; advice" shape.
+        body = f"{file_part} {block_part}: {msg}"
+    else:
+        body = f"{file_part} {block_part}: {msg}"
+    return f"{severity_token}: {tag} {body}"
+
+
 # Re-export ``LEVEL_FAIL`` so callers building human output don't need
 # to import constants separately.
 __all__ = (
@@ -282,4 +371,7 @@ __all__ = (
     "extract_yaml_fences",
     "validate_prose_yaml",
     "read_and_validate",
+    "find_in_scope_files",
+    "collect_prose_findings",
+    "format_finding_as_string",
 )

@@ -1475,10 +1475,15 @@ class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
                 )
             proc = _run([tmpdir, "--json"], cwd=REPO_ROOT)
             data = json.loads(proc.stdout)
-        # Schema preserved: no new top-level keys introduced.
+        # Schema preserved: known top-level keys plus the additive
+        # ``yaml_conformance`` slot from #93 (always present, zero
+        # sentinel when checks did not run).
         self.assertEqual(
             set(data.keys()),
-            {"tool", "path", "success", "counts", "summary", "errors", "version"},
+            {
+                "tool", "path", "success", "counts", "summary",
+                "errors", "version", "yaml_conformance",
+            },
         )
         manifest_fails = [
             entry for entry in data["errors"].get("failures", [])

@@ -71,6 +71,7 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     collect_foundry_config_findings,
 )
+from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 
 
 def check_upward_references(content: str, component_type: str, allow_orchestration: bool = False) -> list[tuple[str, str]]:
@@ -493,6 +494,26 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="json_output",
         help="Output results as machine-readable JSON.",
     )
+    parser.add_argument(
+        "--check-prose-yaml",
+        action="store_true",
+        dest="check_prose_yaml",
+        help=(
+            "Run the doc-snippet ```yaml validation across every "
+            "scanned skill (SKILL.md + capabilities/**/*.md + "
+            "references/**/*.md)."
+        ),
+    )
+    parser.add_argument(
+        "--foundry-self",
+        action="store_true",
+        dest="foundry_self",
+        help=(
+            "Mode switch: run every scanned skill the way the foundry "
+            "runs itself.  Currently implies --check-prose-yaml across "
+            "all skills (G64)."
+        ),
+    )
     return parser
 
 
@@ -531,6 +552,8 @@ def main() -> None:
     verbose: bool = args.verbose
     allow_orchestration: bool = args.allow_orchestration
     json_output: bool = args.json_output
+    # G64 — --foundry-self is a mode switch across every scanned skill.
+    check_prose: bool = args.check_prose_yaml or args.foundry_self
 
     if not os.path.isdir(system_root):
         if json_output:
@@ -560,6 +583,40 @@ def main() -> None:
         allow_orchestration=allow_orchestration,
     )
 
+    # Aggregate prose-YAML doc-snippet findings across every scanned
+    # skill (G64).  Always populate the yaml_conformance JSON slot so
+    # consumers don't need a nullability branch (G25 / G67).
+    prose_findings: list[dict] = []
+    prose_checked = 0
+    if check_prose:
+        all_skills = find_skill_dirs(system_root)
+        for skill in all_skills:
+            if skill["type"] != "registered":
+                continue
+            skill_name = os.path.basename(skill["path"])
+            audit_prefix = f"{DIR_SKILLS}/{skill_name}"
+            findings, checked, per_file = collect_prose_findings(
+                skill["path"], audit_prefix=audit_prefix
+            )
+            prose_checked += checked
+            prose_findings.extend(findings)
+            if effective_verbose:
+                for path, fence_count in per_file:
+                    print(
+                        f"Checking prose YAML: {path} ({fence_count} fences)"
+                    )
+        for finding in prose_findings:
+            errors.append(format_finding_as_string(finding))
+    yaml_conformance_slot = {
+        "corpus": {
+            "total": 0, "passed": 0, "failed": 0, "failures": [],
+        },
+        "doc_snippets": {
+            "checked": prose_checked,
+            "findings": prose_findings,
+        },
+    }
+
     if json_output:
         # Compute component counts directly for JSON output (the
         # public API intentionally returns only errors for backward
@@ -583,6 +640,7 @@ def main() -> None:
                 "info": len(infos),
             },
             "errors": categorize_errors_for_json(errors),
+            "yaml_conformance": yaml_conformance_slot,
         }
         print(to_json_output(result))
         sys.exit(1 if fails else 0)

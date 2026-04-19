@@ -2722,10 +2722,15 @@ class CodexFindingsJsonSchemaTests(unittest.TestCase):
             data = json.loads(proc.stdout)
         self.assertFalse(data["success"])
         self.assertIn("errors", data)
-        # Schema preserved: no new top-level keys introduced.
+        # Schema preserved: known top-level keys plus the additive
+        # ``yaml_conformance`` slot from #93 (always present, zero
+        # sentinel when checks did not run).
         self.assertEqual(
             set(data.keys()),
-            {"tool", "path", "type", "success", "summary", "errors", "version"},
+            {
+                "tool", "path", "type", "success", "summary",
+                "errors", "version", "yaml_conformance",
+            },
         )
         codex_fails = [
             entry for entry in data["errors"].get("failures", [])

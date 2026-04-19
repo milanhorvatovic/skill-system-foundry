@@ -37,6 +37,7 @@ from lib.validation import (
     validate_known_keys,
 )
 from lib.codex_config import validate_codex_config
+from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.constants import (
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
@@ -553,6 +554,26 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="json_output",
         help="Output results as machine-readable JSON.",
     )
+    parser.add_argument(
+        "--check-prose-yaml",
+        action="store_true",
+        dest="check_prose_yaml",
+        help=(
+            "Validate ```yaml fences in SKILL.md, capabilities/**/*.md, "
+            "and references/**/*.md.  See "
+            "references/authoring-principles.md for the convention."
+        ),
+    )
+    parser.add_argument(
+        "--foundry-self",
+        action="store_true",
+        dest="foundry_self",
+        help=(
+            "Run this skill as the foundry runs itself — currently "
+            "implies --check-prose-yaml.  Silently no-op when the flag "
+            "stack already includes the underlying check."
+        ),
+    )
     return parser
 
 
@@ -592,6 +613,10 @@ def main() -> None:
     verbose: bool = args.verbose
     allow_nested_refs: bool = args.allow_nested_refs
     json_output: bool = args.json_output
+    # --foundry-self is a superset trigger; passing both flags is a
+    # no-op (G58).  --foundry-self on a non-foundry target is silently
+    # equivalent to --check-prose-yaml (G8 / G55).
+    check_prose: bool = args.check_prose_yaml or args.foundry_self
 
     if not os.path.isdir(skill_path):
         if json_output:
@@ -607,6 +632,32 @@ def main() -> None:
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 
+    # Prose-YAML doc-snippet check (Deliverable A).  Always populate the
+    # yaml_conformance JSON slot (G25 / G67) so consumers don't need a
+    # nullability branch.
+    prose_findings: list[dict] = []
+    prose_checked = 0
+    if check_prose and not is_capability:
+        prose_findings, prose_checked, per_file = collect_prose_findings(
+            os.path.abspath(skill_path)
+        )
+        if verbose and not json_output:
+            for path, fence_count in per_file:
+                print(
+                    f"Checking prose YAML: {path} ({fence_count} fences)"
+                )
+        for finding in prose_findings:
+            errors.append(format_finding_as_string(finding))
+    yaml_conformance_slot = {
+        "corpus": {
+            "total": 0, "passed": 0, "failed": 0, "failures": [],
+        },
+        "doc_snippets": {
+            "checked": prose_checked,
+            "findings": prose_findings,
+        },
+    }
+
     if json_output:
         fails, warns, infos = categorize_errors(errors)
         result = {
@@ -621,6 +672,7 @@ def main() -> None:
                 "passes": len(passes),
             },
             "errors": categorize_errors_for_json(errors),
+            "yaml_conformance": yaml_conformance_slot,
         }
         if verbose:
             result["passes"] = passes

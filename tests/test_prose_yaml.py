@@ -197,15 +197,23 @@ class ValidateProseYamlTests(unittest.TestCase):
         self.assertIn("did you mean 'yaml'", findings[0]["message"])
 
     def test_structural_value_error_caught_and_emitted(self) -> None:
-        # Indent-indicator block scalar raises in the parser; the prose
-        # path catches and emits a single LEVEL_FAIL finding (§4.1).
-        text = "```yaml\nkey: |2\n  text\n```\n"
-        findings = prose_yaml.validate_prose_yaml("doc.md", text)
+        # When the underlying parser raises ValueError, the prose path
+        # catches it and emits a single LEVEL_FAIL finding rather than
+        # propagating.  Mock the parser to guarantee the raise path
+        # fires regardless of which constructs the parser rejects today.
+        import unittest.mock
+        with unittest.mock.patch(
+            "lib.prose_yaml.parse_yaml_subset",
+            side_effect=ValueError("synthetic structural failure"),
+        ):
+            findings = prose_yaml.validate_prose_yaml(
+                "doc.md", "```yaml\nkey: value\n```\n"
+            )
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["severity"], "fail")
         self.assertIn("structural parse error", findings[0]["message"])
         self.assertIn(
-            "indent-indicator-block-scalar", findings[0]["message"]
+            "synthetic structural failure", findings[0]["message"]
         )
 
     def test_ignored_fence_produces_no_findings(self) -> None:
