@@ -223,6 +223,23 @@ class ValidateProseYamlTests(unittest.TestCase):
             "synthetic structural failure", findings[0]["message"]
         )
 
+    def test_frontmatter_yaml_fence_not_scanned(self) -> None:
+        # A ```yaml fence embedded inside a folded description in the
+        # frontmatter must not be validated as body content.
+        text = (
+            "---\n"
+            "name: demo\n"
+            "description: >\n"
+            "  sample: ```yaml\n"
+            "  body here\n"
+            "  ```\n"
+            "---\n"
+            "# Body\n"
+            "```yaml\nok: value\n```\n"
+        )
+        findings = prose_yaml.validate_prose_yaml("doc.md", text)
+        self.assertEqual(findings, [])
+
     def test_ignored_fence_produces_no_findings(self) -> None:
         text = "<!-- yaml-ignore -->\n```yaml\nbad: *alias\n```\n"
         self.assertEqual(prose_yaml.validate_prose_yaml("doc.md", text), [])
@@ -395,7 +412,12 @@ class CollectProseFindingsTests(unittest.TestCase):
             self.assertEqual(len(findings), 1)
             self.assertEqual(findings[0]["severity"], "fail")
             self.assertEqual(findings[0]["file"], "SKILL.md")
+            self.assertIsNone(findings[0]["block_ordinal"])
             self.assertIn("could not read file", findings[0]["message"])
+            # The human-formatted line omits the "block N" segment.
+            formatted = prose_yaml.format_finding_as_string(findings[0])
+            self.assertNotIn("block 0", formatted)
+            self.assertNotIn("block None", formatted)
         finally:
             import shutil
             shutil.rmtree(root, ignore_errors=True)

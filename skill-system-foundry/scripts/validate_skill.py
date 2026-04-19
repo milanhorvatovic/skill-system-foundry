@@ -637,7 +637,17 @@ def main() -> None:
     # nullability branch.
     prose_findings: list[dict] = []
     prose_checked = 0
-    if check_prose and not is_capability:
+    if check_prose and is_capability:
+        # Capability mode only sees a single ``capability.md`` body,
+        # so the skill-root glob walk the prose check needs does not
+        # apply.  Surface this as an INFO rather than silently
+        # dropping the flag.
+        errors.append(
+            "INFO: [foundry] --check-prose-yaml has no effect with "
+            "--capability; run against the parent skill root to scan "
+            "prose fences"
+        )
+    elif check_prose:
         prose_findings, prose_checked, per_file = collect_prose_findings(
             os.path.abspath(skill_path)
         )

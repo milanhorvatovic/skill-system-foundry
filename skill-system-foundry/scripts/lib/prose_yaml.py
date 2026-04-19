@@ -29,6 +29,28 @@ from .yaml_parser import parse_yaml_subset
 _FENCE_CLOSE_LITERAL = "```"
 
 
+def _strip_frontmatter(markdown_text: str) -> str:
+    """Drop a leading ``---``-delimited frontmatter block if present.
+
+    The prose-YAML check promises that frontmatter is not scanned —
+    without this, a ``yaml`` fence embedded in a folded description
+    would be validated as if it were body content.  We only recognise
+    the canonical ``---``-on-its-own-line form that ``load_frontmatter``
+    already handles elsewhere.
+    """
+    if not markdown_text.startswith("---"):
+        return markdown_text
+    lines = markdown_text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return markdown_text
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            return "\n".join(lines[idx + 1:])
+    # No closing fence — be conservative and return the original text
+    # so existing error handling (unterminated fences) still fires.
+    return markdown_text
+
+
 def extract_yaml_fences(markdown_text: str) -> list[dict]:
     """Return one record per ```yaml fence found in *markdown_text*.
 
@@ -173,10 +195,13 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
     Returns a list of structured finding dicts::
 
         {
-            "file":          str,    # echoed verbatim from *file_path*
-            "block_ordinal": int,    # 1-based, stable across all fences
+            "file":          str,          # echoed from *file_path*
+            "block_ordinal": int | None,    # 1-based when a fence is
+                                            # implicated; ``None`` for
+                                            # file-level findings
+                                            # (e.g. unreadable source)
             "severity":      "fail" | "warn" | "info",
-            "tag":           str,    # bracketed token, may be empty
+            "tag":           str,           # bracketed token, may be empty
             "message":       str,
         }
 
@@ -187,7 +212,8 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
     Frontmatter blocks are **not** scanned; this function only
     inspects fenced code in the body.
     """
-    return _validate_records(file_path, extract_yaml_fences(markdown_text))
+    body = _strip_frontmatter(markdown_text)
+    return _validate_records(file_path, extract_yaml_fences(body))
 
 
 def _validate_records(file_path: str, records: list[dict]) -> list[dict]:
@@ -258,7 +284,7 @@ def _validate_records(file_path: str, records: list[dict]) -> list[dict]:
 
 def _structured_finding(
     file_path: str,
-    ordinal: int,
+    ordinal: int | None,
     severity: str,
     tag: str,
     message: str,
@@ -349,13 +375,13 @@ def collect_prose_findings(
             # through the existing finding stream.
             findings.append(
                 _structured_finding(
-                    display_path, 0, "fail", "[spec]",
+                    display_path, None, "fail", "[spec]",
                     f"could not read file for prose YAML check: {exc}",
                 )
             )
             per_file_counts.append((display_path, 0))
             continue
-        records = extract_yaml_fences(text)
+        records = extract_yaml_fences(_strip_frontmatter(text))
         parsed_count = sum(1 for r in records if r["state"] == "parsed")
         checked += parsed_count
         per_file_counts.append((display_path, len(records)))
@@ -378,9 +404,13 @@ def format_finding_as_string(finding: dict) -> str:
     }[finding["severity"]]
     tag = finding["tag"] or "[spec]"
     file_part = finding["file"]
-    block_part = f"block {finding['block_ordinal']}"
+    ordinal = finding["block_ordinal"]
+    # File-level findings (no implicated fence) omit the ``block N``
+    # segment — ``block 0`` / ``block None`` would be nonsensical.
+    if ordinal is None:
+        return f"{severity_token}: {tag} {file_part}: {finding['message']}"
     return (
-        f"{severity_token}: {tag} {file_part} {block_part}: "
+        f"{severity_token}: {tag} {file_part} block {ordinal}: "
         f"{finding['message']}"
     )
 

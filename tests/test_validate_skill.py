@@ -2875,6 +2875,22 @@ class CheckProseYamlIntegrationTests(unittest.TestCase):
         self.assertEqual(slot["checked"], 0)
         self.assertEqual(slot["findings"], [])
 
+    def test_capability_mode_surfaces_noop_info(self) -> None:
+        # --check-prose-yaml under --capability is a no-op by scope,
+        # but the caller must be told instead of silently dropping the
+        # request.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill = self._make_skill(tmpdir)
+            cap_dir = os.path.join(skill, "capabilities", "foo")
+            os.makedirs(cap_dir)
+            with open(os.path.join(cap_dir, "capability.md"), "w", encoding="utf-8") as fh:
+                fh.write("# Foo\n")
+            proc = _run(
+                [cap_dir, "--capability", "--check-prose-yaml"],
+                cwd=REPO_ROOT,
+            )
+        self.assertIn("--check-prose-yaml has no effect", proc.stdout)
+
     def test_scope_includes_capabilities_and_references(self) -> None:
         # The three globs are SKILL.md + capabilities/**/*.md +
         # references/**/*.md.  Plant a fence in each of the latter two.
