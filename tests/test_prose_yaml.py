@@ -223,6 +223,14 @@ class ValidateProseYamlTests(unittest.TestCase):
             "synthetic structural failure", findings[0]["message"]
         )
 
+    def test_frontmatter_with_no_body_is_treated_as_valid(self) -> None:
+        # A file where the closing ``---`` is the final line (no body
+        # content after it) is still a valid frontmatter block; it
+        # must not be mistaken for an unterminated block.
+        text = "---\nname: demo\n---\n"
+        findings = prose_yaml.validate_prose_yaml("doc.md", text)
+        self.assertEqual(findings, [])
+
     def test_unterminated_frontmatter_skips_prose_scan(self) -> None:
         # Malformed frontmatter (no closing ``---``) must not cause
         # fences inside that block to be validated as body content —

@@ -3,7 +3,7 @@
 from .yaml_parser import parse_yaml_subset
 
 
-def split_frontmatter(content: str) -> tuple[str | None, str]:
+def split_frontmatter(content: str) -> tuple[str | None, str | None]:
     """Split *content* into ``(frontmatter_text, body_text)``.
 
     Delimiter detection is line-based: the first line must be exactly
@@ -11,11 +11,16 @@ def split_frontmatter(content: str) -> tuple[str | None, str]:
     line.  This avoids matching a ``---`` substring inside the YAML
     value space (for example, inside a block scalar).
 
-    Returns ``(None, content)`` when the first line is not the ``---``
-    open marker.  When the open marker is present but the closing
-    marker is missing, returns the text after the opening line with an
-    empty body so the caller can surface the malformed block as a
-    structured finding.
+    Returns:
+    - ``(None, content)`` when the first line is not the ``---`` open
+      marker (no frontmatter present).
+    - ``(frontmatter_text, body_text)`` when both delimiters are
+      present; ``body_text`` may be the empty string when the closing
+      delimiter is the final line and there is no body content.
+    - ``(frontmatter_text, None)`` when the opening marker is present
+      but the closing marker is missing.  ``body_text`` is ``None``
+      (not ``""``) so callers can distinguish this malformed case from
+      a legitimately empty body.
 
     This is the one true frontmatter splitter: ``load_frontmatter`` and
     the prose-YAML check both use it so delimiter rules cannot drift.
@@ -27,7 +32,7 @@ def split_frontmatter(content: str) -> tuple[str | None, str]:
     for index in range(1, len(lines)):
         if lines[index].rstrip("\r\n") == "---":
             return "".join(lines[1:index]), "".join(lines[index + 1:])
-    return "".join(lines[1:]), ""
+    return "".join(lines[1:]), None
 
 
 def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
@@ -46,7 +51,7 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     frontmatter_raw, body_raw = split_frontmatter(content)
     if frontmatter_raw is None:
         return None, content, []
-    if body_raw == "":
+    if body_raw is None:
         return (
             {"_parse_error": "No closing '---' delimiter in frontmatter"},
             frontmatter_raw,

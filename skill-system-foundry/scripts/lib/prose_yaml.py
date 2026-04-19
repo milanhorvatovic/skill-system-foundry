@@ -47,11 +47,12 @@ def _strip_frontmatter(markdown_text: str) -> str:
     frontmatter_raw, body_raw = split_frontmatter(markdown_text)
     if frontmatter_raw is None:
         return markdown_text
-    if body_raw == "":
-        # No closing delimiter — the frontmatter block is malformed.
-        # Skip prose scanning entirely rather than letting fences
-        # inside that block leak into body validation.  The frontmatter
-        # parse error is surfaced separately by ``load_frontmatter``.
+    if body_raw is None:
+        # Opener present but no closing delimiter — the frontmatter
+        # block is malformed.  Skip prose scanning entirely rather
+        # than letting fences inside that block leak into body
+        # validation.  The frontmatter parse error is surfaced
+        # separately by ``load_frontmatter``.
         return ""
     try:
         parsed = parse_yaml_subset(frontmatter_raw.strip(), [])
