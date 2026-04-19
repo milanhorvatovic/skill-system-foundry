@@ -6,28 +6,18 @@ This directory holds a curated set of YAML fixtures used by
 grammar surface, the documented divergences, and the spec-pinned
 rejections.
 
-## Upstream
-
-The `origin: upstream` fixtures here are sourced from the YAML Test
-Suite, vendored verbatim under MIT licensing (see `LICENSE`).
-
-```
-Upstream:       https://github.com/yaml/yaml-test-suite
-Pinned commit:  0000000000000000000000000000000000000000
-Pinned on:      0000-00-00
-```
-
-The placeholder SHA above is set to a real upstream commit when the
-first batch of upstream fixtures lands (see Implementation Plan,
-commit 9).  Re-pinning to a later upstream commit is a contributor
-action — replace the SHA, regenerate `digests.txt`, and re-run the
-harness.
+All current fixtures are `"origin": "original"` — authored in this
+repository to exercise specific parser branches.  When the first
+upstream-vendored fixtures land (sourced from the YAML Test Suite at
+https://github.com/yaml/yaml-test-suite under MIT), re-add a
+top-level `LICENSE` (upstream MIT verbatim) and a
+`THIRD-PARTY-NOTICES.md` entry at the repo root pinning the commit
+SHA and date.
 
 ## Layout
 
 ```
 tests/fixtures/yaml-conformance/
-├── LICENSE                    # upstream MIT license, verbatim
 ├── README.md                  # this file
 ├── digests.txt                # sha256sum format, one .yaml per line
 ├── supported/                 # parses identically to .expected.json's parsed dict

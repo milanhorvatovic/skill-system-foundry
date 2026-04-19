@@ -34,7 +34,9 @@ class CorpusLayoutTests(unittest.TestCase):
         )
 
     def test_required_top_level_files(self) -> None:
-        for name in ("LICENSE", "README.md", "digests.txt"):
+        # LICENSE / THIRD-PARTY-NOTICES are added back when upstream
+        # fixtures actually get vendored (see corpus README).
+        for name in ("README.md", "digests.txt"):
             self.assertTrue(
                 os.path.isfile(os.path.join(_CORPUS_ROOT, name)),
                 f"corpus missing required file: {name}",
