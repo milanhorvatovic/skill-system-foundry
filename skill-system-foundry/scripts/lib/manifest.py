@@ -323,16 +323,18 @@ def update_manifest_for_skill(
     """Ensure *manifest_path* exists and append a skill entry.
 
     Returns ``(updated, warning, created_manifest, findings)`` where
-    *updated* is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update or
-    when the emit step produced structurally invalid YAML,
-    *created_manifest* is True when a new manifest file was
-    scaffolded, and *findings* is a list of plain-scalar divergence
-    findings produced while reading the existing manifest plus any
-    additional findings returned by ``append_skill_entry`` after the
-    new entry is written.  When the emitted manifest fails to parse,
-    *updated* is False and *warning* describes the corruption so
-    callers that ignore *findings* still see the failure.
+    *updated* is True only when the skill entry was appended and the
+    emitted manifest remained structurally valid (i.e., the manifest
+    is left in a usable state), *warning* is a human-readable message
+    when a conflict prevented the update or when the emit step
+    produced structurally invalid YAML, *created_manifest* is True
+    when a new manifest file was scaffolded, and *findings* is a list
+    of plain-scalar divergence findings produced while reading the
+    existing manifest plus any additional findings returned by
+    ``append_skill_entry`` after the write attempt.  When the emitted
+    manifest fails to parse, *updated* is False even though bytes were
+    written to disk, and *warning* describes the corruption so callers
+    that ignore *findings* still see the failure.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
@@ -377,16 +379,18 @@ def update_manifest_for_role(
     """Ensure *manifest_path* exists and append a role entry.
 
     Returns ``(updated, warning, created_manifest, findings)`` where
-    *updated* is True when the manifest was modified, *warning* is a
-    human-readable message when a conflict prevented the update or
-    when the emit step produced structurally invalid YAML,
-    *created_manifest* is True when a new manifest file was
-    scaffolded, and *findings* is a list of plain-scalar divergence
-    findings produced while reading the existing manifest plus any
-    additional findings returned by ``append_role_entry`` after the
-    new entry is written.  When the emitted manifest fails to parse,
-    *updated* is False and *warning* describes the corruption so
-    callers that ignore *findings* still see the failure.
+    *updated* is True only when the role entry was appended and the
+    emitted manifest remained structurally valid (i.e., the manifest
+    is left in a usable state), *warning* is a human-readable message
+    when a conflict prevented the update or when the emit step
+    produced structurally invalid YAML, *created_manifest* is True
+    when a new manifest file was scaffolded, and *findings* is a list
+    of plain-scalar divergence findings produced while reading the
+    existing manifest plus any additional findings returned by
+    ``append_role_entry`` after the write attempt.  When the emitted
+    manifest fails to parse, *updated* is False even though bytes were
+    written to disk, and *warning* describes the corruption so callers
+    that ignore *findings* still see the failure.
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
