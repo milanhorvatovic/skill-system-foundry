@@ -1,0 +1,4 @@
+{
+  "origin": "original",
+  "rationale": "Each list item is a small mapping; numbers are returned as strings."
+}

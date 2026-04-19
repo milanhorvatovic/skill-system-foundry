@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "fail",
+      "substring": "mapping key"
+    }
+  ],
+  "parsed": {
+    "key": "a: b"
+  }
+}

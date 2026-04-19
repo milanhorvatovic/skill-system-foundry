@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Indentation indicator on a folded block scalar is unsupported.",
+  "substring_rationale": "Targets the pinned construct-id token."
+}

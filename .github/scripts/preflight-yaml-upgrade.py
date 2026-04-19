@@ -150,11 +150,21 @@ def scan_file(path: str, rel_path: str) -> list[dict]:
     return hits
 
 
+# Conformance-corpus fixtures are intentionally invalid inputs that
+# exercise the upgraded ValueError paths.  Skipping them keeps the
+# preflight focused on production inputs that would break under the
+# upgrade — finding hits in the corpus is the harness's job, not the
+# preflight's.
+_EXCLUDED_PREFIXES = ("tests/fixtures/yaml-conformance/",)
+
+
 def collect_hits(paths: list[str]) -> list[dict]:
     """Run :func:`scan_file` over each tracked path and return all hits."""
     hits: list[dict] = []
     for absolute in paths:
         rel = os.path.relpath(absolute, _REPO_ROOT).replace(os.sep, "/")
+        if any(rel.startswith(p) for p in _EXCLUDED_PREFIXES):
+            continue
         hits.extend(scan_file(absolute, rel))
     hits.sort(key=lambda h: (h["file"], h["position"], h["construct_id"]))
     return hits

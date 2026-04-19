@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Unquoted value starts with '[' \u2014 strict parsers see flow.",
+  "substring_rationale": "Targets stable spec phrasing 'flow indicator'."
+}

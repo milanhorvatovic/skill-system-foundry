@@ -1,0 +1,5 @@
+people:
+  - name: a
+    age: 1
+  - name: b
+    age: 2

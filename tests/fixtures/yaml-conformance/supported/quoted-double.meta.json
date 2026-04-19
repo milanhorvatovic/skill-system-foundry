@@ -1,0 +1,4 @@
+{
+  "origin": "original",
+  "rationale": "Double-quoted scalars unwrap cleanly."
+}

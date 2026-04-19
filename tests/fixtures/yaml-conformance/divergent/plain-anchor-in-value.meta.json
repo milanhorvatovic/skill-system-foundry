@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Anchor in value position warns; only key position raises (G46).",
+  "substring_rationale": "Stable phrase 'anchor name consumed'."
+}

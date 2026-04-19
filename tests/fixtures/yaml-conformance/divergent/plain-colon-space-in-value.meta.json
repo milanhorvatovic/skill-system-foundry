@@ -1,0 +1,4 @@
+{
+  "origin": "original",
+  "rationale": "Embedded ': ' inside an unquoted value reads as a mapping."
+}

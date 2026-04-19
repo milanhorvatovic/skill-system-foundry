@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "warn",
+      "substring": "anchor name consumed"
+    }
+  ],
+  "parsed": {
+    "key": "&alias trailing"
+  }
+}

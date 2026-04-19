@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Tag in mapping-key position.",
+  "substring_rationale": "Targets the pinned construct-id token."
+}

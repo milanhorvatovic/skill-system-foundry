@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "warn",
+      "substring": "tag indicator"
+    }
+  ],
+  "parsed": {
+    "key": "!tag content"
+  }
+}
