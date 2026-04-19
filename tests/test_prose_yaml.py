@@ -269,5 +269,153 @@ class ReadAndValidateTests(unittest.TestCase):
             prose_yaml.read_and_validate("/nonexistent/file.md")
 
 
+class FindInScopeFilesTests(unittest.TestCase):
+    """``find_in_scope_files`` walks the three configured globs only."""
+
+    def _make_skill_root(self) -> str:
+        root = tempfile.mkdtemp()
+        # In-scope files
+        for rel in (
+            "SKILL.md",
+            "capabilities/foo/capability.md",
+            "capabilities/foo/sub.md",
+            "references/main.md",
+            "references/nested/deep.md",
+        ):
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("# heading\n")
+        # Out-of-scope files
+        for rel in ("README.md", "CHANGELOG.md", "assets/template.md"):
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("# heading\n")
+        return root
+
+    def test_only_in_scope_files_returned(self) -> None:
+        root = self._make_skill_root()
+        try:
+            paths = prose_yaml.find_in_scope_files(root)
+            relatives = sorted(
+                os.path.relpath(p, root).replace(os.sep, "/")
+                for p in paths
+            )
+            self.assertEqual(
+                relatives,
+                [
+                    "SKILL.md",
+                    "capabilities/foo/capability.md",
+                    "capabilities/foo/sub.md",
+                    "references/main.md",
+                    "references/nested/deep.md",
+                ],
+            )
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class CollectProseFindingsTests(unittest.TestCase):
+    """``collect_prose_findings`` aggregates fences across in-scope files."""
+
+    def _build_skill(self, content_by_rel: dict[str, str]) -> str:
+        root = tempfile.mkdtemp()
+        for rel, text in content_by_rel.items():
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path) or root, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        return root
+
+    def test_clean_skill_returns_no_findings(self) -> None:
+        root = self._build_skill({
+            "SKILL.md": "intro\n```yaml\nkey: value\n```\n",
+        })
+        try:
+            findings, checked, per_file = prose_yaml.collect_prose_findings(root)
+            self.assertEqual(findings, [])
+            self.assertEqual(checked, 1)
+            self.assertEqual(per_file, [("SKILL.md", 1)])
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_divergent_skill_aggregates_findings(self) -> None:
+        root = self._build_skill({
+            "SKILL.md": "```yaml\nkey: *alias\n```\n",
+            "references/foo.md": "```yaml\nbad: @reserved\n```\n",
+        })
+        try:
+            findings, checked, _ = prose_yaml.collect_prose_findings(root)
+            self.assertEqual(checked, 2)
+            self.assertEqual(len(findings), 2)
+            self.assertEqual(
+                {f["file"] for f in findings},
+                {"SKILL.md", "references/foo.md"},
+            )
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_audit_prefix_applied(self) -> None:
+        root = self._build_skill({
+            "SKILL.md": "```yaml\nkey: *alias\n```\n",
+        })
+        try:
+            findings, _, per_file = prose_yaml.collect_prose_findings(
+                root, audit_prefix="skills/demo"
+            )
+            self.assertEqual(findings[0]["file"], "skills/demo/SKILL.md")
+            self.assertEqual(per_file[0][0], "skills/demo/SKILL.md")
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class FormatFindingAsStringTests(unittest.TestCase):
+    """Round-trip a structured finding back into the parser-string shape."""
+
+    def test_fail_with_spec_tag(self) -> None:
+        finding = {
+            "file": "doc.md",
+            "block_ordinal": 2,
+            "severity": "fail",
+            "tag": "[spec]",
+            "message": "'key': bad value; advice",
+        }
+        self.assertEqual(
+            prose_yaml.format_finding_as_string(finding),
+            "FAIL: [spec] doc.md block 2: 'key': bad value; advice",
+        )
+
+    def test_warn_with_empty_tag_defaults_to_spec(self) -> None:
+        finding = {
+            "file": "x.md",
+            "block_ordinal": 1,
+            "severity": "warn",
+            "tag": "",
+            "message": "structural parse error",
+        }
+        self.assertEqual(
+            prose_yaml.format_finding_as_string(finding),
+            "WARN: [spec] x.md block 1: structural parse error",
+        )
+
+    def test_info_severity(self) -> None:
+        finding = {
+            "file": "x.md",
+            "block_ordinal": 3,
+            "severity": "info",
+            "tag": "[spec]",
+            "message": "something",
+        }
+        self.assertEqual(
+            prose_yaml.format_finding_as_string(finding),
+            "INFO: [spec] x.md block 3: something",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -337,3 +337,21 @@ Watch for unexpected exploration paths, missed connections, overreliance on cert
 ### Test Across Models
 
 Skills act as additions to models. What works for Opus/o3 might need more detail for Haiku/mini. Test with all models you plan to use.
+
+## Counter-example convention for prose YAML fences
+
+Skills sometimes ship intentional examples of YAML that the in-repo parser would reject — counter-examples illustrating divergences. The doc-snippet validator (`validate_skill --check-prose-yaml`) treats every ```yaml` fence in scope as live input by default; counter-examples need an opt-out.
+
+**Opt-out marker.** The HTML comment `<!-- yaml-ignore -->` on the line immediately above the fence-open line — with no blank line between — opts the fence out of validation. The marker is reviewer-visible by design: a waiver, not silent acceptance.
+
+**Fence shape rules.** The validator only sees fences that match all of:
+
+- Three backticks (no more, no fewer); tilde fences are invisible.
+- Lowercase literal `yaml` immediately after the backticks (no whitespace between).
+- The opening backticks at byte offset 0 (column 0); indented fences are invisible.
+- A column-0 ` ``` ` close marker before end of file.
+
+**Avoid column-0 ` ``` ` inside a YAML block scalar.** The markdown extractor terminates the fence at the first column-0 ` ``` ` line per CommonMark, even when that line is inside a literal-block content region. If a YAML example needs a literal triple-backtick, indent the line so it is no longer at column 0.
+
+**Commented-out fences.** HTML comments are not parsed by the extractor — a column-0 ```yaml` line inside an `<!-- ... -->` block is still recognised. Wrap it in `<!-- yaml-ignore -->` (one fence per marker) or indent the fence to hide it.
+

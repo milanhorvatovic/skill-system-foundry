@@ -344,10 +344,12 @@ def collect_prose_findings(
 def format_finding_as_string(finding: dict) -> str:
     """Format a structured finding dict as a parser-style finding string.
 
-    Reuses the existing ``SEVERITY: [tag] body`` shape so consumers that
-    already iterate ``errors[]`` and call ``categorize_errors`` /
-    ``print_error_line`` work without modification.  G45 — selects
-    key-scoped vs. non-key-scoped form by looking at the message body.
+    Reuses the existing ``SEVERITY: [tag] body`` shape so consumers
+    that already iterate ``errors[]`` and call ``categorize_errors`` /
+    ``print_error_line`` work without modification.  Per G45 the body
+    is the same regardless of whether the message is key-scoped — the
+    parser's ``'key': body; advice`` chunk already begins with ``'key':``
+    when applicable, so no caller-side branching is needed.
     """
     severity_token = {
         "fail": LEVEL_FAIL, "warn": LEVEL_WARN, "info": LEVEL_INFO,
@@ -355,13 +357,10 @@ def format_finding_as_string(finding: dict) -> str:
     tag = finding["tag"] or "[spec]"
     file_part = finding["file"]
     block_part = f"block {finding['block_ordinal']}"
-    msg = finding["message"]
-    if msg.startswith("'") and "':" in msg:
-        # Key-scoped — keep the original "'key': body; advice" shape.
-        body = f"{file_part} {block_part}: {msg}"
-    else:
-        body = f"{file_part} {block_part}: {msg}"
-    return f"{severity_token}: {tag} {body}"
+    return (
+        f"{severity_token}: {tag} {file_part} {block_part}: "
+        f"{finding['message']}"
+    )
 
 
 # Re-export ``LEVEL_FAIL`` so callers building human output don't need

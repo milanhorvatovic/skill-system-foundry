@@ -89,4 +89,14 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 
 ---
 
+## Prose YAML fences
+
+When reviewing Markdown that contains ` ```yaml ` fenced code blocks inside the in-scope globs (`SKILL.md`, `capabilities/**/*.md`, `references/**/*.md`):
+
+- Apply the **counter-example convention** in `references/authoring-principles.md` — counter-examples must be opted out via the `<!-- yaml-ignore -->` HTML comment on the line immediately above the fence-open line, with no blank line between.
+- Confirm the fence shape matches: three backticks, lowercase `yaml` token, no whitespace between backticks and `yaml`, opener at byte offset 0.
+- Avoid embedding column-0 ` ``` ` lines inside YAML block scalars — the extractor terminates the fence at the first column-0 ` ``` ` per CommonMark.
+
+---
+
 **Remember:** Review as a documentation quality reviewer. Prioritize conciseness, structural clarity, and consistency.
