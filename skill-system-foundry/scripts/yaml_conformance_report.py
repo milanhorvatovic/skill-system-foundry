@@ -110,7 +110,39 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 1
 
-    summary = runner.run_corpus(args.corpus_root)
+    # ``runner.run_corpus`` raises ValueError on hard manifest
+    # corruption (malformed digests.txt line, duplicate path, etc.)
+    # and discover_fixtures raises on layout violations.  ``--json``
+    # consumers depend on the pinned ``corpus`` shape on every exit,
+    # so route any such raise into a single failed corpus-level
+    # assertion rather than a Python traceback.
+    try:
+        summary = runner.run_corpus(args.corpus_root)
+    except ValueError as exc:
+        if args.json:
+            print(
+                to_json_output(
+                    {
+                        "corpus": {
+                            "total": 1,
+                            "passed": 0,
+                            "failed": 1,
+                            "failures": [
+                                {
+                                    "file": "corpus",
+                                    "messages": [
+                                        f"corpus load failure: {exc}"
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                )
+            )
+        else:
+            print(f"Error: corpus load failure: {exc}", file=sys.stderr)
+        return 1
+
     payload = {"corpus": summary}
 
     if args.json:

@@ -141,6 +141,52 @@ class MissingCorpusRootTests(unittest.TestCase):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
 
+    def test_malformed_manifest_emits_json_corpus_load_failure(self) -> None:
+        # If digests.txt contains a malformed line, ``runner.run_corpus``
+        # raises ValueError at parse time.  ``--json`` consumers
+        # depend on the pinned ``corpus`` shape on every exit, so the
+        # script must catch the raise and emit a structured payload
+        # rather than crashing with a traceback.
+        import json
+        import shutil
+        import tempfile
+        root = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(root, "supported"))
+            with open(
+                os.path.join(root, "supported", "k.lf.yaml"),
+                "wb",
+            ) as fh:
+                fh.write(b"key: value\n")
+            with open(
+                os.path.join(root, "digests.txt"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write("not-a-valid-line-without-digest-and-path\n")
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                rc = report.main(
+                    ["--corpus-root", root, "--json"]
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(buf.getvalue())
+            self.assertIn("corpus", payload)
+            corpus = payload["corpus"]
+            self.assertEqual(corpus["total"], 1)
+            self.assertEqual(corpus["passed"], 0)
+            self.assertEqual(corpus["failed"], 1)
+            self.assertEqual(corpus["failures"][0]["file"], "corpus")
+            self.assertTrue(
+                any(
+                    "corpus load failure" in m
+                    and "malformed digests.txt line" in m
+                    for m in corpus["failures"][0]["messages"]
+                )
+            )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_missing_root_emits_json_payload(self) -> None:
         # Tooling consumers parsing --json output need a structured
         # payload on every exit path.  The missing-corpus-root error
