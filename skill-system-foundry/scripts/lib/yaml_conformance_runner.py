@@ -26,6 +26,7 @@ forbidden by curation convention so the simple split is unambiguous.
 import hashlib
 import json
 import os
+from collections.abc import Iterator
 
 from .yaml_parser import parse_yaml_subset
 
@@ -71,7 +72,9 @@ def _strip_variant_suffix(rel: str) -> str:
     return rel
 
 
-def _walk_sorted(root: str):
+def _walk_sorted(
+    root: str,
+) -> Iterator[tuple[str, list[str], list[str]]]:
     """``os.walk`` with sorted dirnames + filenames at every level."""
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()

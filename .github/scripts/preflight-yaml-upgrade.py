@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
@@ -89,7 +90,9 @@ def list_tracked_files() -> list[str]:
     ]
 
 
-def scan_yaml_text(text: str, position_for_line: callable) -> list[dict]:
+def scan_yaml_text(
+    text: str, position_for_line: Callable[[int], str]
+) -> list[dict]:
     """Return hits for the three constructs in *text*.
 
     *position_for_line* maps a 1-based line number to the canonical
