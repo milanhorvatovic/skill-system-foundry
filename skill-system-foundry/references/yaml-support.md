@@ -35,7 +35,7 @@ Plain-scalar usage of anchor / tag indicators in **value** position remains a `W
 
 ## Line-ending contract
 
-`parse_yaml_subset` accepts LF, CRLF, CR, and mixed line terminators. Every string value returned uses LF-only line terminators regardless of input style (defense in depth — `load_frontmatter` and the prose extractor normalise at every text-ingestion boundary).
+`parse_yaml_subset` accepts LF, CRLF, CR, and mixed line terminators. Every string value returned uses LF-only line terminators regardless of input style (defense in depth — `load_frontmatter` and the prose extractor normalize at every text-ingestion boundary).
 
 ## Conformance scope
 
