@@ -141,6 +141,34 @@ class MissingCorpusRootTests(unittest.TestCase):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
 
+    def test_malformed_manifest_human_mode_writes_stderr(self) -> None:
+        # Human mode for the same corpus-load failure path emits a
+        # stderr message and exits 1 — covered separately so both
+        # branches of the new try/except are exercised.
+        import shutil
+        import tempfile
+        root = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(root, "supported"))
+            with open(
+                os.path.join(root, "supported", "k.lf.yaml"),
+                "wb",
+            ) as fh:
+                fh.write(b"key: value\n")
+            with open(
+                os.path.join(root, "digests.txt"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write("not-a-valid-line\n")
+            err = io.StringIO()
+            with unittest.mock.patch("sys.stderr", new=err):
+                rc = report.main(["--corpus-root", root])
+            self.assertEqual(rc, 1)
+            self.assertIn("corpus load failure", err.getvalue())
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_malformed_manifest_emits_json_corpus_load_failure(self) -> None:
         # If digests.txt contains a malformed line, ``runner.run_corpus``
         # raises ValueError at parse time.  ``--json`` consumers
