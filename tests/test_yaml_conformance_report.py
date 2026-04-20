@@ -141,6 +141,33 @@ class MissingCorpusRootTests(unittest.TestCase):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
 
+    def test_missing_root_emits_json_payload(self) -> None:
+        # Tooling consumers parsing --json output need a structured
+        # payload on every exit path.  The missing-corpus-root error
+        # previously printed plain stderr text regardless of --json,
+        # which broke the contract for callers that pipe stdout into a
+        # JSON parser.
+        import json
+        buf = io.StringIO()
+        with unittest.mock.patch("sys.stdout", new=buf):
+            rc = report.main(
+                ["--corpus-root", "/nonexistent/path", "--json"]
+            )
+        self.assertEqual(rc, 1)
+        payload = json.loads(buf.getvalue())
+        self.assertIn("corpus", payload)
+        corpus = payload["corpus"]
+        self.assertEqual(corpus["total"], 0)
+        self.assertEqual(corpus["failed"], 0)
+        self.assertEqual(len(corpus["failures"]), 1)
+        self.assertEqual(corpus["failures"][0]["file"], "corpus_root")
+        self.assertTrue(
+            any(
+                "corpus root not found" in m
+                for m in corpus["failures"][0]["messages"]
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -76,10 +76,34 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.corpus_root):
-        print(
-            f"Error: corpus root not found: {args.corpus_root}",
-            file=sys.stderr,
-        )
+        if args.json:
+            # Tooling consumers parsing --json output need a structured
+            # payload on every exit path, including the missing-corpus-
+            # root error — bare stderr text breaks the contract.
+            print(
+                to_json_output(
+                    {
+                        "corpus": {
+                            "total": 0,
+                            "passed": 0,
+                            "failed": 0,
+                            "failures": [
+                                {
+                                    "file": "corpus_root",
+                                    "messages": [
+                                        f"corpus root not found: {args.corpus_root}",
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                )
+            )
+        else:
+            print(
+                f"Error: corpus root not found: {args.corpus_root}",
+                file=sys.stderr,
+            )
         return 1
 
     summary = runner.run_corpus(args.corpus_root)
