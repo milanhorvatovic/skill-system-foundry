@@ -164,6 +164,42 @@ class ScanYamlTextConstructTests(unittest.TestCase):
         ids = [h["construct_id"] for h in hits]
         self.assertIn(preflight.INDENT_ID, ids)
 
+    def test_inline_comment_with_colon_inside_not_flagged(self) -> None:
+        # ``parse_yaml_subset`` strips inline comments before key
+        # analysis, so a ``:`` living inside a trailing ``# comment``
+        # is not a mapping-key separator.  Preflight must mirror that
+        # or it false-positives clean content (``&a # note: text`` and
+        # ``!tag # note: text`` both parse without raising).
+        for text in (
+            "&a # note: text\n",
+            "!tag # note: text\n",
+            "!!str # note: text\n",
+            "key: value # has : inside comment\n",
+        ):
+            with self.subTest(text=text.rstrip()):
+                hits = preflight.scan_yaml_text(
+                    text, lambda n: f"line {n}"
+                )
+                self.assertEqual(hits, [], text)
+
+    def test_strip_inline_comment_quote_aware(self) -> None:
+        # The parser only treats ``#`` as a comment when preceded by
+        # whitespace AND outside a quoted span — preflight must do the
+        # same, so a quoted ``#`` (or a ``#`` glued to the previous
+        # token) does not silently strip part of the value.
+        self.assertEqual(
+            preflight._strip_inline_comment('key: "a # b"'),
+            'key: "a # b"',
+        )
+        self.assertEqual(
+            preflight._strip_inline_comment("key: a#b"),
+            "key: a#b",
+        )
+        self.assertEqual(
+            preflight._strip_inline_comment("key: a # b"),
+            "key: a",
+        )
+
     def test_comment_line_with_colon_not_flagged(self) -> None:
         # A whole-line YAML comment containing colon-shaped content
         # must not trip the construct regexes — the parser never

@@ -109,6 +109,28 @@ def list_tracked_files() -> list[str]:
     ]
 
 
+def _strip_inline_comment(text: str) -> str:
+    """Remove a trailing ``# comment``, respecting quoted strings.
+
+    Mirrors ``lib.yaml_parser._strip_inline_comment`` so preflight
+    construct detection sees the same line shape the parser sees
+    after comment stripping.  ``#`` only counts as a comment when
+    preceded by whitespace and outside a quoted span — otherwise
+    ``#`` is part of the surrounding token.
+    """
+    in_quote = False
+    quote_char: str | None = None
+    for i, ch in enumerate(text):
+        if ch in ('"', "'") and not in_quote:
+            in_quote = True
+            quote_char = ch
+        elif in_quote and ch == quote_char:
+            in_quote = False
+        elif ch == "#" and not in_quote and i > 0 and text[i - 1] == " ":
+            return text[:i].rstrip()
+    return text
+
+
 def scan_yaml_text(
     text: str, position_for_line: Callable[[int], str]
 ) -> list[dict]:
@@ -120,15 +142,20 @@ def scan_yaml_text(
     """
     hits: list[dict] = []
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    for line_no, line in enumerate(text.split("\n"), start=1):
+    for line_no, raw_line in enumerate(text.split("\n"), start=1):
         # Skip whole-line comments — the parser never treats their
         # contents as keys/values, so flagging a colon inside a comment
         # would be a false positive.  Block-scalar literal content is
         # harder to detect without structural parsing; the anchored
         # ``^\\s*<key>:`` pattern in the construct regexes mitigates
         # that case for keys, but is not exhaustive.
-        if line.lstrip().startswith("#"):
+        if raw_line.lstrip().startswith("#"):
             continue
+        # Strip a trailing inline ``# comment`` so colons living inside
+        # the comment do not falsely look like a mapping-key separator.
+        # The parser does this before key analysis; preflight must too
+        # to mirror its actual rejection contract.
+        line = _strip_inline_comment(raw_line)
         if _RE_ANCHOR_KEY.match(line):
             hits.append(
                 {
