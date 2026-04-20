@@ -266,6 +266,30 @@ class MainJsonOutputTests(unittest.TestCase):
         self.assertEqual(payload["action"], "error")
         self.assertIn("not found", payload["error"])
 
+    def test_whitespace_path_emits_action_error_in_json(self) -> None:
+        # The other ValueError exit path (whitespace in a fixture
+        # filename) must also surface as a structured payload, not as
+        # a stderr-only message — otherwise the tooling consumer sees
+        # exit 1 with empty stdout.
+        import json
+        cf = _CorpusFixture()
+        try:
+            _write(
+                os.path.join(cf.root, "supported", "bad name.lf.yaml"),
+                b"key: value\n",
+            )
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                rc = refresh.main(
+                    ["--corpus-root", cf.root, "--json"]
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(buf.getvalue())
+            self.assertEqual(payload["action"], "error")
+            self.assertIn("whitespace", payload["error"])
+        finally:
+            cf.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()
