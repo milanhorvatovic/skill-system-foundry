@@ -201,10 +201,23 @@ def check_variant_parse(
 
 
 def check_parity(variant_texts: list[str]) -> list[str]:
-    """Confirm every variant of a base parses to the same dict."""
+    """Confirm every variant of a base parses to the same dict.
+
+    A variant that raises ``ValueError`` during reparse is reported
+    once as ``"parity skipped due to variant parse failure"`` rather
+    than propagating — ``check_variant_parse`` already captured the
+    underlying parse error per variant, so re-surfacing it here would
+    crash the corpus harness on a single malformed fixture instead of
+    aggregating failures cleanly.
+    """
     if len(variant_texts) <= 1:
         return []
-    parsed_dicts = [parse_yaml_subset(t, []) for t in variant_texts]
+    parsed_dicts = []
+    for text in variant_texts:
+        try:
+            parsed_dicts.append(parse_yaml_subset(text, []))
+        except ValueError:
+            return ["parity skipped due to variant parse failure"]
     first = parsed_dicts[0]
     return [
         f"parity mismatch on variant index {i}"

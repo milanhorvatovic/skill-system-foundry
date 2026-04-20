@@ -229,6 +229,20 @@ class CheckVariantParseTests(unittest.TestCase):
         self.assertTrue(any("parse succeeded" in e for e in errs))
 
 
+class CheckParityCrashGuardTests(unittest.TestCase):
+    """``check_parity`` must aggregate, never propagate parser raises."""
+
+    def test_variant_parse_failure_is_aggregated_not_raised(self) -> None:
+        # A supported/divergent variant whose bytes happen to trip the
+        # parser raises in ``check_parity``'s reparse loop.  Without a
+        # guard the whole harness aborts on a single malformed fixture
+        # instead of recording one case as failed.  The check returns
+        # a single skip message and never propagates.
+        texts = ["key: value\n", "key: |2\n  text\n"]
+        msgs = runner.check_parity(texts)
+        self.assertEqual(msgs, ["parity skipped due to variant parse failure"])
+
+
 class CheckParityTests(unittest.TestCase):
     """Triplet parity asserts byte-different inputs parse identically."""
 
