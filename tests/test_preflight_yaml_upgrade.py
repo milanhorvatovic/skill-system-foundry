@@ -152,18 +152,23 @@ class ScanYamlTextConstructTests(unittest.TestCase):
         hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
         self.assertEqual(hits, [])
 
-    def test_block_scalar_content_with_colon_not_flagged(self) -> None:
-        # Block-scalar literal content containing ``: |2`` would
-        # false-positive against an unanchored search regex.  The
-        # anchored ``^\\s*<key>:`` regex mitigates the case where the
-        # content has internal whitespace (a real prose sentence).
-        text = (
-            "description: |\n"
-            "  This is a literal sentence: |2 here\n"
-        )
-        hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
-        ids = [h["construct_id"] for h in hits]
-        self.assertNotIn(preflight.INDENT_ID, ids)
+    def test_indent_indicator_with_spaces_in_key_flagged(self) -> None:
+        # The parser slices keys from values on the first colon, so
+        # ``my key: |2`` raises the upgraded ValueError despite the
+        # space in the key.  Preflight must mirror that or the
+        # WARN→ValueError gate is blind to a real parser-failure
+        # shape that authors are likely to produce by accident.
+        for text in (
+            "my key: |2\n",
+            "- my key: |2\n",
+            "key with several words: >-3\n",
+        ):
+            with self.subTest(text=text.rstrip()):
+                hits = preflight.scan_yaml_text(
+                    text, lambda n: f"line {n}"
+                )
+                ids = [h["construct_id"] for h in hits]
+                self.assertIn(preflight.INDENT_ID, ids, text)
 
     def test_clean_input_yields_no_hits(self) -> None:
         text = "key: value\nblock: |\n  literal\nlist:\n  - a\n"

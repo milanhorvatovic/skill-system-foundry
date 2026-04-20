@@ -76,17 +76,20 @@ _RE_TAG_KEY = re.compile(
 # header — mirrors ``lib.yaml_parser._is_indent_indicator_header``.
 # Accepts the YAML 1.2 forms ``|2``, ``|2-``, ``|-2``, ``|+2``,
 # ``|2+`` (and the ``>`` variants).  Anchored to ``^<key>:`` (with
-# optional indent and list marker) so arbitrary text containing
-# ``": |2"`` inside comment lines or block-scalar content does not
-# false-positive match.  Whitespace after ``:`` is **optional**
+# optional indent and list marker).  The key segment is ``[^:\n]+?``
+# so keys containing spaces (e.g. ``my key: |2``) match — the parser
+# uses ``find(":")`` to slice keys from values, and raises on the
+# value regardless of key text, so preflight must too.  Trade-off:
+# block-scalar literal content shaped like ``some text: |2 more``
+# can false-positive (preflight has no structural awareness of which
+# line is content vs key); the upside is no real parser-failure
+# shape slips past the gate.  Whitespace after ``:`` is **optional**
 # (``\s*``) to mirror ``parse_yaml_subset`` stripping the post-colon
-# value: ``key:|2`` raises the same as ``key: |2``, so preflight
-# must catch both.  Requires whitespace or end-of-line after the
-# indicator — ``|2#note`` (no space before ``#``) is plain-scalar
-# territory that the parser does not raise on, so preflight must not
-# either.
+# value.  Requires whitespace or end-of-line after the indicator —
+# ``|2#note`` (no space before ``#``) is plain-scalar territory that
+# the parser does not raise on, so preflight must not either.
 _RE_INDENT_INDICATOR = re.compile(
-    rf"^\s*{_LIST_PREFIX}\S+?:\s*[|>](?:[1-9][-+]?|[-+][1-9])(?:\s|$)"
+    rf"^\s*{_LIST_PREFIX}[^:\n]+?:\s*[|>](?:[1-9][-+]?|[-+][1-9])(?:\s|$)"
 )
 
 
