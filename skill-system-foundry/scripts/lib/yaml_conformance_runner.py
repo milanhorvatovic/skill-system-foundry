@@ -377,16 +377,24 @@ def run_corpus(corpus_root: str) -> dict:
                     {"file": case["base"], "messages": messages}
                 )
 
-    orphan_digests = sorted(set(digests) - discovered_variants)
-    if orphan_digests:
-        failures.append(
-            {
-                "file": "digests.txt",
-                "messages": [
-                    f"orphan digest entry: {path}" for path in orphan_digests
-                ],
-            }
-        )
+    # The orphan-digest sweep is a single corpus-level assertion that
+    # only runs when a manifest is present.  Count it in ``total`` so
+    # the ``passed + failed == total`` invariant holds (without this
+    # bump, an orphan failure could push ``passed`` negative when the
+    # rest of the corpus is clean).
+    if manifest_present:
+        total += 1
+        orphan_digests = sorted(set(digests) - discovered_variants)
+        if orphan_digests:
+            failures.append(
+                {
+                    "file": "digests.txt",
+                    "messages": [
+                        f"orphan digest entry: {path}"
+                        for path in orphan_digests
+                    ],
+                }
+            )
 
     failures.sort(key=lambda f: f["file"])
     return {

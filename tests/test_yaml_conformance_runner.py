@@ -491,6 +491,66 @@ class RunCaseAndCorpusTests(unittest.TestCase):
         finally:
             b.cleanup()
 
+    def test_summary_invariant_passed_plus_failed_equals_total(self) -> None:
+        # Sweep three corpus shapes that each previously had a chance
+        # to break the ``passed + failed == total`` invariant before
+        # the orphan-digest sweep was counted in ``total``: clean +
+        # manifest, clean + no manifest, and orphan-digest failure on
+        # an otherwise-clean corpus (which used to push ``passed``
+        # below the case count).
+        cases = [
+            ("clean_with_manifest", True, False),
+            ("clean_no_manifest", False, False),
+            ("orphan_only", True, True),
+        ]
+        for label, write_manifest, with_orphan in cases:
+            with self.subTest(label=label):
+                b = _CorpusBuilder()
+                try:
+                    for s, sep in (
+                        (".lf.yaml", "\n"),
+                        (".crlf.yaml", "\r\n"),
+                        (".mixed.yaml", "\n"),
+                    ):
+                        b.write_variant(
+                            "supported", "k", s, "key: value" + sep
+                        )
+                    b.write_sidecar(
+                        "supported",
+                        "k",
+                        {"parsed": {"key": "value"}},
+                        {"origin": "original", "rationale": "smoke"},
+                    )
+                    if write_manifest:
+                        real_lf = runner.hash_file(
+                            os.path.join(b.root, "supported", "k.lf.yaml")
+                        )
+                        real_crlf = runner.hash_file(
+                            os.path.join(b.root, "supported", "k.crlf.yaml")
+                        )
+                        real_mixed = runner.hash_file(
+                            os.path.join(b.root, "supported", "k.mixed.yaml")
+                        )
+                        ghost = (
+                            "deadbeef  supported/ghost.lf.yaml\n"
+                            if with_orphan else ""
+                        )
+                        b.write_digests(
+                            f"{real_lf}  supported/k.lf.yaml\n"
+                            f"{real_crlf}  supported/k.crlf.yaml\n"
+                            f"{real_mixed}  supported/k.mixed.yaml\n"
+                            f"{ghost}"
+                        )
+                    summary = runner.run_corpus(b.root)
+                    self.assertEqual(
+                        summary["passed"] + summary["failed"],
+                        summary["total"],
+                        summary,
+                    )
+                    self.assertGreaterEqual(summary["passed"], 0, summary)
+                finally:
+                    b.cleanup()
+
     def test_orphan_digest_entry_surfaces_as_corpus_failure(self) -> None:
         # A digests.txt line whose path is not a discovered fixture
         # (typically a leftover after a fixture deletion) is the inverse
