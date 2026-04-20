@@ -363,6 +363,161 @@ class RunCaseAndCorpusTests(unittest.TestCase):
         finally:
             b.cleanup()
 
+    def test_missing_digest_entry_fails_loud(self) -> None:
+        # When a manifest is in play, a fixture variant without a
+        # corresponding digests.txt entry is just as much a drift
+        # signal as a hash mismatch.  Surface it as a per-variant
+        # failure and skip parity for that variant so byte trust is
+        # preserved.  ``test_no_manifest_does_not_enforce_per_variant``
+        # pins the inverse: no manifest means no per-variant
+        # enforcement (orphan-digest sweep covers the other side).
+        b = _CorpusBuilder()
+        try:
+            for s, sep in (
+                (".lf.yaml", "\n"),
+                (".crlf.yaml", "\r\n"),
+                (".mixed.yaml", "\n"),
+            ):
+                b.write_variant(
+                    "supported", "k", s, "key: value" + sep
+                )
+            b.write_sidecar(
+                "supported",
+                "k",
+                {"parsed": {"key": "value"}},
+                {"origin": "original", "rationale": "smoke"},
+            )
+            # Manifest exists but only covers .lf — the other two
+            # variants must surface as missing-entry failures.
+            real_lf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.lf.yaml")
+            )
+            b.write_digests(f"{real_lf}  supported/k.lf.yaml\n")
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            messages = summary["failures"][0]["messages"]
+            self.assertFalse(
+                any("missing digest entry: supported/k.lf.yaml" in m for m in messages),
+                messages,
+            )
+            self.assertTrue(
+                any("missing digest entry: supported/k.crlf.yaml" in m for m in messages)
+            )
+            self.assertTrue(
+                any("missing digest entry: supported/k.mixed.yaml" in m for m in messages)
+            )
+            self.assertTrue(
+                any("parity skipped due to byte drift" in m for m in messages)
+            )
+        finally:
+            b.cleanup()
+
+    def test_no_manifest_does_not_enforce_per_variant(self) -> None:
+        # A corpus with no digests.txt at all (typical scaffolding
+        # state) skips per-variant digest checks rather than failing
+        # every variant.  Orphan-digest detection in run_corpus covers
+        # the inverse class of drift; the "manifest absent" case
+        # belongs to corpus setup, not corruption.
+        b = _CorpusBuilder()
+        try:
+            for s, sep in (
+                (".lf.yaml", "\n"),
+                (".crlf.yaml", "\r\n"),
+                (".mixed.yaml", "\n"),
+            ):
+                b.write_variant(
+                    "supported", "k", s, "key: value" + sep
+                )
+            b.write_sidecar(
+                "supported",
+                "k",
+                {"parsed": {"key": "value"}},
+                {"origin": "original", "rationale": "smoke"},
+            )
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 0)
+            self.assertEqual(summary["passed"], 1)
+        finally:
+            b.cleanup()
+
+    def test_orphan_digest_entry_surfaces_as_corpus_failure(self) -> None:
+        # A digests.txt line whose path is not a discovered fixture
+        # (typically a leftover after a fixture deletion) is the inverse
+        # of the missing-entry case and must also fail loud.
+        b = _CorpusBuilder()
+        try:
+            for s, sep in (
+                (".lf.yaml", "\n"),
+                (".crlf.yaml", "\r\n"),
+                (".mixed.yaml", "\n"),
+            ):
+                b.write_variant(
+                    "supported", "k", s, "key: value" + sep
+                )
+            b.write_sidecar(
+                "supported",
+                "k",
+                {"parsed": {"key": "value"}},
+                {"origin": "original", "rationale": "smoke"},
+            )
+            real_lf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.lf.yaml")
+            )
+            real_crlf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.crlf.yaml")
+            )
+            real_mixed = runner.hash_file(
+                os.path.join(b.root, "supported", "k.mixed.yaml")
+            )
+            b.write_digests(
+                f"{real_lf}  supported/k.lf.yaml\n"
+                f"{real_crlf}  supported/k.crlf.yaml\n"
+                f"{real_mixed}  supported/k.mixed.yaml\n"
+                "deadbeef  supported/ghost.lf.yaml\n"
+            )
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            entry = summary["failures"][0]
+            self.assertEqual(entry["file"], "digests.txt")
+            self.assertIn(
+                "orphan digest entry: supported/ghost.lf.yaml",
+                entry["messages"],
+            )
+        finally:
+            b.cleanup()
+
+    def test_malformed_meta_json_reports_meta_path(self) -> None:
+        # When the meta.json sidecar is malformed, the failure message
+        # must point at meta.json — not at expected.json (which loaded
+        # fine).  Misreporting the path makes corpus debugging harder.
+        b = _CorpusBuilder()
+        try:
+            for s in (".lf.yaml", ".crlf.yaml", ".mixed.yaml"):
+                b.write_variant(
+                    "supported", "k", s, "key: value\n"
+                )
+            _write(
+                os.path.join(b.root, "supported", "k.expected.json"),
+                json.dumps({"parsed": {"key": "value"}}),
+            )
+            _write(
+                os.path.join(b.root, "supported", "k.meta.json"),
+                "{ this is not json",
+            )
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            messages = summary["failures"][0]["messages"]
+            self.assertTrue(
+                any("sidecar parse error" in m and "k.meta.json" in m for m in messages),
+                messages,
+            )
+            self.assertFalse(
+                any("k.expected.json" in m for m in messages),
+                messages,
+            )
+        finally:
+            b.cleanup()
+
     def test_digest_mismatch_skips_parity(self) -> None:
         b = _CorpusBuilder()
         try:

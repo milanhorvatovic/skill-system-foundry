@@ -245,6 +245,12 @@ def run_case(
             encoding="utf-8",
         ) as fh:
             expected = json.load(fh)
+    except json.JSONDecodeError as exc:
+        msgs.append(
+            f"sidecar parse error: {case['expected']} — {exc}"
+        )
+        return msgs
+    try:
         with open(
             os.path.join(corpus_root, case["meta"]),
             "r",
@@ -253,7 +259,7 @@ def run_case(
             json.load(fh)
     except json.JSONDecodeError as exc:
         msgs.append(
-            f"sidecar parse error: {case['expected']} — {exc}"
+            f"sidecar parse error: {case['meta']} — {exc}"
         )
         return msgs
 
@@ -267,17 +273,30 @@ def run_case(
                     f"missing {expected_variant}"
                 )
 
+    # Digest enforcement is fail-loud per variant when a manifest is in
+    # play: a missing entry is just as much a drift signal as a hash
+    # mismatch, so both routes mark the variant as drifted and parity
+    # is skipped (it is meaningless once we cannot trust the bytes).
+    # The "no manifest at all" case (empty *digests* — typically
+    # synthetic-corpus scaffolding before digests.txt is generated) is
+    # left alone; the orphan-digest sweep in ``run_corpus`` covers the
+    # inverse class of drift.
     digest_failures: set[str] = set()
+    enforce_digests = bool(digests)
     for variant_rel in case["variants"]:
         variant_path = os.path.join(corpus_root, variant_rel)
-        if variant_rel in digests:
-            actual = hash_file(variant_path)
-            if actual != digests[variant_rel]:
-                msgs.append(
-                    f"digest mismatch: {variant_rel} "
-                    f"expected={digests[variant_rel]} actual={actual}"
-                )
+        if variant_rel not in digests:
+            if enforce_digests:
+                msgs.append(f"missing digest entry: {variant_rel}")
                 digest_failures.add(variant_rel)
+            continue
+        actual = hash_file(variant_path)
+        if actual != digests[variant_rel]:
+            msgs.append(
+                f"digest mismatch: {variant_rel} "
+                f"expected={digests[variant_rel]} actual={actual}"
+            )
+            digest_failures.add(variant_rel)
 
     variant_texts: list[str] = []
     for variant_rel in case["variants"]:
@@ -302,7 +321,14 @@ def run_case(
 
 
 def run_corpus(corpus_root: str) -> dict:
-    """Run the full corpus and return the summary dict."""
+    """Run the full corpus and return the summary dict.
+
+    Orphan digest entries (manifest lines whose path does not match any
+    discovered fixture variant) are surfaced as a corpus-level failure
+    under the synthetic ``digests.txt`` file slot.  This catches the
+    inverse of the per-case ``missing digest entry`` check: a fixture
+    deletion that left its digest line behind.
+    """
     digests: dict[str, str] = {}
     digests_path = os.path.join(corpus_root, "digests.txt")
     if os.path.isfile(digests_path):
@@ -313,14 +339,28 @@ def run_corpus(corpus_root: str) -> dict:
 
     total = 0
     failures: list[dict] = []
+    discovered_variants: set[str] = set()
     for bucket in BUCKETS:
         for case in cases_by_bucket.get(bucket, []):
+            discovered_variants.update(case["variants"])
             total += 1
             messages = run_case(corpus_root, bucket, case, digests)
             if messages:
                 failures.append(
                     {"file": case["base"], "messages": messages}
                 )
+
+    orphan_digests = sorted(set(digests) - discovered_variants)
+    if orphan_digests:
+        failures.append(
+            {
+                "file": "digests.txt",
+                "messages": [
+                    f"orphan digest entry: {path}" for path in orphan_digests
+                ],
+            }
+        )
+
     failures.sort(key=lambda f: f["file"])
     return {
         "total": total,
