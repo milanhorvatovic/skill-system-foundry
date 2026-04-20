@@ -8,16 +8,9 @@ Two consumers:
   the same shape as JSON for tooling consumers that don't run tests.
 
 This module is pure data — no test framework dependencies — so callers
-control how failures surface.
-
-Package layout note
--------------------
-``tests/lib/`` is intentionally **not** a Python package — there is no
-``__init__.py``.  Adding one would shadow ``skill-system-foundry/
-scripts/lib`` (the canonical ``lib`` package every test imports from
-via sys.path injection), breaking the entire suite.  Consumers import
-this module by adding ``tests/lib`` to ``sys.path`` instead of using
-``from tests.lib.yaml_conformance_runner import ...``.
+control how failures surface.  It lives under ``lib/`` so the shipped
+report script can import it from the bundled distribution rather than
+crossing into ``tests/`` (which the release bundle excludes).
 
 Sorted iteration: ``os.walk`` is wrapped to sort directory and
 filename order, ensuring byte-identical output across platforms with
@@ -33,26 +26,13 @@ forbidden by curation convention so the simple split is unambiguous.
 import hashlib
 import json
 import os
-import sys
+
+from .yaml_parser import parse_yaml_subset
 
 VARIANT_SUFFIXES = (".lf.yaml", ".crlf.yaml", ".mixed.yaml")
 BUCKETS = ("supported", "divergent", "rejected")
 _EXPECTED_SUFFIX = ".expected.json"
 _META_SUFFIX = ".meta.json"
-
-# Surface ``parse_yaml_subset`` to module callers without forcing them to
-# manage sys.path.  The runner lives in tests/lib/, the parser lives in
-# skill-system-foundry/scripts/lib/.
-_SCRIPTS_DIR = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__), "..", "..",
-        "skill-system-foundry", "scripts",
-    )
-)
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
-
-from lib.yaml_parser import parse_yaml_subset  # noqa: E402
 
 
 def parse_digests_file(text: str) -> dict[str, str]:

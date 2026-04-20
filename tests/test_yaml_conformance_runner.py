@@ -1,4 +1,4 @@
-"""Unit tests for ``tests/lib/yaml_conformance_runner.py``.
+"""Unit tests for ``skill-system-foundry/scripts/lib/yaml_conformance_runner.py``.
 
 Synthetic in-memory corpora exercise each helper.  The real corpus is
 exercised end-to-end by ``tests/test_yaml_conformance.py``.
@@ -11,13 +11,15 @@ import sys
 import tempfile
 import unittest
 
-_TESTS_LIB_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "lib")
+_SCRIPTS_DIR = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__), "..", "skill-system-foundry", "scripts"
+    )
 )
-if _TESTS_LIB_DIR not in sys.path:
-    sys.path.insert(0, _TESTS_LIB_DIR)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
-import yaml_conformance_runner as runner  # noqa: E402
+from lib import yaml_conformance_runner as runner  # noqa: E402
 
 
 def _write(path: str, content: bytes | str) -> None:

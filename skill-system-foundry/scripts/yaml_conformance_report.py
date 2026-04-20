@@ -24,12 +24,10 @@ _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 _SCRIPTS_DIR = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
-_TESTS_LIB = os.path.join(_REPO_ROOT, "tests", "lib")
-for _path in (_SCRIPTS_DIR, _TESTS_LIB):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
-import yaml_conformance_runner as runner  # noqa: E402
+from lib import yaml_conformance_runner as runner  # noqa: E402
 from lib.reporting import to_json_output  # noqa: E402
 
 DEFAULT_CORPUS_ROOT = os.path.join(

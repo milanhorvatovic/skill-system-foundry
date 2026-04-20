@@ -2,7 +2,6 @@
 source =
     skill-system-foundry/scripts
     .github/scripts
-    tests/lib
 branch = True
 
 [report]

@@ -1,7 +1,7 @@
 """End-to-end YAML 1.2.2 conformance harness.
 
-Imports helpers from ``tests/lib/yaml_conformance_runner.py`` and runs
-them against the real corpus under ``tests/fixtures/yaml-conformance/``.
+Imports helpers from ``skill-system-foundry/scripts/lib/yaml_conformance_runner.py``
+and runs them against the real corpus under ``tests/fixtures/yaml-conformance/``.
 
 Failures surface per case so the unittest output names the offending
 fixture instead of dumping the whole summary.
@@ -11,13 +11,15 @@ import os
 import sys
 import unittest
 
-_TESTS_LIB_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "lib")
+_SCRIPTS_DIR = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__), "..", "skill-system-foundry", "scripts"
+    )
 )
-if _TESTS_LIB_DIR not in sys.path:
-    sys.path.insert(0, _TESTS_LIB_DIR)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
-import yaml_conformance_runner as runner  # noqa: E402
+from lib import yaml_conformance_runner as runner  # noqa: E402
 
 _CORPUS_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "fixtures", "yaml-conformance")
