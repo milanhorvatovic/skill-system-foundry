@@ -98,7 +98,20 @@ class CorpusSummaryShapeTests(unittest.TestCase):
     def test_corpus_is_currently_clean(self) -> None:
         summary = runner.run_corpus(_CORPUS_ROOT)
         self.assertEqual(summary["failed"], 0, summary["failures"])
-        self.assertGreater(summary["total"], 0)
+        # ``total`` includes the orphan-digest sweep when a manifest
+        # exists, so ``> 0`` would still pass even if every fixture
+        # were deleted.  Assert at least one fixture case exists in
+        # each non-rejected bucket as well so an accidental wipe
+        # cannot land silently.
+        cases = runner.discover_fixtures(_CORPUS_ROOT)
+        self.assertGreater(
+            sum(len(cases[bucket]) for bucket in runner.BUCKETS),
+            0,
+            "corpus has no fixture cases",
+        )
+        self.assertGreater(len(cases["supported"]), 0)
+        self.assertGreater(len(cases["divergent"]), 0)
+        self.assertGreater(len(cases["rejected"]), 0)
 
 
 if __name__ == "__main__":
