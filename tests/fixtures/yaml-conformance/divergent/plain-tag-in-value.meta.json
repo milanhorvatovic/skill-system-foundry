@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Tag in value position warns; only key position raises.",
+  "substring_rationale": "Stable phrase 'tag indicator'."
+}

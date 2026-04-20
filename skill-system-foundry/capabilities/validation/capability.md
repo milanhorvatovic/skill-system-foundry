@@ -14,7 +14,7 @@ python scripts/validate_skill.py <skill-path> [--capability] [--verbose] [--allo
 - `--verbose`: Show all checks, not just failures
 - `--allow-nested-references`: Suppress nested-reference warnings (needed for skills that intentionally cross-reference their own reference files)
 - `--json`: Machine-readable output
-- `--check-prose-yaml`: Validate ```` ```yaml ```` fences in `SKILL.md`, `capabilities/**/*.md`, and `references/**/*.md`. See [authoring-principles.md](references/authoring-principles.md) for the counter-example convention.
+- `--check-prose-yaml`: Validate ```` ```yaml ```` fences in `SKILL.md`, `capabilities/**/*.md`, and `references/**/*.md`. See [authoring-principles.md](references/authoring-principles.md) for the counter-example convention and [yaml-support.md](references/yaml-support.md) for the supported grammar surface.
 - `--foundry-self`: Run this skill the way the foundry runs itself (currently implies `--check-prose-yaml`).
 
 For registered skills, the validator checks: frontmatter fields (`name`, `description`), naming conventions (lowercase + hyphens, max 64 chars, matches directory), line counts (recommended max 500 lines), and resource directory structure. In `--capability` mode it only validates the body (line counts, nested-reference rules) and, if frontmatter is present, reports name/description as informational notes without enforcing frontmatter or directory checks.
@@ -61,6 +61,7 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 
 **References:**
 - [agentskills-spec.md](references/agentskills-spec.md) — Agent Skills specification compliance guide
+- [yaml-support.md](references/yaml-support.md) — Supported YAML grammar surface, divergence guarantees, and conformance scope
 
 **Scripts:**
 - [validate_skill.py](scripts/validate_skill.py) — Single skill spec validation

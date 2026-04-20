@@ -1,0 +1,4 @@
+{
+  "origin": "original",
+  "rationale": "Empty-value form returns empty string."
+}

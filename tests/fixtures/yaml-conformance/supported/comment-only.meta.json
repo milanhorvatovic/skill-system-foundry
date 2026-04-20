@@ -1,0 +1,4 @@
+{
+  "origin": "original",
+  "rationale": "Full-line comments are stripped before parse."
+}

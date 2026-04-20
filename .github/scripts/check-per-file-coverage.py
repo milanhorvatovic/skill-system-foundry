@@ -141,7 +141,12 @@ def check_per_file(
     Raises ``OSError`` when the file cannot be read, ``json.JSONDecodeError``
     when the content is not valid JSON, and ``ValueError`` when the data
     structure is malformed (missing ``files`` dict, or a file entry lacks
-    branch coverage data that can be used or computed).
+    branch coverage data that can be used or computed) or when a
+    ``--file-threshold`` override targets a path that the coverage data
+    does not contain — typically because ``.coveragerc`` ``source`` /
+    ``omit`` excludes the file or the path is mistyped.  Surfacing the
+    mismatch loudly turns a previously-silent dead-letter override into
+    a CI-visible failure.
     """
     overrides = {
         _normalize_path(k): v for k, v in (file_thresholds or {}).items()
@@ -152,6 +157,16 @@ def check_per_file(
     if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
         raise ValueError(
             "coverage.json is malformed — missing or non-dict top-level 'files' key"
+        )
+
+    measured_paths = {_normalize_path(name) for name in data["files"]}
+    unmatched_overrides = sorted(set(overrides) - measured_paths)
+    if unmatched_overrides:
+        raise ValueError(
+            "--file-threshold target(s) absent from coverage data: "
+            + ", ".join(unmatched_overrides)
+            + " — extend .coveragerc 'source' (and tighten 'omit' if "
+            "needed) so the file is measured, or correct a mistyped path"
         )
 
     failures: list[tuple[str, float]] = []

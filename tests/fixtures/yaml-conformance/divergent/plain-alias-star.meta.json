@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Unquoted '*' triggers strict alias resolution.",
+  "substring_rationale": "Stable phrase 'alias indicator'."
+}

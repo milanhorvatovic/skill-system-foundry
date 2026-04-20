@@ -1261,17 +1261,42 @@ class CheckPlainScalarBlockScalarTests(unittest.TestCase):
         self.assertIn("invalid block scalar header", findings[0])
         self.assertIn("reject", findings[0])
 
-    def test_indentation_indicator_message(self) -> None:
-        """Headers with indentation indicators get misparsed message."""
+    def test_indentation_indicator_raises_pinned_message(self) -> None:
+        """Indent-indicator block-scalar headers raise the pinned ValueError."""
         for header in ("|2", ">4", "|3-", ">+9", "|-5", ">7+"):
             with self.subTest(header=header):
-                findings: list[str] = []
-                _check_plain_scalar("key", header, findings)
-                self.assertEqual(len(findings), 1)
-                self.assertIn("FAIL", findings[0])
-                self.assertIn("indentation indicator", findings[0])
-                self.assertIn("misparsed", findings[0])
-                self.assertNotIn("reject", findings[0])
+                with self.assertRaises(ValueError) as ctx:
+                    _check_plain_scalar("key", header, [])
+                self.assertIn(
+                    "indent-indicator-block-scalar", str(ctx.exception)
+                )
+                self.assertIn("§8.1.1", str(ctx.exception))
+
+    def test_indentation_indicator_raises_without_findings_list(self) -> None:
+        """Raise fires regardless of whether the caller passed findings."""
+        with self.assertRaises(ValueError):
+            _check_plain_scalar("key", "|2", None)
+
+    def test_indentation_indicator_with_trailing_comment_raises(self) -> None:
+        """YAML §8.1.1 allows trailing whitespace + ``# comment`` after the
+        chomping/indent indicators; the rejection must still fire — otherwise
+        ``key: |2 # note`` slips through and the parser silently accepts an
+        unsupported header.
+        """
+        for header in (
+            "|2 # note",
+            ">+3   # explanation",
+            "|-5\t# tab-then-hash",
+            "|2 ",
+            "|2\t",
+            ">4-  ",
+        ):
+            with self.subTest(header=header):
+                with self.assertRaises(ValueError) as ctx:
+                    _check_plain_scalar("key", header, [])
+                self.assertIn(
+                    "indent-indicator-block-scalar", str(ctx.exception)
+                )
 
 
 class CheckPlainScalarTagTests(unittest.TestCase):
@@ -1508,30 +1533,22 @@ class ParseMappingExtendedBlockScalarTests(unittest.TestCase):
         result, _ = _parse_mapping(lines, 0, 0, [])
         self.assertEqual(result, {"key": ""})
 
-    def test_indentation_indicator_treated_as_plain(self) -> None:
-        """Headers with indentation indicators are treated as plain scalars."""
-        findings: list[str] = []
+    def test_indentation_indicator_raises(self) -> None:
+        """Indent-indicator block-scalar header raises during mapping parse."""
         lines = [(0, "key: |2"), (2, "indented")]
-        result, _ = _parse_mapping(lines, 0, 0, findings)
-        self.assertEqual(result, {"key": "|2"})
-        self.assertEqual(len(findings), 1)
-        self.assertIn("block scalar", findings[0])
+        with self.assertRaises(ValueError) as ctx:
+            _parse_mapping(lines, 0, 0, [])
+        self.assertIn("indent-indicator-block-scalar", str(ctx.exception))
 
-    def test_combined_chomping_digit_treated_as_plain(self) -> None:
-        """Chomping+digit headers are treated as plain scalars."""
-        findings: list[str] = []
-        lines = [(0, "key: |-4"), (2, "content")]
-        result, _ = _parse_mapping(lines, 0, 0, findings)
-        self.assertEqual(result, {"key": "|-4"})
-        self.assertEqual(len(findings), 1)
+    def test_combined_chomping_digit_raises(self) -> None:
+        """``|-4`` (chomping + digit) raises the pinned ValueError."""
+        with self.assertRaises(ValueError):
+            _parse_mapping([(0, "key: |-4"), (2, "content")], 0, 0, [])
 
-    def test_digit_then_chomping_treated_as_plain(self) -> None:
-        """Digit+chomping headers are treated as plain scalars."""
-        findings: list[str] = []
-        lines = [(0, "key: |4-"), (2, "content")]
-        result, _ = _parse_mapping(lines, 0, 0, findings)
-        self.assertEqual(result, {"key": "|4-"})
-        self.assertEqual(len(findings), 1)
+    def test_digit_then_chomping_raises(self) -> None:
+        """``|4-`` (digit + chomping) raises the pinned ValueError."""
+        with self.assertRaises(ValueError):
+            _parse_mapping([(0, "key: |4-"), (2, "content")], 0, 0, [])
 
 
 # ===================================================================
@@ -1596,14 +1613,15 @@ class ParseListSimpleItemScalarCheckTests(unittest.TestCase):
                 self.assertEqual(findings, [])
                 self.assertEqual(result, [""])
 
-    def test_block_scalar_header_with_digit_treated_as_plain(self) -> None:
-        """Headers with digits are treated as plain scalars and produce findings."""
+    def test_block_scalar_header_with_digit_raises(self) -> None:
+        """Headers with digit indentation indicators raise ValueError."""
         for header in ("|2", ">-4"):
             with self.subTest(header=header):
-                findings: list[str] = []
-                result, _ = _parse_list([(0, f"- {header}")], 0, 0, findings, "items")
-                self.assertEqual(len(findings), 1)
-                self.assertIn("block scalar", findings[0])
+                with self.assertRaises(ValueError) as ctx:
+                    _parse_list([(0, f"- {header}")], 0, 0, [], "items")
+                self.assertIn(
+                    "indent-indicator-block-scalar", str(ctx.exception)
+                )
 
     def test_simple_list_folded_block_scalar(self) -> None:
         """Simple list item with folded block scalar collects continuation lines."""
@@ -1935,6 +1953,90 @@ class ConfigurationYamlIntegrationTests(unittest.TestCase):
         self.assertIsInstance(value, str)
         self.assertTrue(value.isdigit(), f"Expected digit string, got {value!r}")
         self.assertGreater(int(value), 0)
+
+
+class GrammarGapUpgradeTests(unittest.TestCase):
+    """Three pinned ``ValueError`` paths for the grammar gaps."""
+
+    def test_anchor_with_trailing_key_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_yaml_subset("&anchor key: value\n")
+        self.assertIn("anchor-with-trailing-in-key", str(ctx.exception))
+        self.assertIn("§6.9", str(ctx.exception))
+
+    def test_anchor_with_trailing_inside_list_dict_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_yaml_subset("- &a key: value\n")
+
+    def test_anchor_with_trailing_continuation_key_raises(self) -> None:
+        # Continuation key inside a list-of-mappings item.
+        text = "- name: a\n  &b key: value\n"
+        with self.assertRaises(ValueError):
+            parse_yaml_subset(text)
+
+    def test_bare_anchor_as_key_does_not_raise(self) -> None:
+        # No trailing text — falls outside the upgraded construct.
+        result = parse_yaml_subset("&anchor: value\n")
+        self.assertIn("&anchor", result)
+
+    def test_tag_in_mapping_key_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_yaml_subset("!!str key: value\n")
+        self.assertIn("tag-in-mapping-key", str(ctx.exception))
+        self.assertIn("§6.9", str(ctx.exception))
+
+    def test_tag_in_list_dict_key_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_yaml_subset("- !custom key: value\n")
+
+    def test_indent_indicator_block_scalar_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            parse_yaml_subset("key: |2\n  text\n")
+        self.assertIn("indent-indicator-block-scalar", str(ctx.exception))
+        self.assertIn("§8.1.1", str(ctx.exception))
+
+    def test_anchor_in_value_position_still_warns(self) -> None:
+        # Non-key (plain-scalar value) anchor remains a WARN finding,
+        # not a raise — only mapping-key position is upgraded.
+        findings: list[str] = []
+        parse_yaml_subset("key: &alias trailing\n", findings)
+        self.assertTrue(any("WARN" in f for f in findings))
+
+    def test_tag_in_value_position_still_warns(self) -> None:
+        findings: list[str] = []
+        parse_yaml_subset("key: !tag value\n", findings)
+        self.assertTrue(any("WARN" in f for f in findings))
+
+
+class ParseYamlSubsetLineEndingNormalizationTests(unittest.TestCase):
+    """LF / CRLF / CR / mixed inputs produce identical parsed output."""
+
+    BASE = "key: value\nblock: |\n  line1\n  line2\nlist:\n  - a\n  - b\n"
+
+    def test_lf_input_round_trips(self) -> None:
+        result = parse_yaml_subset(self.BASE)
+        self.assertEqual(result["key"], "value")
+        self.assertEqual(result["block"], "line1\nline2")
+        self.assertEqual(result["list"], ["a", "b"])
+
+    def test_crlf_input_matches_lf(self) -> None:
+        crlf = self.BASE.replace("\n", "\r\n")
+        self.assertEqual(parse_yaml_subset(crlf), parse_yaml_subset(self.BASE))
+
+    def test_cr_only_input_matches_lf(self) -> None:
+        cr = self.BASE.replace("\n", "\r")
+        self.assertEqual(parse_yaml_subset(cr), parse_yaml_subset(self.BASE))
+
+    def test_mixed_input_matches_lf(self) -> None:
+        mixed = "key: value\r\nblock: |\r  line1\n  line2\r\nlist:\n  - a\r  - b\n"
+        self.assertEqual(
+            parse_yaml_subset(mixed), parse_yaml_subset(self.BASE)
+        )
+
+    def test_block_scalar_value_is_lf_only(self) -> None:
+        crlf = self.BASE.replace("\n", "\r\n")
+        result = parse_yaml_subset(crlf)
+        self.assertNotIn("\r", result["block"])
 
 
 if __name__ == "__main__":

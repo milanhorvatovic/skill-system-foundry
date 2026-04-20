@@ -1,0 +1,5 @@
+{
+  "origin": "original",
+  "rationale": "Unmatched leading single quote on a plain scalar.",
+  "substring_rationale": "Targets the stable phrase 'unterminated quote'."
+}

@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "fail",
+      "substring": "unterminated quote"
+    }
+  ],
+  "parsed": {
+    "key": "\"unterminated"
+  }
+}

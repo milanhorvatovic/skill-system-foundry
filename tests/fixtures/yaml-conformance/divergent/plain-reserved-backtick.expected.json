@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "fail",
+      "substring": "reserved character"
+    }
+  ],
+  "parsed": {
+    "key": "`value"
+  }
+}

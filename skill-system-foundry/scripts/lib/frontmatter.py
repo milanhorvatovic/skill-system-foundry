@@ -1,4 +1,11 @@
-"""SKILL.md frontmatter extraction and body utilities."""
+"""SKILL.md frontmatter extraction and body utilities.
+
+Line endings in the on-disk file are normalized to LF immediately after
+``f.read()`` so the returned ``body`` is LF-only regardless of how the
+file was checked out — the prose-YAML extractor and any other body
+consumer can split on ``\\n`` without ferrying the original endings
+through downstream processors.
+"""
 
 from .yaml_parser import parse_yaml_subset
 
@@ -44,9 +51,15 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     none).  If no frontmatter is found, returns
     ``(None, full_content, [])``.  Parse errors are returned as a dict
     with a ``_parse_error`` key.
+
+    Input line endings are normalized to LF before any further
+    processing, so both the frontmatter and the returned ``body`` use
+    LF-only terminators (see module docstring).
     """
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
+
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
 
     frontmatter_raw, body_raw = split_frontmatter(content)
     if frontmatter_raw is None:

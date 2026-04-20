@@ -1,6 +1,7 @@
 [run]
 source =
     skill-system-foundry/scripts
+    .github/scripts
 branch = True
 
 [report]
@@ -11,6 +12,7 @@ exclude_lines =
     raise NotImplementedError
 
 omit =
-    tests/*
+    tests/test_*.py
+    tests/helpers.py
     */__pycache__/*
     .git/*

@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "fail",
+      "substring": "explicit mapping key"
+    }
+  ],
+  "parsed": {
+    "key": "? marker"
+  }
+}

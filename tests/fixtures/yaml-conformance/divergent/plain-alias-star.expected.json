@@ -1,0 +1,11 @@
+{
+  "findings": [
+    {
+      "severity": "fail",
+      "substring": "alias indicator"
+    }
+  ],
+  "parsed": {
+    "key": "*alias"
+  }
+}
