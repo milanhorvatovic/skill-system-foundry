@@ -294,7 +294,10 @@ class MainExitCodeTests(unittest.TestCase):
     """Exit 0 on clean, non-zero on hits; JSON shape pinned."""
 
     def test_clean_repo_exits_zero(self) -> None:
-        # The shipped tracked content must remain clean before commit 6.
+        # Tracked content must stay clean against the upgraded
+        # parser — preflight is the WARN→ValueError gate, so any hit
+        # here means a tracked YAML/Markdown input would crash the
+        # shipped parser and the upgrade has regressed.
         with unittest.mock.patch("sys.stdout", new=io.StringIO()):
             self.assertEqual(preflight.main([]), 0)
 
