@@ -79,14 +79,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             # Tooling consumers parsing --json output need a structured
             # payload on every exit path, including the missing-corpus-
-            # root error — bare stderr text breaks the contract.
+            # root error — bare stderr text breaks the contract.  The
+            # missing-root condition counts as one failed corpus-level
+            # assertion so ``passed + failed == total`` holds and
+            # consumers that key on ``failed`` rather than exit code
+            # see the same answer.
             print(
                 to_json_output(
                     {
                         "corpus": {
-                            "total": 0,
+                            "total": 1,
                             "passed": 0,
-                            "failed": 0,
+                            "failed": 1,
                             "failures": [
                                 {
                                     "file": "corpus_root",

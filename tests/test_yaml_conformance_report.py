@@ -157,8 +157,13 @@ class MissingCorpusRootTests(unittest.TestCase):
         payload = json.loads(buf.getvalue())
         self.assertIn("corpus", payload)
         corpus = payload["corpus"]
-        self.assertEqual(corpus["total"], 0)
-        self.assertEqual(corpus["failed"], 0)
+        # Counts must be internally consistent: the missing-root
+        # condition counts as one failed corpus-level assertion so
+        # ``passed + failed == total`` holds and consumers keying on
+        # ``failed`` rather than exit code see the same answer.
+        self.assertEqual(corpus["total"], 1)
+        self.assertEqual(corpus["passed"], 0)
+        self.assertEqual(corpus["failed"], 1)
         self.assertEqual(len(corpus["failures"]), 1)
         self.assertEqual(corpus["failures"][0]["file"], "corpus_root")
         self.assertTrue(
