@@ -141,6 +141,49 @@ class MissingCorpusRootTests(unittest.TestCase):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
 
+    def test_oserror_during_run_corpus_emits_json_payload(self) -> None:
+        # ``run_corpus`` opens ``digests.txt`` directly and can raise
+        # ``OSError`` (permission denied, racy unlink, transient FS
+        # error).  The ``--json`` contract must hold on this exit
+        # path too — the pinned ``corpus`` payload, not a traceback.
+        import json
+        import shutil
+        import tempfile
+        import unittest.mock as mock
+        root = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(root, "supported"))
+            with open(
+                os.path.join(root, "supported", "k.lf.yaml"),
+                "wb",
+            ) as fh:
+                fh.write(b"key: value\n")
+            buf = io.StringIO()
+            with mock.patch.object(
+                report.runner,
+                "run_corpus",
+                side_effect=OSError("permission denied"),
+            ):
+                with mock.patch("sys.stdout", new=buf):
+                    rc = report.main(
+                        ["--corpus-root", root, "--json"]
+                    )
+            self.assertEqual(rc, 1)
+            payload = json.loads(buf.getvalue())
+            corpus = payload["corpus"]
+            self.assertEqual(corpus["total"], 1)
+            self.assertEqual(corpus["failed"], 1)
+            self.assertEqual(corpus["failures"][0]["file"], "corpus")
+            self.assertTrue(
+                any(
+                    "corpus load failure" in m
+                    and "permission denied" in m
+                    for m in corpus["failures"][0]["messages"]
+                )
+            )
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_malformed_manifest_human_mode_writes_stderr(self) -> None:
         # Human mode for the same corpus-load failure path emits a
         # stderr message and exits 1 — covered separately so both

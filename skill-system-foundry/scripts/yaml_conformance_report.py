@@ -112,13 +112,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # ``runner.run_corpus`` raises ValueError on hard manifest
     # corruption (malformed digests.txt line, duplicate path, etc.)
-    # and discover_fixtures raises on layout violations.  ``--json``
-    # consumers depend on the pinned ``corpus`` shape on every exit,
-    # so route any such raise into a single failed corpus-level
-    # assertion rather than a Python traceback.
+    # and discover_fixtures raises on layout violations.  It also
+    # opens ``digests.txt`` directly, which can raise ``OSError``
+    # (permission-denied, transient FS error, racy unlink).
+    # ``--json`` consumers depend on the pinned ``corpus`` shape on
+    # every exit, so route any such raise into a single failed
+    # corpus-level assertion rather than a Python traceback.
     try:
         summary = runner.run_corpus(args.corpus_root)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         if args.json:
             print(
                 to_json_output(
