@@ -96,6 +96,26 @@ class ScanYamlTextConstructTests(unittest.TestCase):
                 ids = [h["construct_id"] for h in hits]
                 self.assertIn(preflight.TAG_ID, ids, header)
 
+    def test_tag_with_whitespace_gap_before_colon_flagged(self) -> None:
+        # The parser splits the line on the first ``:`` and then
+        # whitespace-splits the resulting key.  ``! : value`` and
+        # ``!tag : value`` therefore have first-token ``!`` / ``!tag``
+        # in mapping-key position and raise — even though the tag
+        # token is separated from the colon by whitespace rather
+        # than concatenated.  Preflight must catch the gap forms.
+        for header in (
+            "! : value\n",
+            "!tag : value\n",
+            "!!str : value\n",
+            "  ! : value\n",
+        ):
+            with self.subTest(header=header.rstrip()):
+                hits = preflight.scan_yaml_text(
+                    header, lambda n: f"line {n}"
+                )
+                ids = [h["construct_id"] for h in hits]
+                self.assertIn(preflight.TAG_ID, ids, header)
+
     def test_indent_indicator_block_scalar_flagged(self) -> None:
         text = "key: |2\n  some text\n"
         hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")

@@ -62,14 +62,15 @@ _RE_ANCHOR_KEY = re.compile(
 # ``lib.yaml_parser._check_mapping_key_construct`` actually rejects.
 # The parser raises whenever the first whitespace-separated key token
 # starts with ``!``, with **no** "must have trailing key text"
-# precondition (unlike the anchor case).  So ``!tag:`` and ``!!str:``
-# are upgrade-breaking even though they have no trailing key word.
-# Trailing key text remains optional in the regex (matches both
-# ``!tag:`` and ``!tag key:`` / ``!!type key:`` shapes).  Excludes
-# the YAML directive line ``%TAG …``, which never starts with
-# whitespace+``!``.
+# precondition (unlike the anchor case).  So ``!tag:``, ``!!str:``,
+# ``! :``, and ``!tag :`` are all upgrade-breaking — anything before
+# the line's first ``:`` whose first ``\S`` token starts with ``!``
+# raises.  ``[^\n]*?`` (non-greedy) between the tag token and the
+# colon covers trailing key text and bare-whitespace gap forms
+# without missing parser-rejected shapes.  Excludes the YAML
+# directive line ``%TAG …``, which never starts with whitespace+``!``.
 _RE_TAG_KEY = re.compile(
-    rf"^\s*{_LIST_PREFIX}!{{1,2}}\S*(?:\s+\S[^\n]*?)?:"
+    rf"^\s*{_LIST_PREFIX}!{{1,2}}\S*[^\n]*?:"
 )
 # Block scalar header with indentation indicator (digit 1-9) in the
 # header — mirrors ``lib.yaml_parser._is_indent_indicator_header``.
