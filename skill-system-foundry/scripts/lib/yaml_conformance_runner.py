@@ -218,6 +218,8 @@ def run_case(
     bucket: str,
     case: dict,
     digests: dict[str, str],
+    *,
+    enforce_digests: bool = True,
 ) -> list[str]:
     """Run digest, parse, and parity checks for one case.
 
@@ -277,12 +279,14 @@ def run_case(
     # play: a missing entry is just as much a drift signal as a hash
     # mismatch, so both routes mark the variant as drifted and parity
     # is skipped (it is meaningless once we cannot trust the bytes).
-    # The "no manifest at all" case (empty *digests* — typically
-    # synthetic-corpus scaffolding before digests.txt is generated) is
-    # left alone; the orphan-digest sweep in ``run_corpus`` covers the
-    # inverse class of drift.
+    # ``enforce_digests`` is driven by the caller (``run_corpus``) from
+    # whether ``digests.txt`` actually exists on disk — an empty-but-
+    # present manifest still enforces (every variant fails as missing
+    # entry), since an accidentally truncated manifest would otherwise
+    # silently disable both per-variant checks and the orphan-digest
+    # sweep.  Only an absent file (typical scaffolding state) skips
+    # enforcement.
     digest_failures: set[str] = set()
-    enforce_digests = bool(digests)
     for variant_rel in case["variants"]:
         variant_path = os.path.join(corpus_root, variant_rel)
         if variant_rel not in digests:
@@ -331,7 +335,8 @@ def run_corpus(corpus_root: str) -> dict:
     """
     digests: dict[str, str] = {}
     digests_path = os.path.join(corpus_root, "digests.txt")
-    if os.path.isfile(digests_path):
+    manifest_present = os.path.isfile(digests_path)
+    if manifest_present:
         with open(digests_path, "r", encoding="utf-8") as fh:
             digests = parse_digests_file(fh.read())
 
@@ -344,7 +349,13 @@ def run_corpus(corpus_root: str) -> dict:
         for case in cases_by_bucket.get(bucket, []):
             discovered_variants.update(case["variants"])
             total += 1
-            messages = run_case(corpus_root, bucket, case, digests)
+            messages = run_case(
+                corpus_root,
+                bucket,
+                case,
+                digests,
+                enforce_digests=manifest_present,
+            )
             if messages:
                 failures.append(
                     {"file": case["base"], "messages": messages}

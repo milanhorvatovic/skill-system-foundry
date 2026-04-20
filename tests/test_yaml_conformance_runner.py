@@ -440,6 +440,43 @@ class RunCaseAndCorpusTests(unittest.TestCase):
         finally:
             b.cleanup()
 
+    def test_empty_manifest_still_enforces(self) -> None:
+        # An empty-but-present digests.txt is a different signal from
+        # an absent file: it almost certainly means the manifest was
+        # accidentally truncated, so per-variant enforcement must
+        # still fire (every variant surfaces as a missing entry).
+        b = _CorpusBuilder()
+        try:
+            for s, sep in (
+                (".lf.yaml", "\n"),
+                (".crlf.yaml", "\r\n"),
+                (".mixed.yaml", "\n"),
+            ):
+                b.write_variant(
+                    "supported", "k", s, "key: value" + sep
+                )
+            b.write_sidecar(
+                "supported",
+                "k",
+                {"parsed": {"key": "value"}},
+                {"origin": "original", "rationale": "smoke"},
+            )
+            b.write_digests("")
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            messages = summary["failures"][0]["messages"]
+            for variant in (
+                "supported/k.lf.yaml",
+                "supported/k.crlf.yaml",
+                "supported/k.mixed.yaml",
+            ):
+                self.assertTrue(
+                    any(f"missing digest entry: {variant}" in m for m in messages),
+                    f"expected missing-entry message for {variant} in {messages!r}",
+                )
+        finally:
+            b.cleanup()
+
     def test_orphan_digest_entry_surfaces_as_corpus_failure(self) -> None:
         # A digests.txt line whose path is not a discovered fixture
         # (typically a leftover after a fixture deletion) is the inverse
