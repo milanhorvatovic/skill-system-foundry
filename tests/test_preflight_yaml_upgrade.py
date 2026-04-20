@@ -38,6 +38,27 @@ class ScanYamlTextConstructTests(unittest.TestCase):
         ids = [h["construct_id"] for h in hits]
         self.assertIn(preflight.ANCHOR_ID, ids)
 
+    def test_anchor_with_non_word_chars_in_name_flagged(self) -> None:
+        # The parser rejects any mapping key whose first whitespace-
+        # separated token starts with ``&`` and has trailing key text,
+        # regardless of which characters appear in the anchor name.
+        # Preflight must mirror that breadth so the WARN→ValueError
+        # gate is not blind to anchors whose names use unusual
+        # characters (a parse-failure that landed in tracked content
+        # would surface only at parser time, not preflight).
+        for header in (
+            "&a.b key: value\n",
+            "&a/b key: value\n",
+            "&a:b key: value\n",
+            "& key: value\n",
+        ):
+            with self.subTest(header=header.rstrip()):
+                hits = preflight.scan_yaml_text(
+                    header, lambda n: f"line {n}"
+                )
+                ids = [h["construct_id"] for h in hits]
+                self.assertIn(preflight.ANCHOR_ID, ids, header)
+
     def test_tag_in_mapping_key_flagged(self) -> None:
         text = "!!str key: value\n"
         hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
