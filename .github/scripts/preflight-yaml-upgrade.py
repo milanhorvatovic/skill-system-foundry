@@ -78,12 +78,15 @@ _RE_TAG_KEY = re.compile(
 # ``|2+`` (and the ``>`` variants).  Anchored to ``^<key>:`` (with
 # optional indent and list marker) so arbitrary text containing
 # ``": |2"`` inside comment lines or block-scalar content does not
-# false-positive match.  Requires whitespace or end-of-line after
-# the indicator — ``|2#note`` (no space before ``#``) is plain-scalar
+# false-positive match.  Whitespace after ``:`` is **optional**
+# (``\s*``) to mirror ``parse_yaml_subset`` stripping the post-colon
+# value: ``key:|2`` raises the same as ``key: |2``, so preflight
+# must catch both.  Requires whitespace or end-of-line after the
+# indicator — ``|2#note`` (no space before ``#``) is plain-scalar
 # territory that the parser does not raise on, so preflight must not
 # either.
 _RE_INDENT_INDICATOR = re.compile(
-    rf"^\s*{_LIST_PREFIX}\S+?:\s+[|>](?:[1-9][-+]?|[-+][1-9])(?:\s|$)"
+    rf"^\s*{_LIST_PREFIX}\S+?:\s*[|>](?:[1-9][-+]?|[-+][1-9])(?:\s|$)"
 )
 
 

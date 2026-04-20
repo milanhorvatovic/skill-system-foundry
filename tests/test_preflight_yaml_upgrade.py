@@ -108,6 +108,23 @@ class ScanYamlTextConstructTests(unittest.TestCase):
         ids = [h["construct_id"] for h in hits]
         self.assertIn(preflight.INDENT_ID, ids)
 
+    def test_indent_indicator_without_post_colon_space_flagged(self) -> None:
+        # ``parse_yaml_subset`` strips whitespace after the colon, so
+        # ``key:|2`` raises the same upgraded ValueError as ``key: |2``.
+        # Preflight must mirror that or the WARN→ValueError gate is
+        # blind to a real parser-failure shape.
+        for text in (
+            "key:|2\n",
+            "- key:|2\n",
+            "key:>-3\n",
+        ):
+            with self.subTest(text=text.rstrip()):
+                hits = preflight.scan_yaml_text(
+                    text, lambda n: f"line {n}"
+                )
+                ids = [h["construct_id"] for h in hits]
+                self.assertIn(preflight.INDENT_ID, ids, text)
+
     def test_indent_indicator_with_comment_attached_not_flagged(self) -> None:
         # ``|2#note`` (no whitespace before ``#``) is not an
         # indent-indicator header per parser semantics — the parser
