@@ -162,22 +162,32 @@ def extract_frontmatter(text: str) -> str | None:
 
 
 def scan_file(path: str, rel_path: str) -> list[dict]:
-    """Scan *path* and return preflight hits keyed by *rel_path*."""
+    """Scan *path* and return preflight hits keyed by *rel_path*.
+
+    Out-of-scope files (anything that is not ``.md`` / ``.yaml`` /
+    ``.yml``) are skipped before any I/O so the walk does not read
+    and decode every tracked file in the repo.  Two side benefits:
+    less work, and UTF-8 decode failures on out-of-scope binaries
+    (images, fonts) never reach the silent-skip path.
+    """
+    is_markdown = rel_path.endswith(".md")
+    is_yaml = rel_path.endswith((".yaml", ".yml"))
+    if not is_markdown and not is_yaml:
+        return []
+
     try:
         with open(path, "r", encoding="utf-8") as fh:
             text = fh.read()
     except (UnicodeDecodeError, OSError):
         return []
 
-    if rel_path.endswith(".md"):
+    if is_markdown:
         block = extract_frontmatter(text)
         if block is None:
             return []
         hits = scan_yaml_text(block, lambda _n: "frontmatter")
-    elif rel_path.endswith((".yaml", ".yml")):
-        hits = scan_yaml_text(text, lambda n: f"line {n}")
     else:
-        return []
+        hits = scan_yaml_text(text, lambda n: f"line {n}")
     for h in hits:
         h["file"] = rel_path
     return hits
