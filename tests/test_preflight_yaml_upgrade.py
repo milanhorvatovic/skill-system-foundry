@@ -108,6 +108,46 @@ class ScanYamlTextConstructTests(unittest.TestCase):
         ids = [h["construct_id"] for h in hits]
         self.assertIn(preflight.INDENT_ID, ids)
 
+    def test_indent_indicator_with_comment_attached_not_flagged(self) -> None:
+        # ``|2#note`` (no whitespace before ``#``) is not an
+        # indent-indicator header per parser semantics — the parser
+        # only raises when the ``#`` is preceded by whitespace per
+        # YAML §8.1.1.  Preflight must mirror that or it
+        # false-positives clean content.
+        text = "key: |2#note\n"
+        hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
+        ids = [h["construct_id"] for h in hits]
+        self.assertNotIn(preflight.INDENT_ID, ids)
+
+    def test_indent_indicator_with_proper_comment_flagged(self) -> None:
+        # ``|2 # note`` (whitespace before ``#``) IS an indent-indicator
+        # header — the parser raises, so preflight must too.
+        text = "key: |2 # note\n"
+        hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
+        ids = [h["construct_id"] for h in hits]
+        self.assertIn(preflight.INDENT_ID, ids)
+
+    def test_comment_line_with_colon_not_flagged(self) -> None:
+        # A whole-line YAML comment containing colon-shaped content
+        # must not trip the construct regexes — the parser never
+        # treats comment text as keys/values.
+        text = "# &anchor key: value | also !!str other: x and key: |2\n"
+        hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
+        self.assertEqual(hits, [])
+
+    def test_block_scalar_content_with_colon_not_flagged(self) -> None:
+        # Block-scalar literal content containing ``: |2`` would
+        # false-positive against an unanchored search regex.  The
+        # anchored ``^\\s*<key>:`` regex mitigates the case where the
+        # content has internal whitespace (a real prose sentence).
+        text = (
+            "description: |\n"
+            "  This is a literal sentence: |2 here\n"
+        )
+        hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
+        ids = [h["construct_id"] for h in hits]
+        self.assertNotIn(preflight.INDENT_ID, ids)
+
     def test_clean_input_yields_no_hits(self) -> None:
         text = "key: value\nblock: |\n  literal\nlist:\n  - a\n"
         hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")

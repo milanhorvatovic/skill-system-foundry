@@ -67,13 +67,18 @@ _RE_ANCHOR_KEY = re.compile(
 _RE_TAG_KEY = re.compile(
     rf"^\s*{_LIST_PREFIX}!{{1,2}}\S*(?:\s+\S[^\n]*?)?:"
 )
-# Block scalar header with indentation indicator (digit 1-9) anywhere
-# in the header — accepts the YAML 1.2 forms ``|2``, ``|2-``, ``|-2``,
-# ``>2+``, ``>+2``.  Match against the value portion (after ``: ``) so
-# bare ``|`` / ``>`` headers (which the parser does support) do not
-# trigger.
+# Block scalar header with indentation indicator (digit 1-9) in the
+# header — mirrors ``lib.yaml_parser._is_indent_indicator_header``.
+# Accepts the YAML 1.2 forms ``|2``, ``|2-``, ``|-2``, ``|+2``,
+# ``|2+`` (and the ``>`` variants).  Anchored to ``^<key>:`` (with
+# optional indent and list marker) so arbitrary text containing
+# ``": |2"`` inside comment lines or block-scalar content does not
+# false-positive match.  Requires whitespace or end-of-line after
+# the indicator — ``|2#note`` (no space before ``#``) is plain-scalar
+# territory that the parser does not raise on, so preflight must not
+# either.
 _RE_INDENT_INDICATOR = re.compile(
-    r":\s*[|>](?:[1-9][-+]?|[-+]?[1-9])\s*(?:#.*)?$"
+    rf"^\s*{_LIST_PREFIX}\S+?:\s+[|>](?:[1-9][-+]?|[-+][1-9])(?:\s|$)"
 )
 
 
@@ -105,6 +110,14 @@ def scan_yaml_text(
     hits: list[dict] = []
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     for line_no, line in enumerate(text.split("\n"), start=1):
+        # Skip whole-line comments — the parser never treats their
+        # contents as keys/values, so flagging a colon inside a comment
+        # would be a false positive.  Block-scalar literal content is
+        # harder to detect without structural parsing; the anchored
+        # ``^\\s*<key>:`` pattern in the construct regexes mitigates
+        # that case for keys, but is not exhaustive.
+        if line.lstrip().startswith("#"):
+            continue
         if _RE_ANCHOR_KEY.match(line):
             hits.append(
                 {
