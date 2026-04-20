@@ -25,7 +25,16 @@ jobs:
       - name: Verify bundle excludes yaml-conformance corpus
         run: |
           : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
-          python -c "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1]); hits=[n for n in z.namelist() if 'yaml-conformance' in n]; sys.exit(1 if hits else 0)" "$BUNDLE_PATH"
+          python - "$BUNDLE_PATH" <<'PY'
+          import sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          hits = [n for n in z.namelist() if 'yaml-conformance' in n]
+          if hits:
+              print('Found forbidden yaml-conformance entries in bundle:', file=sys.stderr)
+              for n in hits:
+                  print(f'  {n}', file=sys.stderr)
+              sys.exit(1)
+          PY
 
       - name: Upload release asset
         env:
