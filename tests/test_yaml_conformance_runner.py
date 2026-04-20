@@ -645,6 +645,70 @@ class RunCaseAndCorpusTests(unittest.TestCase):
         finally:
             b.cleanup()
 
+    def test_hash_read_failure_aggregated_not_raised(self) -> None:
+        # If ``hash_file`` raises ``OSError`` (true discovery-vs-hash
+        # race, permission flip, hostile cleanup) the harness must
+        # catch and aggregate as a digest-side failure rather than
+        # crash the whole corpus run on a single failed read.
+        # Simulate via mock — a real ``os.unlink`` between discovery
+        # and run_case is hard to stage because ``discover_fixtures``
+        # scans disk inside ``run_corpus``.
+        import unittest.mock
+        b = _CorpusBuilder()
+        try:
+            for s, sep in (
+                (".lf.yaml", "\n"),
+                (".crlf.yaml", "\r\n"),
+                (".mixed.yaml", "\n"),
+            ):
+                b.write_variant(
+                    "supported", "k", s, "key: value" + sep
+                )
+            b.write_sidecar(
+                "supported",
+                "k",
+                {"parsed": {"key": "value"}},
+                {"origin": "original", "rationale": "smoke"},
+            )
+            real_lf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.lf.yaml")
+            )
+            real_crlf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.crlf.yaml")
+            )
+            real_mixed = runner.hash_file(
+                os.path.join(b.root, "supported", "k.mixed.yaml")
+            )
+            b.write_digests(
+                f"{real_lf}  supported/k.lf.yaml\n"
+                f"{real_crlf}  supported/k.crlf.yaml\n"
+                f"{real_mixed}  supported/k.mixed.yaml\n"
+            )
+            real_hash = runner.hash_file
+            target = "supported/k.crlf.yaml"
+
+            def fake_hash(path: str) -> str:
+                if path.endswith(target.replace("/", os.sep)) or path.endswith(target):
+                    raise OSError("simulated discovery-vs-hash race")
+                return real_hash(path)
+
+            with unittest.mock.patch.object(runner, "hash_file", fake_hash):
+                summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            messages = summary["failures"][0]["messages"]
+            self.assertTrue(
+                any(
+                    "digest read failed: supported/k.crlf.yaml" in m
+                    for m in messages
+                ),
+                messages,
+            )
+            self.assertTrue(
+                any("parity skipped due to byte drift" in m for m in messages)
+            )
+        finally:
+            b.cleanup()
+
     def test_variant_read_failure_aggregated_not_raised(self) -> None:
         # If a fixture variant cannot be read (deleted between
         # discovery and read, or its bytes are not valid UTF-8) the

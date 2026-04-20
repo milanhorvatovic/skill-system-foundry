@@ -318,7 +318,20 @@ def run_case(
                 msgs.append(f"missing digest entry: {variant_rel}")
                 digest_failures.add(variant_rel)
             continue
-        actual = hash_file(variant_path)
+        try:
+            actual = hash_file(variant_path)
+        except OSError as exc:
+            # File deleted/moved between discovery and hash — aggregate
+            # as a digest-side failure so parity is skipped, the same
+            # way the variant-read step downstream does for OSError /
+            # UnicodeDecodeError.  Without this guard the whole corpus
+            # run would abort on a single missing fixture.
+            msgs.append(
+                f"digest read failed: {variant_rel} "
+                f"({type(exc).__name__})"
+            )
+            digest_failures.add(variant_rel)
+            continue
         if actual != digests[variant_rel]:
             msgs.append(
                 f"digest mismatch: {variant_rel} "
