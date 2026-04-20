@@ -187,5 +187,85 @@ class MainRegenerateModeTests(unittest.TestCase):
             cf.cleanup()
 
 
+class MainJsonOutputTests(unittest.TestCase):
+    """``--json`` covers all four exit paths so tooling can consume them."""
+
+    def test_check_clean_emits_drift_false(self) -> None:
+        import json
+        cf = _CorpusFixture()
+        try:
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                refresh.main(["--corpus-root", cf.root])  # populate
+            buf2 = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf2):
+                rc = refresh.main(
+                    ["--corpus-root", cf.root, "--check", "--json"]
+                )
+            self.assertEqual(rc, 0)
+            payload = json.loads(buf2.getvalue())
+            self.assertEqual(payload["action"], "check")
+            self.assertFalse(payload["drift"])
+            self.assertGreater(payload["fixture_count"], 0)
+        finally:
+            cf.cleanup()
+
+    def test_check_drift_emits_diff(self) -> None:
+        import json
+        cf = _CorpusFixture()
+        try:
+            with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+                refresh.main(["--corpus-root", cf.root])
+            # Mutate one fixture so the live digest no longer matches.
+            with open(
+                os.path.join(cf.root, "supported", "a.lf.yaml"),
+                "wb",
+            ) as fh:
+                fh.write(b"key: changed\n")
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                rc = refresh.main(
+                    ["--corpus-root", cf.root, "--check", "--json"]
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(buf.getvalue())
+            self.assertEqual(payload["action"], "check")
+            self.assertTrue(payload["drift"])
+            self.assertIn("supported/a.lf.yaml", payload["changed"])
+            self.assertEqual(payload["missing"], [])
+            self.assertEqual(payload["extra"], [])
+        finally:
+            cf.cleanup()
+
+    def test_regenerate_emits_path_and_count(self) -> None:
+        import json
+        cf = _CorpusFixture()
+        try:
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                rc = refresh.main(
+                    ["--corpus-root", cf.root, "--json"]
+                )
+            self.assertEqual(rc, 0)
+            payload = json.loads(buf.getvalue())
+            self.assertEqual(payload["action"], "regenerated")
+            self.assertTrue(payload["path"].endswith("digests.txt"))
+            self.assertGreater(payload["fixture_count"], 0)
+        finally:
+            cf.cleanup()
+
+    def test_error_emits_action_error(self) -> None:
+        import json
+        buf = io.StringIO()
+        with unittest.mock.patch("sys.stdout", new=buf):
+            rc = refresh.main(
+                ["--corpus-root", "/nonexistent/x", "--json"]
+            )
+        self.assertEqual(rc, 1)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["action"], "error")
+        self.assertIn("not found", payload["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

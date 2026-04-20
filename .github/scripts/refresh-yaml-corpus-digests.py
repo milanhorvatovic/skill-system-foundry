@@ -22,6 +22,7 @@ script aborts with a clear error if it encounters such a path.
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 
@@ -85,6 +86,39 @@ def read_existing_manifest(corpus_root: str) -> str:
         return fh.read()
 
 
+def _parse_manifest(text: str) -> dict[str, str]:
+    """Return ``{path: digest}`` for *text* in ``sha256sum`` format."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            out[parts[1]] = parts[0]
+    return out
+
+
+def _diff_manifests(
+    expected: str, actual: str
+) -> dict[str, list[str]]:
+    """Return a structured drift report between *expected* and *actual*.
+
+    Keys: ``"missing"`` (in expected, not actual), ``"extra"`` (in
+    actual, not expected), ``"changed"`` (digest differs).  All lists
+    are sorted for stable output.
+    """
+    exp_map = _parse_manifest(expected)
+    act_map = _parse_manifest(actual)
+    missing = sorted(set(exp_map) - set(act_map))
+    extra = sorted(set(act_map) - set(exp_map))
+    changed = sorted(
+        path for path in set(exp_map) & set(act_map)
+        if exp_map[path] != act_map[path]
+    )
+    return {"missing": missing, "extra": extra, "changed": changed}
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point.  Returns 0 on success, 1 on drift (``--check``) or
     other recoverable errors."""
@@ -107,34 +141,98 @@ def main(argv: list[str] | None = None) -> int:
             "without rewriting; exit 0 on match, 1 on drift."
         ),
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit a structured JSON payload instead of human-readable "
+            "text.  Required for tooling consumers per the repository "
+            "entry-point contract."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.corpus_root):
-        print(
-            f"Error: corpus root not found: {args.corpus_root}",
-            file=sys.stderr,
-        )
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "action": "error",
+                        "error": "corpus root not found",
+                        "corpus_root": args.corpus_root,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(
+                f"Error: corpus root not found: {args.corpus_root}",
+                file=sys.stderr,
+            )
         return 1
 
     try:
         manifest = collect_manifest(args.corpus_root)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        if args.json:
+            print(
+                json.dumps(
+                    {"action": "error", "error": str(exc)},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+    fixture_count = sum(1 for line in manifest.splitlines() if line.strip())
 
     if args.check:
         existing = read_existing_manifest(args.corpus_root)
         if existing == manifest:
-            print("digests.txt is up to date.")
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "action": "check",
+                            "drift": False,
+                            "fixture_count": fixture_count,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print("digests.txt is up to date.")
             return 0
-        print(
-            "digests.txt drift detected — re-run without --check to regenerate.",
-            file=sys.stderr,
-        )
+        if args.json:
+            payload = {"action": "check", "drift": True}
+            payload.update(_diff_manifests(manifest, existing))
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                "digests.txt drift detected — re-run without --check to regenerate.",
+                file=sys.stderr,
+            )
         return 1
 
-    write_manifest_atomic(args.corpus_root, manifest)
-    print(f"Wrote {args.corpus_root}/{_MANIFEST_FILENAME}.")
+    final_path = write_manifest_atomic(args.corpus_root, manifest)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "action": "regenerated",
+                    "path": final_path,
+                    "fixture_count": fixture_count,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        print(f"Wrote {args.corpus_root}/{_MANIFEST_FILENAME}.")
     return 0
 
 
