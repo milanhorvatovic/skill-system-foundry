@@ -326,21 +326,35 @@ def run_case(
             )
             digest_failures.add(variant_rel)
 
+    # Read failures (file vanished between discovery and read, or
+    # bytes are not valid UTF-8) must surface as per-variant messages
+    # rather than crashing the harness — the runner's contract is to
+    # return an aggregated summary, and ``yaml_conformance_report.py
+    # --json`` consumers depend on always getting the pinned shape.
+    read_failures: set[str] = set()
     variant_texts: list[str] = []
     for variant_rel in case["variants"]:
         if variant_rel in digest_failures:
             continue
         variant_path = os.path.join(corpus_root, variant_rel)
-        with open(variant_path, "rb") as fh:
-            text = fh.read().decode("utf-8")
+        try:
+            with open(variant_path, "rb") as fh:
+                text = fh.read().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            msgs.append(
+                f"variant read failure: {variant_rel} "
+                f"({type(exc).__name__})"
+            )
+            read_failures.add(variant_rel)
+            continue
         variant_texts.append(text)
         msgs.extend(check_variant_parse(bucket, text, expected))
 
     if bucket in ("supported", "divergent"):
-        if digest_failures:
+        if digest_failures or read_failures:
+            drifted = sorted(digest_failures | read_failures)
             msgs.append(
-                "parity skipped due to byte drift on "
-                f"{sorted(digest_failures)}"
+                f"parity skipped due to byte drift on {drifted}"
             )
         else:
             msgs.extend(check_parity(variant_texts))

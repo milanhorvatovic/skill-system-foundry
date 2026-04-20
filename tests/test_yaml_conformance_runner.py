@@ -645,6 +645,67 @@ class RunCaseAndCorpusTests(unittest.TestCase):
         finally:
             b.cleanup()
 
+    def test_variant_read_failure_aggregated_not_raised(self) -> None:
+        # If a fixture variant cannot be read (deleted between
+        # discovery and read, or its bytes are not valid UTF-8) the
+        # harness must surface a per-variant error and skip parity
+        # for that variant — never propagate the exception, since
+        # the harness's contract is an aggregated summary that
+        # yaml_conformance_report.py --json relies on.
+        b = _CorpusBuilder()
+        try:
+            for s, sep in (
+                (".lf.yaml", "\n"),
+                (".crlf.yaml", "\r\n"),
+                (".mixed.yaml", "\n"),
+            ):
+                b.write_variant(
+                    "supported", "k", s, "key: value" + sep
+                )
+            b.write_sidecar(
+                "supported",
+                "k",
+                {"parsed": {"key": "value"}},
+                {"origin": "original", "rationale": "smoke"},
+            )
+            # Replace one variant with non-UTF-8 bytes.
+            with open(
+                os.path.join(b.root, "supported", "k.crlf.yaml"),
+                "wb",
+            ) as fh:
+                fh.write(b"\xff\xfe not utf 8")
+            # Manifest must reflect the new bytes so digest checks pass
+            # (otherwise the variant fails on digest, not on read).
+            real_lf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.lf.yaml")
+            )
+            real_crlf = runner.hash_file(
+                os.path.join(b.root, "supported", "k.crlf.yaml")
+            )
+            real_mixed = runner.hash_file(
+                os.path.join(b.root, "supported", "k.mixed.yaml")
+            )
+            b.write_digests(
+                f"{real_lf}  supported/k.lf.yaml\n"
+                f"{real_crlf}  supported/k.crlf.yaml\n"
+                f"{real_mixed}  supported/k.mixed.yaml\n"
+            )
+            summary = runner.run_corpus(b.root)
+            self.assertEqual(summary["failed"], 1)
+            messages = summary["failures"][0]["messages"]
+            self.assertTrue(
+                any(
+                    "variant read failure: supported/k.crlf.yaml" in m
+                    for m in messages
+                ),
+                messages,
+            )
+            self.assertTrue(
+                any("parity skipped due to byte drift" in m for m in messages)
+            )
+        finally:
+            b.cleanup()
+
     def test_digest_mismatch_skips_parity(self) -> None:
         b = _CorpusBuilder()
         try:
