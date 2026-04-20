@@ -26,7 +26,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from collections.abc import Callable
 
 _REPO_ROOT = os.path.abspath(
