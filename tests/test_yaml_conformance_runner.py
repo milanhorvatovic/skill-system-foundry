@@ -87,6 +87,22 @@ class ParseDigestsFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.parse_digests_file("no-second-field\n")
 
+    def test_duplicate_path_raises(self) -> None:
+        # Two manifest lines naming the same fixture path is
+        # corruption (typically a merge artefact); silently letting
+        # the second value win would mask drift depending on line
+        # order, so the parser must raise.
+        text = (
+            "abc  supported/a.lf.yaml\n"
+            "def  supported/a.lf.yaml\n"
+        )
+        with self.assertRaises(ValueError) as ctx:
+            runner.parse_digests_file(text)
+        self.assertIn(
+            "duplicate digest entry", str(ctx.exception)
+        )
+        self.assertIn("supported/a.lf.yaml", str(ctx.exception))
+
 
 class HashFileTests(unittest.TestCase):
     """``hash_file`` returns a stable hex digest."""

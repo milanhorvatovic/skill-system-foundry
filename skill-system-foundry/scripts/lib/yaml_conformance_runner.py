@@ -40,7 +40,11 @@ def parse_digests_file(text: str) -> dict[str, str]:
     """Parse ``digests.txt`` text into a ``{path: hex-digest}`` dict.
 
     Splits each non-empty line on the first run of whitespace.  Raises
-    ``ValueError`` when a line lacks two whitespace-separated fields.
+    ``ValueError`` when a line lacks two whitespace-separated fields,
+    or when the same fixture path appears more than once: duplicate
+    entries are manifest corruption (typically a bad merge), and
+    silently letting the last value win would mask drift depending on
+    line order.
     """
     out: dict[str, str] = {}
     for raw in text.splitlines():
@@ -51,6 +55,10 @@ def parse_digests_file(text: str) -> dict[str, str]:
         if len(parts) != 2:
             raise ValueError(f"malformed digests.txt line: {raw!r}")
         digest, path = parts[0], parts[1]
+        if path in out:
+            raise ValueError(
+                f"duplicate digest entry for path: {path}"
+            )
         out[path] = digest
     return out
 

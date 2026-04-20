@@ -90,9 +90,11 @@ def _parse_manifest(text: str) -> dict[str, str]:
     """Return ``{path: digest}`` for *text* in ``sha256sum`` format.
 
     Raises ``ValueError`` when a non-empty line cannot be split into
-    two whitespace-separated fields.  Silently skipping malformed
-    lines would let ``--check`` report "no drift" against a
-    syntactically broken manifest, hiding real corruption from CI.
+    two whitespace-separated fields, or when the same fixture path
+    appears more than once.  Silently skipping malformed lines or
+    silently letting the last duplicate win would let ``--check``
+    report misleading drift output (or "no drift" against syntactically
+    broken input), hiding real corruption from CI.
     """
     out: dict[str, str] = {}
     for raw in text.splitlines():
@@ -104,7 +106,12 @@ def _parse_manifest(text: str) -> dict[str, str]:
             raise ValueError(
                 f"malformed digests.txt line: {raw!r}"
             )
-        out[parts[1]] = parts[0]
+        path = parts[1]
+        if path in out:
+            raise ValueError(
+                f"duplicate digest entry for path: {path}"
+            )
+        out[path] = parts[0]
     return out
 
 
