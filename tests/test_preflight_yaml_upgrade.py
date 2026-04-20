@@ -65,6 +65,25 @@ class ScanYamlTextConstructTests(unittest.TestCase):
         ids = [h["construct_id"] for h in hits]
         self.assertIn(preflight.TAG_ID, ids)
 
+    def test_tag_without_trailing_key_text_flagged(self) -> None:
+        # The parser raises for any mapping key whose first token starts
+        # with ``!`` — trailing key text is NOT required (this is the
+        # tag/anchor asymmetry: anchors raise only with trailing text,
+        # tags raise unconditionally).  Preflight must mirror that, or
+        # ``!tag: value`` and ``!!str: value`` slip through and surface
+        # only at parser time.
+        for header in (
+            "!tag: value\n",
+            "!!str: value\n",
+            "!my:custom: value\n",
+        ):
+            with self.subTest(header=header.rstrip()):
+                hits = preflight.scan_yaml_text(
+                    header, lambda n: f"line {n}"
+                )
+                ids = [h["construct_id"] for h in hits]
+                self.assertIn(preflight.TAG_ID, ids, header)
+
     def test_indent_indicator_block_scalar_flagged(self) -> None:
         text = "key: |2\n  some text\n"
         hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")

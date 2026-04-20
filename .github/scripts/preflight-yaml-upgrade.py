@@ -50,12 +50,18 @@ _LIST_PREFIX = r"(?:-\s+)?"
 _RE_ANCHOR_KEY = re.compile(
     rf"^\s*{_LIST_PREFIX}&\S*\s+\S[^\n]*?:"
 )
-# Tag in mapping-key position: "!tag key:" or "!!type key:" (single
-# bang or double bang followed by a tag handle, then whitespace, then
-# key text ending in a colon).  Excludes the YAML directive line
-# "%TAG ...", which never starts with whitespace+!.
+# Tag in mapping-key position — must mirror what
+# ``lib.yaml_parser._check_mapping_key_construct`` actually rejects.
+# The parser raises whenever the first whitespace-separated key token
+# starts with ``!``, with **no** "must have trailing key text"
+# precondition (unlike the anchor case).  So ``!tag:`` and ``!!str:``
+# are upgrade-breaking even though they have no trailing key word.
+# Trailing key text remains optional in the regex (matches both
+# ``!tag:`` and ``!tag key:`` / ``!!type key:`` shapes).  Excludes
+# the YAML directive line ``%TAG …``, which never starts with
+# whitespace+``!``.
 _RE_TAG_KEY = re.compile(
-    rf"^\s*{_LIST_PREFIX}!{{1,2}}\S*\s+\S[^\n]*?:"
+    rf"^\s*{_LIST_PREFIX}!{{1,2}}\S*(?:\s+\S[^\n]*?)?:"
 )
 # Block scalar header with indentation indicator (digit 1-9) anywhere
 # in the header — accepts the YAML 1.2 forms ``|2``, ``|2-``, ``|-2``,
