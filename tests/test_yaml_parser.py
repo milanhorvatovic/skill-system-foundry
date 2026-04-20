@@ -1277,6 +1277,27 @@ class CheckPlainScalarBlockScalarTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _check_plain_scalar("key", "|2", None)
 
+    def test_indentation_indicator_with_trailing_comment_raises(self) -> None:
+        """YAML §8.1.1 allows trailing whitespace + ``# comment`` after the
+        chomping/indent indicators; the rejection must still fire — otherwise
+        ``key: |2 # note`` slips through and the parser silently accepts an
+        unsupported header.
+        """
+        for header in (
+            "|2 # note",
+            ">+3   # explanation",
+            "|-5\t# tab-then-hash",
+            "|2 ",
+            "|2\t",
+            ">4-  ",
+        ):
+            with self.subTest(header=header):
+                with self.assertRaises(ValueError) as ctx:
+                    _check_plain_scalar("key", header, [])
+                self.assertIn(
+                    "indent-indicator-block-scalar", str(ctx.exception)
+                )
+
 
 class CheckPlainScalarTagTests(unittest.TestCase):
     """Tests for tag indicator detection."""

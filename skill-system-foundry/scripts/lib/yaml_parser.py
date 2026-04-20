@@ -48,6 +48,9 @@ style.  Round-trip callers that re-emit parsed values will see LF even
 if the original text used CRLF.
 """
 
+import re
+
+
 def parse_yaml_subset(text: str | None, findings: list[str] | None = None) -> dict:
     """Parse a limited YAML subset into a Python dict.
 
@@ -203,25 +206,26 @@ def _quote_advice(value: str) -> str:
     return "use a block scalar (|- preserves newlines; >- folds them) — value contains characters that require escape processing in quoted forms"
 
 
+_INDENT_INDICATOR_HEADER_RE = re.compile(
+    r"^[|>](?:[1-9][-+]?|[-+][1-9])(?:\s|$)"
+)
+
+
 def _is_indent_indicator_header(value: str) -> bool:
     """Return ``True`` when *value* is a block-scalar header carrying a
     YAML 1.2 indentation indicator (``|2``, ``|2-``, ``|-2``, ``>+3``…).
 
     Bare ``|`` / ``>`` and bare chomping headers (``|-``, ``>+``) are
     handled by ``_is_block_scalar_header`` and remain supported.
+
+    YAML 1.2 §8.1.1 allows trailing whitespace and a ``#``-anchored
+    comment after the chomping/indent indicators, so headers like
+    ``|2 # note`` or ``|-2 \\t`` must also be recognised.  Matching
+    ``[|>]<indicator>`` followed by either whitespace or end-of-string
+    captures every legal trailing form without admitting headers like
+    ``|2abc`` (which is plain-scalar territory, not a block scalar).
     """
-    if not value or value[0] not in ("|", ">"):
-        return False
-    rest = value[1:]
-    if len(rest) == 1:
-        return rest.isdigit() and rest != "0"
-    if len(rest) == 2:
-        c1, c2 = rest[0], rest[1]
-        return (
-            (c1.isdigit() and c1 != "0" and c2 in "-+")
-            or (c1 in "-+" and c2.isdigit() and c2 != "0")
-        )
-    return False
+    return bool(_INDENT_INDICATOR_HEADER_RE.match(value))
 
 
 def _check_plain_scalar(key: str, value: str, findings: list[str] | None) -> None:
