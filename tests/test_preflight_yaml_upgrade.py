@@ -41,15 +41,15 @@ class ScanYamlTextConstructTests(unittest.TestCase):
     def test_anchor_with_non_word_chars_in_name_flagged(self) -> None:
         # The parser rejects any mapping key whose first whitespace-
         # separated token starts with ``&`` and has trailing key text,
-        # regardless of which characters appear in the anchor name.
-        # Preflight must mirror that breadth so the WARN→ValueError
-        # gate is not blind to anchors whose names use unusual
-        # characters (a parse-failure that landed in tracked content
-        # would surface only at parser time, not preflight).
+        # regardless of which non-colon characters appear in the
+        # anchor name.  Preflight must mirror that breadth so the
+        # WARN→ValueError gate is not blind to anchors whose names
+        # use ``.`` / ``/`` etc.  ``:`` is the colon-key boundary, so
+        # tokens containing ``:`` are handled by
+        # ``test_anchor_with_colon_inside_name_not_flagged`` below.
         for header in (
             "&a.b key: value\n",
             "&a/b key: value\n",
-            "&a:b key: value\n",
             "& key: value\n",
         ):
             with self.subTest(header=header.rstrip()):
@@ -58,6 +58,18 @@ class ScanYamlTextConstructTests(unittest.TestCase):
                 )
                 ids = [h["construct_id"] for h in hits]
                 self.assertIn(preflight.ANCHOR_ID, ids, header)
+
+    def test_anchor_with_colon_inside_name_not_flagged(self) -> None:
+        # ``&a:b key: value`` — the parser splits the line on the
+        # first colon, so the key is ``&a`` (no trailing text after
+        # whitespace-split), and ``_check_mapping_key_construct``
+        # does NOT raise for it.  Preflight must mirror the parser's
+        # silence here, otherwise it false-positives clean content at
+        # the upgrade gate.
+        text = "&a:b key: value\n"
+        hits = preflight.scan_yaml_text(text, lambda n: f"line {n}")
+        ids = [h["construct_id"] for h in hits]
+        self.assertNotIn(preflight.ANCHOR_ID, ids)
 
     def test_tag_in_mapping_key_flagged(self) -> None:
         text = "!!str key: value\n"

@@ -42,14 +42,17 @@ TAG_ID = "tag-in-mapping-key"
 _LIST_PREFIX = r"(?:-\s+)?"
 # Anchor in mapping-key position: "&<token> key:" — must mirror what
 # ``lib.yaml_parser._check_mapping_key_construct`` actually rejects.
-# The parser splits the key on whitespace and raises whenever the
-# first token starts with ``&`` and there is any trailing key text,
-# regardless of which characters appear in the anchor name.  Matching
-# only ``[A-Za-z0-9_-]+`` made preflight blind to anchors with other
-# characters (the reviewer's case in point), so the regex now accepts
-# any non-whitespace anchor token.
+# The parser keys lines on the **first** colon, so the substring
+# before the colon is the key.  ``_check_mapping_key_construct``
+# splits that key on whitespace; only when the first whitespace-
+# separated token starts with ``&`` AND trailing key text exists does
+# it raise.  Excluding ``:`` from the anchor-name token is essential:
+# a line like ``&a:b key: value`` has key=``&a`` (no trailing text)
+# in parser semantics, so it does NOT raise — flagging it in
+# preflight would be a false positive that fails clean content at
+# the upgrade gate.
 _RE_ANCHOR_KEY = re.compile(
-    rf"^\s*{_LIST_PREFIX}&\S*\s+\S[^\n]*?:"
+    rf"^\s*{_LIST_PREFIX}&[^\s:]*\s+\S[^\n]*?:"
 )
 # Tag in mapping-key position — must mirror what
 # ``lib.yaml_parser._check_mapping_key_construct`` actually rejects.
