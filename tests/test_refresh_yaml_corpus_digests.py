@@ -266,6 +266,31 @@ class MainJsonOutputTests(unittest.TestCase):
         self.assertEqual(payload["action"], "error")
         self.assertIn("not found", payload["error"])
 
+    def test_check_with_malformed_manifest_emits_action_error(self) -> None:
+        # An on-disk digests.txt that contains a line without two
+        # whitespace-separated fields is corruption, not drift.  --check
+        # must surface it as an error instead of silently parsing past
+        # the bad line and reporting "no drift" — that would give CI
+        # false confidence in a broken manifest.
+        import json
+        cf = _CorpusFixture()
+        try:
+            with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+                refresh.main(["--corpus-root", cf.root])
+            with open(cf.manifest_path(), "a", encoding="utf-8") as fh:
+                fh.write("not-a-valid-line-without-second-field\n")
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                rc = refresh.main(
+                    ["--corpus-root", cf.root, "--check", "--json"]
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(buf.getvalue())
+            self.assertEqual(payload["action"], "error")
+            self.assertIn("malformed digests.txt line", payload["error"])
+        finally:
+            cf.cleanup()
+
     def test_whitespace_path_emits_action_error_in_json(self) -> None:
         # The other ValueError exit path (whitespace in a fixture
         # filename) must also surface as a structured payload, not as

@@ -87,15 +87,24 @@ def read_existing_manifest(corpus_root: str) -> str:
 
 
 def _parse_manifest(text: str) -> dict[str, str]:
-    """Return ``{path: digest}`` for *text* in ``sha256sum`` format."""
+    """Return ``{path: digest}`` for *text* in ``sha256sum`` format.
+
+    Raises ``ValueError`` when a non-empty line cannot be split into
+    two whitespace-separated fields.  Silently skipping malformed
+    lines would let ``--check`` report "no drift" against a
+    syntactically broken manifest, hiding real corruption from CI.
+    """
     out: dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
         parts = line.split(None, 1)
-        if len(parts) == 2:
-            out[parts[1]] = parts[0]
+        if len(parts) != 2:
+            raise ValueError(
+                f"malformed digests.txt line: {raw!r}"
+            )
+        out[parts[1]] = parts[0]
     return out
 
 
@@ -207,9 +216,27 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print("digests.txt is up to date.")
             return 0
+        try:
+            diff = _diff_manifests(manifest, existing)
+        except ValueError as exc:
+            # Existing manifest is corrupted (a non-empty line that
+            # does not split into two whitespace-separated fields).
+            # Surface as a hard error so --check is fail-loud about
+            # corruption rather than masking it as "drift".
+            if args.json:
+                print(
+                    json.dumps(
+                        {"action": "error", "error": str(exc)},
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
+            return 1
         if args.json:
             payload = {"action": "check", "drift": True}
-            payload.update(_diff_manifests(manifest, existing))
+            payload.update(diff)
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(
