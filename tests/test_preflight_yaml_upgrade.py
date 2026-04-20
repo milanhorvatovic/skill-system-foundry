@@ -192,6 +192,49 @@ class ExtractFrontmatterTests(unittest.TestCase):
         self.assertIn("embedded --- dashes are fine", block)
 
 
+class ScanFileUnreadableTests(unittest.TestCase):
+    """In-scope files that cannot be read/decoded surface as hits."""
+
+    def test_undecodable_yaml_surfaces_unreadable_hit(self) -> None:
+        # A tracked .yaml file that fails UTF-8 decode must surface
+        # as a hit, not vanish silently — otherwise the upgrade gate
+        # treats a corrupted tracked file the same as a clean one.
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".yaml", delete=False
+        ) as fh:
+            fh.write(b"\xff\xfe binary garbage")
+            tmp_path = fh.name
+        try:
+            hits = preflight.scan_file(tmp_path, "fixtures/binary.yaml")
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0]["construct_id"], preflight.UNREADABLE_ID)
+            self.assertIn("UnicodeDecodeError", hits[0]["position"])
+            self.assertEqual(hits[0]["file"], "fixtures/binary.yaml")
+        finally:
+            os.unlink(tmp_path)
+
+    def test_missing_yaml_surfaces_unreadable_hit(self) -> None:
+        # OSError (e.g. file removed between walk and read) likewise
+        # fails loud rather than silently passing.
+        hits = preflight.scan_file(
+            "/nonexistent/path/x.yaml", "fixtures/x.yaml"
+        )
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["construct_id"], preflight.UNREADABLE_ID)
+        self.assertIn("FileNotFoundError", hits[0]["position"])
+
+    def test_out_of_scope_unreadable_file_still_silent(self) -> None:
+        # Out-of-scope suffixes (binaries, archives, etc.) are not
+        # the gate's concern — they continue to return empty without
+        # opening so the walk avoids unnecessary I/O on the whole
+        # repo.
+        hits = preflight.scan_file(
+            "/nonexistent/path/x.png", "assets/x.png"
+        )
+        self.assertEqual(hits, [])
+
+
 class ScanFileFrontmatterPositionTests(unittest.TestCase):
     """Markdown hits use ``"frontmatter"`` as their position token."""
 

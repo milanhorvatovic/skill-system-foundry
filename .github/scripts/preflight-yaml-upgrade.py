@@ -36,6 +36,11 @@ _REPO_ROOT = os.path.abspath(
 ANCHOR_ID = "anchor-with-trailing-in-key"
 INDENT_ID = "indent-indicator-block-scalar"
 TAG_ID = "tag-in-mapping-key"
+# Synthetic construct-id surfaced when a tracked in-scope file
+# (``.md`` / ``.yaml`` / ``.yml``) cannot be read or decoded as
+# UTF-8.  The preflight gate fails loud on these so a corrupted
+# tracked file is not silently treated as "clean".
+UNREADABLE_ID = "unreadable-file"
 
 # A leading list marker ("- ") may or may not be present; the indent
 # stripped before the construct is allowed to be any whitespace.
@@ -178,8 +183,18 @@ def scan_file(path: str, rel_path: str) -> list[dict]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             text = fh.read()
-    except (UnicodeDecodeError, OSError):
-        return []
+    except (UnicodeDecodeError, OSError) as exc:
+        # In-scope file that cannot be read or UTF-8 decoded must
+        # surface as a failure rather than silently disappearing —
+        # otherwise the upgrade gate trusts a corrupted tracked file
+        # the same as a clean one.
+        return [
+            {
+                "construct_id": UNREADABLE_ID,
+                "position": f"read-error: {type(exc).__name__}",
+                "file": rel_path,
+            }
+        ]
 
     if is_markdown:
         block = extract_frontmatter(text)
