@@ -266,6 +266,33 @@ class MainJsonOutputTests(unittest.TestCase):
         self.assertEqual(payload["action"], "error")
         self.assertIn("not found", payload["error"])
 
+    def test_check_with_duplicate_path_emits_action_error(self) -> None:
+        # Two manifest lines naming the same fixture path is corruption,
+        # not drift.  --check must surface it through the same error
+        # payload as malformed lines so CI cannot interpret the
+        # ambiguous diff as an actionable drift result.
+        import json
+        cf = _CorpusFixture()
+        try:
+            with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+                refresh.main(["--corpus-root", cf.root])
+            with open(cf.manifest_path(), "r", encoding="utf-8") as fh:
+                contents = fh.read()
+            first_line = contents.splitlines()[0]
+            with open(cf.manifest_path(), "a", encoding="utf-8") as fh:
+                fh.write(first_line + "\n")
+            buf = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=buf):
+                rc = refresh.main(
+                    ["--corpus-root", cf.root, "--check", "--json"]
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(buf.getvalue())
+            self.assertEqual(payload["action"], "error")
+            self.assertIn("duplicate digest entry", payload["error"])
+        finally:
+            cf.cleanup()
+
     def test_check_with_malformed_manifest_emits_action_error(self) -> None:
         # An on-disk digests.txt that contains a line without two
         # whitespace-separated fields is corruption, not drift.  --check
