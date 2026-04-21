@@ -237,7 +237,11 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
                         if filename.endswith(".pyc"):
                             continue
                         abs_path = os.path.join(dirpath, filename)
-                        arcname = os.path.relpath(abs_path, REPO_ROOT)
+                        # `zip -r` on the ubuntu release runner writes
+                        # POSIX-separated entry names. Normalizing here
+                        # keeps the Windows matrix cell faithful to the
+                        # real release artifact shape.
+                        arcname = os.path.relpath(abs_path, REPO_ROOT).replace(os.sep, "/")
                         zf.write(abs_path, arcname)
 
             # Mirror release.yml's "Verify bundle excludes yaml-conformance
