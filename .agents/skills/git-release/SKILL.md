@@ -42,10 +42,14 @@ This is the single source of truth for the current version. Git tags mirror it a
 Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yml` triggers on `release: published` and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
 
 ```bash
-gh run list --workflow python-tests.yaml --branch main --limit 1
+# Latest python-tests.yaml run on main — conclusion must be success
+# and headSha must match the commit you are about to tag.
+gh run list --workflow python-tests.yaml --branch main --limit 1 \
+  --json conclusion,headSha,databaseId,displayTitle
+git rev-parse main
 ```
 
-Do not publish a release until the latest `main` run of `python-tests.yaml` is green. This is a procedural gate, not a workflow gate.
+Do not publish a release unless the latest `main` run of `python-tests.yaml` is green **and** its `headSha` equals the commit being tagged. If `main` has advanced past the commit you intend to release, either wait for the run on the newer tip to finish (and retarget the tag to that tip), or re-run the workflow on the exact commit via `gh run rerun <databaseId>`. This is a procedural gate, not a workflow gate.
 
 Then run validation and tests locally to confirm the codebase is clean:
 
