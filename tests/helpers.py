@@ -6,10 +6,12 @@ DEFAULT_DESCRIPTION = "Packages a minimal demo skill for bundling smoke tests."
 
 
 def run_script(argv: list[str], *, cwd: str | None = None) -> subprocess.CompletedProcess:
-    """Run *argv* under the current Python interpreter and capture output.
+    """Run *argv* as a subprocess in *cwd* and capture stdout/stderr as text.
 
     Shared helper for subprocess-style CLI tests so scaffold / bundle /
     validate invocations don't re-duplicate ``subprocess.run`` boilerplate.
+    Callers are responsible for choosing ``argv[0]`` (typically
+    ``sys.executable`` for the in-repo Python scripts).
     """
     return subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
 

@@ -59,7 +59,9 @@ def _assert_ok(test: unittest.TestCase, proc: subprocess.CompletedProcess) -> No
     )
 
 
-def _scaffold_standalone(system_root: str, skill_name: str) -> str:
+def _scaffold_standalone(
+    test: unittest.TestCase, system_root: str, skill_name: str,
+) -> str:
     """Scaffold a standalone skill into *system_root* and return its directory."""
     proc = _run([
         sys.executable, SCAFFOLD_SCRIPT,
@@ -67,7 +69,7 @@ def _scaffold_standalone(system_root: str, skill_name: str) -> str:
         "--root", system_root,
         "--update-manifest",
     ])
-    assert proc.returncode == 0, f"scaffold failed: {proc.stdout}\n{proc.stderr}"
+    _assert_ok(test, proc)
     return os.path.join(system_root, "skills", skill_name)
 
 
@@ -153,7 +155,7 @@ class ScaffoldBundlePipelineTests(unittest.TestCase):
         skill_name = "pipeline-demo"
 
         with tempfile.TemporaryDirectory() as system_root:
-            skill_dir = _scaffold_standalone(system_root, skill_name)
+            skill_dir = _scaffold_standalone(self, system_root, skill_name)
             self.assertTrue(os.path.isdir(skill_dir))
             self.assertTrue(
                 os.path.isfile(os.path.join(system_root, "manifest.yaml")),
@@ -192,7 +194,7 @@ class ScaffoldBundlePipelineTests(unittest.TestCase):
         skill_name = "pipeline-demo-generic"
 
         with tempfile.TemporaryDirectory() as system_root:
-            skill_dir = _scaffold_standalone(system_root, skill_name)
+            skill_dir = _scaffold_standalone(self, system_root, skill_name)
 
             _assert_ok(self, _run([
                 sys.executable, VALIDATE_SCRIPT, skill_dir,
@@ -223,10 +225,13 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
 
             # Stdlib zipfile mirrors `zip -r` semantics and works on
             # Windows matrix cells where the `zip` CLI is absent.
-            # __pycache__ and .pyc files are pruned so the local run
+            # Bytecode (__pycache__/, *.pyc) is pruned so the local run
             # matches release.yml's fresh-checkout shape; otherwise a
             # developer's stale bytecode would diverge from the real
-            # release artifact and could mask a regression.
+            # release artifact and could mask a regression. IDE / OS
+            # scratch files (.DS_Store, Thumbs.db, .idea/, .vscode/)
+            # are not filtered — release.yml's `zip -r` would include
+            # them too, so the test stays faithful to that behaviour.
             with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as zf:
                 for dirpath, dirnames, filenames in os.walk(FOUNDRY_DIR):
                     if "__pycache__" in dirnames:
