@@ -23,7 +23,15 @@ FOUNDRY_DIR = os.path.join(REPO_ROOT, "skill-system-foundry")
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
+    # Enforce UTF-8 in the child so bundle.py's ✓/✗/⚠ and
+    # validate_skill.py's → don't trip UnicodeEncodeError on the
+    # Windows matrix cell's cp1252 default console encoding.
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run(
+        argv, cwd=REPO_ROOT, capture_output=True, text=True, env=env,
+    )
 
 
 def _assert_ok(test: unittest.TestCase, proc: subprocess.CompletedProcess) -> None:
