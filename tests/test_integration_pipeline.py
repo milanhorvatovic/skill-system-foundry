@@ -1,17 +1,27 @@
 """End-to-end integration smoke tests for the authoring and release pipelines.
 
-Two cases live here:
+Three cases live here:
 
-- ``ScaffoldBundlePipelineTests`` — scaffold a standalone skill, validate it,
-  patch its frontmatter the way a real author would, bundle it, unzip the
-  bundle into a clean temp dir, and revalidate. Guards the user-facing
-  authoring flow driven by ``scaffold.py`` and ``bundle.py``.
+- ``ScaffoldBundlePipelineTests.test_standalone_skill_round_trip`` —
+  scaffold a standalone skill, validate it, patch its frontmatter the way
+  a real author would, bundle it with the default ``--target claude``,
+  unzip the bundle into a clean temp dir, and revalidate. Guards the
+  user-facing authoring flow driven by ``scaffold.py`` and ``bundle.py``
+  for the platform with the tightest limit.
 
-- ``ReleaseArtifactPipelineTests`` — mirror what ``.github/workflows/release.yml``
-  actually ships (a raw zip of ``skill-system-foundry/``), unzip on a clean
-  path, and validate with the same flags the foundry uses to validate
-  itself. Guards the release artifact, which is produced by ``zip -r`` and
-  is not covered by the ``bundle.py`` path.
+- ``ScaffoldBundlePipelineTests.test_generic_target_accepts_raw_scaffold_output`` —
+  same pipeline without the frontmatter patch, bundled with
+  ``--target generic``. Proves that at least one supported target path
+  works end-to-end on the unmodified scaffold output and keeps the
+  known ``--target claude`` UX gap from hiding a generic-target
+  regression.
+
+- ``ReleaseArtifactPipelineTests`` — mirror what
+  ``.github/workflows/release.yml`` actually ships (a raw zip of
+  ``skill-system-foundry/``), unzip on a clean path, and validate with
+  the same flags the foundry uses to validate itself. Guards the
+  release artifact, which is produced by ``zip -r`` and is not covered
+  by the ``bundle.py`` path.
 
 Subprocess + ``tempfile.TemporaryDirectory`` + stdlib ``zipfile`` —
 matches the conventions in ``test_scaffold_cli.py`` and
@@ -26,6 +36,8 @@ import tempfile
 import unittest
 import zipfile
 
+from helpers import run_script
+
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "skill-system-foundry", "scripts")
@@ -36,12 +48,7 @@ FOUNDRY_DIR = os.path.join(REPO_ROOT, "skill-system-foundry")
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        argv,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    return run_script(argv, cwd=REPO_ROOT)
 
 
 def _assert_ok(test: unittest.TestCase, proc: subprocess.CompletedProcess) -> None:
@@ -52,16 +59,69 @@ def _assert_ok(test: unittest.TestCase, proc: subprocess.CompletedProcess) -> No
     )
 
 
+def _scaffold_standalone(system_root: str, skill_name: str) -> str:
+    """Scaffold a standalone skill into *system_root* and return its directory."""
+    proc = _run([
+        sys.executable, SCAFFOLD_SCRIPT,
+        "skill", skill_name,
+        "--root", system_root,
+        "--update-manifest",
+    ])
+    assert proc.returncode == 0, f"scaffold failed: {proc.stdout}\n{proc.stderr}"
+    return os.path.join(system_root, "skills", skill_name)
+
+
+def _bundle_and_extract(
+    test: unittest.TestCase,
+    skill_dir: str,
+    skill_name: str,
+    system_root: str,
+    target: str,
+) -> None:
+    """Bundle *skill_dir* with *target* and revalidate the extracted copy."""
+    bundle_zip = os.path.join(system_root, f"{skill_name}-{target}.zip")
+    bundle = _run([
+        sys.executable, BUNDLE_SCRIPT, skill_dir,
+        "--output", bundle_zip,
+        "--target", target,
+    ])
+    _assert_ok(test, bundle)
+    test.assertTrue(os.path.isfile(bundle_zip))
+
+    with tempfile.TemporaryDirectory() as extract_root:
+        with zipfile.ZipFile(bundle_zip) as zf:
+            zf.extractall(extract_root)
+
+        entries = os.listdir(extract_root)
+        test.assertIn(
+            skill_name, entries,
+            msg=f"extracted bundle missing top-level {skill_name}/ dir; got {entries}",
+        )
+        extracted_skill = os.path.join(extract_root, skill_name)
+        test.assertTrue(
+            os.path.isfile(os.path.join(extracted_skill, "SKILL.md")),
+            msg=f"extracted bundle missing SKILL.md: {extracted_skill}",
+        )
+
+        validate_extracted = _run([
+            sys.executable, VALIDATE_SCRIPT, extracted_skill,
+        ])
+        _assert_ok(test, validate_extracted)
+
+
 # Short, realistic SKILL.md that a downstream author would produce
 # after editing the scaffold output. Must fit under the Claude bundle
 # description limit (200 chars) so bundle.py --target claude passes.
 #
 # Known UX gap: the raw scaffold template ships a 317-char placeholder
 # description that fails `bundle.py --target claude` out of the box. A
-# first-time user running scaffold -> bundle hits the 200-char failure
-# with no guidance. This test patches around it to exercise the full
-# pipeline; shortening the placeholder in assets/skill-standalone.md
-# is the real fix and belongs in a separate change.
+# first-time user running scaffold -> bundle with the default target
+# hits the 200-char failure with no guidance. This test patches around
+# it to exercise the full default-target pipeline; shortening the
+# placeholder in ``skill-system-foundry/assets/skill-standalone.md``
+# is the real fix and belongs in a separate change. The companion test
+# ``test_generic_target_accepts_raw_scaffold_output`` below proves the
+# non-default target paths do not hit this wall, scoping the gap.
 _PATCHED_SKILL_MD = """---
 name: {name}
 description: >
@@ -86,37 +146,27 @@ Follow the normal skill lifecycle: scaffold, edit, validate, bundle.
 
 
 class ScaffoldBundlePipelineTests(unittest.TestCase):
-    """scaffold -> validate -> (edit frontmatter) -> bundle -> unzip -> validate."""
+    """scaffold -> validate -> bundle -> unzip -> validate, across targets."""
 
     def test_standalone_skill_round_trip(self) -> None:
+        """Default --target claude, with the realistic author-edit step."""
         skill_name = "pipeline-demo"
 
         with tempfile.TemporaryDirectory() as system_root:
-            scaffold = _run([
-                sys.executable, SCAFFOLD_SCRIPT,
-                "skill", skill_name,
-                "--root", system_root,
-                "--update-manifest",
-            ])
-            _assert_ok(self, scaffold)
-
-            skill_dir = os.path.join(system_root, "skills", skill_name)
+            skill_dir = _scaffold_standalone(system_root, skill_name)
             self.assertTrue(os.path.isdir(skill_dir))
             self.assertTrue(
                 os.path.isfile(os.path.join(system_root, "manifest.yaml")),
                 msg="--update-manifest should have produced manifest.yaml",
             )
 
-            validate_scaffolded = _run([
+            _assert_ok(self, _run([
                 sys.executable, VALIDATE_SCRIPT, skill_dir,
-            ])
-            _assert_ok(self, validate_scaffolded)
+            ]))
 
             # Simulate the author filling in the template placeholders
-            # before distribution. The raw scaffold output carries a
-            # 317-char placeholder description that fails bundle.py's
-            # Claude 200-char limit — real users always edit before
-            # bundling, and this is the minimal patch that mirrors that.
+            # before distribution — see _PATCHED_SKILL_MD module-level
+            # comment for the UX-gap context.
             skill_md_path = os.path.join(skill_dir, "SKILL.md")
             with open(skill_md_path, "w", encoding="utf-8") as f:
                 f.write(_PATCHED_SKILL_MD.format(
@@ -124,38 +174,33 @@ class ScaffoldBundlePipelineTests(unittest.TestCase):
                     title=skill_name.replace("-", " ").title(),
                 ))
 
-            validate_edited = _run([
+            _assert_ok(self, _run([
                 sys.executable, VALIDATE_SCRIPT, skill_dir,
-            ])
-            _assert_ok(self, validate_edited)
+            ]))
 
-            bundle_zip = os.path.join(system_root, f"{skill_name}.zip")
-            bundle = _run([
-                sys.executable, BUNDLE_SCRIPT, skill_dir,
-                "--output", bundle_zip,
-            ])
-            _assert_ok(self, bundle)
-            self.assertTrue(os.path.isfile(bundle_zip))
+            _bundle_and_extract(
+                self, skill_dir, skill_name, system_root, target="claude",
+            )
 
-            with tempfile.TemporaryDirectory() as extract_root:
-                with zipfile.ZipFile(bundle_zip) as zf:
-                    zf.extractall(extract_root)
+    def test_generic_target_accepts_raw_scaffold_output(self) -> None:
+        """--target generic must bundle the unmodified scaffold output.
 
-                entries = os.listdir(extract_root)
-                self.assertIn(
-                    skill_name, entries,
-                    msg=f"extracted bundle missing top-level {skill_name}/ dir; got {entries}",
-                )
-                extracted_skill = os.path.join(extract_root, skill_name)
-                self.assertTrue(
-                    os.path.isfile(os.path.join(extracted_skill, "SKILL.md")),
-                    msg=f"extracted bundle missing SKILL.md: {extracted_skill}",
-                )
+        Scopes the default-target UX gap and guards against a regression
+        that would flip the 200-char limit from warning to error on the
+        non-default targets.
+        """
+        skill_name = "pipeline-demo-generic"
 
-                validate_extracted = _run([
-                    sys.executable, VALIDATE_SCRIPT, extracted_skill,
-                ])
-                _assert_ok(self, validate_extracted)
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = _scaffold_standalone(system_root, skill_name)
+
+            _assert_ok(self, _run([
+                sys.executable, VALIDATE_SCRIPT, skill_dir,
+            ]))
+
+            _bundle_and_extract(
+                self, skill_dir, skill_name, system_root, target="generic",
+            )
 
 
 class ReleaseArtifactPipelineTests(unittest.TestCase):

@@ -1,7 +1,17 @@
 import os
+import subprocess
 
 
 DEFAULT_DESCRIPTION = "Packages a minimal demo skill for bundling smoke tests."
+
+
+def run_script(argv: list[str], *, cwd: str | None = None) -> subprocess.CompletedProcess:
+    """Run *argv* under the current Python interpreter and capture output.
+
+    Shared helper for subprocess-style CLI tests so scaffold / bundle /
+    validate invocations don't re-duplicate ``subprocess.run`` boilerplate.
+    """
+    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
 
 
 def write_text(path: str, content: str) -> None:
