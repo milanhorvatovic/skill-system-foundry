@@ -20,7 +20,6 @@ Covers:
 import io
 import json
 import os
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout

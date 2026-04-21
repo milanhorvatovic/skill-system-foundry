@@ -31,7 +31,6 @@ import argparse
 import json
 import os
 import re
-import sys
 
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
@@ -61,8 +60,10 @@ def _strip_inline(raw: str) -> str:
         quote = value[0]
         end = value.find(quote, 1)
         if end == -1:
-            # Unterminated quote — fall through to raw stripping so the
-            # classifier still surfaces a useful failure reason.
+            # Unterminated quote would already be rejected by any YAML
+            # parser — GitHub Actions will not accept the file — so the
+            # scanner just returns the raw string and lets the classifier
+            # decide. No correctness risk either way.
             return value
         return value[1:end]
     for sep in (" #", "\t#"):
@@ -89,7 +90,7 @@ def classify(value: str) -> str | None:
     if "@" not in value:
         return "missing '@<commit-sha>' pin"
     prefix, _, ref = value.rpartition("@")
-    if "/" not in prefix or not prefix or not ref:
+    if "/" not in prefix or not ref:
         return "not a recognised action reference form"
     if not _SHA_RE.match(ref):
         return f"ref '{ref}' is not a 40-character lowercase commit SHA"
@@ -161,7 +162,9 @@ def collect_violations(workflows_dir: str) -> list[dict]:
                 "uses": value,
                 "reason": reason,
             })
-    results.sort(key=lambda v: (v["file"], v["line"]))
+    # Insertion order already matches (file, line): list_workflow_files
+    # returns basenames sorted lexically, scan_workflow yields ascending
+    # line numbers, and all entries for one file flush before the next.
     return results
 
 
