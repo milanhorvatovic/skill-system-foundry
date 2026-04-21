@@ -1,0 +1,225 @@
+"""Enforce SHA-pinned ``uses:`` references in every workflow file.
+
+Walks ``.github/workflows/*.yml`` and ``.github/workflows/*.yaml`` line by
+line (no YAML parsing needed) and applies these rules to every ``uses:``
+key it finds:
+
+===========================================  =========
+Reference form                               Treatment
+===========================================  =========
+``org/repo@<40-char-lowercase-hex>``         allowed
+``org/repo/subpath@<40-char-lowercase-hex>`` allowed
+``./path``                                   allowed
+``docker://image...``                        allowed
+anything else                                rejected
+===========================================  =========
+
+Output:
+  * Default human mode: one ``FAIL: <file>:<line>: <uses> -- <reason>``
+    line per violation.
+  * ``--json`` mode: a JSON list of ``{"file", "line", "uses",
+    "reason"}`` dicts, sorted by ``(file, line)``.
+
+Exit code: 0 when every ``uses:`` is pinned, 1 on any violation, 2 on
+argparse/usage errors.
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Matches a YAML-key ``uses:`` at the start of a line, optionally
+# preceded by a list marker ("- "). Captures the raw right-hand side
+# (value plus any trailing comment); the caller strips quotes and
+# trailing comments before classification.
+_USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S.*?)\s*$")
+
+
+def _strip_inline(raw: str) -> str:
+    """Return the bare ``uses:`` value with quotes and comment stripped.
+
+    GitHub action references never contain ``#``, so a ``#`` that
+    appears after whitespace on an unquoted value is always an inline
+    YAML comment and is removed. For quoted values (single or double
+    quote pairs) the inside of the quotes is returned verbatim and
+    anything after the closing quote is discarded.
+    """
+    value = raw.strip()
+    if not value:
+        return value
+    if value[0] in ("'", '"'):
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end == -1:
+            # Unterminated quote — fall through to raw stripping so the
+            # classifier still surfaces a useful failure reason.
+            return value
+        return value[1:end]
+    for sep in (" #", "\t#"):
+        idx = value.find(sep)
+        if idx != -1:
+            value = value[:idx]
+            break
+    return value.strip()
+
+
+def classify(value: str) -> str | None:
+    """Return ``None`` when *value* is an allowed reference form.
+
+    Otherwise return a short human-readable reason string.
+    """
+    if not value:
+        return "empty uses value"
+    if value.startswith("./"):
+        return None
+    if value.startswith("../"):
+        return "local action path must start with './' (no parent traversal)"
+    if value.startswith("docker://"):
+        return None
+    if "@" not in value:
+        return "missing '@<commit-sha>' pin"
+    prefix, _, ref = value.rpartition("@")
+    if "/" not in prefix or not prefix or not ref:
+        return "not a recognised action reference form"
+    if not _SHA_RE.match(ref):
+        return f"ref '{ref}' is not a 40-character lowercase commit SHA"
+    return None
+
+
+def scan_workflow(text: str) -> list[tuple[int, str, str]]:
+    """Return ``(line_number, value, reason)`` tuples for every violation.
+
+    *text* is the full content of a workflow file. Lines whose first
+    non-whitespace character is ``#`` are skipped so commented-out
+    examples do not register. Line numbers are 1-indexed.
+    """
+    violations: list[tuple[int, str, str]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        match = _USES_RE.match(line)
+        if not match:
+            continue
+        value = _strip_inline(match.group(1))
+        reason = classify(value)
+        if reason is not None:
+            violations.append((lineno, value, reason))
+    return violations
+
+
+def list_workflow_files(workflows_dir: str) -> list[str]:
+    """Return sorted absolute paths of every workflow YAML in *dir*."""
+    if not os.path.isdir(workflows_dir):
+        return []
+    names = [
+        n for n in os.listdir(workflows_dir)
+        if n.endswith(".yml") or n.endswith(".yaml")
+    ]
+    names.sort()
+    return [os.path.join(workflows_dir, n) for n in names]
+
+
+def collect_violations(
+    workflows_dir: str,
+    rel_base: str,
+) -> list[dict]:
+    """Walk *workflows_dir* and return a sorted list of violation dicts.
+
+    *rel_base* is the directory that violation ``file`` fields are made
+    relative to. Paths are always emitted with forward slashes so
+    output is stable across platforms.
+    """
+    results: list[dict] = []
+    for absolute in list_workflow_files(workflows_dir):
+        rel = os.path.relpath(absolute, rel_base).replace(os.sep, "/")
+        try:
+            with open(absolute, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as exc:
+            results.append({
+                "file": rel,
+                "line": 0,
+                "uses": "",
+                "reason": f"read-error: {type(exc).__name__}: {exc}",
+            })
+            continue
+        for lineno, value, reason in scan_workflow(text):
+            results.append({
+                "file": rel,
+                "line": lineno,
+                "uses": value,
+                "reason": reason,
+            })
+    results.sort(key=lambda v: (v["file"], v["line"]))
+    return results
+
+
+def format_human(violations: list[dict]) -> str:
+    """Format *violations* as one ``FAIL`` line per entry."""
+    if not violations:
+        return "All workflow `uses:` references are SHA-pinned."
+    lines = [
+        f"FAIL: {v['file']}:{v['line']}: {v['uses']} -- {v['reason']}"
+        for v in violations
+    ]
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point. Returns 0 clean, 1 on violations, 2 on usage errors."""
+    try:
+        args = _parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    if args.workflows_dir is not None:
+        workflows_dir = os.path.abspath(args.workflows_dir)
+        rel_base = os.path.dirname(workflows_dir)
+    else:
+        workflows_dir = os.path.join(_REPO_ROOT, ".github", "workflows")
+        rel_base = _REPO_ROOT
+
+    violations = collect_violations(workflows_dir, rel_base)
+
+    if args.json:
+        print(json.dumps(violations, indent=2, sort_keys=True))
+    else:
+        print(format_human(violations))
+
+    return 1 if violations else 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """Parse command-line arguments. Raises ``SystemExit`` on errors."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Fail when any 'uses:' line in .github/workflows/ is not "
+            "pinned to a 40-character commit SHA."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a JSON list of {file, line, uses, reason} dicts.",
+    )
+    parser.add_argument(
+        "--workflows-dir",
+        default=None,
+        help=(
+            "Override the workflows directory to scan (primarily for "
+            "tests). Defaults to <repo>/.github/workflows."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

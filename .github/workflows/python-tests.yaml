@@ -50,7 +50,8 @@ jobs:
             --file-threshold skill-system-foundry/scripts/yaml_conformance_report.py=90 \
             --file-threshold skill-system-foundry/scripts/lib/yaml_conformance_runner.py=90 \
             --file-threshold .github/scripts/preflight-yaml-upgrade.py=90 \
-            --file-threshold .github/scripts/refresh-yaml-corpus-digests.py=90
+            --file-threshold .github/scripts/refresh-yaml-corpus-digests.py=90 \
+            --file-threshold .github/scripts/verify-action-pins.py=90
 
       - name: Generate coverage HTML report
         if: always() && steps.run-tests.outcome != 'skipped'
