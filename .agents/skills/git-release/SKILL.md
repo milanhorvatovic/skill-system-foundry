@@ -39,7 +39,15 @@ This is the single source of truth for the current version. Git tags mirror it a
 
 ### Step 1: Verify Pre-Release State
 
-Run validation and tests to confirm the codebase is clean:
+Confirm CI is green on `main` for the commit being tagged **before** publishing the release. The `release.yml` workflow triggers on `release: published` and does not run tests — `python-tests.yaml` on `main` is the gate. Check it via the GitHub Actions UI or:
+
+```bash
+gh run list --workflow python-tests.yaml --branch main --limit 1
+```
+
+Do not publish a release until the latest `main` run is green. This is a procedural gate, not a workflow gate.
+
+Then run validation and tests locally to confirm the codebase is clean:
 
 ```bash
 # Self-validate the meta-skill
@@ -56,7 +64,7 @@ python -m coverage run -m unittest discover -s tests -p "test_*.py" -v
 python -m coverage report
 ```
 
-All validation checks must pass (zero failures). Coverage must meet the 70% threshold configured in `.coveragerc`.
+All validation checks must pass (zero failures). Coverage must meet the 70% threshold configured in `.coveragerc`. The suite includes an end-to-end integration smoke test (`tests/test_integration_pipeline.py`) that guards both the `scaffold → validate → bundle → unzip → validate` authoring pipeline and the `zip -r` release artifact shape.
 
 ### Step 2: Bump the Version
 
