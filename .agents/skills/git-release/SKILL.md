@@ -39,13 +39,13 @@ This is the single source of truth for the current version. Git tags mirror it a
 
 ### Step 1: Verify Pre-Release State
 
-Confirm CI is green on `main` for the commit being tagged **before** publishing the release. The `release.yml` workflow triggers on `release: published` and does not run tests — `python-tests.yaml` on `main` is the gate. Check it via the GitHub Actions UI or:
+Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yml` triggers on `release: published` and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
 
 ```bash
 gh run list --workflow python-tests.yaml --branch main --limit 1
 ```
 
-Do not publish a release until the latest `main` run is green. This is a procedural gate, not a workflow gate.
+Do not publish a release until the latest `main` run of `python-tests.yaml` is green. This is a procedural gate, not a workflow gate.
 
 Then run validation and tests locally to confirm the codebase is clean:
 

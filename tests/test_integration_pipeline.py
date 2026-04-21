@@ -1,31 +1,8 @@
 """End-to-end integration smoke tests for the authoring and release pipelines.
 
-Three cases live here:
-
-- ``ScaffoldBundlePipelineTests.test_standalone_skill_round_trip`` —
-  scaffold a standalone skill, validate it, patch its frontmatter the way
-  a real author would, bundle it with the default ``--target claude``,
-  unzip the bundle into a clean temp dir, and revalidate. Guards the
-  user-facing authoring flow driven by ``scaffold.py`` and ``bundle.py``
-  for the platform with the tightest limit.
-
-- ``ScaffoldBundlePipelineTests.test_generic_target_accepts_raw_scaffold_output`` —
-  same pipeline without the frontmatter patch, bundled with
-  ``--target generic``. Proves that at least one supported target path
-  works end-to-end on the unmodified scaffold output and keeps the
-  known ``--target claude`` UX gap from hiding a generic-target
-  regression.
-
-- ``ReleaseArtifactPipelineTests`` — mirror what
-  ``.github/workflows/release.yml`` actually ships (a raw zip of
-  ``skill-system-foundry/``), unzip on a clean path, and validate with
-  the same flags the foundry uses to validate itself. Guards the
-  release artifact, which is produced by ``zip -r`` and is not covered
-  by the ``bundle.py`` path.
-
-Subprocess + ``tempfile.TemporaryDirectory`` + stdlib ``zipfile`` —
-matches the conventions in ``test_scaffold_cli.py`` and
-``test_bundle_cli.py``. Runs on the ubuntu + windows matrix in
+Covers the scaffold -> validate -> bundle -> unzip -> validate flow across
+bundle targets, and the `zip -r` release-artifact shape produced by
+``.github/workflows/release.yml``. Runs on the ubuntu + windows matrix in
 ``python-tests.yaml`` without any workflow changes.
 """
 
@@ -35,8 +12,6 @@ import sys
 import tempfile
 import unittest
 import zipfile
-
-from helpers import run_script
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -48,7 +23,7 @@ FOUNDRY_DIR = os.path.join(REPO_ROOT, "skill-system-foundry")
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
-    return run_script(argv, cwd=REPO_ROOT)
+    return subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
 
 
 def _assert_ok(test: unittest.TestCase, proc: subprocess.CompletedProcess) -> None:
@@ -111,40 +86,57 @@ def _bundle_and_extract(
         _assert_ok(test, validate_extracted)
 
 
-# Short, realistic SKILL.md that a downstream author would produce
-# after editing the scaffold output. Must fit under the Claude bundle
-# description limit (200 chars) so bundle.py --target claude passes.
-#
-# Known UX gap: the raw scaffold template ships a 317-char placeholder
-# description that fails `bundle.py --target claude` out of the box. A
-# first-time user running scaffold -> bundle with the default target
-# hits the 200-char failure with no guidance. This test patches around
-# it to exercise the full default-target pipeline; shortening the
-# placeholder in ``skill-system-foundry/assets/skill-standalone.md``
-# is the real fix and belongs in a separate change. The companion test
-# ``test_generic_target_accepts_raw_scaffold_output`` below proves the
-# non-default target paths do not hit this wall, scoping the gap.
-_PATCHED_SKILL_MD = """---
-name: {name}
-description: >
-  Processes integration smoke test inputs. Triggers when verifying the
-  scaffold to bundle pipeline end to end.
-license: MIT
-metadata:
-  author: Integration Test
-  version: 1.0.0
----
+# The exact folded-scalar description block that ``scaffold.py`` emits
+# into SKILL.md. Kept as a literal so the surgical patch below fails
+# loudly (with "placeholder not found") if the template drifts, rather
+# than silently no-op'ing. See ``skill-system-foundry/assets/skill-standalone.md``.
+_TEMPLATE_DESCRIPTION_BLOCK = (
+    "description: >\n"
+    "  <Description of what this skill does and when to trigger it.\n"
+    "  Max 1024 characters. Be specific about contexts, keywords, and use cases.\n"
+    "  Include trigger phrases. Be slightly pushy to avoid under-triggering.\n"
+    "  Third-person voice recommended (foundry convention).\n"
+    "  Optionally include \"Don't use when...\" for disambiguation.>\n"
+)
 
-# {title}
+# Short replacement description that fits under every bundle target's
+# limit (Claude's 200-char cap is the tightest). Known UX gap: the raw
+# scaffold template ships a 317-char placeholder description that fails
+# ``bundle.py --target claude`` out of the box — shortening the
+# placeholder in ``skill-system-foundry/assets/skill-standalone.md`` is
+# the real fix and belongs in a separate change. The companion test
+# ``test_generic_target_accepts_raw_scaffold_output`` keeps the gap
+# from hiding a regression on non-default targets.
+_AUTHORED_DESCRIPTION_BLOCK = (
+    "description: >\n"
+    "  Processes integration smoke test inputs. Triggers when verifying the\n"
+    "  scaffold to bundle pipeline end to end.\n"
+)
 
-## Purpose
 
-Minimal standalone skill used by the integration pipeline smoke test.
+def _patch_description(test: unittest.TestCase, skill_md_path: str) -> None:
+    """Replace only the scaffolded description block, preserving everything else.
 
-## Instructions
-
-Follow the normal skill lifecycle: scaffold, edit, validate, bundle.
-"""
+    Mirrors what a real author does — edit the description, leave the
+    rest of the template untouched. Reading-and-patching (rather than
+    overwriting the whole file) keeps this test honest: if
+    ``scaffold.py`` starts emitting a new frontmatter field or body
+    section, the test continues to exercise it.
+    """
+    with open(skill_md_path, "r", encoding="utf-8") as f:
+        original = f.read()
+    test.assertIn(
+        _TEMPLATE_DESCRIPTION_BLOCK, original,
+        msg=(
+            "scaffold template's description block changed — update "
+            "_TEMPLATE_DESCRIPTION_BLOCK to match the new emitted shape"
+        ),
+    )
+    patched = original.replace(
+        _TEMPLATE_DESCRIPTION_BLOCK, _AUTHORED_DESCRIPTION_BLOCK, 1,
+    )
+    with open(skill_md_path, "w", encoding="utf-8") as f:
+        f.write(patched)
 
 
 class ScaffoldBundlePipelineTests(unittest.TestCase):
@@ -166,15 +158,10 @@ class ScaffoldBundlePipelineTests(unittest.TestCase):
                 sys.executable, VALIDATE_SCRIPT, skill_dir,
             ]))
 
-            # Simulate the author filling in the template placeholders
-            # before distribution — see _PATCHED_SKILL_MD module-level
-            # comment for the UX-gap context.
-            skill_md_path = os.path.join(skill_dir, "SKILL.md")
-            with open(skill_md_path, "w", encoding="utf-8") as f:
-                f.write(_PATCHED_SKILL_MD.format(
-                    name=skill_name,
-                    title=skill_name.replace("-", " ").title(),
-                ))
+            # Simulate the author filling in the description placeholder
+            # before distribution — see _AUTHORED_DESCRIPTION_BLOCK for
+            # the UX-gap context.
+            _patch_description(self, os.path.join(skill_dir, "SKILL.md"))
 
             _assert_ok(self, _run([
                 sys.executable, VALIDATE_SCRIPT, skill_dir,
@@ -211,7 +198,8 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
     release.yml does not run bundle.py — it ships a raw zip of the
     skill directory. This test guards that specific artifact shape
     against the same "unzip and validate on a clean machine" regression
-    the bundle pipeline case guards for user skills.
+    the bundle pipeline case guards for user skills, plus the
+    yaml-conformance exclusion that release.yml asserts inline.
     """
 
     def test_released_artifact_unzips_and_validates(self) -> None:
@@ -242,6 +230,18 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
                         abs_path = os.path.join(dirpath, filename)
                         arcname = os.path.relpath(abs_path, REPO_ROOT)
                         zf.write(abs_path, arcname)
+
+            # Mirror release.yml's "Verify bundle excludes yaml-conformance
+            # corpus" step. The corpus currently lives outside the bundled
+            # path, so this is a passive invariant — pin it here so a
+            # future restructure that pulls the corpus into the bundle
+            # fails the test before it ships.
+            with zipfile.ZipFile(artifact) as zf:
+                hits = [n for n in zf.namelist() if "yaml-conformance" in n]
+            self.assertEqual(
+                hits, [],
+                msg=f"release bundle must not contain yaml-conformance entries: {hits}",
+            )
 
             extract_root = os.path.join(tmpdir, "extracted")
             os.makedirs(extract_root)
