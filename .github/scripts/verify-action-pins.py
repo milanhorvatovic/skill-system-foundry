@@ -1,8 +1,11 @@
 """Enforce SHA-pinned ``uses:`` references in every workflow file.
 
 Walks ``.github/workflows/*.yml`` and ``.github/workflows/*.yaml`` line by
-line (no YAML parsing needed) and applies these rules to every ``uses:``
-key it finds:
+line (no YAML parsing — the issue spec deliberately prefers a simple
+scan over a full parse, at the cost of a theoretical false-positive
+when a multi-line ``run: |`` block has a line whose first non-whitespace
+text is literally ``uses:``; no current workflow trips this) and applies
+these rules to every ``uses:`` key it finds:
 
 ===========================================  =========
 Reference form                               Treatment
@@ -127,25 +130,25 @@ def list_workflow_files(workflows_dir: str) -> list[str]:
     return [os.path.join(workflows_dir, n) for n in names]
 
 
-def collect_violations(
-    workflows_dir: str,
-    rel_base: str,
-) -> list[dict]:
+def collect_violations(workflows_dir: str) -> list[dict]:
     """Walk *workflows_dir* and return a sorted list of violation dicts.
 
-    *rel_base* is the directory that violation ``file`` fields are made
-    relative to. Paths are always emitted with forward slashes so
-    output is stable across platforms.
+    Violation ``file`` fields are always labelled
+    ``.github/workflows/<basename>`` regardless of where the scanned
+    directory actually lives on disk. That matches production output
+    exactly, so a contributor who runs the script with
+    ``--workflows-dir`` locally sees the same paths CI would print.
+    Forward slashes make the label stable across platforms.
     """
     results: list[dict] = []
     for absolute in list_workflow_files(workflows_dir):
-        rel = os.path.relpath(absolute, rel_base).replace(os.sep, "/")
+        label = ".github/workflows/" + os.path.basename(absolute)
         try:
             with open(absolute, encoding="utf-8") as fh:
                 text = fh.read()
         except OSError as exc:
             results.append({
-                "file": rel,
+                "file": label,
                 "line": 0,
                 "uses": "",
                 "reason": f"read-error: {type(exc).__name__}: {exc}",
@@ -153,7 +156,7 @@ def collect_violations(
             continue
         for lineno, value, reason in scan_workflow(text):
             results.append({
-                "file": rel,
+                "file": label,
                 "line": lineno,
                 "uses": value,
                 "reason": reason,
@@ -182,12 +185,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.workflows_dir is not None:
         workflows_dir = os.path.abspath(args.workflows_dir)
-        rel_base = os.path.dirname(workflows_dir)
     else:
         workflows_dir = os.path.join(_REPO_ROOT, ".github", "workflows")
-        rel_base = _REPO_ROOT
 
-    violations = collect_violations(workflows_dir, rel_base)
+    violations = collect_violations(workflows_dir)
 
     if args.json:
         print(json.dumps(violations, indent=2, sort_keys=True))

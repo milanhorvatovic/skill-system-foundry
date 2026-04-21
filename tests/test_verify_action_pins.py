@@ -289,7 +289,7 @@ class ScanWorkflowTests(unittest.TestCase):
 
 class CollectViolationsTests(unittest.TestCase):
 
-    def test_mixed_directory_reports_relative_paths(self) -> None:
+    def test_mixed_directory_labels_paths_canonically(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             wf = os.path.join(root, ".github", "workflows")
             _write(
@@ -300,9 +300,11 @@ class CollectViolationsTests(unittest.TestCase):
                 os.path.join(wf, "bad.yml"),
                 _INVALID_WORKFLOW,
             )
-            violations = collect_violations(wf, root)
+            violations = collect_violations(wf)
             files = {v["file"] for v in violations}
-            # Only bad.yml should contribute.
+            # Only bad.yml should contribute, labelled with the
+            # production .github/workflows/ prefix regardless of where
+            # the temp directory lives on disk.
             self.assertEqual(
                 files,
                 {".github/workflows/bad.yml"},
@@ -312,8 +314,7 @@ class CollectViolationsTests(unittest.TestCase):
                 self.assertNotIn("\\", v["file"])
 
     def test_sorted_by_file_then_line(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            wf = os.path.join(root, ".github", "workflows")
+        with tempfile.TemporaryDirectory() as wf:
             _write(
                 os.path.join(wf, "z.yaml"),
                 f"uses: actions/checkout@v4\nuses: actions/checkout@main\n",
@@ -322,7 +323,7 @@ class CollectViolationsTests(unittest.TestCase):
                 os.path.join(wf, "a.yaml"),
                 f"uses: actions/checkout@v4\n",
             )
-            violations = collect_violations(wf, root)
+            violations = collect_violations(wf)
             self.assertEqual(
                 [(v["file"], v["line"]) for v in violations],
                 [
@@ -335,7 +336,7 @@ class CollectViolationsTests(unittest.TestCase):
     def test_missing_directory_returns_empty(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             self.assertEqual(
-                collect_violations(os.path.join(root, "does-not-exist"), root),
+                collect_violations(os.path.join(root, "does-not-exist")),
                 [],
             )
             self.assertEqual(
@@ -344,17 +345,28 @@ class CollectViolationsTests(unittest.TestCase):
             )
 
     def test_non_yaml_file_ignored(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            wf = os.path.join(root, ".github", "workflows")
+        with tempfile.TemporaryDirectory() as wf:
             _write(
                 os.path.join(wf, "README.md"),
                 "uses: actions/checkout@v4\n",
             )
-            self.assertEqual(collect_violations(wf, root), [])
+            self.assertEqual(collect_violations(wf), [])
+
+    def test_empty_workflow_file_produces_no_violations(self) -> None:
+        with tempfile.TemporaryDirectory() as wf:
+            _write(os.path.join(wf, "empty.yaml"), "")
+            self.assertEqual(collect_violations(wf), [])
+
+    def test_comments_only_file_produces_no_violations(self) -> None:
+        with tempfile.TemporaryDirectory() as wf:
+            _write(
+                os.path.join(wf, "comments.yaml"),
+                "# uses: actions/checkout@v4\n# another comment\n",
+            )
+            self.assertEqual(collect_violations(wf), [])
 
     def test_unreadable_file_surfaces_as_read_error(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            wf = os.path.join(root, ".github", "workflows")
+        with tempfile.TemporaryDirectory() as wf:
             path = os.path.join(wf, "oops.yaml")
             _write(path, "placeholder")
             # Force an OSError from ``open`` without touching the FS.
@@ -366,7 +378,7 @@ class CollectViolationsTests(unittest.TestCase):
                 return real_open(p, *args, **kwargs)
 
             with mock.patch("builtins.open", side_effect=_boom):
-                violations = collect_violations(wf, root)
+                violations = collect_violations(wf)
             self.assertEqual(len(violations), 1)
             self.assertEqual(violations[0]["line"], 0)
             self.assertIn("read-error", violations[0]["reason"])
@@ -446,7 +458,7 @@ class MainTests(unittest.TestCase):
             self.assertEqual(
                 set(entry.keys()), {"file", "line", "uses", "reason"}
             )
-            self.assertEqual(entry["file"], "workflows/bad.yaml")
+            self.assertEqual(entry["file"], ".github/workflows/bad.yaml")
 
     def test_json_empty_output(self) -> None:
         with tempfile.TemporaryDirectory() as root:
