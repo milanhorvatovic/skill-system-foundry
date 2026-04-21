@@ -87,9 +87,18 @@ def _bundle_and_extract(
 
 
 # The exact folded-scalar description block that ``scaffold.py`` emits
-# into SKILL.md. Kept as a literal so the surgical patch below fails
-# loudly (with "placeholder not found") if the template drifts, rather
-# than silently no-op'ing. See ``skill-system-foundry/assets/skill-standalone.md``.
+# into SKILL.md, copied byte-for-byte from
+# ``skill-system-foundry/assets/skill-standalone.md`` (lines 3-8).
+#
+# Duplication is deliberate: editing the asset template's placeholder
+# description is expected to require a synchronized update here. The
+# trade-off is explicit literal coupling (maintenance cost) in exchange
+# for a loud, self-documenting failure when the template drifts — the
+# surgical patch below raises ``assertIn`` with a pointer to this
+# constant, rather than silently no-op'ing the replacement. A
+# programmatic extraction from the asset file would avoid the
+# duplication but would silently accept any new-shape placeholder,
+# defeating the drift detector.
 _TEMPLATE_DESCRIPTION_BLOCK = (
     "description: >\n"
     "  <Description of what this skill does and when to trigger it.\n"
