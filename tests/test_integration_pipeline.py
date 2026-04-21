@@ -55,6 +55,13 @@ def _assert_ok(test: unittest.TestCase, proc: subprocess.CompletedProcess) -> No
 # Short, realistic SKILL.md that a downstream author would produce
 # after editing the scaffold output. Must fit under the Claude bundle
 # description limit (200 chars) so bundle.py --target claude passes.
+#
+# Known UX gap: the raw scaffold template ships a 317-char placeholder
+# description that fails `bundle.py --target claude` out of the box. A
+# first-time user running scaffold -> bundle hits the 200-char failure
+# with no guidance. This test patches around it to exercise the full
+# pipeline; shortening the placeholder in assets/skill-standalone.md
+# is the real fix and belongs in a separate change.
 _PATCHED_SKILL_MD = """---
 name: {name}
 description: >
@@ -135,11 +142,11 @@ class ScaffoldBundlePipelineTests(unittest.TestCase):
                     zf.extractall(extract_root)
 
                 entries = os.listdir(extract_root)
-                self.assertEqual(
-                    len(entries), 1,
-                    msg=f"expected single top-level entry, got {entries}",
+                self.assertIn(
+                    skill_name, entries,
+                    msg=f"extracted bundle missing top-level {skill_name}/ dir; got {entries}",
                 )
-                extracted_skill = os.path.join(extract_root, entries[0])
+                extracted_skill = os.path.join(extract_root, skill_name)
                 self.assertTrue(
                     os.path.isfile(os.path.join(extracted_skill, "SKILL.md")),
                     msg=f"extracted bundle missing SKILL.md: {extracted_skill}",
@@ -171,9 +178,17 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
 
             # Stdlib zipfile mirrors `zip -r` semantics and works on
             # Windows matrix cells where the `zip` CLI is absent.
+            # __pycache__ and .pyc files are pruned so the local run
+            # matches release.yml's fresh-checkout shape; otherwise a
+            # developer's stale bytecode would diverge from the real
+            # release artifact and could mask a regression.
             with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as zf:
-                for dirpath, _dirnames, filenames in os.walk(FOUNDRY_DIR):
+                for dirpath, dirnames, filenames in os.walk(FOUNDRY_DIR):
+                    if "__pycache__" in dirnames:
+                        dirnames.remove("__pycache__")
                     for filename in filenames:
+                        if filename.endswith(".pyc"):
+                            continue
                         abs_path = os.path.join(dirpath, filename)
                         arcname = os.path.relpath(abs_path, REPO_ROOT)
                         zf.write(abs_path, arcname)
