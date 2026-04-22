@@ -536,18 +536,23 @@ class CollectViolationsTests(unittest.TestCase):
         # Copilot-flagged contract gap: the docstring promised absolute
         # paths but the function previously echoed whatever the caller
         # passed. Feeding a relative path must now come back absolute.
-        cwd = os.getcwd()
-        try:
-            with tempfile.TemporaryDirectory() as root:
-                os.chdir(root)
+        #
+        # chdir back to the original cwd *inside* the TemporaryDirectory
+        # context so the cleanup in ``__exit__`` does not try to remove
+        # the current working directory (which fails with WinError 32
+        # on Windows matrix cells).
+        with tempfile.TemporaryDirectory() as root:
+            cwd = os.getcwd()
+            os.chdir(root)
+            try:
                 rel = "workflows"
                 _write(os.path.join(rel, "a.yaml"), "")
                 paths = list_workflow_files(rel)
                 self.assertEqual(len(paths), 1)
                 self.assertTrue(os.path.isabs(paths[0]))
                 self.assertTrue(paths[0].endswith("a.yaml"))
-        finally:
-            os.chdir(cwd)
+            finally:
+                os.chdir(cwd)
 
     def test_non_yaml_file_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as wf:
