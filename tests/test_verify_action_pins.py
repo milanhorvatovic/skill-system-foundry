@@ -3,7 +3,8 @@
 Covers:
   * ``classify`` — every row of the rules table plus rejected forms
     (tag, branch name, uppercase hex, short hex, missing '@', missing
-    owner, parent-traversal local path, empty value, bare docker ref).
+    owner or repo segment, parent-traversal local path, empty value,
+    whitespace-only value, bare ``./``, bare ``docker://``).
   * ``_strip_inline`` — unquoted + trailing YAML comment, single- and
     double-quoted values with trailing comment, no comment, unterminated
     quote, tab-separated comment.
@@ -184,6 +185,30 @@ class ClassifyRejectedTests(unittest.TestCase):
     def test_bare_slash_prefix_rejected(self) -> None:
         reason = classify(f"/@{_SHA}")
         self.assertIsNotNone(reason)
+
+    def test_bare_dot_slash_rejected(self) -> None:
+        # ``./`` with no suffix is not a real local action path.
+        reason = classify("./")
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("empty", reason)
+
+    def test_bare_docker_scheme_rejected(self) -> None:
+        # ``docker://`` with no image reference is a malformed value
+        # that would fail at workflow runtime; the gate rejects it.
+        reason = classify("docker://")
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("empty", reason)
+
+    def test_whitespace_only_value_is_empty(self) -> None:
+        # classify strips its input so a standalone caller passing
+        # whitespace-only text gets the same "empty uses value" reason
+        # the scan path produces.
+        reason = classify("    ")
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("empty", reason)
 
 
 # ===================================================================

@@ -89,8 +89,12 @@ def _strip_inline(raw: str) -> str:
 def classify(value: str) -> str | None:
     """Return ``None`` when *value* is an allowed reference form.
 
-    Otherwise return a short human-readable reason string.
+    Otherwise return a short human-readable reason string. Leading and
+    trailing whitespace is stripped so standalone callers see the same
+    decision the scan path does (``scan_workflow`` already normalises
+    via ``_strip_inline`` before calling in).
     """
+    value = value.strip()
     if not value:
         return "empty uses value"
     # Reject any parent-traversal form *before* the ``./`` accept
@@ -105,8 +109,12 @@ def classify(value: str) -> str | None:
     ):
         return "local action path must not contain parent traversal"
     if value.startswith("./"):
+        if value == "./":
+            return "local action path must not be empty"
         return None
     if value.startswith("docker://"):
+        if value == "docker://":
+            return "docker action reference must not be empty"
         return None
     if "@" not in value:
         return "missing '@<commit-sha>' pin"
