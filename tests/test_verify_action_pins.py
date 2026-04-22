@@ -137,7 +137,7 @@ class ClassifyRejectedTests(unittest.TestCase):
 
     def test_dot_slash_parent_traversal_rejected(self) -> None:
         # The accept-./ branch must not short-circuit when the path
-        # immediately escapes via ../ — this was a Codex-flagged bypass.
+        # immediately escapes via ../ — a previously-missed bypass.
         reason = classify("./../foo")
         self.assertIsNotNone(reason)
         self.assertIn("parent traversal", cast(str, reason))
@@ -164,7 +164,7 @@ class ClassifyRejectedTests(unittest.TestCase):
         self.assertIsNotNone(reason)
 
     def test_empty_repo_segment_rejected(self) -> None:
-        # Copilot-flagged bypass: ``org/@<sha>`` previously passed
+        # Regression: ``org/@<sha>`` previously passed
         # because the naive ``"/" in prefix`` check was truthy even
         # though the repo segment is empty.
         reason = classify(f"org/@{_SHA}")
@@ -347,7 +347,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(scan_workflow(text), [])
 
     def test_single_quoted_key_is_flagged(self) -> None:
-        # Codex-flagged bypass: YAML permits quoted mapping keys, and
+        # Regression: YAML permits quoted mapping keys, and
         # GitHub Actions treats them identically. The gate must detect
         # them or an unpinned action can slip past.
         text = "      - 'uses': actions/checkout@v4\n"
@@ -368,7 +368,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(violations[0][1], "actions/checkout@v4")
 
     def test_empty_uses_value_is_flagged(self) -> None:
-        # Copilot-flagged hole: an empty ``uses:`` used to be missed
+        # Regression: an empty ``uses:`` used to be missed
         # because the value regex required at least one non-whitespace
         # character. classify already rejects "" — the scanner must now
         # reach it.
@@ -391,7 +391,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertIn("parent traversal", violations[0][2])
 
     def test_inline_comment_after_empty_uses_is_flagged_as_empty(self) -> None:
-        # Copilot-flagged misleading output: ``uses: # comment`` must
+        # Regression: ``uses: # comment`` must
         # report an empty value rather than treating the comment as the
         # literal reference.
         text = "      - uses: # just a note\n"
@@ -401,7 +401,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertIn("empty", violations[0][2])
 
     def test_flow_style_tag_is_flagged(self) -> None:
-        # Copilot-flagged flow-style bypass: ``- { uses: ref }`` is
+        # Regression: ``- { uses: ref }`` is
         # valid YAML and valid GHA step syntax; the gate must match it.
         text = "      - { uses: actions/checkout@v4 }\n"
         violations = scan_workflow(text)
@@ -425,7 +425,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(violations[0][1], "actions/checkout@v4")
 
     def test_flow_pattern_inside_run_body_not_flagged(self) -> None:
-        # Codex-flagged false-positive: ``{ uses: ... }`` appearing as
+        # Regression: ``{ uses: ... }`` appearing as
         # literal text inside a ``run:`` script body is scalar content,
         # not a flow-mapping step. The flow regex must not match here
         # or every such run-block would trip CI.
@@ -443,7 +443,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(scan_workflow(text), [])
 
     def test_keyed_flow_mapping_unpinned_is_flagged(self) -> None:
-        # Codex-flagged bypass: reusable-workflow jobs can be written
+        # Regression: reusable-workflow jobs can be written
         # as ``job-id: { uses: ... }``. The flow matcher must run on
         # those lines too, not just bare-step or list-item forms.
         text = (
@@ -470,7 +470,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(violations[0][1], "org/repo@v4")
 
     def test_single_quoted_keyed_flow_is_flagged(self) -> None:
-        # Codex-flagged bypass: quoted YAML mapping keys are valid, so
+        # Regression: quoted YAML mapping keys are valid, so
         # "'call': { uses: ... }" must also run through the flow scan.
         text = "  'call': { uses: org/repo@v4 }\n"
         violations = scan_workflow(text)
@@ -484,7 +484,7 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(violations[0][1], "org/repo@main")
 
     def test_flow_pattern_inside_literal_block_scalar_not_flagged(self) -> None:
-        # Codex-flagged false-positive: ``key: { uses: ... }`` inside
+        # Regression: ``key: { uses: ... }`` inside
         # a ``run: |`` block body is shell content, not YAML structure.
         # The scanner tracks block-scalar indent and skips the body.
         text = (
@@ -592,7 +592,7 @@ class CollectViolationsTests(unittest.TestCase):
             )
 
     def test_list_workflow_files_returns_absolute_paths(self) -> None:
-        # Copilot-flagged contract gap: the docstring promised absolute
+        # Regression: the docstring promised absolute
         # paths but the function previously echoed whatever the caller
         # passed. Feeding a relative path must now come back absolute.
         #
@@ -622,7 +622,7 @@ class CollectViolationsTests(unittest.TestCase):
             self.assertEqual(collect_violations(wf), [])
 
     def test_directory_with_yaml_suffix_is_not_scanned(self) -> None:
-        # Codex-flagged false-fail: a directory whose name ends in
+        # Regression: a directory whose name ends in
         # .yaml used to be passed to open(), producing a spurious
         # ``read-error: IsADirectoryError`` violation. list_workflow_files
         # now filters to regular files so the directory is ignored.
@@ -632,7 +632,7 @@ class CollectViolationsTests(unittest.TestCase):
             self.assertEqual(list_workflow_files(wf), [])
 
     def test_unreadable_directory_surfaces_as_list_error(self) -> None:
-        # Copilot-flagged crash path: os.listdir raises OSError
+        # Regression: os.listdir raises OSError
         # (e.g. PermissionError) when the directory is unreadable.
         # collect_violations now surfaces that as a structured
         # ``list-error`` violation instead of crashing.
@@ -680,7 +680,7 @@ class CollectViolationsTests(unittest.TestCase):
             self.assertIn("read-error", violations[0]["reason"])
 
     def test_invalid_utf8_file_surfaces_as_read_error(self) -> None:
-        # Copilot-flagged crash path: bytes that are not valid UTF-8
+        # Regression: bytes that are not valid UTF-8
         # raise UnicodeDecodeError during fh.read(). The gate catches
         # UnicodeError alongside OSError so the run produces a
         # structured violation instead of crashing.
@@ -792,7 +792,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_missing_workflows_dir_fails_closed(self) -> None:
-        # Copilot-flagged false-green: a missing directory used to exit
+        # Regression: a missing directory used to exit
         # 0 with "All workflow `uses:` references are SHA-pinned." The
         # gate now fails closed with a clear error on stderr.
         with tempfile.TemporaryDirectory() as root:

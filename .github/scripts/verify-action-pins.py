@@ -1,11 +1,14 @@
 """Enforce SHA-pinned ``uses:`` references in every workflow file.
 
 Walks ``.github/workflows/*.yml`` and ``.github/workflows/*.yaml`` line by
-line (no YAML parsing — the issue spec deliberately prefers a simple
-scan over a full parse, at the cost of a theoretical false-positive
-when a multi-line ``run: |`` block has a line whose first non-whitespace
-text is literally ``uses:``; no current workflow trips this) and applies
-these rules to every ``uses:`` key it finds:
+line. No YAML parsing — the issue spec deliberately prefers a simple
+scan over a full parse. Recognised block-scalar bodies (``run: |`` /
+``run: >`` with any chomping or indent indicator) are tracked by
+indent and skipped, so a shell line that happens to look like
+``key: { uses: ... }`` does not false-positive. The only remaining
+theoretical miss is a multi-line YAML construct the lightweight scan
+does not recognise as a block scalar — no current workflow trips it.
+The rules applied to every ``uses:`` key found:
 
 ===========================================  =========
 Reference form                               Treatment
