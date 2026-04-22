@@ -469,6 +469,20 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0][1], "org/repo@v4")
 
+    def test_single_quoted_keyed_flow_is_flagged(self) -> None:
+        # Codex-flagged bypass: quoted YAML mapping keys are valid, so
+        # "'call': { uses: ... }" must also run through the flow scan.
+        text = "  'call': { uses: org/repo@v4 }\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "org/repo@v4")
+
+    def test_double_quoted_keyed_flow_is_flagged(self) -> None:
+        text = '  "call": { uses: org/repo@main }\n'
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "org/repo@main")
+
 
 # ===================================================================
 # collect_violations / list_workflow_files
@@ -561,6 +575,16 @@ class CollectViolationsTests(unittest.TestCase):
                 "uses: actions/checkout@v4\n",
             )
             self.assertEqual(collect_violations(wf), [])
+
+    def test_directory_with_yaml_suffix_is_not_scanned(self) -> None:
+        # Codex-flagged false-fail: a directory whose name ends in
+        # .yaml used to be passed to open(), producing a spurious
+        # ``read-error: IsADirectoryError`` violation. list_workflow_files
+        # now filters to regular files so the directory is ignored.
+        with tempfile.TemporaryDirectory() as wf:
+            os.makedirs(os.path.join(wf, "bogus.yaml"))
+            self.assertEqual(collect_violations(wf), [])
+            self.assertEqual(list_workflow_files(wf), [])
 
     def test_empty_workflow_file_produces_no_violations(self) -> None:
         with tempfile.TemporaryDirectory() as wf:

@@ -62,14 +62,15 @@ _FLOW_USES_RE = re.compile(
 )
 # Matches a line whose logical value is a flow mapping — either a
 # bare list item (``- { ... }``), a bare flow map (``{ ... }``), or a
-# keyed mapping value (``call: { ... }`` / ``- name: { ... }``). Only
-# those lines are scanned with the flow regex; a shell command
-# containing literal ``{ uses: ... }`` embedded in scalar text
-# produces no leading ``key:`` ending in ``{`` so it is ignored. The
-# keyed form is required to catch reusable-workflow jobs written as
-# ``job-id: { uses: org/repo/.github/workflows/x.yml@ref }``.
+# keyed mapping value (``call: { ... }`` / ``- name: { ... }``). The
+# key may itself be single- or double-quoted (``'call': { ... }``) —
+# YAML treats those as the same mapping key, so the gate must not
+# miss quoted-key flow maps. Lines whose step body does not begin
+# with ``{`` (after any optional key/list prefix) fall through to no
+# flow scanning, so scalar text containing literal ``{ uses: ... }``
+# does not false-positive.
 _FLOW_STEP_RE = re.compile(
-    r"^\s*(?:-\s*)?(?:[\w.-]+\s*:\s*)?\{"
+    r"""^\s*(?:-\s*)?(?:['"]?[\w.-]+['"]?\s*:\s*)?\{"""
 )
 
 
@@ -196,9 +197,16 @@ def list_workflow_files(workflows_dir: str) -> list[str]:
     absolute_dir = os.path.abspath(workflows_dir)
     if not os.path.isdir(absolute_dir):
         return []
+    # Filter to regular files so an entry like ``bogus.yaml/``
+    # (a directory whose name happens to end with the YAML suffix)
+    # does not pass to ``open()`` and surface as a spurious
+    # ``read-error: IsADirectoryError`` violation that would false-fail
+    # CI. Symlinks to files are accepted via ``os.path.isfile``'s
+    # default follow-link behaviour.
     names = [
         n for n in os.listdir(absolute_dir)
-        if n.endswith(".yml") or n.endswith(".yaml")
+        if (n.endswith(".yml") or n.endswith(".yaml"))
+        and os.path.isfile(os.path.join(absolute_dir, n))
     ]
     names.sort()
     return [os.path.join(absolute_dir, n) for n in names]
