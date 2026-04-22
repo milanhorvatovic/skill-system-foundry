@@ -483,6 +483,51 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0][1], "org/repo@main")
 
+    def test_flow_pattern_inside_literal_block_scalar_not_flagged(self) -> None:
+        # Codex-flagged false-positive: ``key: { uses: ... }`` inside
+        # a ``run: |`` block body is shell content, not YAML structure.
+        # The scanner tracks block-scalar indent and skips the body.
+        text = (
+            "    - name: demo\n"
+            "      run: |\n"
+            "        echo hi\n"
+            "        key: { uses: foo@v1 }\n"
+        )
+        self.assertEqual(scan_workflow(text), [])
+
+    def test_flow_pattern_inside_folded_block_scalar_not_flagged(self) -> None:
+        # ``run: >`` (folded block scalar) has the same semantics.
+        text = (
+            "    - name: demo\n"
+            "      run: >\n"
+            "        key: { uses: foo@v1 }\n"
+        )
+        self.assertEqual(scan_workflow(text), [])
+
+    def test_block_scalar_with_chomping_indicator_is_recognised(self) -> None:
+        # Chomping indicators (|-, >-, |+, >+) and explicit indent
+        # (``|2``) also open block scalars. The opener regex must
+        # accept them or a malformed-looking run body would leak.
+        text = (
+            "    run: |-\n"
+            "      key: { uses: foo@v1 }\n"
+        )
+        self.assertEqual(scan_workflow(text), [])
+
+    def test_block_scalar_ends_when_line_dedents(self) -> None:
+        # After the scalar closes, subsequent ``uses:`` lines must be
+        # scanned normally.
+        text = (
+            "    - name: demo\n"
+            "      run: |\n"
+            "        echo hi\n"
+            "    - uses: actions/checkout@v4\n"
+        )
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][0], 4)
+        self.assertEqual(violations[0][1], "actions/checkout@v4")
+
 
 # ===================================================================
 # collect_violations / list_workflow_files

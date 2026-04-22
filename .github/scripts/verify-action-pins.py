@@ -72,6 +72,13 @@ _FLOW_USES_RE = re.compile(
 _FLOW_STEP_RE = re.compile(
     r"""^\s*(?:-\s*)?(?:['"]?[\w.-]+['"]?\s*:\s*)?\{"""
 )
+# Matches a block-scalar opener: ``key: |`` / ``key: >`` with any
+# chomping (+/-) and explicit indent indicators, plus an optional
+# trailing comment. Lines after the opener whose indent is strictly
+# greater than the opener's are part of the scalar body and must not
+# be scanned — shell content like ``key: { uses: foo }`` inside a
+# ``run: |`` block is text, not YAML structure.
+_BLOCK_SCALAR_RE = re.compile(r":\s*[|>][+\-\d]*\s*(?:#.*)?$")
 
 
 def _strip_inline(raw: str) -> str:
@@ -162,13 +169,31 @@ def scan_workflow(text: str) -> list[tuple[int, str, str]]:
     *text* is the full content of a workflow file. Lines whose first
     non-whitespace character is ``#`` are skipped so commented-out
     examples do not register. Both block-style (``uses: ref``) and
-    flow-style (``{ uses: ref }``) mapping forms are scanned. Line
+    flow-style (``{ uses: ref }``) mapping forms are scanned.
+
+    Block-scalar bodies (``run: |`` / ``run: >``) are tracked by
+    indent: a line is considered inside the scalar when its indent is
+    strictly greater than the opener's, and scanning resumes once a
+    non-empty line dedents back to the opener's indent (or less).
+    Lines inside a scalar are skipped so shell content that looks like
+    YAML structure does not false-positive the flow scanner. Line
     numbers are 1-indexed.
     """
     violations: list[tuple[int, str, str]] = []
+    block_scalar_indent: int | None = None
     for lineno, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if block_scalar_indent is not None:
+            if indent > block_scalar_indent:
+                continue
+            block_scalar_indent = None
         stripped = line.lstrip()
         if stripped.startswith("#"):
+            continue
+        if _BLOCK_SCALAR_RE.search(line):
+            block_scalar_indent = indent
             continue
         block = _USES_RE.match(line)
         if block is not None:
