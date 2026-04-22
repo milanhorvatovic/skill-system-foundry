@@ -407,6 +407,30 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(violations[0][1], "")
         self.assertIn("empty", violations[0][2])
 
+    def test_flow_style_tag_is_flagged(self) -> None:
+        # Copilot-flagged flow-style bypass: ``- { uses: ref }`` is
+        # valid YAML and valid GHA step syntax; the gate must match it.
+        text = "      - { uses: actions/checkout@v4 }\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "actions/checkout@v4")
+
+    def test_flow_style_pinned_is_allowed(self) -> None:
+        text = f"      - {{ uses: actions/checkout@{_SHA} }}\n"
+        self.assertEqual(scan_workflow(text), [])
+
+    def test_flow_style_uses_after_other_keys_is_flagged(self) -> None:
+        text = "      - { name: co, uses: actions/checkout@main }\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "actions/checkout@main")
+
+    def test_flow_style_quoted_key_is_flagged(self) -> None:
+        text = "      - { 'uses': actions/checkout@v4 }\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "actions/checkout@v4")
+
 
 # ===================================================================
 # collect_violations / list_workflow_files
@@ -605,6 +629,17 @@ class MainTests(unittest.TestCase):
         # SHA-pinned, so the default invocation must succeed.
         code, _, _ = self._run([])
         self.assertEqual(code, 0)
+
+    def test_missing_workflows_dir_fails_closed(self) -> None:
+        # Copilot-flagged false-green: a missing directory used to exit
+        # 0 with "All workflow `uses:` references are SHA-pinned." The
+        # gate now fails closed with a clear error on stderr.
+        with tempfile.TemporaryDirectory() as root:
+            ghost = os.path.join(root, "does-not-exist")
+            code, stdout, stderr = self._run(["--workflows-dir", ghost])
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("workflows directory not found", stderr)
 
 
 if __name__ == "__main__":

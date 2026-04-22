@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import re
+import sys
 
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
@@ -47,6 +48,15 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # comments before classification.
 _USES_RE = re.compile(
     r"""^\s*(?:-\s+)?['"]?uses['"]?\s*:\s*(\S.*?|)\s*$"""
+)
+# Flow-style YAML mappings (``- { uses: ref }`` / ``{ name: x, uses: ref
+# }``) are also valid GitHub Actions step syntax, so the scanner must
+# find ``uses`` keys inside ``{}`` as well. The lookbehind is ``{`` or
+# ``,`` to allow both leading and subsequent positions; the value is
+# captured lazily up to the next ``,`` or ``}`` that would terminate
+# it in the flow map.
+_FLOW_USES_RE = re.compile(
+    r"""[{,]\s*['"]?uses['"]?\s*:\s*([^,}\n]*?)\s*(?=[,}])"""
 )
 
 
@@ -137,20 +147,27 @@ def scan_workflow(text: str) -> list[tuple[int, str, str]]:
 
     *text* is the full content of a workflow file. Lines whose first
     non-whitespace character is ``#`` are skipped so commented-out
-    examples do not register. Line numbers are 1-indexed.
+    examples do not register. Both block-style (``uses: ref``) and
+    flow-style (``{ uses: ref }``) mapping forms are scanned. Line
+    numbers are 1-indexed.
     """
     violations: list[tuple[int, str, str]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         stripped = line.lstrip()
         if stripped.startswith("#"):
             continue
-        match = _USES_RE.match(line)
-        if not match:
+        block = _USES_RE.match(line)
+        if block is not None:
+            value = _strip_inline(block.group(1))
+            reason = classify(value)
+            if reason is not None:
+                violations.append((lineno, value, reason))
             continue
-        value = _strip_inline(match.group(1))
-        reason = classify(value)
-        if reason is not None:
-            violations.append((lineno, value, reason))
+        for flow in _FLOW_USES_RE.finditer(line):
+            value = _strip_inline(flow.group(1))
+            reason = classify(value)
+            if reason is not None:
+                violations.append((lineno, value, reason))
     return violations
 
 
@@ -230,6 +247,18 @@ def main(argv: list[str] | None = None) -> int:
         workflows_dir = os.path.abspath(args.workflows_dir)
     else:
         workflows_dir = os.path.join(_REPO_ROOT, ".github", "workflows")
+
+    # Fail closed when the workflows directory is missing. Returning 0
+    # against ``list_workflow_files -> []`` would otherwise produce a
+    # misleading "All workflow `uses:` references are SHA-pinned."
+    # result that hides a setup error (wrong ``--workflows-dir``, a
+    # repo without workflows, or a CI checkout that lost the tree).
+    if not os.path.isdir(workflows_dir):
+        print(
+            f"ERROR: workflows directory not found: {workflows_dir}",
+            file=sys.stderr,
+        )
+        return 1
 
     violations = collect_violations(workflows_dir)
 
