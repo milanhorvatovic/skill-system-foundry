@@ -442,6 +442,33 @@ class ScanWorkflowTests(unittest.TestCase):
         text = "    - name: note { uses: actions/checkout@v4 }\n"
         self.assertEqual(scan_workflow(text), [])
 
+    def test_keyed_flow_mapping_unpinned_is_flagged(self) -> None:
+        # Codex-flagged bypass: reusable-workflow jobs can be written
+        # as ``job-id: { uses: ... }``. The flow matcher must run on
+        # those lines too, not just bare-step or list-item forms.
+        text = (
+            "jobs:\n"
+            "  call: { uses: org/repo/.github/workflows/x.yml@main }\n"
+        )
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(
+            violations[0][1],
+            "org/repo/.github/workflows/x.yml@main",
+        )
+
+    def test_keyed_flow_mapping_pinned_is_allowed(self) -> None:
+        text = f"  call: {{ uses: org/repo@{_SHA} }}\n"
+        self.assertEqual(scan_workflow(text), [])
+
+    def test_hyphenated_job_id_keyed_flow_is_flagged(self) -> None:
+        # Job IDs can contain hyphens and dots — the key regex must
+        # accept them.
+        text = "  call-reusable.v2: { uses: org/repo@v4 }\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "org/repo@v4")
+
 
 # ===================================================================
 # collect_violations / list_workflow_files
@@ -504,6 +531,23 @@ class CollectViolationsTests(unittest.TestCase):
                 list_workflow_files(os.path.join(root, "does-not-exist")),
                 [],
             )
+
+    def test_list_workflow_files_returns_absolute_paths(self) -> None:
+        # Copilot-flagged contract gap: the docstring promised absolute
+        # paths but the function previously echoed whatever the caller
+        # passed. Feeding a relative path must now come back absolute.
+        cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                os.chdir(root)
+                rel = "workflows"
+                _write(os.path.join(rel, "a.yaml"), "")
+                paths = list_workflow_files(rel)
+                self.assertEqual(len(paths), 1)
+                self.assertTrue(os.path.isabs(paths[0]))
+                self.assertTrue(paths[0].endswith("a.yaml"))
+        finally:
+            os.chdir(cwd)
 
     def test_non_yaml_file_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as wf:

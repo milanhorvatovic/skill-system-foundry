@@ -60,11 +60,17 @@ _USES_RE = re.compile(
 _FLOW_USES_RE = re.compile(
     r"""[{,]\s*['"]?uses['"]?\s*:\s*([^,}\n]*?)\s*(?=[,}])"""
 )
-# Matches a line whose step body starts with ``{`` — optionally after
-# a list marker. Only those lines are scanned with the flow regex; a
-# shell command containing literal ``{ uses: ... }`` in its middle is
-# not a flow-mapping step and must be ignored.
-_FLOW_STEP_RE = re.compile(r"^\s*(?:-\s*)?\{")
+# Matches a line whose logical value is a flow mapping — either a
+# bare list item (``- { ... }``), a bare flow map (``{ ... }``), or a
+# keyed mapping value (``call: { ... }`` / ``- name: { ... }``). Only
+# those lines are scanned with the flow regex; a shell command
+# containing literal ``{ uses: ... }`` embedded in scalar text
+# produces no leading ``key:`` ending in ``{`` so it is ignored. The
+# keyed form is required to catch reusable-workflow jobs written as
+# ``job-id: { uses: org/repo/.github/workflows/x.yml@ref }``.
+_FLOW_STEP_RE = re.compile(
+    r"^\s*(?:-\s*)?(?:[\w.-]+\s*:\s*)?\{"
+)
 
 
 def _strip_inline(raw: str) -> str:
@@ -181,15 +187,21 @@ def scan_workflow(text: str) -> list[tuple[int, str, str]]:
 
 
 def list_workflow_files(workflows_dir: str) -> list[str]:
-    """Return sorted absolute paths of every workflow YAML in *dir*."""
-    if not os.path.isdir(workflows_dir):
+    """Return sorted absolute paths of every workflow YAML in *dir*.
+
+    *workflows_dir* may be relative; it is normalised to an absolute
+    path internally so the returned list matches the documented
+    contract regardless of what the caller passed.
+    """
+    absolute_dir = os.path.abspath(workflows_dir)
+    if not os.path.isdir(absolute_dir):
         return []
     names = [
-        n for n in os.listdir(workflows_dir)
+        n for n in os.listdir(absolute_dir)
         if n.endswith(".yml") or n.endswith(".yaml")
     ]
     names.sort()
-    return [os.path.join(workflows_dir, n) for n in names]
+    return [os.path.join(absolute_dir, n) for n in names]
 
 
 def collect_violations(workflows_dir: str) -> list[dict]:
