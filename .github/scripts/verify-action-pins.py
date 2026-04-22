@@ -111,7 +111,13 @@ def classify(value: str) -> str | None:
     if "@" not in value:
         return "missing '@<commit-sha>' pin"
     prefix, _, ref = value.rpartition("@")
-    if "/" not in prefix or not ref:
+    # The prefix must be ``owner/repo`` or ``owner/repo/subpath`` with
+    # every segment non-empty. Splitting on ``/`` and checking segment
+    # count + emptiness catches bypasses like ``org/@<sha>``,
+    # ``/repo@<sha>``, or ``org//@<sha>`` that a naive ``"/" in prefix``
+    # test would wave through.
+    parts = prefix.split("/")
+    if len(parts) < 2 or any(not part for part in parts) or not ref:
         return "not a recognised action reference form"
     if not _SHA_RE.match(ref):
         return f"ref '{ref}' is not a 40-character lowercase commit SHA"

@@ -166,6 +166,25 @@ class ClassifyRejectedTests(unittest.TestCase):
         reason = classify("actions/checkout@")
         self.assertIsNotNone(reason)
 
+    def test_empty_repo_segment_rejected(self) -> None:
+        # Copilot-flagged bypass: ``org/@<sha>`` previously passed
+        # because the naive ``"/" in prefix`` check was truthy even
+        # though the repo segment is empty.
+        reason = classify(f"org/@{_SHA}")
+        self.assertIsNotNone(reason)
+
+    def test_empty_owner_segment_rejected(self) -> None:
+        reason = classify(f"/repo@{_SHA}")
+        self.assertIsNotNone(reason)
+
+    def test_double_slash_in_prefix_rejected(self) -> None:
+        reason = classify(f"org//sub@{_SHA}")
+        self.assertIsNotNone(reason)
+
+    def test_bare_slash_prefix_rejected(self) -> None:
+        reason = classify(f"/@{_SHA}")
+        self.assertIsNotNone(reason)
+
 
 # ===================================================================
 # _strip_inline — comment and quote handling

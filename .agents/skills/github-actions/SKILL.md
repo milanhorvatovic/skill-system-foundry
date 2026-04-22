@@ -15,7 +15,7 @@ description: >
 
 # GitHub Actions Skill
 
-Guides the creation, modification, and review of GitHub Actions workflows in the Skill System Foundry repository. Codifies the conventions established across the four existing workflows.
+Guides the creation, modification, and review of GitHub Actions workflows in the Skill System Foundry repository. Codifies the conventions established across the repository's existing workflows.
 
 ## Repository Workflows
 
