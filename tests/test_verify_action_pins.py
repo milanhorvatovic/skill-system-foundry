@@ -24,6 +24,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from typing import cast
 from unittest import mock
 
 # The filename uses hyphens so import the module via importlib.
@@ -101,8 +102,7 @@ class ClassifyRejectedTests(unittest.TestCase):
     def test_tag_ref_rejected(self) -> None:
         reason = classify("actions/checkout@v4")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("40-character", reason)
+        self.assertIn("40-character", cast(str, reason))
 
     def test_branch_ref_rejected(self) -> None:
         reason = classify("actions/checkout@main")
@@ -124,8 +124,7 @@ class ClassifyRejectedTests(unittest.TestCase):
     def test_missing_at_rejected(self) -> None:
         reason = classify("actions/checkout")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("pin", reason)
+        self.assertIn("pin", cast(str, reason))
 
     def test_missing_owner_rejected(self) -> None:
         reason = classify(f"checkout@{_SHA}")
@@ -134,22 +133,19 @@ class ClassifyRejectedTests(unittest.TestCase):
     def test_parent_traversal_local_path_rejected(self) -> None:
         reason = classify("../foo")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("parent traversal", reason)
+        self.assertIn("parent traversal", cast(str, reason))
 
     def test_dot_slash_parent_traversal_rejected(self) -> None:
         # The accept-./ branch must not short-circuit when the path
         # immediately escapes via ../ — this was a Codex-flagged bypass.
         reason = classify("./../foo")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("parent traversal", reason)
+        self.assertIn("parent traversal", cast(str, reason))
 
     def test_embedded_parent_traversal_rejected(self) -> None:
         reason = classify("./foo/../bar")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("parent traversal", reason)
+        self.assertIn("parent traversal", cast(str, reason))
 
     def test_trailing_parent_segment_rejected(self) -> None:
         reason = classify("./foo/..")
@@ -190,16 +186,14 @@ class ClassifyRejectedTests(unittest.TestCase):
         # ``./`` with no suffix is not a real local action path.
         reason = classify("./")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("empty", reason)
+        self.assertIn("empty", cast(str, reason))
 
     def test_bare_docker_scheme_rejected(self) -> None:
         # ``docker://`` with no image reference is a malformed value
         # that would fail at workflow runtime; the gate rejects it.
         reason = classify("docker://")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("empty", reason)
+        self.assertIn("empty", cast(str, reason))
 
     def test_whitespace_only_value_is_empty(self) -> None:
         # classify strips its input so a standalone caller passing
@@ -207,8 +201,7 @@ class ClassifyRejectedTests(unittest.TestCase):
         # the scan path produces.
         reason = classify("    ")
         self.assertIsNotNone(reason)
-        assert reason is not None
-        self.assertIn("empty", reason)
+        self.assertIn("empty", cast(str, reason))
 
 
 # ===================================================================
