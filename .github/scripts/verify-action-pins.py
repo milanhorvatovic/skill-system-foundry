@@ -54,10 +54,17 @@ _USES_RE = re.compile(
 # find ``uses`` keys inside ``{}`` as well. The lookbehind is ``{`` or
 # ``,`` to allow both leading and subsequent positions; the value is
 # captured lazily up to the next ``,`` or ``}`` that would terminate
-# it in the flow map.
+# it in the flow map. The caller restricts where this regex runs so
+# literal ``{ uses: ... }`` inside scalar text (e.g. a ``run:`` script
+# body) does not false-positive.
 _FLOW_USES_RE = re.compile(
     r"""[{,]\s*['"]?uses['"]?\s*:\s*([^,}\n]*?)\s*(?=[,}])"""
 )
+# Matches a line whose step body starts with ``{`` — optionally after
+# a list marker. Only those lines are scanned with the flow regex; a
+# shell command containing literal ``{ uses: ... }`` in its middle is
+# not a flow-mapping step and must be ignored.
+_FLOW_STEP_RE = re.compile(r"^\s*(?:-\s*)?\{")
 
 
 def _strip_inline(raw: str) -> str:
@@ -163,6 +170,8 @@ def scan_workflow(text: str) -> list[tuple[int, str, str]]:
             if reason is not None:
                 violations.append((lineno, value, reason))
             continue
+        if _FLOW_STEP_RE.match(line) is None:
+            continue
         for flow in _FLOW_USES_RE.finditer(line):
             value = _strip_inline(flow.group(1))
             reason = classify(value)
@@ -199,7 +208,7 @@ def collect_violations(workflows_dir: str) -> list[dict]:
         try:
             with open(absolute, encoding="utf-8") as fh:
                 text = fh.read()
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             results.append({
                 "file": label,
                 "line": 0,

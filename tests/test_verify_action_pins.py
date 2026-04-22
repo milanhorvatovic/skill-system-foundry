@@ -431,6 +431,24 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0][1], "actions/checkout@v4")
 
+    def test_flow_pattern_inside_run_body_not_flagged(self) -> None:
+        # Codex-flagged false-positive: ``{ uses: ... }`` appearing as
+        # literal text inside a ``run:`` script body is scalar content,
+        # not a flow-mapping step. The flow regex must not match here
+        # or every such run-block would trip CI.
+        text = (
+            "    - name: demo\n"
+            "      run: echo '{ uses: actions/checkout@v4 }'\n"
+        )
+        self.assertEqual(scan_workflow(text), [])
+
+    def test_flow_pattern_in_other_scalar_not_flagged(self) -> None:
+        # Any line whose step body does not begin with '{' is ignored
+        # by the flow matcher. A value that happens to look like a
+        # flow fragment inside a string must not register.
+        text = "    - name: note { uses: actions/checkout@v4 }\n"
+        self.assertEqual(scan_workflow(text), [])
+
 
 # ===================================================================
 # collect_violations / list_workflow_files
@@ -532,6 +550,21 @@ class CollectViolationsTests(unittest.TestCase):
             self.assertEqual(len(violations), 1)
             self.assertEqual(violations[0]["line"], 0)
             self.assertIn("read-error", violations[0]["reason"])
+
+    def test_invalid_utf8_file_surfaces_as_read_error(self) -> None:
+        # Copilot-flagged crash path: bytes that are not valid UTF-8
+        # raise UnicodeDecodeError during fh.read(). The gate catches
+        # UnicodeError alongside OSError so the run produces a
+        # structured violation instead of crashing.
+        with tempfile.TemporaryDirectory() as wf:
+            path = os.path.join(wf, "bad-bytes.yaml")
+            with open(path, "wb") as fh:
+                fh.write(b"name: \xff\xfe not utf-8\n")
+            violations = collect_violations(wf)
+            self.assertEqual(len(violations), 1)
+            self.assertEqual(violations[0]["line"], 0)
+            self.assertIn("read-error", violations[0]["reason"])
+            self.assertIn("UnicodeDecodeError", violations[0]["reason"])
 
 
 # ===================================================================
