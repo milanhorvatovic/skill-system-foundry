@@ -586,6 +586,23 @@ class CollectViolationsTests(unittest.TestCase):
             self.assertEqual(collect_violations(wf), [])
             self.assertEqual(list_workflow_files(wf), [])
 
+    def test_unreadable_directory_surfaces_as_list_error(self) -> None:
+        # Copilot-flagged crash path: os.listdir raises OSError
+        # (e.g. PermissionError) when the directory is unreadable.
+        # collect_violations now surfaces that as a structured
+        # ``list-error`` violation instead of crashing.
+        with tempfile.TemporaryDirectory() as wf:
+            with mock.patch(
+                "os.listdir",
+                side_effect=PermissionError("simulated denial"),
+            ):
+                violations = collect_violations(wf)
+            self.assertEqual(len(violations), 1)
+            self.assertEqual(violations[0]["file"], ".github/workflows/")
+            self.assertEqual(violations[0]["line"], 0)
+            self.assertIn("list-error", violations[0]["reason"])
+            self.assertIn("PermissionError", violations[0]["reason"])
+
     def test_empty_workflow_file_produces_no_violations(self) -> None:
         with tempfile.TemporaryDirectory() as wf:
             _write(os.path.join(wf, "empty.yaml"), "")

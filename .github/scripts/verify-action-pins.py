@@ -220,10 +220,23 @@ def collect_violations(workflows_dir: str) -> list[dict]:
     directory actually lives on disk. That matches production output
     exactly, so a contributor who runs the script with
     ``--workflows-dir`` locally sees the same paths CI would print.
-    Forward slashes make the label stable across platforms.
+    Forward slashes make the label stable across platforms. An
+    ``OSError`` from the directory listing itself (e.g. a permission
+    issue) surfaces as a single ``list-error`` violation at
+    ``.github/workflows/`` so CI fails closed with an actionable
+    message rather than crashing with an uncaught traceback.
     """
     results: list[dict] = []
-    for absolute in list_workflow_files(workflows_dir):
+    try:
+        workflow_paths = list_workflow_files(workflows_dir)
+    except OSError as exc:
+        return [{
+            "file": ".github/workflows/",
+            "line": 0,
+            "uses": "",
+            "reason": f"list-error: {type(exc).__name__}: {exc}",
+        }]
+    for absolute in workflow_paths:
         label = ".github/workflows/" + os.path.basename(absolute)
         try:
             with open(absolute, encoding="utf-8") as fh:
