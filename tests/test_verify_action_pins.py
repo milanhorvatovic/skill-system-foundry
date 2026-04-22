@@ -221,6 +221,13 @@ class StripInlineTests(unittest.TestCase):
     def test_empty_input(self) -> None:
         self.assertEqual(_strip_inline(""), "")
 
+    def test_leading_hash_treated_as_empty(self) -> None:
+        # A YAML value that is a bare comment ("uses: # trailing") has
+        # no real right-hand side — return empty so classify reports
+        # "empty uses value" rather than a misleading pin reason.
+        self.assertEqual(_strip_inline("# comment"), "")
+        self.assertEqual(_strip_inline("#"), "")
+
 
 # ===================================================================
 # scan_workflow — line-level behaviour
@@ -345,6 +352,16 @@ class ScanWorkflowTests(unittest.TestCase):
         violations = scan_workflow(text)
         self.assertEqual(len(violations), 1)
         self.assertIn("parent traversal", violations[0][2])
+
+    def test_inline_comment_after_empty_uses_is_flagged_as_empty(self) -> None:
+        # Copilot-flagged misleading output: ``uses: # comment`` must
+        # report an empty value rather than treating the comment as the
+        # literal reference.
+        text = "      - uses: # just a note\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "")
+        self.assertIn("empty", violations[0][2])
 
 
 # ===================================================================

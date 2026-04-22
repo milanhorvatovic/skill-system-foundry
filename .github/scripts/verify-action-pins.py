@@ -62,6 +62,12 @@ def _strip_inline(raw: str) -> str:
     value = raw.strip()
     if not value:
         return value
+    # An unquoted leading ``#`` makes the entire right-hand side a YAML
+    # comment (the value is empty). Return empty so classify reports the
+    # real issue — empty uses value — instead of a misleading
+    # "missing '@<commit-sha>' pin" against the comment text.
+    if value[0] == "#":
+        return ""
     if value[0] in ("'", '"'):
         quote = value[0]
         end = value.find(quote, 1)
@@ -177,9 +183,14 @@ def collect_violations(workflows_dir: str) -> list[dict]:
                 "uses": value,
                 "reason": reason,
             })
-    # Insertion order already matches (file, line): list_workflow_files
-    # returns basenames sorted lexically, scan_workflow yields ascending
-    # line numbers, and all entries for one file flush before the next.
+    # Sort defensively on (file, line) even though insertion order
+    # already matches today (list_workflow_files returns basenames
+    # sorted lexically, scan_workflow yields ascending line numbers,
+    # all entries for one file flush before the next). The docstring
+    # advertises sorted output, so a future refactor that recurses into
+    # subdirectories or parallelises reads must not quietly break the
+    # contract.
+    results.sort(key=lambda v: (v["file"], v["line"]))
     return results
 
 
