@@ -38,10 +38,16 @@ _REPO_ROOT = os.path.abspath(
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # Matches a YAML-key ``uses:`` at the start of a line, optionally
-# preceded by a list marker ("- "). Captures the raw right-hand side
-# (value plus any trailing comment); the caller strips quotes and
-# trailing comments before classification.
-_USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S.*?)\s*$")
+# preceded by a list marker ("- "). The ``uses`` token may itself be
+# quoted (``'uses':`` / ``"uses":``) — GitHub Actions still treats those
+# as the same key, so the gate must not miss them. Captures the raw
+# right-hand side (value plus any trailing comment); may be empty so an
+# intentionally blank ``uses:`` reaches ``classify`` and is reported
+# rather than silently ignored. The caller strips quotes and trailing
+# comments before classification.
+_USES_RE = re.compile(
+    r"""^\s*(?:-\s+)?['"]?uses['"]?\s*:\s*(\S.*?|)\s*$"""
+)
 
 
 def _strip_inline(raw: str) -> str:
@@ -81,10 +87,19 @@ def classify(value: str) -> str | None:
     """
     if not value:
         return "empty uses value"
+    # Reject any parent-traversal form *before* the ``./`` accept
+    # branch, otherwise ``./../foo`` would slip through because it
+    # starts with ``./``. Catch the bare, leading, embedded, and
+    # trailing forms.
+    if (
+        value == ".."
+        or value.startswith("../")
+        or "/../" in value
+        or value.endswith("/..")
+    ):
+        return "local action path must not contain parent traversal"
     if value.startswith("./"):
         return None
-    if value.startswith("../"):
-        return "local action path must start with './' (no parent traversal)"
     if value.startswith("docker://"):
         return None
     if "@" not in value:

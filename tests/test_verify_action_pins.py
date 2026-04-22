@@ -134,7 +134,29 @@ class ClassifyRejectedTests(unittest.TestCase):
         reason = classify("../foo")
         self.assertIsNotNone(reason)
         assert reason is not None
-        self.assertIn("./", reason)
+        self.assertIn("parent traversal", reason)
+
+    def test_dot_slash_parent_traversal_rejected(self) -> None:
+        # The accept-./ branch must not short-circuit when the path
+        # immediately escapes via ../ — this was a Codex-flagged bypass.
+        reason = classify("./../foo")
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("parent traversal", reason)
+
+    def test_embedded_parent_traversal_rejected(self) -> None:
+        reason = classify("./foo/../bar")
+        self.assertIsNotNone(reason)
+        assert reason is not None
+        self.assertIn("parent traversal", reason)
+
+    def test_trailing_parent_segment_rejected(self) -> None:
+        reason = classify("./foo/..")
+        self.assertIsNotNone(reason)
+
+    def test_bare_double_dot_rejected(self) -> None:
+        reason = classify("..")
+        self.assertIsNotNone(reason)
 
     def test_empty_value_rejected(self) -> None:
         reason = classify("")
@@ -279,6 +301,50 @@ class ScanWorkflowTests(unittest.TestCase):
         # test only asserts the commented-out form is skipped.
         text = "      # uses: actions/checkout@v4\n"
         self.assertEqual(scan_workflow(text), [])
+
+    def test_single_quoted_key_is_flagged(self) -> None:
+        # Codex-flagged bypass: YAML permits quoted mapping keys, and
+        # GitHub Actions treats them identically. The gate must detect
+        # them or an unpinned action can slip past.
+        text = "      - 'uses': actions/checkout@v4\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "actions/checkout@v4")
+
+    def test_double_quoted_key_is_flagged(self) -> None:
+        text = '      - "uses": actions/checkout@main\n'
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "actions/checkout@main")
+
+    def test_quoted_key_with_quoted_value_is_flagged(self) -> None:
+        text = "      - 'uses': 'actions/checkout@v4'\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "actions/checkout@v4")
+
+    def test_empty_uses_value_is_flagged(self) -> None:
+        # Copilot-flagged hole: an empty ``uses:`` used to be missed
+        # because the value regex required at least one non-whitespace
+        # character. classify already rejects "" — the scanner must now
+        # reach it.
+        text = "      - uses:\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "")
+        self.assertIn("empty", violations[0][2])
+
+    def test_whitespace_only_uses_value_is_flagged(self) -> None:
+        text = "      - uses:   \n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0][1], "")
+
+    def test_dot_slash_parent_traversal_line_is_flagged(self) -> None:
+        text = "      - uses: ./../escape\n"
+        violations = scan_workflow(text)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("parent traversal", violations[0][2])
 
 
 # ===================================================================
