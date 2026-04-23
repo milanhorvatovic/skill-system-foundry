@@ -19,7 +19,9 @@ Exit codes:
 
     0   all commits were classified and output was produced
     1   one or more commits were unmapped (human review required)
-    2   argparse usage error (invalid --version, --dry-run without --in-place)
+    2   argparse usage error, or a runtime failure surfaced as a
+        message on stderr (e.g., missing --since ref, duplicate
+        version in CHANGELOG.md, unreadable configuration)
 
 The script is repository infrastructure, not part of the meta-skill.
 It borrows the meta-skill's YAML parser via a ``sys.path`` shim to
@@ -55,8 +57,16 @@ CONFIG_PATH = os.path.join(
 
 SECTION_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security")
 
-# Accepts X.Y.Z, vX.Y.Z, and pre-release suffixes per semver 2.0.0 (e.g. 1.2.0-rc.1).
-_SEMVER_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+# Accepts X.Y.Z and vX.Y.Z with optional pre-release and/or build
+# metadata per semver 2.0.0 (e.g. 1.2.0-rc.1, 1.2.0+build.42).  Each
+# dot-separated identifier must have at least one character — this
+# excludes malformed inputs like ``1.2.0-.`` that a looser character
+# class would otherwise accept.
+_SEMVER_RE = re.compile(
+    r"^v?\d+\.\d+\.\d+"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
@@ -214,10 +224,13 @@ def _extract_version(section: str) -> str | None:
 
 
 def splice_into_changelog(existing: str, new_section: str) -> str:
-    """Insert *new_section* directly after the H1 heading.
+    """Insert *new_section* above the most recent release section.
 
-    When no H1 exists (fresh file or malformed), prepend a standard
-    Keep-a-Changelog preamble and place *new_section* beneath it.
+    The anchor is the first ``## [X.Y.Z]`` heading in *existing*; the
+    new section is inserted directly before it so any preamble between
+    the H1 and that heading stays intact.  When *existing* has no
+    release sections yet, the new section is appended after whatever
+    preamble is present (or synthesized if the H1 is also missing).
 
     Refuses to splice when the version already appears in *existing* —
     the release path should not silently produce a duplicate section.
@@ -234,12 +247,20 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
 
     new_section = new_section.rstrip() + "\n"
     lines = existing.splitlines(keepends=True)
-    insert_at = None
+
+    # Preferred anchor: the first existing release section.  Preserves
+    # any H1 + preamble block above it.
     for idx, line in enumerate(lines):
-        if line.startswith("# "):
-            insert_at = idx + 1
-            break
-    if insert_at is None:
+        if _VERSION_LINE_RE.match(line):
+            head = "".join(lines[:idx]).rstrip("\n") + "\n\n"
+            tail = "".join(lines[idx:])
+            return head + new_section + "\n" + tail
+
+    # No release sections yet.  Synthesize a Keep-a-Changelog preamble
+    # when the file is empty or has no H1; otherwise append below the
+    # existing preamble so the first release lands at the bottom.
+    has_h1 = any(line.startswith("# ") for line in lines)
+    if not has_h1:
         preamble = (
             "# Changelog\n"
             "\n"
@@ -250,16 +271,9 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
             "\n"
         )
         return preamble + new_section + (existing if existing else "")
-    # Skip any blank lines immediately after the H1 so the new section
-    # lands right under it with a single blank separator.
-    while insert_at < len(lines) and lines[insert_at].strip() == "":
-        insert_at += 1
-    head = "".join(lines[:insert_at])
-    tail = "".join(lines[insert_at:])
-    if head and not head.endswith("\n"):
-        head += "\n"
-    separator = "\n" if tail else ""
-    return head + "\n" + new_section + separator + tail
+
+    head = existing.rstrip("\n") + "\n\n"
+    return head + new_section
 
 
 def resolve_date(
@@ -374,51 +388,71 @@ def today_iso() -> str:
     return datetime.date.today().isoformat()
 
 
+def _write_preserving_lf(text: str, stream: typing.TextIO) -> None:
+    """Write *text* to *stream* without newline translation.
+
+    On Windows, text-mode ``stream.write`` rewrites ``\\n`` to
+    ``\\r\\n``.  When *stream* exposes a ``buffer`` attribute (real
+    stdout/stderr), bypass translation by writing UTF-8 bytes
+    directly; fall back to a plain ``write`` for test-time surrogates
+    like ``io.StringIO`` that have no ``buffer``.
+    """
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(text.encode("utf-8"))
+    else:
+        stream.write(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if not _SEMVER_RE.match(args.version):
         parser.error(
-            f"--version must be X.Y.Z or vX.Y.Z (optional -prerelease suffix); "
-            f"got {args.version!r}"
+            f"--version must be X.Y.Z or vX.Y.Z (optional -prerelease / "
+            f"+build suffix); got {args.version!r}"
         )
     if args.dry_run and not args.in_place:
         parser.error("--dry-run has no effect without --in-place")
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    repo_root = find_repo_root(script_dir)
-    verb_map = load_verb_mapping()
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        repo_root = find_repo_root(script_dir)
+        verb_map = load_verb_mapping()
 
-    section, unmapped = generate(
-        since=args.since,
-        version=args.version,
-        date_override=args.date,
-        repo_root=repo_root,
-        today=today_iso(),
-        verb_map=verb_map,
-    )
+        section, unmapped = generate(
+            since=args.since,
+            version=args.version,
+            date_override=args.date,
+            repo_root=repo_root,
+            today=today_iso(),
+            verb_map=verb_map,
+        )
 
-    report_unmapped(unmapped, sys.stderr)
+        report_unmapped(unmapped, sys.stderr)
 
-    changelog_path = os.path.join(repo_root, "CHANGELOG.md")
+        changelog_path = os.path.join(repo_root, "CHANGELOG.md")
 
-    if args.in_place:
-        existing = ""
-        if os.path.exists(changelog_path):
-            # newline="" preserves LF on read; we write LF explicitly below to
-            # keep CHANGELOG.md stable across OSes (Windows CI would otherwise
-            # churn the whole file to CRLF).
-            with open(changelog_path, "r", encoding="utf-8", newline="") as fh:
-                existing = fh.read()
-        merged = splice_into_changelog(existing, section)
-        if args.dry_run:
-            sys.stdout.write(merged)
+        if args.in_place:
+            existing = ""
+            if os.path.exists(changelog_path):
+                # newline="" preserves LF on read; we write LF explicitly below
+                # to keep CHANGELOG.md stable across OSes (Windows CI would
+                # otherwise churn the whole file to CRLF).
+                with open(changelog_path, "r", encoding="utf-8", newline="") as fh:
+                    existing = fh.read()
+            merged = splice_into_changelog(existing, section)
+            if args.dry_run:
+                _write_preserving_lf(merged, sys.stdout)
+            else:
+                with open(changelog_path, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(merged)
         else:
-            with open(changelog_path, "w", encoding="utf-8", newline="") as fh:
-                fh.write(merged)
-    else:
-        sys.stdout.write(section)
+            _write_preserving_lf(section, sys.stdout)
+    except (RuntimeError, FileNotFoundError) as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 2
 
     return 1 if unmapped else 0
 

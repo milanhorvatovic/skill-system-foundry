@@ -70,6 +70,10 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── audit_skill_system.py    ← audit entire skill system
 │       ├── scaffold.py              ← scaffold new components from templates
 │       └── bundle.py                ← bundle for distribution (zip)
+├── scripts/                         ← repository infrastructure (not part of the meta-skill)
+│   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
+│   └── lib/
+│       └── configuration.yaml       ← repo-infra config (distinct from skill-system-foundry/scripts/lib/configuration.yaml)
 ├── tests/                           ← comprehensive test suite (see tests/ for current files)
 │   ├── helpers.py                   ← shared test utilities
 │   └── test_*.py                    ← one test file per source module
@@ -115,7 +119,7 @@ These constraints are non-negotiable across the entire codebase:
 
 - **Standard library only** — no `pip install` dependencies in production code. Scripts must run anywhere Python 3.12+ is available.
 - **Python 3.12 compatibility** — do not use features from 3.13+.
-- **Validation rules in YAML** — limits, patterns, and reserved words live in `scripts/lib/configuration.yaml`. Never hardcode validation rules in Python.
+- **Validation rules in YAML** — limits, patterns, and reserved words live in `skill-system-foundry/scripts/lib/configuration.yaml`. Never hardcode validation rules in Python. (A separate `scripts/lib/configuration.yaml` at the repo root holds repo-infrastructure config — e.g., the changelog generator's verb mapping — and is not loaded by the meta-skill.)
 - **`os.path` only** — do not use `pathlib`. Do not mix the two.
 - **Type hints on all function signatures** — use builtin generics (`list`, `dict`, `tuple`) and `X | None`.
 - **`encoding="utf-8"` on all `open()` calls.**

@@ -284,6 +284,48 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertIn("## [1.1.0]", merged)
         self.assertIn("## [1.1.0-rc.1]", merged)
 
+    def test_preamble_is_preserved_between_h1_and_new_release(self) -> None:
+        # Regression: splice used to insert between the H1 and the
+        # preamble, pushing "All notable changes..." below the new
+        # release.  The anchor is now the first ``## [`` section, so
+        # preamble stays intact above the new entry.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "All notable changes to this project are documented in this file.\n"
+            "\n"
+            "The format is based on Keep a Changelog.\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        h1_pos = merged.index("# Changelog")
+        preamble_pos = merged.index("All notable changes")
+        format_pos = merged.index("The format is based on")
+        new_pos = merged.index("## [1.1.0]")
+        old_pos = merged.index("## [1.0.0]")
+        # Preamble paragraphs stay right under the H1, new release
+        # slots in between the preamble and the previous release.
+        self.assertLess(h1_pos, preamble_pos)
+        self.assertLess(preamble_pos, format_pos)
+        self.assertLess(format_pos, new_pos)
+        self.assertLess(new_pos, old_pos)
+
+    def test_appends_when_h1_only_has_preamble_no_release(self) -> None:
+        # No ``## [`` section yet — the new release lands below the
+        # existing preamble rather than between the H1 and the text.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "All notable changes to this project are documented in this file.\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        preamble_pos = merged.index("All notable changes")
+        new_pos = merged.index("## [1.1.0]")
+        self.assertLess(preamble_pos, new_pos)
+
 
 # ===================================================================
 # Date resolution
@@ -601,6 +643,53 @@ class MainCliTests(unittest.TestCase):
                     "--date", "2024-01-01",
                 ])
         self.assertIn("## [1.1.0] - 2024-01-01", out.getvalue())
+
+    def test_runtime_error_surfaced_and_exits_two(self) -> None:
+        # A duplicate-version splice raises RuntimeError; main() must
+        # turn that into an "error: ..." line on stderr and return 2
+        # rather than leaking a traceback.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            with open(changelog, "w", encoding="utf-8") as fh:
+                fh.write("# Changelog\n\n## [1.1.0] - 2026-03-22\n")
+
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--in-place",
+                ])
+        self.assertEqual(rc, 2)
+        self.assertIn("error:", err.getvalue())
+        self.assertIn("already contains", err.getvalue())
+
+    def test_build_metadata_version_accepted(self) -> None:
+        with self._patch_git([("aaa", "Add X")]):
+            with mock.patch("sys.stdout", new=io.StringIO()) as out, \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0+build.42",
+                ])
+        self.assertEqual(rc, 0)
+        self.assertIn("## [1.1.0+build.42]", out.getvalue())
+
+    def test_malformed_prerelease_rejected(self) -> None:
+        # Lone dot is not a valid prerelease identifier per semver 2.0.0.
+        with mock.patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                gc.main(["--since", "v1.0.0", "--version", "1.1.0-."])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 # ===================================================================
