@@ -53,14 +53,14 @@ jobs:
           bundle_path, checksum_path = sys.argv[1], sys.argv[2]
           actual_name = os.path.basename(bundle_path)
           write_line = f"{hash_bundle(bundle_path)}  {actual_name}\n"
-          with open(checksum_path, "w", encoding="utf-8") as fh:
+          with open(checksum_path, "w", encoding="utf-8", newline="\n") as fh:
               fh.write(write_line)
           # Re-read the checksum file and re-hash the bundle so this step
           # confirms the checksum file matches the bundle as it exists at the
           # end of checksum generation. (A mismatch introduced after this step
           # but before `gh release upload` would not be caught here.)
           with open(checksum_path, "r", encoding="utf-8") as fh:
-              checksum_line = fh.readline().rstrip("\n")
+              checksum_line = fh.readline().rstrip("\r\n")
           if "  " not in checksum_line:
               print('Malformed checksum file: expected "<sha256>  <filename>"', file=sys.stderr)
               sys.exit(1)
