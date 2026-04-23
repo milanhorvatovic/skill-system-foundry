@@ -2467,11 +2467,12 @@ class ValidateKnownKeysTests(unittest.TestCase):
     def _build_no_close_match_key(self) -> str:
         """Return a deterministic key that yields no close matches.
 
-        Starts from a long sentinel (whose Levenshtein ratio against any
-        short known key is well below ``cutoff``) and extends it if a
-        future ``KNOWN_FRONTMATTER_KEYS`` expansion ever causes a hit,
-        so the no-match test paths always execute instead of being
-        silently skipped when the fixture drifts.
+        Starts from a long sentinel (whose ``difflib.SequenceMatcher``
+        similarity ratio against any short known key is well below
+        ``cutoff``) and extends it if a future ``KNOWN_FRONTMATTER_KEYS``
+        expansion ever causes a hit, so the no-match test paths always
+        execute instead of being silently skipped when the fixture
+        drifts.
         """
         candidate = "frontmatter-no-close-match-sentinel"
         known_keys = sorted(KNOWN_FRONTMATTER_KEYS)
