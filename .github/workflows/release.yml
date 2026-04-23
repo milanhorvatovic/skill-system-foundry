@@ -51,6 +51,7 @@ jobs:
           with open(checksum_path, "w", encoding="utf-8") as fh:
               fh.write(line)
           PY
+          (cd "$(dirname "$BUNDLE_PATH")" && sha256sum -c "$(basename "$CHECKSUM_PATH")")
           echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
 
       - name: Upload release asset
