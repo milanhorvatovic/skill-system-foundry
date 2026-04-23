@@ -21,9 +21,12 @@ avoid vendoring a second copy.
 """
 
 import argparse
+import datetime
 import os
+import re
 import subprocess
 import sys
+import typing
 
 # Borrow the meta-skill's stdlib-only YAML parser.  The skill directory
 # name contains a hyphen, which blocks plain imports, so insert the
@@ -40,7 +43,7 @@ CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "lib", "configuration.yaml"
 )
 
-SECTION_ORDER = ("Added", "Changed", "Fixed", "Removed")
+SECTION_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security")
 
 
 def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
@@ -174,12 +177,37 @@ def render_section(
     return "\n".join(lines)
 
 
+_VERSION_LINE_RE = re.compile(r"^## \[([^\]]+)\]")
+
+
+def _extract_version(section: str) -> str | None:
+    """Return the ``X.Y.Z`` token from a section's ``## [X.Y.Z] - date`` heading."""
+    for line in section.splitlines():
+        match = _VERSION_LINE_RE.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
 def splice_into_changelog(existing: str, new_section: str) -> str:
     """Insert *new_section* directly after the H1 heading.
 
     When no H1 exists (fresh file or malformed), prepend a standard
     Keep-a-Changelog preamble and place *new_section* beneath it.
+
+    Refuses to splice when the version already appears in *existing* —
+    the release path should not silently produce a duplicate section.
     """
+    version = _extract_version(new_section)
+    if version and existing:
+        duplicate_marker = f"## [{version}]"
+        for line in existing.splitlines():
+            if line.startswith(duplicate_marker):
+                raise RuntimeError(
+                    f"CHANGELOG.md already contains a section for {version}; "
+                    "remove it first or run without --in-place to emit to stdout."
+                )
+
     new_section = new_section.rstrip() + "\n"
     lines = existing.splitlines(keepends=True)
     insert_at = None
@@ -301,7 +329,16 @@ def generate(
     return section, unmapped
 
 
-def report_unmapped(unmapped: list[tuple[str, str]], stream) -> None:
+def report_unmapped(
+    unmapped: list[tuple[str, str]],
+    stream: typing.TextIO,
+) -> None:
+    """Write ``unmapped — review manually: <sha> <subject>`` for each entry.
+
+    *stream* must have a ``write(str)`` method; the caller picks stderr
+    or stdout.  Entries are emitted in the order they were classified
+    so the output matches ``git log`` ordering.
+    """
     for sha, subject in unmapped:
         stream.write(
             f"unmapped — review manually: {sha[:12]} {subject}\n"
@@ -311,10 +348,9 @@ def report_unmapped(unmapped: list[tuple[str, str]], stream) -> None:
 def today_iso() -> str:
     """Return today's local date as YYYY-MM-DD.
 
-    Wrapped for test-time monkey-patching.
+    Wrapped so tests can monkey-patch ``gc.today_iso`` without having
+    to stub the full ``datetime`` module.
     """
-    import datetime
-
     return datetime.date.today().isoformat()
 
 

@@ -1,14 +1,12 @@
 <!--
 Release notes template — paste into the body of the GitHub Release
-when publishing a new version.  Replace {VERSION} with the release
-number (e.g., 1.2.0) and {SECTION} with the matching anchor in
-CHANGELOG.md (Keep-a-Changelog uses lowercased, hyphen-separated
-version headings, so [1.2.0] becomes #120).
+when publishing a new version.  Replace every {VERSION} placeholder
+with the release number (e.g., 1.2.0).
 -->
 
 ## What's changed
 
-See the [{VERSION} section of the changelog](https://github.com/milanhorvatovic/skill-system-foundry/blob/main/CHANGELOG.md#{SECTION}) for the full list of changes.
+See the [changelog](https://github.com/milanhorvatovic/skill-system-foundry/blob/main/CHANGELOG.md) for the full list of changes.
 
 ## Install
 

@@ -133,21 +133,18 @@ class RenderSectionTests(unittest.TestCase):
         self.assertNotIn("### Removed", section)
 
     def test_subsection_order_is_fixed(self) -> None:
+        # Canonical Keep-a-Changelog order — matches SECTION_ORDER.
         buckets = {
-            "Removed": ["Remove R"],
+            "Security": ["Patch S"],
             "Fixed": ["Fix F"],
+            "Removed": ["Remove R"],
+            "Deprecated": ["Deprecate D"],
             "Changed": ["Update C"],
             "Added": ["Add A"],
         }
         section = gc.render_section("1.0.0", "2026-01-01", buckets)
-        # Added should appear before Changed, etc. — SECTION_ORDER is canonical.
-        added_pos = section.index("### Added")
-        changed_pos = section.index("### Changed")
-        fixed_pos = section.index("### Fixed")
-        removed_pos = section.index("### Removed")
-        self.assertLess(added_pos, changed_pos)
-        self.assertLess(changed_pos, fixed_pos)
-        self.assertLess(fixed_pos, removed_pos)
+        positions = [section.index(f"### {name}") for name in gc.SECTION_ORDER]
+        self.assertEqual(positions, sorted(positions))
 
     def test_entries_rendered_as_list_items(self) -> None:
         buckets = {"Added": ["Add feature X (#42)"], "Changed": [], "Fixed": [], "Removed": []}
@@ -205,6 +202,33 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         merged = gc.splice_into_changelog("", NEW_SECTION)
         # No leftover empty-file content.
         self.assertIn("## [1.1.0] - 2026-03-22", merged)
+
+    def test_duplicate_version_raises(self) -> None:
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [1.1.0] - 2026-03-22\n"
+            "\n"
+            "### Added\n"
+            "\n"
+            "- Old entry\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        self.assertIn("1.1.0", str(ctx.exception))
+        self.assertIn("already contains", str(ctx.exception))
+
+    def test_different_version_splices_alongside_existing(self) -> None:
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        self.assertIn("## [1.1.0]", merged)
+        self.assertIn("## [1.0.0]", merged)
 
 
 # ===================================================================
