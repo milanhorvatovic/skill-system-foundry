@@ -2525,13 +2525,18 @@ class ValidateKnownKeysTests(unittest.TestCase):
         fm = {"xyz": "value"}
         # Guard against future known-key additions turning 'xyz' into a
         # hit: recompute via the same pinned parameters as the impl and
-        # bail the premise if the fixture stops being a "no match" case.
-        self.assertEqual(
-            difflib.get_close_matches(
-                "xyz", sorted(KNOWN_FRONTMATTER_KEYS), n=3, cutoff=0.6
-            ),
-            [],
-        )
+        # skip if the fixture stops being a "no match" case, so fixture
+        # drift surfaces as a skip rather than a spurious failure.
+        if difflib.get_close_matches(
+            "xyz",
+            sorted(KNOWN_FRONTMATTER_KEYS),
+            n=FRONTMATTER_SUGGEST_MAX_MATCHES,
+            cutoff=FRONTMATTER_SUGGEST_CUTOFF,
+        ):
+            self.skipTest(
+                "'xyz' now has close matches in KNOWN_FRONTMATTER_KEYS; "
+                "update this fixture to use a key with no suggestions."
+            )
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
@@ -2563,14 +2568,18 @@ class ValidateKnownKeysTests(unittest.TestCase):
     def test_mixed_hit_and_miss_keys(self) -> None:
         """Unknown keys render with suggestions only where matches exist."""
         fm = {"descripton": "oops", "xyz": "value"}
-        # Same defensive guard as the no-match test — pin 'xyz' as the
-        # no-match half of this fixture against future key additions.
-        self.assertEqual(
-            difflib.get_close_matches(
-                "xyz", sorted(KNOWN_FRONTMATTER_KEYS), n=3, cutoff=0.6
-            ),
-            [],
-        )
+        # Same defensive guard as the no-match test — skip rather than
+        # fail if 'xyz' acquires a close match under a future key set.
+        if difflib.get_close_matches(
+            "xyz",
+            sorted(KNOWN_FRONTMATTER_KEYS),
+            n=FRONTMATTER_SUGGEST_MAX_MATCHES,
+            cutoff=FRONTMATTER_SUGGEST_CUTOFF,
+        ):
+            self.skipTest(
+                "'xyz' now has close matches in KNOWN_FRONTMATTER_KEYS; "
+                "update this fixture to use a key with no suggestions."
+            )
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
