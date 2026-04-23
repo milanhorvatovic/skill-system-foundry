@@ -777,26 +777,6 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("error:", err.getvalue())
         self.assertIn("bad yaml token", err.getvalue())
 
-    def test_attribute_error_from_config_surfaces_as_exit_two(self) -> None:
-        # AttributeError happens when a malformed config yields a
-        # non-mapping where a mapping is expected; must exit 2 cleanly.
-        patches = mock.patch.multiple(
-            gc,
-            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
-            load_verb_mapping=mock.MagicMock(
-                side_effect=AttributeError(
-                    "'str' object has no attribute 'items'"
-                )
-            ),
-        )
-        with patches, \
-             mock.patch("sys.stdout", new=io.StringIO()), \
-             mock.patch("sys.stderr", new=io.StringIO()) as err:
-            rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
-        self.assertEqual(rc, 2)
-        self.assertIn("error:", err.getvalue())
-
-
 # ===================================================================
 # first_word — edge cases
 # ===================================================================

@@ -199,7 +199,7 @@ def classify_commits(
         if section is None:
             unmapped.append((sha, subject))
             continue
-        buckets.setdefault(section, []).append(subject)
+        buckets[section].append(subject)
     return buckets, unmapped
 
 
@@ -471,12 +471,11 @@ def main(argv: list[str] | None = None) -> int:
                     fh.write(merged)
         else:
             _write_preserving_lf(section, sys.stdout)
-    except (RuntimeError, FileNotFoundError, ValueError, AttributeError) as exc:
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
         # ValueError: parse_yaml_subset raises on grammar-gap constructs.
-        # AttributeError: a malformed config can yield a non-mapping where
-        # a mapping is expected, which then fails on ``.items()``.  Both
-        # route through the same "error: ... / exit 2" contract as the
-        # RuntimeError/FileNotFoundError paths rather than leaking tracebacks.
+        # Config shape errors are turned into RuntimeError by
+        # load_verb_mapping with precise isinstance-guarded messages, so
+        # no AttributeError path remains to catch.
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
