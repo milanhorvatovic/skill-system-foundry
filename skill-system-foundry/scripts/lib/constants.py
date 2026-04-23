@@ -185,7 +185,19 @@ if "frontmatter_suggestions" not in _skill:
     )
 _fm_suggest = _skill["frontmatter_suggestions"]
 FRONTMATTER_SUGGEST_MAX_MATCHES = int(_fm_suggest["max_matches"])
+if FRONTMATTER_SUGGEST_MAX_MATCHES <= 0:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.frontmatter_suggestions.max_matches': "
+        f"{FRONTMATTER_SUGGEST_MAX_MATCHES!r}. Expected a positive integer."
+    )
 FRONTMATTER_SUGGEST_CUTOFF = float(_fm_suggest["cutoff"])
+if not 0.0 <= FRONTMATTER_SUGGEST_CUTOFF <= 1.0:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.frontmatter_suggestions.cutoff': "
+        f"{FRONTMATTER_SUGGEST_CUTOFF!r}. Expected a number in [0.0, 1.0]."
+    )
 
 # Allowed-tools validation
 _allowed_tools = _skill["allowed_tools"]

@@ -208,6 +208,34 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("frontmatter_suggestions", str(ctx.exception))
 
+    def _full_config_with_substitution(self, old: str, new: str) -> str:
+        """Return configuration text with *old* replaced by *new* exactly once."""
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        if text.count(old) != 1:
+            self.fail(
+                f"Expected exactly one occurrence of {old!r} in configuration.yaml"
+            )
+        return text.replace(old, new, 1)
+
+    def test_invalid_frontmatter_suggest_max_matches_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "max_matches: 3", "max_matches: 0"
+                )
+            )
+        self.assertIn("max_matches", str(ctx.exception))
+
+    def test_invalid_frontmatter_suggest_cutoff_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "cutoff: 0.6", "cutoff: 1.5"
+                )
+            )
+        self.assertIn("cutoff", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
