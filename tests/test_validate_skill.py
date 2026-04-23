@@ -2509,6 +2509,50 @@ class ValidateKnownKeysTests(unittest.TestCase):
         for key in ("name", "description", "compatibility"):
             self.assertIn(key, info_errors[0])
 
+    def test_close_match_suggests_known_key(self) -> None:
+        """A near-miss like 'descripton' suggests 'description'."""
+        fm = {"descripton": "oops"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("descripton (did you mean: description?)", info_errors[0])
+
+    def test_no_close_match_omits_suggestion(self) -> None:
+        """An unrecognized key with no close match has no suggestion text."""
+        fm = {"xyz": "value"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertNotIn("did you mean", info_errors[0])
+
+    def test_multiple_close_matches_listed(self) -> None:
+        """Up to three close matches appear in the suggestion."""
+        # 'licensse' is close to 'license'; synthesize a frontmatter where
+        # the key is close to multiple known keys via a short ambiguous stem.
+        fm = {"nam": "value"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        import difflib
+        expected = difflib.get_close_matches(
+            "nam", sorted(KNOWN_FRONTMATTER_KEYS)
+        )
+        # Guard the test's premise: the stdlib default must return >= 1.
+        self.assertGreaterEqual(len(expected), 1)
+        self.assertIn(
+            f"nam (did you mean: {', '.join(expected)}?)", info_errors[0]
+        )
+
+    def test_mixed_hit_and_miss_keys(self) -> None:
+        """Unknown keys render with suggestions only where matches exist."""
+        fm = {"descripton": "oops", "xyz": "value"}
+        errors, passes = validate_known_keys(fm)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("descripton (did you mean: description?)", info_errors[0])
+        # 'xyz' has no close match — it appears bare, not followed by '('.
+        self.assertIn("xyz — check for typos", info_errors[0])
+
 
 # ===================================================================
 # validate_skill — optional frontmatter integration

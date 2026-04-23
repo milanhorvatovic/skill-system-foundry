@@ -1,5 +1,7 @@
 """Shared validation functions for skill-system-foundry scripts."""
 
+import difflib
+
 from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
     RE_NAME_FORMAT, RESERVED_NAMES,
@@ -221,6 +223,10 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
 
     Unrecognized keys produce INFO-level warnings to help catch
     misspellings (e.g. 'compatability' instead of 'compatibility').
+    For each unknown key, ``difflib.get_close_matches`` (with stdlib
+    defaults, ``n=3``/``cutoff=0.6``) is consulted and any hits are
+    appended in the form ``key (did you mean: a, b, c?)``. Keys with
+    no close match are emitted unchanged.
 
     Returns (errors, passes) tuple.
     """
@@ -234,10 +240,18 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
         k for k in frontmatter if k not in KNOWN_FRONTMATTER_KEYS
     )
     if unknown_keys:
+        known_sorted = sorted(KNOWN_FRONTMATTER_KEYS)
+        rendered: list[str] = []
+        for key in unknown_keys:
+            matches = difflib.get_close_matches(key, known_sorted)
+            if matches:
+                rendered.append(f"{key} (did you mean: {', '.join(matches)}?)")
+            else:
+                rendered.append(key)
         errors.append(
             f"{LEVEL_INFO}: [foundry] unrecognized frontmatter keys: "
-            f"{', '.join(unknown_keys)} — check for typos. "
-            f"Known keys: {', '.join(sorted(KNOWN_FRONTMATTER_KEYS))}"
+            f"{', '.join(rendered)} — check for typos. "
+            f"Known keys: {', '.join(known_sorted)}"
         )
     else:
         passes.append("frontmatter: all keys recognized")
