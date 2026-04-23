@@ -44,6 +44,8 @@ from lib.validation import (
     validate_known_keys,
 )
 from lib.constants import (
+    FRONTMATTER_SUGGEST_CUTOFF,
+    FRONTMATTER_SUGGEST_MAX_MATCHES,
     KNOWN_FRONTMATTER_KEYS,
     KNOWN_SPDX_LICENSES,
     KNOWN_TOOLS,
@@ -2550,8 +2552,8 @@ class ValidateKnownKeysTests(unittest.TestCase):
         expected = difflib.get_close_matches(
             "nam",
             sorted(KNOWN_FRONTMATTER_KEYS),
-            n=3,  # Matches validate_known_keys(): suggest at most three keys.
-            cutoff=0.6,  # Matches validate_known_keys(): exclude weak matches.
+            n=FRONTMATTER_SUGGEST_MAX_MATCHES,
+            cutoff=FRONTMATTER_SUGGEST_CUTOFF,
         )
         self.assertGreaterEqual(len(expected), 1)
         self.assertIn(

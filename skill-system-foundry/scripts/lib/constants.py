@@ -174,6 +174,11 @@ MAX_COMPATIBILITY_CHARS = int(_skill["compatibility"]["max_length"])
 # Known frontmatter keys (for unrecognized-key detection)
 KNOWN_FRONTMATTER_KEYS = frozenset(_skill["known_frontmatter_keys"])
 
+# "Did you mean?" suggestion parameters (difflib.get_close_matches)
+_fm_suggest = _skill["frontmatter_suggestions"]
+FRONTMATTER_SUGGEST_MAX_MATCHES = int(_fm_suggest["max_matches"])
+FRONTMATTER_SUGGEST_CUTOFF = float(_fm_suggest["cutoff"])
+
 # Allowed-tools validation
 _allowed_tools = _skill["allowed_tools"]
 KNOWN_TOOLS = frozenset(_allowed_tools["known_tools"])
@@ -269,7 +274,7 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
-del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE
+del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf

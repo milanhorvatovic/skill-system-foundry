@@ -8,6 +8,7 @@ from .constants import (
     KNOWN_FRONTMATTER_KEYS, KNOWN_TOOLS, MAX_ALLOWED_TOOLS,
     RE_METADATA_VERSION,
     MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
+    FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 
@@ -224,9 +225,10 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
     Unrecognized keys produce INFO-level warnings to help catch
     misspellings (e.g. 'compatability' instead of 'compatibility').
     For each unknown key, ``difflib.get_close_matches`` is consulted
-    (``n=3``, ``cutoff=0.6``) and any hits are appended in the form
-    ``key (did you mean: a, b, c?)``. Keys with no close match are
-    emitted unchanged.
+    (``n`` and ``cutoff`` sourced from ``configuration.yaml`` →
+    ``FRONTMATTER_SUGGEST_MAX_MATCHES`` / ``FRONTMATTER_SUGGEST_CUTOFF``)
+    and any hits are appended in the form ``key (did you mean: a, b, c?)``.
+    Keys with no close match are emitted unchanged.
 
     Returns (errors, passes) tuple.
     """
@@ -243,7 +245,12 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
         known_sorted = sorted(KNOWN_FRONTMATTER_KEYS)
         rendered: list[str] = []
         for key in unknown_keys:
-            matches = difflib.get_close_matches(key, known_sorted, n=3, cutoff=0.6)
+            matches = difflib.get_close_matches(
+                key,
+                known_sorted,
+                n=FRONTMATTER_SUGGEST_MAX_MATCHES,
+                cutoff=FRONTMATTER_SUGGEST_CUTOFF,
+            )
             if matches:
                 rendered.append(f"{key} (did you mean: {', '.join(matches)}?)")
             else:

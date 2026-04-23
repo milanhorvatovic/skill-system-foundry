@@ -42,6 +42,15 @@ skill:
     - license
     - metadata
 
+  # "Did you mean?" suggestions for unrecognized frontmatter keys.
+  # Parameters are passed to ``difflib.get_close_matches`` in
+  # ``validate_known_keys``.  Calibrated against the known-key set above:
+  # cutoff=0.5 pulls in false positives (meta → name at 0.5); cutoff=0.7
+  # silently drops real typos (meta → metadata at 0.67).
+  frontmatter_suggestions:
+    max_matches: 3
+    cutoff: 0.6
+
   # allowed-tools validation (space-delimited tool names in frontmatter)
   allowed_tools:
     known_tools:
