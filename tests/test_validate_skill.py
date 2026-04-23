@@ -2521,6 +2521,15 @@ class ValidateKnownKeysTests(unittest.TestCase):
     def test_no_close_match_omits_suggestion(self) -> None:
         """An unrecognized key with no close match has no suggestion text."""
         fm = {"xyz": "value"}
+        # Guard against future known-key additions turning 'xyz' into a
+        # hit: recompute via the same pinned parameters as the impl and
+        # bail the premise if the fixture stops being a "no match" case.
+        self.assertEqual(
+            difflib.get_close_matches(
+                "xyz", sorted(KNOWN_FRONTMATTER_KEYS), n=3, cutoff=0.6
+            ),
+            [],
+        )
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
@@ -2529,17 +2538,20 @@ class ValidateKnownKeysTests(unittest.TestCase):
     def test_multiple_close_matches_listed(self) -> None:
         """Up to three close matches appear in the suggestion.
 
-        The expected list is re-computed via the live ``difflib`` so the
-        test pins "implementation uses stdlib defaults" rather than
-        hardcoding any particular score — if a future Python tweaks the
-        ratio math, the test still checks the same contract.
+        The expected list is re-computed via the live ``difflib`` using
+        the same pinned parameters as ``validate_known_keys()`` rather
+        than hardcoding any particular score — if a future Python tweaks
+        the ratio math, the test still checks the same contract.
         """
         fm = {"nam": "value"}
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
         expected = difflib.get_close_matches(
-            "nam", sorted(KNOWN_FRONTMATTER_KEYS)
+            "nam",
+            sorted(KNOWN_FRONTMATTER_KEYS),
+            n=3,  # Matches validate_known_keys(): suggest at most three keys.
+            cutoff=0.6,  # Matches validate_known_keys(): exclude weak matches.
         )
         self.assertGreaterEqual(len(expected), 1)
         self.assertIn(
@@ -2549,6 +2561,14 @@ class ValidateKnownKeysTests(unittest.TestCase):
     def test_mixed_hit_and_miss_keys(self) -> None:
         """Unknown keys render with suggestions only where matches exist."""
         fm = {"descripton": "oops", "xyz": "value"}
+        # Same defensive guard as the no-match test — pin 'xyz' as the
+        # no-match half of this fixture against future key additions.
+        self.assertEqual(
+            difflib.get_close_matches(
+                "xyz", sorted(KNOWN_FRONTMATTER_KEYS), n=3, cutoff=0.6
+            ),
+            [],
+        )
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
