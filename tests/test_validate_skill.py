@@ -2464,6 +2464,31 @@ class ValidateLicenseTests(unittest.TestCase):
 class ValidateKnownKeysTests(unittest.TestCase):
     """Tests for the validate_known_keys function."""
 
+    def _build_no_close_match_key(self) -> str:
+        """Return a deterministic key that yields no close matches.
+
+        Starts from a long sentinel (whose Levenshtein ratio against any
+        short known key is well below ``cutoff``) and extends it if a
+        future ``KNOWN_FRONTMATTER_KEYS`` expansion ever causes a hit,
+        so the no-match test paths always execute instead of being
+        silently skipped when the fixture drifts.
+        """
+        candidate = "frontmatter-no-close-match-sentinel"
+        known_keys = sorted(KNOWN_FRONTMATTER_KEYS)
+        for attempt in range(128):
+            if not difflib.get_close_matches(
+                candidate,
+                known_keys,
+                n=FRONTMATTER_SUGGEST_MAX_MATCHES,
+                cutoff=FRONTMATTER_SUGGEST_CUTOFF,
+            ):
+                return candidate
+            candidate = f"{candidate}-{attempt}"
+        self.fail(
+            "Could not derive a frontmatter key with no close matches; "
+            "adjust the sentinel used by _build_no_close_match_key()."
+        )
+
     def test_all_known_keys_pass(self) -> None:
         """A frontmatter with only known keys produces a pass."""
         fm = {k: "value" for k in KNOWN_FRONTMATTER_KEYS}
@@ -2522,21 +2547,8 @@ class ValidateKnownKeysTests(unittest.TestCase):
 
     def test_no_close_match_omits_suggestion(self) -> None:
         """An unrecognized key with no close match has no suggestion text."""
-        fm = {"xyz": "value"}
-        # Guard against future known-key additions turning 'xyz' into a
-        # hit: recompute via the same pinned parameters as the impl and
-        # skip if the fixture stops being a "no match" case, so fixture
-        # drift surfaces as a skip rather than a spurious failure.
-        if difflib.get_close_matches(
-            "xyz",
-            sorted(KNOWN_FRONTMATTER_KEYS),
-            n=FRONTMATTER_SUGGEST_MAX_MATCHES,
-            cutoff=FRONTMATTER_SUGGEST_CUTOFF,
-        ):
-            self.skipTest(
-                "'xyz' now has close matches in KNOWN_FRONTMATTER_KEYS; "
-                "update this fixture to use a key with no suggestions."
-            )
+        no_match_key = self._build_no_close_match_key()
+        fm = {no_match_key: "value"}
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
@@ -2567,28 +2579,17 @@ class ValidateKnownKeysTests(unittest.TestCase):
 
     def test_mixed_hit_and_miss_keys(self) -> None:
         """Unknown keys render with suggestions only where matches exist."""
-        fm = {"descripton": "oops", "xyz": "value"}
-        # Same defensive guard as the no-match test — skip rather than
-        # fail if 'xyz' acquires a close match under a future key set.
-        if difflib.get_close_matches(
-            "xyz",
-            sorted(KNOWN_FRONTMATTER_KEYS),
-            n=FRONTMATTER_SUGGEST_MAX_MATCHES,
-            cutoff=FRONTMATTER_SUGGEST_CUTOFF,
-        ):
-            self.skipTest(
-                "'xyz' now has close matches in KNOWN_FRONTMATTER_KEYS; "
-                "update this fixture to use a key with no suggestions."
-            )
+        no_match_key = self._build_no_close_match_key()
+        fm = {"descripton": "oops", no_match_key: "value"}
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
         self.assertIn("descripton (did you mean: description?)", info_errors[0])
-        # Intent: 'xyz' has no close match, so it must not carry a
-        # "(did you mean" parenthetical — assert on that intent directly
-        # rather than on positional context within the sorted list.
-        self.assertNotIn("xyz (did you mean", info_errors[0])
-        self.assertIn("xyz", info_errors[0])
+        # Intent: the no-match key must not carry a "(did you mean"
+        # parenthetical — assert on that intent directly rather than
+        # on positional context within the sorted list.
+        self.assertNotIn(f"{no_match_key} (did you mean", info_errors[0])
+        self.assertIn(no_match_key, info_errors[0])
 
 
 # ===================================================================
