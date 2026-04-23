@@ -110,6 +110,25 @@ cp -r skill-system-foundry /path/to/project/.agents/skills/
 
 Download the latest versioned zip from [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) and extract into your skills directory.
 
+Each release also publishes a `skill-system-foundry-vX.Y.Z.zip.sha256` checksum file. The filename column inside that file is basename-only, so download both files into the same directory, `cd` into it, and then run the command for your platform:
+
+```bash
+# Linux
+cd /path/to/downloads && sha256sum --check skill-system-foundry-vX.Y.Z.zip.sha256
+
+# macOS
+cd /path/to/downloads && shasum -a 256 -c skill-system-foundry-vX.Y.Z.zip.sha256
+```
+
+```powershell
+# Windows (PowerShell) — run from the directory containing both files
+$expected = ((Get-Content skill-system-foundry-vX.Y.Z.zip.sha256 -Raw).Trim() -split '\s+' | Select-Object -First 1).ToLower()
+$actual   = (Get-FileHash skill-system-foundry-vX.Y.Z.zip -Algorithm SHA256).Hash.ToLower()
+if ($expected -eq $actual) { "OK" } else { "MISMATCH"; exit 1 }
+```
+
+On Linux and macOS the expected output is `skill-system-foundry-vX.Y.Z.zip: OK`.
+
 ## Getting Started
 
 **Prerequisites:** Python 3.12+ and a local checkout of this repository (the scripts run from `skill-system-foundry/`).
