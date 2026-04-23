@@ -108,6 +108,42 @@ class LoadVerbMappingTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_missing_changelog_block_rejected(self) -> None:
+        # A config file that lacks the ``changelog.verb_mapping`` block
+        # must fail loudly rather than silently routing every commit to
+        # unmapped with no explanation.
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write("other:\n  key: value\n")
+            path = fh.name
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gc.load_verb_mapping(path)
+            self.assertIn("changelog.verb_mapping", str(ctx.exception))
+        finally:
+            os.unlink(path)
+
+    def test_non_mapping_verb_mapping_rejected(self) -> None:
+        # ``verb_mapping: [Add, Fix]`` (a list instead of a mapping)
+        # would previously raise ``AttributeError`` on ``.items()``;
+        # it now raises ``RuntimeError`` with a clear message.
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write("changelog:\n  verb_mapping:\n    - Add\n    - Fix\n")
+            path = fh.name
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gc.load_verb_mapping(path)
+            self.assertIn("must be a mapping", str(ctx.exception))
+        finally:
+            os.unlink(path)
+
 
 # ===================================================================
 # Classification
@@ -722,6 +758,44 @@ class MainCliTests(unittest.TestCase):
                 gc.main(["--since", "v1.0.0", "--version", "1.1.0-."])
         self.assertEqual(ctx.exception.code, 2)
 
+    def test_value_error_from_config_surfaces_as_exit_two(self) -> None:
+        # ValueError from the YAML parser (or anywhere in the pipeline)
+        # must route through the "error: ..." / exit 2 contract instead
+        # of leaking a traceback.
+        patches = mock.patch.multiple(
+            gc,
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+            load_verb_mapping=mock.MagicMock(
+                side_effect=ValueError("bad yaml token at line 3")
+            ),
+        )
+        with patches, \
+             mock.patch("sys.stdout", new=io.StringIO()), \
+             mock.patch("sys.stderr", new=io.StringIO()) as err:
+            rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
+        self.assertEqual(rc, 2)
+        self.assertIn("error:", err.getvalue())
+        self.assertIn("bad yaml token", err.getvalue())
+
+    def test_attribute_error_from_config_surfaces_as_exit_two(self) -> None:
+        # AttributeError happens when a malformed config yields a
+        # non-mapping where a mapping is expected; must exit 2 cleanly.
+        patches = mock.patch.multiple(
+            gc,
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+            load_verb_mapping=mock.MagicMock(
+                side_effect=AttributeError(
+                    "'str' object has no attribute 'items'"
+                )
+            ),
+        )
+        with patches, \
+             mock.patch("sys.stdout", new=io.StringIO()), \
+             mock.patch("sys.stderr", new=io.StringIO()) as err:
+            rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
+        self.assertEqual(rc, 2)
+        self.assertIn("error:", err.getvalue())
+
 
 # ===================================================================
 # first_word — edge cases
@@ -737,6 +811,11 @@ class FirstWordTests(unittest.TestCase):
 
     def test_leading_whitespace(self) -> None:
         self.assertEqual(gc.first_word("  Add feature"), "Add")
+
+    def test_whitespace_only_returns_empty(self) -> None:
+        # Whitespace is truthy but split() yields no tokens; the helper
+        # must return "" rather than indexing into an empty list.
+        self.assertEqual(gc.first_word("   "), "")
 
 
 # ===================================================================

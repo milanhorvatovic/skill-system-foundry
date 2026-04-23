@@ -84,7 +84,18 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     with open(config_path, "r", encoding="utf-8") as fh:
         text = fh.read()
     config = parse_yaml_subset(text)
-    sections = config.get("changelog", {}).get("verb_mapping", {})
+    changelog = config.get("changelog")
+    if not isinstance(changelog, dict) or "verb_mapping" not in changelog:
+        raise RuntimeError(
+            f"{config_path} is missing the required 'changelog.verb_mapping' "
+            f"block; cannot classify commits."
+        )
+    sections = changelog["verb_mapping"]
+    if not isinstance(sections, dict):
+        raise RuntimeError(
+            f"'changelog.verb_mapping' in {config_path} must be a mapping, "
+            f"got {type(sections).__name__}."
+        )
     flat: dict[str, str] = {}
     for section, verbs in sections.items():
         if section not in SECTION_ORDER:
@@ -166,7 +177,8 @@ def collect_commits(since: str, until: str, repo_root: str) -> list[tuple[str, s
 
 def first_word(subject: str) -> str:
     """Return the first whitespace-delimited token of *subject*."""
-    return subject.split(None, 1)[0] if subject else ""
+    tokens = subject.split(None, 1)
+    return tokens[0] if tokens else ""
 
 
 def classify_commits(
@@ -388,8 +400,13 @@ def report_unmapped(
 
 
 def today_iso() -> str:
-    """Return today's local date as YYYY-MM-DD."""
-    return datetime.date.today().isoformat()
+    """Return today's UTC date as YYYY-MM-DD.
+
+    UTC avoids wallclock drift between a contributor running this
+    locally and the same command running in GitHub Actions (which is
+    always UTC).  Explicit ``--date`` overrides this when needed.
+    """
+    return datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 
 
 def _write_preserving_lf(text: str, stream: typing.TextIO) -> None:
@@ -454,7 +471,12 @@ def main(argv: list[str] | None = None) -> int:
                     fh.write(merged)
         else:
             _write_preserving_lf(section, sys.stdout)
-    except (RuntimeError, FileNotFoundError) as exc:
+    except (RuntimeError, FileNotFoundError, ValueError, AttributeError) as exc:
+        # ValueError: parse_yaml_subset raises on grammar-gap constructs.
+        # AttributeError: a malformed config can yield a non-mapping where
+        # a mapping is expected, which then fails on ``.items()``.  Both
+        # route through the same "error: ... / exit 2" contract as the
+        # RuntimeError/FileNotFoundError paths rather than leaking tracebacks.
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
