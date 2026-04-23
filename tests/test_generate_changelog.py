@@ -55,6 +55,13 @@ class LoadVerbMappingTests(unittest.TestCase):
         self.assertNotIn("Replace", mapping)
         self.assertNotIn("Bump", mapping)
 
+    def test_security_and_deprecated_verbs_present(self) -> None:
+        mapping = gc.load_verb_mapping()
+        self.assertEqual(mapping["Deprecate"], "Deprecated")
+        self.assertEqual(mapping["Patch"], "Security")
+        self.assertEqual(mapping["Secure"], "Security")
+        self.assertEqual(mapping["Mitigate"], "Security")
+
     def test_unknown_section_rejected(self) -> None:
         import tempfile
 
@@ -74,6 +81,30 @@ class LoadVerbMappingTests(unittest.TestCase):
                 gc.load_verb_mapping(path)
             self.assertIn("Bogus", str(ctx.exception))
             self.assertIn("SECTION_ORDER", str(ctx.exception))
+        finally:
+            os.unlink(path)
+
+    def test_non_list_verb_entry_rejected(self) -> None:
+        # A scalar where a list is expected (e.g., ``Added: Add`` instead
+        # of ``Added: [Add]``) should fail loudly — silently dropping the
+        # section would leave its verbs unclassified at release time.
+        import tempfile
+
+        bad = (
+            "changelog:\n"
+            "  verb_mapping:\n"
+            "    Added: Add\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write(bad)
+            path = fh.name
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gc.load_verb_mapping(path)
+            self.assertIn("Added", str(ctx.exception))
+            self.assertIn("must be a list", str(ctx.exception))
         finally:
             os.unlink(path)
 

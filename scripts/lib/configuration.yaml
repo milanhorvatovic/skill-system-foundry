@@ -32,11 +32,17 @@ changelog:
       - Increase
       - Enforce
       - Restructure
-    Fixed:
-      - Fix
-      - Catch
-      - Resolve
+    Deprecated:
+      - Deprecate
     Removed:
       - Remove
       - Drop
       - Delete
+    Fixed:
+      - Fix
+      - Catch
+      - Resolve
+    Security:
+      - Patch
+      - Secure
+      - Mitigate

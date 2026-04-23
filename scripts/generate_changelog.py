@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate a Keep-a-Changelog section from git commit history.
 
-Reads commits between two refs, buckets them into Added / Changed /
-Fixed / Removed via a first-word verb map loaded from
+Reads commits between two refs, buckets them into Keep-a-Changelog
+sections (Added / Changed / Deprecated / Removed / Fixed / Security)
+via a first-word verb map loaded from
 ``scripts/lib/configuration.yaml``, and emits a Keep-a-Changelog 1.1.0
 section.  Commits whose first word is not in the map are surfaced on
 stderr and are NOT written to the output — the human author then
@@ -93,7 +94,10 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
                 f"it from {config_path}."
             )
         if not isinstance(verbs, list):
-            continue
+            raise RuntimeError(
+                f"verb_mapping[{section!r}] must be a list, got "
+                f"{type(verbs).__name__}; check {config_path}."
+            )
         for verb in verbs:
             flat[verb] = section
     return flat
