@@ -180,7 +180,7 @@ class MissingSectionFailFastTests(unittest.TestCase):
         skipping = False
         skip_indent = 0
         for line in text.splitlines(keepends=True):
-            stripped = line.lstrip(" ")
+            stripped = line.lstrip(" \t")
             indent = len(line) - len(stripped)
             bare = line.strip()
             if not in_parent and bare == f"{parent}:":
