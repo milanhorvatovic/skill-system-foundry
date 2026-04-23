@@ -42,20 +42,32 @@ jobs:
           CHECKSUM_PATH="${BUNDLE_PATH}.sha256"
           python - "$BUNDLE_PATH" "$CHECKSUM_PATH" <<'PY'
           import hashlib, os, sys
+
+          def hash_bundle(path):
+              digest = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
           bundle_path, checksum_path = sys.argv[1], sys.argv[2]
-          digest = hashlib.sha256()
-          with open(bundle_path, "rb") as fh:
-              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                  digest.update(chunk)
-          expected_line = f"{digest.hexdigest()}  {os.path.basename(bundle_path)}\n"
+          actual_name = os.path.basename(bundle_path)
+          write_line = f"{hash_bundle(bundle_path)}  {actual_name}\n"
           with open(checksum_path, "w", encoding="utf-8") as fh:
-              fh.write(expected_line)
+              fh.write(write_line)
+          # Re-verify against the bundle on disk (not just the written file)
+          # so the uploaded checksum is guaranteed to match the uploaded zip,
+          # even if something perturbs either file between hashing and upload.
           with open(checksum_path, "r", encoding="utf-8") as fh:
-              actual_line = fh.read()
-          if actual_line != expected_line:
-              print(f"Checksum file content mismatch: expected {expected_line!r}, got {actual_line!r}", file=sys.stderr)
+              expected_digest, expected_name = fh.readline().rstrip("\n").split("  ", 1)
+          if expected_name != actual_name:
+              print(f"Checksum filename mismatch: {expected_name!r} vs {actual_name!r}", file=sys.stderr)
               sys.exit(1)
-          print(f"{os.path.basename(bundle_path)}: OK")
+          actual_digest = hash_bundle(bundle_path)
+          if actual_digest != expected_digest:
+              print(f"Checksum mismatch: file has {expected_digest}, bundle hashes to {actual_digest}", file=sys.stderr)
+              sys.exit(1)
+          print(f"{actual_name}: OK")
           PY
           echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
 
