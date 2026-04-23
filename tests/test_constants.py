@@ -166,6 +166,76 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("yaml_conformance", str(ctx.exception))
 
+    def _full_config_minus_nested(self, parent: str, child: str) -> str:
+        """Return configuration text with *parent.child* stripped out.
+
+        Walks the YAML line-by-line: the ``child:`` line under
+        ``parent:`` and all lines at deeper indentation are dropped.
+        """
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        out_lines: list[str] = []
+        in_parent = False
+        parent_indent = 0
+        skipping = False
+        skip_indent = 0
+        for line in text.splitlines(keepends=True):
+            stripped = line.lstrip(" \t")
+            indent = len(line) - len(stripped)
+            bare = line.strip()
+            if not in_parent and bare == f"{parent}:":
+                in_parent = True
+                parent_indent = indent
+                out_lines.append(line)
+                continue
+            if in_parent and indent <= parent_indent and bare and not bare.startswith("#"):
+                in_parent = False
+            if in_parent and bare == f"{child}:":
+                skipping = True
+                skip_indent = indent
+                continue
+            if skipping:
+                if bare == "" or bare.startswith("#") or indent > skip_indent:
+                    continue
+                skipping = False
+            out_lines.append(line)
+        return "".join(out_lines)
+
+    def test_missing_frontmatter_suggestions_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("skill", "frontmatter_suggestions")
+            )
+        self.assertIn("frontmatter_suggestions", str(ctx.exception))
+
+    def _full_config_with_substitution(self, old: str, new: str) -> str:
+        """Return configuration text with *old* replaced by *new* exactly once."""
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        if text.count(old) != 1:
+            self.fail(
+                f"Expected exactly one occurrence of {old!r} in configuration.yaml"
+            )
+        return text.replace(old, new, 1)
+
+    def test_invalid_frontmatter_suggest_max_matches_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "max_matches: 3", "max_matches: 0"
+                )
+            )
+        self.assertIn("max_matches", str(ctx.exception))
+
+    def test_invalid_frontmatter_suggest_cutoff_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "cutoff: 0.6", "cutoff: 1.5"
+                )
+            )
+        self.assertIn("cutoff", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

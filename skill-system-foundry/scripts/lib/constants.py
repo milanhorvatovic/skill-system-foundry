@@ -174,6 +174,31 @@ MAX_COMPATIBILITY_CHARS = int(_skill["compatibility"]["max_length"])
 # Known frontmatter keys (for unrecognized-key detection)
 KNOWN_FRONTMATTER_KEYS = frozenset(_skill["known_frontmatter_keys"])
 
+# "Did you mean?" suggestion parameters (difflib.get_close_matches).
+# Fail-fast so a stale checkout missing this section produces a clear
+# error at import rather than a later bare KeyError.
+if "frontmatter_suggestions" not in _skill:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.frontmatter_suggestions'; update your checkout or "
+        "restore the full configuration file."
+    )
+_fm_suggest = _skill["frontmatter_suggestions"]
+FRONTMATTER_SUGGEST_MAX_MATCHES = int(_fm_suggest["max_matches"])
+if FRONTMATTER_SUGGEST_MAX_MATCHES <= 0:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.frontmatter_suggestions.max_matches': "
+        f"{FRONTMATTER_SUGGEST_MAX_MATCHES!r}. Expected a positive integer."
+    )
+FRONTMATTER_SUGGEST_CUTOFF = float(_fm_suggest["cutoff"])
+if not 0.0 <= FRONTMATTER_SUGGEST_CUTOFF <= 1.0:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.frontmatter_suggestions.cutoff': "
+        f"{FRONTMATTER_SUGGEST_CUTOFF!r}. Expected a number in [0.0, 1.0]."
+    )
+
 # Allowed-tools validation
 _allowed_tools = _skill["allowed_tools"]
 KNOWN_TOOLS = frozenset(_allowed_tools["known_tools"])
@@ -269,7 +294,7 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
-del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE
+del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf
