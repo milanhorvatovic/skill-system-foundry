@@ -47,27 +47,15 @@ jobs:
           with open(bundle_path, "rb") as fh:
               for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                   digest.update(chunk)
-          line = f"{digest.hexdigest()}  {os.path.basename(bundle_path)}\n"
+          expected_line = f"{digest.hexdigest()}  {os.path.basename(bundle_path)}\n"
           with open(checksum_path, "w", encoding="utf-8") as fh:
-              fh.write(line)
-          PY
-          python - "$BUNDLE_PATH" "$CHECKSUM_PATH" <<'PY'
-          import hashlib, os, sys
-          bundle_path, checksum_path = sys.argv[1], sys.argv[2]
+              fh.write(expected_line)
           with open(checksum_path, "r", encoding="utf-8") as fh:
-              expected_digest, expected_name = fh.readline().rstrip("\n").split("  ", 1)
-          actual_name = os.path.basename(bundle_path)
-          if expected_name != actual_name:
-              print(f"Checksum filename mismatch: expected {expected_name!r}, got {actual_name!r}", file=sys.stderr)
+              actual_line = fh.read()
+          if actual_line != expected_line:
+              print(f"Checksum file content mismatch: expected {expected_line!r}, got {actual_line!r}", file=sys.stderr)
               sys.exit(1)
-          digest = hashlib.sha256()
-          with open(bundle_path, "rb") as fh:
-              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                  digest.update(chunk)
-          if digest.hexdigest() != expected_digest:
-              print(f"Checksum mismatch: expected {expected_digest}, got {digest.hexdigest()}", file=sys.stderr)
-              sys.exit(1)
-          print(f"{actual_name}: OK")
+          print(f"{os.path.basename(bundle_path)}: OK")
           PY
           echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
 

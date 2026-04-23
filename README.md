@@ -122,9 +122,9 @@ shasum -a 256 -c skill-system-foundry-vX.Y.Z.zip.sha256
 
 ```powershell
 # Windows (PowerShell)
-$expected = (Get-Content skill-system-foundry-vX.Y.Z.zip.sha256).Split(' ')[0]
+$expected = ((Get-Content skill-system-foundry-vX.Y.Z.zip.sha256 -Raw).Trim() -split '\s+' | Select-Object -First 1).ToLower()
 $actual   = (Get-FileHash skill-system-foundry-vX.Y.Z.zip -Algorithm SHA256).Hash.ToLower()
-if ($expected -eq $actual) { "OK" } else { "MISMATCH" }
+if ($expected -eq $actual) { "OK" } else { "MISMATCH"; exit 1 }
 ```
 
 On Linux and macOS the expected output is `skill-system-foundry-vX.Y.Z.zip: OK`.
