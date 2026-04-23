@@ -110,6 +110,14 @@ cp -r skill-system-foundry /path/to/project/.agents/skills/
 
 Download the latest versioned zip from [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) and extract into your skills directory.
 
+Each release also publishes a `skill-system-foundry-vX.Y.Z.zip.sha256` checksum file. To verify the bundle, download both files into the same directory and run:
+
+```bash
+sha256sum --check skill-system-foundry-vX.Y.Z.zip.sha256
+```
+
+Expected output: `skill-system-foundry-vX.Y.Z.zip: OK`.
+
 ## Getting Started
 
 **Prerequisites:** Python 3.12+ and a local checkout of this repository (the scripts run from `skill-system-foundry/`).

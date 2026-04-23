@@ -36,10 +36,28 @@ jobs:
               sys.exit(1)
           PY
 
+      - name: Compute SHA256 checksum
+        run: |
+          : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
+          CHECKSUM_PATH="${BUNDLE_PATH}.sha256"
+          python - "$BUNDLE_PATH" "$CHECKSUM_PATH" <<'PY'
+          import hashlib, os, sys
+          bundle_path, checksum_path = sys.argv[1], sys.argv[2]
+          digest = hashlib.sha256()
+          with open(bundle_path, "rb") as fh:
+              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          line = f"{digest.hexdigest()}  {os.path.basename(bundle_path)}\n"
+          with open(checksum_path, "w", encoding="utf-8") as fh:
+              fh.write(line)
+          PY
+          echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
+
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "$GITHUB_REF_NAME" \
             "$BUNDLE_PATH" \
+            "$CHECKSUM_PATH" \
             --clobber
