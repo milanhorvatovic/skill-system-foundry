@@ -174,7 +174,15 @@ MAX_COMPATIBILITY_CHARS = int(_skill["compatibility"]["max_length"])
 # Known frontmatter keys (for unrecognized-key detection)
 KNOWN_FRONTMATTER_KEYS = frozenset(_skill["known_frontmatter_keys"])
 
-# "Did you mean?" suggestion parameters (difflib.get_close_matches)
+# "Did you mean?" suggestion parameters (difflib.get_close_matches).
+# Fail-fast so a stale checkout missing this section produces a clear
+# error at import rather than a later bare KeyError.
+if "frontmatter_suggestions" not in _skill:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.frontmatter_suggestions'; update your checkout or "
+        "restore the full configuration file."
+    )
 _fm_suggest = _skill["frontmatter_suggestions"]
 FRONTMATTER_SUGGEST_MAX_MATCHES = int(_fm_suggest["max_matches"])
 FRONTMATTER_SUGGEST_CUTOFF = float(_fm_suggest["cutoff"])
