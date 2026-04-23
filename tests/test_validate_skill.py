@@ -2527,9 +2527,13 @@ class ValidateKnownKeysTests(unittest.TestCase):
         self.assertNotIn("did you mean", info_errors[0])
 
     def test_multiple_close_matches_listed(self) -> None:
-        """Up to three close matches appear in the suggestion."""
-        # 'licensse' is close to 'license'; synthesize a frontmatter where
-        # the key is close to multiple known keys via a short ambiguous stem.
+        """Up to three close matches appear in the suggestion.
+
+        The expected list is re-computed via the live ``difflib`` so the
+        test pins "implementation uses stdlib defaults" rather than
+        hardcoding any particular score — if a future Python tweaks the
+        ratio math, the test still checks the same contract.
+        """
         fm = {"nam": "value"}
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
@@ -2537,7 +2541,6 @@ class ValidateKnownKeysTests(unittest.TestCase):
         expected = difflib.get_close_matches(
             "nam", sorted(KNOWN_FRONTMATTER_KEYS)
         )
-        # Guard the test's premise: the stdlib default must return >= 1.
         self.assertGreaterEqual(len(expected), 1)
         self.assertIn(
             f"nam (did you mean: {', '.join(expected)}?)", info_errors[0]
@@ -2550,8 +2553,11 @@ class ValidateKnownKeysTests(unittest.TestCase):
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
         self.assertIn("descripton (did you mean: description?)", info_errors[0])
-        # 'xyz' has no close match — it appears bare, not followed by '('.
-        self.assertIn("xyz — check for typos", info_errors[0])
+        # Intent: 'xyz' has no close match, so it must not carry a
+        # "(did you mean" parenthetical — assert on that intent directly
+        # rather than on positional context within the sorted list.
+        self.assertNotIn("xyz (did you mean", info_errors[0])
+        self.assertIn("xyz", info_errors[0])
 
 
 # ===================================================================
