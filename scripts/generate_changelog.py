@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""Generate a Keep-a-Changelog section from git commit history.
+
+Reads commits between two refs, buckets them into Added / Changed /
+Fixed / Removed via a first-word verb map loaded from
+``scripts/lib/configuration.yaml``, and emits a Keep-a-Changelog 1.1.0
+section.  Commits whose first word is not in the map are surfaced on
+stderr and are NOT written to the output — the human author then
+reclassifies them manually.
+
+Usage::
+
+    python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0
+    python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --in-place
+    python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --dry-run
+    python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --date 2026-03-22
+
+The script is repository infrastructure, not part of the meta-skill.
+It borrows the meta-skill's YAML parser via a ``sys.path`` shim to
+avoid vendoring a second copy.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+
+# Borrow the meta-skill's stdlib-only YAML parser.  The skill directory
+# name contains a hyphen, which blocks plain imports, so insert the
+# path explicitly.  This is the only cross-boundary dependency; the
+# verb_mapping data itself lives in this repo's scripts/lib/ tree.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FOUNDRY_SCRIPTS = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
+if _FOUNDRY_SCRIPTS not in sys.path:
+    sys.path.insert(0, _FOUNDRY_SCRIPTS)
+
+from lib.yaml_parser import parse_yaml_subset  # noqa: E402
+
+CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "lib", "configuration.yaml"
+)
+
+SECTION_ORDER = ("Added", "Changed", "Fixed", "Removed")
+
+
+def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
+    """Return ``{verb: section}`` flattened from configuration.yaml.
+
+    The YAML stores sections as keys with verb lists as values (the
+    natural way to read it); this inverts to a flat lookup for O(1)
+    bucketing during commit processing.
+    """
+    with open(config_path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    config = parse_yaml_subset(text)
+    sections = config.get("changelog", {}).get("verb_mapping", {})
+    flat: dict[str, str] = {}
+    for section, verbs in sections.items():
+        if not isinstance(verbs, list):
+            continue
+        for verb in verbs:
+            flat[verb] = section
+    return flat
+
+
+def run_git(args: list[str], cwd: str) -> str:
+    """Run a git command and return stdout.  Raises on non-zero exit."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed: {result.stderr.strip()}"
+        )
+    return result.stdout
+
+
+def tag_exists(ref: str, repo_root: str) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def tag_commit_date(tag: str, repo_root: str) -> str:
+    """Return ``%as`` (author date, ISO short) for *tag*."""
+    return run_git(["log", "-1", "--format=%as", tag], repo_root).strip()
+
+
+def collect_commits(since: str, until: str, repo_root: str) -> list[tuple[str, str]]:
+    """Return ``[(sha, subject)]`` for commits in ``since..until``.
+
+    Merge commits are excluded: in a squash-merge workflow they should
+    not appear, and in a traditional-merge workflow their ``Merge pull
+    request #N`` subjects would route to unmapped anyway.  Excluding
+    them up-front keeps stderr output focused on real content commits.
+    """
+    out = run_git(
+        [
+            "log",
+            "--no-merges",
+            "--pretty=%H%x00%s",
+            f"{since}..{until}",
+        ],
+        repo_root,
+    )
+    commits: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        if "\x00" not in line:
+            continue
+        sha, subject = line.split("\x00", 1)
+        sha = sha.strip()
+        subject = subject.strip()
+        if sha and subject:
+            commits.append((sha, subject))
+    return commits
+
+
+def first_word(subject: str) -> str:
+    """Return the first whitespace-delimited token of *subject*."""
+    return subject.split(None, 1)[0] if subject else ""
+
+
+def classify_commits(
+    commits: list[tuple[str, str]],
+    verb_map: dict[str, str],
+) -> tuple[dict[str, list[str]], list[tuple[str, str]]]:
+    """Split commits into ``{section: [subject]}`` and ``[(sha, subject)]`` unmapped.
+
+    Multi-verb subjects (``Update X and add Y``) use the first word
+    only — intentional and documented in issue #105.
+    """
+    buckets: dict[str, list[str]] = {s: [] for s in SECTION_ORDER}
+    unmapped: list[tuple[str, str]] = []
+    for sha, subject in commits:
+        verb = first_word(subject)
+        section = verb_map.get(verb)
+        if section is None:
+            unmapped.append((sha, subject))
+            continue
+        buckets.setdefault(section, []).append(subject)
+    return buckets, unmapped
+
+
+def render_section(
+    version: str,
+    date: str,
+    buckets: dict[str, list[str]],
+) -> str:
+    """Render a Keep-a-Changelog section for *version*.
+
+    Empty subsections are omitted — Keep-a-Changelog allows this and
+    it keeps the output tight.
+    """
+    lines = [f"## [{version}] - {date}"]
+    for section in SECTION_ORDER:
+        entries = buckets.get(section) or []
+        if not entries:
+            continue
+        lines.append("")
+        lines.append(f"### {section}")
+        lines.append("")
+        for subject in entries:
+            lines.append(f"- {subject}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def splice_into_changelog(existing: str, new_section: str) -> str:
+    """Insert *new_section* directly after the H1 heading.
+
+    When no H1 exists (fresh file or malformed), prepend a standard
+    Keep-a-Changelog preamble and place *new_section* beneath it.
+    """
+    new_section = new_section.rstrip() + "\n"
+    lines = existing.splitlines(keepends=True)
+    insert_at = None
+    for idx, line in enumerate(lines):
+        if line.startswith("# "):
+            insert_at = idx + 1
+            break
+    if insert_at is None:
+        preamble = (
+            "# Changelog\n"
+            "\n"
+            "All notable changes to this project are documented in this file.\n"
+            "\n"
+            "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\n"
+            "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n"
+            "\n"
+        )
+        return preamble + new_section + (existing if existing else "")
+    # Skip any blank lines immediately after the H1 so the new section
+    # lands right under it with a single blank separator.
+    while insert_at < len(lines) and lines[insert_at].strip() == "":
+        insert_at += 1
+    head = "".join(lines[:insert_at])
+    tail = "".join(lines[insert_at:])
+    if head and not head.endswith("\n"):
+        head += "\n"
+    separator = "\n" if tail else ""
+    return head + "\n" + new_section + separator + tail
+
+
+def resolve_date(
+    version: str,
+    repo_root: str,
+    override: str | None,
+    today: str,
+) -> str:
+    """Return the release date for *version*.
+
+    Precedence: ``--date`` override > tag commit date (if the version
+    tag exists) > today's local date.
+    """
+    if override:
+        return override
+    tag = version if version.startswith("v") else f"v{version}"
+    if tag_exists(tag, repo_root):
+        return tag_commit_date(tag, repo_root)
+    return today
+
+
+def resolve_until(version: str, repo_root: str) -> str:
+    """Pick the commit range endpoint: the version tag if it exists, else HEAD."""
+    tag = version if version.startswith("v") else f"v{version}"
+    return tag if tag_exists(tag, repo_root) else "HEAD"
+
+
+def find_repo_root(start: str) -> str:
+    """Walk upward from *start* until a ``.git`` entry is found."""
+    current = os.path.abspath(start)
+    while True:
+        if os.path.exists(os.path.join(current, ".git")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            raise RuntimeError(f"no .git found walking up from {start}")
+        current = parent
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Generate a Keep-a-Changelog section from git history.",
+    )
+    parser.add_argument(
+        "--since",
+        required=True,
+        help="Previous version tag (e.g., v1.0.2) — start of the commit range.",
+    )
+    parser.add_argument(
+        "--version",
+        required=True,
+        help="New version (e.g., 1.1.0 or v1.1.0) — the section heading version.",
+    )
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="Override the release date (YYYY-MM-DD). Defaults to tag commit date when the version tag exists, else today's local date.",
+    )
+    parser.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Splice the generated section into CHANGELOG.md at the repo root, directly after the H1 heading.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what --in-place would do without writing.",
+    )
+    return parser
+
+
+def normalize_version(version: str) -> str:
+    """Strip a leading ``v`` from *version* for the section heading."""
+    return version[1:] if version.startswith("v") else version
+
+
+def generate(
+    since: str,
+    version: str,
+    date_override: str | None,
+    repo_root: str,
+    today: str,
+    verb_map: dict[str, str],
+) -> tuple[str, list[tuple[str, str]]]:
+    """Pure function — returns ``(rendered_section, unmapped_commits)``."""
+    until = resolve_until(version, repo_root)
+    commits = collect_commits(since, until, repo_root)
+    buckets, unmapped = classify_commits(commits, verb_map)
+    date = resolve_date(version, repo_root, date_override, today)
+    section = render_section(normalize_version(version), date, buckets)
+    return section, unmapped
+
+
+def report_unmapped(unmapped: list[tuple[str, str]], stream) -> None:
+    for sha, subject in unmapped:
+        stream.write(
+            f"unmapped — review manually: {sha[:12]} {subject}\n"
+        )
+
+
+def today_iso() -> str:
+    """Return today's local date as YYYY-MM-DD.
+
+    Wrapped for test-time monkey-patching.
+    """
+    import datetime
+
+    return datetime.date.today().isoformat()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = find_repo_root(script_dir)
+    verb_map = load_verb_mapping()
+
+    section, unmapped = generate(
+        since=args.since,
+        version=args.version,
+        date_override=args.date,
+        repo_root=repo_root,
+        today=today_iso(),
+        verb_map=verb_map,
+    )
+
+    report_unmapped(unmapped, sys.stderr)
+
+    changelog_path = os.path.join(repo_root, "CHANGELOG.md")
+
+    if args.in_place:
+        existing = ""
+        if os.path.exists(changelog_path):
+            with open(changelog_path, "r", encoding="utf-8") as fh:
+                existing = fh.read()
+        merged = splice_into_changelog(existing, section)
+        if args.dry_run:
+            sys.stdout.write(merged)
+        else:
+            with open(changelog_path, "w", encoding="utf-8") as fh:
+                fh.write(merged)
+    else:
+        sys.stdout.write(section)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

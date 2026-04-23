@@ -1,0 +1,42 @@
+# Repository infrastructure configuration.
+#
+# Separate from skill-system-foundry/scripts/lib/configuration.yaml,
+# which governs the meta-skill's own validation rules.  This file holds
+# configuration for tooling that operates on the repository itself
+# (release automation, changelog generation, etc.).
+
+# ============================================================
+# Changelog Generation (scripts/generate_changelog.py)
+# ============================================================
+# Maps the first word of a commit subject to a Keep-a-Changelog
+# section.  Commits whose first word is not listed here are surfaced
+# on stderr as "unmapped — review manually" and are NOT written to
+# CHANGELOG.md, forcing human reclassification rather than silently
+# dumping them into a non-standard "Other" section.
+#
+# First-word convention follows the repository's verb-first commit
+# style documented in CLAUDE.md ("Update <component>", "Add <new-thing>",
+# "Fix <issue>").  Squash-merge PR titles already follow this pattern.
+changelog:
+  verb_mapping:
+    Added:
+      - Add
+    Changed:
+      - Update
+      - Refactor
+      - Improve
+      - Harden
+      - Raise
+      - Apply
+      - Migrate
+      - Increase
+      - Enforce
+      - Restructure
+    Fixed:
+      - Fix
+      - Catch
+      - Resolve
+    Removed:
+      - Remove
+      - Drop
+      - Delete

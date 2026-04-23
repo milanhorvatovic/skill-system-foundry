@@ -108,7 +108,7 @@ cp -r skill-system-foundry /path/to/project/.agents/skills/
 
 ### GitHub Releases
 
-Download the latest versioned zip from [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) and extract into your skills directory.
+Download the latest versioned zip from [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) and extract into your skills directory. See [CHANGELOG.md](CHANGELOG.md) for what changed between versions.
 
 Each release also publishes a `skill-system-foundry-vX.Y.Z.zip.sha256` checksum file. The filename column inside that file is basename-only, so download both files into the same directory, `cd` into it, and then run the command for your platform:
 
@@ -218,6 +218,7 @@ To confirm that symlinks were materialized correctly (and not replaced by plain 
 
 | Topic | Link |
 |-------|------|
+| Release history | [CHANGELOG.md](CHANGELOG.md) |
 | Full architecture and orchestration paths | [Architecture](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Architecture) |
 | Token economy, conciseness, degrees of freedom | [Design Principles](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Design-Principles) |
 | Tool landscape and discovery paths | [Supported Tools](https://github.com/milanhorvatovic/skill-system-foundry/wiki/Supported-Tools) |
