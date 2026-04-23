@@ -6,6 +6,7 @@ main() CLI entry point.
 """
 
 import contextlib
+import difflib
 import io
 import json
 import os
@@ -2533,7 +2534,6 @@ class ValidateKnownKeysTests(unittest.TestCase):
         errors, passes = validate_known_keys(fm)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(info_errors), 1)
-        import difflib
         expected = difflib.get_close_matches(
             "nam", sorted(KNOWN_FRONTMATTER_KEYS)
         )
