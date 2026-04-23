@@ -223,10 +223,10 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
 
     Unrecognized keys produce INFO-level warnings to help catch
     misspellings (e.g. 'compatability' instead of 'compatibility').
-    For each unknown key, ``difflib.get_close_matches`` (with stdlib
-    defaults, ``n=3``/``cutoff=0.6``) is consulted and any hits are
-    appended in the form ``key (did you mean: a, b, c?)``. Keys with
-    no close match are emitted unchanged.
+    For each unknown key, ``difflib.get_close_matches`` is consulted
+    (``n=3``, ``cutoff=0.6``) and any hits are appended in the form
+    ``key (did you mean: a, b, c?)``. Keys with no close match are
+    emitted unchanged.
 
     Returns (errors, passes) tuple.
     """
@@ -243,7 +243,7 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
         known_sorted = sorted(KNOWN_FRONTMATTER_KEYS)
         rendered: list[str] = []
         for key in unknown_keys:
-            matches = difflib.get_close_matches(key, known_sorted)
+            matches = difflib.get_close_matches(key, known_sorted, n=3, cutoff=0.6)
             if matches:
                 rendered.append(f"{key} (did you mean: {', '.join(matches)}?)")
             else:
