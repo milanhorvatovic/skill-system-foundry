@@ -55,11 +55,16 @@ jobs:
           write_line = f"{hash_bundle(bundle_path)}  {actual_name}\n"
           with open(checksum_path, "w", encoding="utf-8") as fh:
               fh.write(write_line)
-          # Re-verify against the bundle on disk (not just the written file)
-          # so the uploaded checksum is guaranteed to match the uploaded zip,
-          # even if something perturbs either file between hashing and upload.
+          # Re-read the checksum file and re-hash the bundle so this step
+          # confirms the checksum file matches the bundle as it exists at the
+          # end of checksum generation. (A mismatch introduced after this step
+          # but before `gh release upload` would not be caught here.)
           with open(checksum_path, "r", encoding="utf-8") as fh:
-              expected_digest, expected_name = fh.readline().rstrip("\n").split("  ", 1)
+              checksum_line = fh.readline().rstrip("\n")
+          if "  " not in checksum_line:
+              print('Malformed checksum file: expected "<sha256>  <filename>"', file=sys.stderr)
+              sys.exit(1)
+          expected_digest, expected_name = checksum_line.split("  ", 1)
           if expected_name != actual_name:
               print(f"Checksum filename mismatch: {expected_name!r} vs {actual_name!r}", file=sys.stderr)
               sys.exit(1)
