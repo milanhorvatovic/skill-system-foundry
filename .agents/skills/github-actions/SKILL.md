@@ -15,7 +15,7 @@ description: >
 
 # GitHub Actions Skill
 
-Guides the creation, modification, and review of GitHub Actions workflows in the Skill System Foundry repository. Codifies the conventions established across the four existing workflows.
+Guides the creation, modification, and review of GitHub Actions workflows in the Skill System Foundry repository. Codifies the conventions established across the repository's existing workflows.
 
 ## Repository Workflows
 
@@ -23,6 +23,7 @@ Guides the creation, modification, and review of GitHub Actions workflows in the
 |---|---|---|---|
 | Tests + coverage | `python-tests.yaml` | Push to `main`, PRs | `test` (matrix), `update-badge` |
 | Shell lint | `shellcheck.yaml` | Push/PR (path-filtered to `.sh`) | `shellcheck` |
+| Action-pin verify | `verify-action-pins.yaml` | Push to `main`, PRs | `verify` |
 | Codex code review | `codex-code-review.yaml` | PR events (non-draft) | `review` (read-only), `publish` (write) |
 | Release bundle | `release.yml` | Release published | `bundle` |
 
@@ -44,6 +45,8 @@ When updating an action version:
 1. Find the new tag's commit SHA on the action's repository releases page
 2. Replace the SHA in the workflow
 3. Update the comment to reflect the new tag and version
+
+This rule is enforced by `.github/scripts/verify-action-pins.py`, which the `verify-action-pins.yaml` workflow runs on every PR and push to `main`. Any `uses:` line that is not a 40-character lowercase commit SHA (or `./local-path` / `docker://...`) fails CI. Run the script locally with `python .github/scripts/verify-action-pins.py` to check before pushing.
 
 ### Least-Privilege Permissions
 
@@ -154,7 +157,7 @@ Jobs that only run shell commands or Python scripts can rely on the GitHub defau
 
 Check these in order:
 
-1. **Are all actions SHA-pinned?** Look for any `uses:` line without a 40-character SHA
+1. **Are all actions SHA-pinned?** Enforced automatically by `verify-action-pins.yaml`; rely on the gate instead of reviewing this by eye.
 2. **Are permissions minimal?** Does the workflow request more access than it needs? Does a write permission belong at job level instead of workflow level?
 3. **Is the permission boundary maintained?** Read-only analysis and write-capable publishing should be in separate jobs
 4. **Are new environment variables validated?** Scripts called by the workflow should check `${VAR:?}` at the top
