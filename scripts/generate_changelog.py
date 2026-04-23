@@ -12,12 +12,22 @@ Usage::
 
     python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0
     python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --in-place
-    python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --dry-run
+    python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --in-place --dry-run
     python scripts/generate_changelog.py --since v1.0.2 --version 1.1.0 --date 2026-03-22
+
+Exit codes:
+
+    0   all commits were classified and output was produced
+    1   one or more commits were unmapped (human review required)
+    2   argparse usage error (invalid --version, --dry-run without --in-place)
 
 The script is repository infrastructure, not part of the meta-skill.
 It borrows the meta-skill's YAML parser via a ``sys.path`` shim to
-avoid vendoring a second copy.
+avoid vendoring a second copy.  The script also does not implement
+``--json`` (a meta-skill convention) because its output is a single
+Markdown section consumed by humans during a release, and unmapped
+commits are surfaced on stderr in a line-oriented form already
+suitable for scripting.
 """
 
 import argparse
@@ -45,6 +55,9 @@ CONFIG_PATH = os.path.join(
 
 SECTION_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security")
 
+# Accepts X.Y.Z, vX.Y.Z, and pre-release suffixes per semver 2.0.0 (e.g. 1.2.0-rc.1).
+_SEMVER_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+
 
 def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     """Return ``{verb: section}`` flattened from configuration.yaml.
@@ -52,6 +65,10 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     The YAML stores sections as keys with verb lists as values (the
     natural way to read it); this inverts to a flat lookup for O(1)
     bucketing during commit processing.
+
+    Raises ``RuntimeError`` if the YAML declares a section name that is
+    not in ``SECTION_ORDER`` — the renderer iterates ``SECTION_ORDER``
+    only, so an unknown section would silently drop its commits.
     """
     with open(config_path, "r", encoding="utf-8") as fh:
         text = fh.read()
@@ -59,6 +76,12 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     sections = config.get("changelog", {}).get("verb_mapping", {})
     flat: dict[str, str] = {}
     for section, verbs in sections.items():
+        if section not in SECTION_ORDER:
+            raise RuntimeError(
+                f"verb_mapping section {section!r} is not in SECTION_ORDER "
+                f"{SECTION_ORDER}; either add it to SECTION_ORDER or remove "
+                f"it from {config_path}."
+            )
         if not isinstance(verbs, list):
             continue
         for verb in verbs:
@@ -139,7 +162,8 @@ def classify_commits(
     """Split commits into ``{section: [subject]}`` and ``[(sha, subject)]`` unmapped.
 
     Multi-verb subjects (``Update X and add Y``) use the first word
-    only — intentional and documented in issue #105.
+    only; every commit subject in this repo already starts with a
+    verb, so the first word is the intended classifier.
     """
     buckets: dict[str, list[str]] = {s: [] for s in SECTION_ORDER}
     unmapped: list[tuple[str, str]] = []
@@ -200,9 +224,9 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
     """
     version = _extract_version(new_section)
     if version and existing:
-        duplicate_marker = f"## [{version}]"
         for line in existing.splitlines():
-            if line.startswith(duplicate_marker):
+            match = _VERSION_LINE_RE.match(line)
+            if match and match.group(1) == version:
                 raise RuntimeError(
                     f"CHANGELOG.md already contains a section for {version}; "
                     "remove it first or run without --in-place to emit to stdout."
@@ -346,17 +370,21 @@ def report_unmapped(
 
 
 def today_iso() -> str:
-    """Return today's local date as YYYY-MM-DD.
-
-    Wrapped so tests can monkey-patch ``gc.today_iso`` without having
-    to stub the full ``datetime`` module.
-    """
+    """Return today's local date as YYYY-MM-DD."""
     return datetime.date.today().isoformat()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if not _SEMVER_RE.match(args.version):
+        parser.error(
+            f"--version must be X.Y.Z or vX.Y.Z (optional -prerelease suffix); "
+            f"got {args.version!r}"
+        )
+    if args.dry_run and not args.in_place:
+        parser.error("--dry-run has no effect without --in-place")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = find_repo_root(script_dir)
@@ -378,18 +406,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.in_place:
         existing = ""
         if os.path.exists(changelog_path):
-            with open(changelog_path, "r", encoding="utf-8") as fh:
+            # newline="" preserves LF on read; we write LF explicitly below to
+            # keep CHANGELOG.md stable across OSes (Windows CI would otherwise
+            # churn the whole file to CRLF).
+            with open(changelog_path, "r", encoding="utf-8", newline="") as fh:
                 existing = fh.read()
         merged = splice_into_changelog(existing, section)
         if args.dry_run:
             sys.stdout.write(merged)
         else:
-            with open(changelog_path, "w", encoding="utf-8") as fh:
+            with open(changelog_path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(merged)
     else:
         sys.stdout.write(section)
 
-    return 0
+    return 1 if unmapped else 0
 
 
 if __name__ == "__main__":

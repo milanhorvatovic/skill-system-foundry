@@ -55,6 +55,28 @@ class LoadVerbMappingTests(unittest.TestCase):
         self.assertNotIn("Replace", mapping)
         self.assertNotIn("Bump", mapping)
 
+    def test_unknown_section_rejected(self) -> None:
+        import tempfile
+
+        bad = (
+            "changelog:\n"
+            "  verb_mapping:\n"
+            "    Bogus:\n"
+            "      - Tweak\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write(bad)
+            path = fh.name
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gc.load_verb_mapping(path)
+            self.assertIn("Bogus", str(ctx.exception))
+            self.assertIn("SECTION_ORDER", str(ctx.exception))
+        finally:
+            os.unlink(path)
+
 
 # ===================================================================
 # Classification
@@ -229,6 +251,38 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         merged = gc.splice_into_changelog(existing, NEW_SECTION)
         self.assertIn("## [1.1.0]", merged)
         self.assertIn("## [1.0.0]", merged)
+
+    def test_version_prefix_is_not_false_match(self) -> None:
+        # Existing section for 1.1.0 must NOT trip a duplicate check
+        # when the new section is for 1.1 — the two are distinct
+        # versions and the guard must compare by extracted token, not
+        # substring prefix.  (1.1 itself would be rejected by the CLI
+        # semver validator, but splice_into_changelog is tested in
+        # isolation.)
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [1.1.0] - 2026-03-22\n"
+            "\n"
+            "- Existing\n"
+        )
+        new_for_prefix = "## [1.1] - 2026-04-01\n\n### Added\n\n- Add Y\n"
+        merged = gc.splice_into_changelog(existing, new_for_prefix)
+        self.assertIn("## [1.1]", merged)
+        self.assertIn("## [1.1.0]", merged)
+
+    def test_prerelease_does_not_match_release(self) -> None:
+        # 1.1.0 is not a duplicate of 1.1.0-rc.1 — both should coexist.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [1.1.0-rc.1] - 2026-03-22\n"
+            "\n"
+            "- RC entry\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        self.assertIn("## [1.1.0]", merged)
+        self.assertIn("## [1.1.0-rc.1]", merged)
 
 
 # ===================================================================
@@ -410,13 +464,44 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("## [1.1.0]", out.getvalue())
 
-    def test_unmapped_goes_to_stderr_not_stdout(self) -> None:
+    def test_unmapped_goes_to_stderr_and_exits_non_zero(self) -> None:
         with self._patch_git([("zzz", "Replace the thing")]):
             with mock.patch("sys.stdout", new=io.StringIO()) as out, \
                  mock.patch("sys.stderr", new=io.StringIO()) as err:
-                gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
+                rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
+        self.assertEqual(rc, 1)
         self.assertIn("unmapped", err.getvalue())
         self.assertNotIn("Replace the thing", out.getvalue())
+
+    def test_invalid_version_is_rejected(self) -> None:
+        with mock.patch("sys.stderr", new=io.StringIO()) as err:
+            with self.assertRaises(SystemExit) as ctx:
+                gc.main(["--since", "v1.0.0", "--version", "latest"])
+        # argparse.error exits with code 2.
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--version", err.getvalue())
+
+    def test_invalid_version_short_form_rejected(self) -> None:
+        with mock.patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaises(SystemExit):
+                gc.main(["--since", "v1.0.0", "--version", "1.1"])
+
+    def test_prerelease_version_accepted(self) -> None:
+        with self._patch_git([("aaa", "Add X")]):
+            with mock.patch("sys.stdout", new=io.StringIO()) as out, \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0-rc.1"])
+        self.assertEqual(rc, 0)
+        self.assertIn("## [1.1.0-rc.1]", out.getvalue())
+
+    def test_dry_run_without_in_place_rejected(self) -> None:
+        with mock.patch("sys.stderr", new=io.StringIO()) as err:
+            with self.assertRaises(SystemExit) as ctx:
+                gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--dry-run",
+                ])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--dry-run", err.getvalue())
 
     def test_in_place_writes_file(self) -> None:
         import tempfile
@@ -475,6 +560,37 @@ class MainCliTests(unittest.TestCase):
             with open(changelog, "r", encoding="utf-8") as fh:
                 self.assertEqual(fh.read(), original)
             self.assertIn("## [1.1.0]", out.getvalue())
+
+    def test_in_place_write_preserves_lf_line_endings(self) -> None:
+        # On Windows, default text-mode writes convert \n to \r\n.
+        # The in-place write opens with newline="" to pin LF so the
+        # CHANGELOG.md does not churn across CI platforms.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            with open(changelog, "w", encoding="utf-8", newline="") as fh:
+                fh.write("# Changelog\n\n## [1.0.0] - 2026-01-01\n")
+
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--in-place",
+                ])
+            with open(changelog, "rb") as fh:
+                raw = fh.read()
+            self.assertNotIn(b"\r\n", raw)
+            self.assertIn(b"## [1.1.0]", raw)
 
     def test_date_override_wins(self) -> None:
         with self._patch_git([("a", "Add X")]):
