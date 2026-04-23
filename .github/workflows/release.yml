@@ -51,7 +51,24 @@ jobs:
           with open(checksum_path, "w", encoding="utf-8") as fh:
               fh.write(line)
           PY
-          (cd "$(dirname "$BUNDLE_PATH")" && sha256sum -c "$(basename "$CHECKSUM_PATH")")
+          python - "$BUNDLE_PATH" "$CHECKSUM_PATH" <<'PY'
+          import hashlib, os, sys
+          bundle_path, checksum_path = sys.argv[1], sys.argv[2]
+          with open(checksum_path, "r", encoding="utf-8") as fh:
+              expected_digest, expected_name = fh.readline().rstrip("\n").split("  ", 1)
+          actual_name = os.path.basename(bundle_path)
+          if expected_name != actual_name:
+              print(f"Checksum filename mismatch: expected {expected_name!r}, got {actual_name!r}", file=sys.stderr)
+              sys.exit(1)
+          digest = hashlib.sha256()
+          with open(bundle_path, "rb") as fh:
+              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          if digest.hexdigest() != expected_digest:
+              print(f"Checksum mismatch: expected {expected_digest}, got {digest.hexdigest()}", file=sys.stderr)
+              sys.exit(1)
+          print(f"{actual_name}: OK")
+          PY
           echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
 
       - name: Upload release asset
