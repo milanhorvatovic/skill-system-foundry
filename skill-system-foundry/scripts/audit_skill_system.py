@@ -117,9 +117,12 @@ def check_version_consistency(system_root: str) -> list[str]:
     """Assert SKILL.md, plugin.json, and marketplace.json agree on version.
 
     The rule is a pre-loop, repo-level check — it runs once before the
-    per-skill audit and is gated by the presence of
-    ``.claude-plugin/plugin.json`` so integrator skill systems (which do
-    not ship the plugin manifest) are unaffected.
+    per-skill audit.  It is gated on the presence of **both**
+    ``.claude-plugin/plugin.json`` *and* ``skill-system-foundry/SKILL.md``
+    under the audit root, so it only fires for the foundry distribution
+    repository itself.  Integrator skill systems that ship their own
+    Claude plugin manifest (and therefore have ``.claude-plugin/plugin.json``)
+    but lay out their canonical SKILL.md elsewhere are unaffected.
 
     Canonical source is ``skill-system-foundry/SKILL.md`` →
     ``metadata.version``.  The rule emits one FAIL finding per file that
@@ -128,7 +131,10 @@ def check_version_consistency(system_root: str) -> list[str]:
     three agree.
     """
     plugin_path = os.path.join(system_root, ".claude-plugin", "plugin.json")
-    if not os.path.exists(plugin_path):
+    foundry_skill_path = os.path.join(
+        system_root, "skill-system-foundry", FILE_SKILL_MD
+    )
+    if not (os.path.exists(plugin_path) and os.path.exists(foundry_skill_path)):
         return []
 
     findings: list[str] = []

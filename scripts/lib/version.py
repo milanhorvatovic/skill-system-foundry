@@ -272,6 +272,16 @@ def _plan_json_version_edit(
 ) -> str:
     """Replace a ``"version": "<current>"`` line with *new*.
 
+    **Formatting contract.**  This helper edits the file as text — it
+    does not parse and re-emit JSON, so file shape (key order,
+    indentation, trailing newline) is preserved verbatim.  In return it
+    requires the manifest to be **pretty-printed** with the
+    ``"version"`` key on its own indented line.  A compact one-line JSON
+    document will pass JSON validation and the precondition read but
+    fail the planner with a ``ValueError`` — reformat the manifest or
+    use a structural JSON editor instead.  All foundry-shipped
+    manifests follow the pretty-printed convention.
+
     The anchored pattern targets an indented key at any depth but refuses to
     run unless exactly one line matches.  *label* is used only in error
     messages so the caller's ``ValueError`` is actionable.
@@ -285,7 +295,9 @@ def _plan_json_version_edit(
     if len(matches) != 1:
         raise ValueError(
             f"expected exactly one '\"version\": \"{current}\"' line in "
-            f"{label}, found {len(matches)}"
+            f"{label}, found {len(matches)} (the planner requires a "
+            "pretty-printed JSON manifest with the version key on its "
+            "own line)"
         )
     return pattern.sub(
         lambda m: f"{m.group('prefix')}{new}{m.group('suffix')}",
@@ -314,12 +326,15 @@ def plan_marketplace_json_edit(content: str, current: str, new: str) -> str:
 
 
 def skill_md_path(repo_root: str) -> str:
+    """Return the path to ``skill-system-foundry/SKILL.md`` under *repo_root*."""
     return os.path.join(repo_root, "skill-system-foundry", "SKILL.md")
 
 
 def plugin_json_path(repo_root: str) -> str:
+    """Return the path to ``.claude-plugin/plugin.json`` under *repo_root*."""
     return os.path.join(repo_root, ".claude-plugin", "plugin.json")
 
 
 def marketplace_json_path(repo_root: str) -> str:
+    """Return the path to ``.claude-plugin/marketplace.json`` under *repo_root*."""
     return os.path.join(repo_root, ".claude-plugin", "marketplace.json")

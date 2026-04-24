@@ -150,7 +150,7 @@ python scripts/audit_skill_system.py .
 
 The `--allow-nested-references` flag is needed because this meta-skill intentionally uses nested references. One warning about a missing `skills/` directory from the audit is expected in this distribution repository.
 
-The version-consistency rule in `audit_skill_system.py` (which compares `SKILL.md`, `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`) only fires when the audit root contains `.claude-plugin/plugin.json`. The `cd skill-system-foundry` invocation above therefore skips that rule by design — it is a repo-level check, not a skill-level check. To include it, run the audit from the repo root:
+The version-consistency rule in `audit_skill_system.py` (which compares `SKILL.md`, `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`) only fires when the audit root contains both `.claude-plugin/plugin.json` and `skill-system-foundry/SKILL.md` — the gate keeps the rule scoped to the foundry distribution repository so integrator skill systems that ship their own Claude plugin manifest are unaffected. The `cd skill-system-foundry` invocation above therefore skips that rule by design — it is a repo-level check, not a skill-level check. To include it, run the audit from the repo root:
 
 ```bash
 python skill-system-foundry/scripts/audit_skill_system.py .

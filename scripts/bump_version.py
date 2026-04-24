@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Atomically bump the version across SKILL.md, plugin.json, and marketplace.json.
+"""Bump the version across SKILL.md, plugin.json, and marketplace.json in lockstep.
+
+Each file is replaced via ``os.replace`` so the swap is atomic *per file*,
+but the set of three is **not** transactional: a failure between the
+first and last swap leaves the manifests inconsistent on disk and the
+script reports that drift via ``EXIT_PARTIAL_WRITE``.  Treat this as a
+best-effort lockstep bump, not a cross-file atomic transaction.
 
 The three files are the single source of truth for the release version.
 ``audit_skill_system.py`` enforces that they agree; this script is the
@@ -53,6 +59,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -136,7 +143,7 @@ class ManifestReadError(Exception):
     """
 
 
-def _safe_read(label: str, fn) -> str | None:
+def _safe_read(label: str, fn: Callable[[], str | None]) -> str | None:
     """Run *fn* and translate ``OSError``/``json.JSONDecodeError`` to
     :class:`ManifestReadError` with a *label* prefix.
     """
@@ -151,7 +158,12 @@ def read_all_versions(repo_root: str) -> dict[str, str | None]:
 
     Raises :class:`ManifestReadError` when any manifest is missing,
     unreadable, or contains invalid JSON / frontmatter — operator-facing
-    precondition failures that ``main()`` maps to ``EXIT_DRIFT``.
+    precondition failures that ``main()`` maps to ``EXIT_DRIFT``.  An
+    empty or missing top-level ``"name"`` in ``plugin.json`` is also a
+    precondition failure: without a name the script cannot match the
+    plugin entry inside ``marketplace.json``, and silently skipping that
+    read would surface downstream as a misleading "marketplace.json"
+    error.
     """
     skill_path = _version.skill_md_path(repo_root)
     plugin_path = _version.plugin_json_path(repo_root)
@@ -159,6 +171,11 @@ def read_all_versions(repo_root: str) -> dict[str, str | None]:
     plugin_name = _safe_read(
         "plugin.json", lambda: _version.read_plugin_name(plugin_path)
     )
+    if not plugin_name:
+        raise ManifestReadError(
+            "plugin.json: missing or empty 'name' — cannot match the "
+            "plugin entry in marketplace.json"
+        )
     return {
         "SKILL.md": _safe_read(
             "SKILL.md", lambda: _version.read_skill_md_version(skill_path)
@@ -166,15 +183,11 @@ def read_all_versions(repo_root: str) -> dict[str, str | None]:
         "plugin.json": _safe_read(
             "plugin.json", lambda: _version.read_plugin_json_version(plugin_path)
         ),
-        "marketplace.json": (
-            _safe_read(
-                "marketplace.json",
-                lambda: _version.read_marketplace_json_version(
-                    market_path, plugin_name
-                ),
-            )
-            if plugin_name
-            else None
+        "marketplace.json": _safe_read(
+            "marketplace.json",
+            lambda: _version.read_marketplace_json_version(
+                market_path, plugin_name
+            ),
         ),
     }
 

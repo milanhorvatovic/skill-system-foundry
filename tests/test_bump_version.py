@@ -506,6 +506,28 @@ class MalformedManifestTests(unittest.TestCase):
             self.assertEqual(rc, bump_version.EXIT_DRIFT)
             self.assertIn("marketplace.json", err)
 
+    def test_missing_plugin_name_surfaces_as_precondition(self) -> None:
+        """An empty/missing plugin name must surface as plugin.json error.
+
+        Previously the marketplace read was silently skipped when
+        ``plugin_name`` was falsy, which then surfaced as a misleading
+        "could not read marketplace.json" finding.  The real precondition
+        failure is the missing name in plugin.json.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            with open(
+                os.path.join(repo, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{\n  "version": "1.1.0"\n}\n')
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, err = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_DRIFT)
+            self.assertIn("plugin.json", err)
+            self.assertIn("missing or empty 'name'", err)
+
 
 class ArgparseExitTests(unittest.TestCase):
     """``main()`` must return an int even when argparse exits."""

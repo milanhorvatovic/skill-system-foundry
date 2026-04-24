@@ -1652,7 +1652,13 @@ class CheckVersionConsistencyTests(unittest.TestCase):
             self.assertIn("plugin.json=1.2.0", findings[0])
             self.assertIn("marketplace.json=1.3.0", findings[0])
 
-    def test_fails_when_skill_md_missing(self) -> None:
+    def test_skipped_when_foundry_skill_md_missing(self) -> None:
+        """An integrator skill system with its own plugin manifest but no
+        ``skill-system-foundry/SKILL.md`` must not trigger the rule.
+
+        The gate requires both files to exist so the audit only fires for
+        the foundry distribution repository itself.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, ".claude-plugin"))
             with open(
@@ -1669,9 +1675,7 @@ class CheckVersionConsistencyTests(unittest.TestCase):
                 fh.write(
                     '{"plugins":[{"name":"demo","version":"1.1.0"}]}'
                 )
-            findings = check_version_consistency(tmp)
-            self.assertTrue(findings)
-            self.assertTrue(any("SKILL.md" in f for f in findings))
+            self.assertEqual(check_version_consistency(tmp), [])
 
     def test_fails_on_malformed_plugin_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

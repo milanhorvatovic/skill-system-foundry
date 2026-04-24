@@ -305,6 +305,15 @@ class PlanPluginJsonEditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             version.plan_plugin_json_edit(content, "1.1.0", "1.2.0")
 
+    def test_rejects_compact_json_with_pretty_format_hint(self) -> None:
+        # A compact one-line JSON document is valid JSON but the planner
+        # cannot anchor on it — surface the formatting contract in the
+        # error message so the operator knows how to recover.
+        content = '{"name":"demo","version":"1.1.0"}\n'
+        with self.assertRaises(ValueError) as ctx:
+            version.plan_plugin_json_edit(content, "1.1.0", "1.2.0")
+        self.assertIn("pretty-printed", str(ctx.exception))
+
 
 class PlanMarketplaceJsonEditTests(unittest.TestCase):
     def test_replaces_nested_version(self) -> None:
