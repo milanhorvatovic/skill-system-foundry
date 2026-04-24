@@ -181,6 +181,15 @@ class ReadSkillMdVersionTests(unittest.TestCase):
                 fh.write("# Title only\n")
             self.assertIsNone(version.read_skill_md_version(path))
 
+    def test_returns_none_for_malformed_opening_delimiter(self) -> None:
+        # ``---oops\n`` must not be treated as an opener — the line-wise
+        # check rejects anything other than ``---`` on the first line.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "SKILL.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("---oops\nmetadata:\n  version: 1.0.0\n---\n")
+            self.assertIsNone(version.read_skill_md_version(path))
+
     def test_returns_none_when_metadata_missing_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "SKILL.md")
@@ -271,6 +280,15 @@ class PlanSkillMdEditTests(unittest.TestCase):
                 "---\nname: x\nmetadata:\n  version: 1.0.0\n", "1.0.0", "1.1.0"
             )
 
+    def test_rejects_malformed_opening_delimiter(self) -> None:
+        # ``---oops`` on the first line must not pass for a frontmatter
+        # opener; the line-wise opener check rejects it instead of
+        # treating the body as YAML.
+        bad = "---oops\nmetadata:\n  version: 1.0.0\n---\n"
+        with self.assertRaises(ValueError) as ctx:
+            version.plan_skill_md_edit(bad, "1.0.0", "1.1.0")
+        self.assertIn("missing opening", str(ctx.exception))
+
     def test_plans_quoted_version_and_preserves_quote_style(self) -> None:
         # ``read_skill_md_version`` strips matched surrounding quotes, so a
         # quoted manifest must round-trip through the planner — preserving
@@ -314,11 +332,35 @@ class PlanPluginJsonEditTests(unittest.TestCase):
             version.plan_plugin_json_edit(content, "1.1.0", "1.2.0")
         self.assertIn("pretty-printed", str(ctx.exception))
 
+    def test_refuses_when_top_level_version_is_compact(self) -> None:
+        # Top-level version is compact (and therefore not edited by the
+        # text regex), but a nested object has a pretty-printed
+        # ``"version"`` line at the same value.  The text regex would
+        # silently update the wrong field; the structural post-check
+        # must raise instead.
+        content = (
+            '{"version":"1.1.0",\n'
+            '  "sidecar": {\n'
+            '    "version": "1.1.0"\n'
+            '  }\n'
+            '}\n'
+        )
+        with self.assertRaises(ValueError) as ctx:
+            version.plan_plugin_json_edit(content, "1.1.0", "1.2.0")
+        msg = str(ctx.exception)
+        # The first failure may be the text regex (1 match → success path)
+        # caught by the post-check, OR the post-check itself.  Either
+        # way the canonical top-level version is left unchanged.
+        self.assertTrue(
+            "top-level" in msg or "pretty-printed" in msg,
+            f"unexpected error message: {msg}",
+        )
+
 
 class PlanMarketplaceJsonEditTests(unittest.TestCase):
     def test_replaces_nested_version(self) -> None:
         out = version.plan_marketplace_json_edit(
-            SAMPLE_MARKETPLACE_JSON, "1.1.0", "1.2.0"
+            SAMPLE_MARKETPLACE_JSON, "1.1.0", "1.2.0", "example"
         )
         self.assertIn('"version": "1.2.0"', out)
         self.assertIn("version-tag-in-tag", out)
@@ -326,8 +368,33 @@ class PlanMarketplaceJsonEditTests(unittest.TestCase):
     def test_rejects_missing_current(self) -> None:
         with self.assertRaises(ValueError):
             version.plan_marketplace_json_edit(
-                SAMPLE_MARKETPLACE_JSON, "9.9.9", "1.2.0"
+                SAMPLE_MARKETPLACE_JSON, "9.9.9", "1.2.0", "example"
             )
+
+    def test_refuses_when_named_plugin_not_updated(self) -> None:
+        # If the regex matches a "version" line in the wrong plugin (e.g.,
+        # because the named plugin's version is in a non-supported
+        # format), the post-sub structural check must fail rather than
+        # silently corrupting the file.
+        content = (
+            '{\n'
+            '  "plugins": [\n'
+            '    {\n'
+            '      "name": "example",\n'
+            '      "version": "1.1.0"\n'
+            '    },\n'
+            '    {\n'
+            '      "name": "other",\n'
+            '      "version": "1.1.0"\n'
+            '    }\n'
+            '  ]\n'
+            '}\n'
+        )
+        # Two matching lines exist → planner already rejects via
+        # "found 2" ValueError.  Verify the message.
+        with self.assertRaises(ValueError) as ctx:
+            version.plan_marketplace_json_edit(content, "1.1.0", "1.2.0", "example")
+        self.assertIn("found 2", str(ctx.exception))
 
 
 # ===================================================================

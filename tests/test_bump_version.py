@@ -541,6 +541,35 @@ class ArgparseExitTests(unittest.TestCase):
         self.assertEqual(rc, bump_version.EXIT_OK)
 
 
+class TempFileSafetyTests(unittest.TestCase):
+    """``commit_writes`` must not clobber pre-existing sibling files."""
+
+    def test_pre_existing_dot_tmp_is_preserved(self) -> None:
+        """A maintainer's adjacent ``.tmp`` artifact must survive a bump.
+
+        Earlier versions of ``commit_writes`` staged through a
+        deterministic ``<target>.tmp`` path, which would truncate any
+        pre-existing file at that name and then remove it during
+        cleanup.  Use ``tempfile.mkstemp`` for unique sibling names.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            # Plant a file at the deterministic name an earlier version
+            # would have used; it must still exist with its original
+            # content after the bump.
+            sentinel = os.path.join(
+                repo, ".claude-plugin", "plugin.json.tmp"
+            )
+            with open(sentinel, "w", encoding="utf-8") as fh:
+                fh.write("MAINTAINER ARTIFACT — DO NOT TOUCH")
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, _ = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_OK)
+            self.assertTrue(os.path.exists(sentinel))
+            with open(sentinel, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "MAINTAINER ARTIFACT — DO NOT TOUCH")
+
+
 class HeadShaTests(unittest.TestCase):
     def test_returns_none_outside_git(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -59,6 +59,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -153,17 +154,25 @@ def _safe_read(label: str, fn: Callable[[], str | None]) -> str | None:
         raise ManifestReadError(f"{label}: {exc}") from exc
 
 
-def read_all_versions(repo_root: str) -> dict[str, str | None]:
-    """Return current version from each of the three manifest files.
+def read_all_versions(repo_root: str) -> tuple[dict[str, str | None], str]:
+    """Return ``(versions, plugin_name)`` for the three manifest files.
 
-    Raises :class:`ManifestReadError` when any manifest is missing,
-    unreadable, or contains invalid JSON / frontmatter — operator-facing
-    precondition failures that ``main()`` maps to ``EXIT_DRIFT``.  An
-    empty or missing top-level ``"name"`` in ``plugin.json`` is also a
-    precondition failure: without a name the script cannot match the
-    plugin entry inside ``marketplace.json``, and silently skipping that
-    read would surface downstream as a misleading "marketplace.json"
-    error.
+    *versions* maps each manifest filename to its currently declared
+    version, or ``None`` when the version field itself is missing or
+    cannot be parsed (the audit/drift logic in ``main`` treats ``None``
+    as drift).  *plugin_name* is the top-level ``"name"`` from
+    ``plugin.json``; it is needed downstream by :func:`plan_writes` to
+    bind the marketplace edit to the correct plugin entry.
+
+    Raises :class:`ManifestReadError` only on precondition failures
+    that ``main()`` maps to ``EXIT_DRIFT``: an ``OSError`` reading a
+    manifest, a ``json.JSONDecodeError`` parsing a JSON manifest, or a
+    missing/empty top-level ``"name"`` in ``plugin.json`` (without it
+    the script cannot match the marketplace plugin entry, so silently
+    skipping that read would surface as a misleading
+    "marketplace.json" error).  A malformed or missing SKILL.md
+    frontmatter is **not** raised here — the version reader returns
+    ``None`` and the caller treats the absence as drift.
     """
     skill_path = _version.skill_md_path(repo_root)
     plugin_path = _version.plugin_json_path(repo_root)
@@ -176,7 +185,7 @@ def read_all_versions(repo_root: str) -> dict[str, str | None]:
             "plugin.json: missing or empty 'name' — cannot match the "
             "plugin entry in marketplace.json"
         )
-    return {
+    versions: dict[str, str | None] = {
         "SKILL.md": _safe_read(
             "SKILL.md", lambda: _version.read_skill_md_version(skill_path)
         ),
@@ -190,18 +199,21 @@ def read_all_versions(repo_root: str) -> dict[str, str | None]:
             ),
         ),
     }
+    return versions, plugin_name
 
 
 def plan_writes(
-    repo_root: str, current: str, new: str
+    repo_root: str, current: str, new: str, plugin_name: str
 ) -> list[tuple[str, str]]:
     """Return ``[(path, new_content)]`` for every manifest file.
 
     Raises ``ValueError`` when any anchored regex does not match exactly
-    once — the caller maps that to exit 5.  Raises
-    :class:`ManifestReadError` when a manifest cannot be read so the
-    caller can surface that as a precondition failure (``EXIT_DRIFT``)
-    rather than a stack trace.
+    once or when post-substitution structural verification fails — the
+    caller maps that to exit 5.  Raises :class:`ManifestReadError` when
+    a manifest cannot be read so the caller can surface that as a
+    precondition failure (``EXIT_DRIFT``) rather than a stack trace.
+    *plugin_name* is the name read from ``plugin.json`` and is used to
+    bind the marketplace edit to the matching plugin entry.
     """
     skill_path = _version.skill_md_path(repo_root)
     plugin_path = _version.plugin_json_path(repo_root)
@@ -221,7 +233,12 @@ def plan_writes(
     return [
         (skill_path, _version.plan_skill_md_edit(skill_content, current, new)),
         (plugin_path, _version.plan_plugin_json_edit(plugin_content, current, new)),
-        (market_path, _version.plan_marketplace_json_edit(market_content, current, new)),
+        (
+            market_path,
+            _version.plan_marketplace_json_edit(
+                market_content, current, new, plugin_name
+            ),
+        ),
     ]
 
 
@@ -242,29 +259,45 @@ class PartialWriteError(OSError):
 
 
 def commit_writes(writes: list[tuple[str, str]]) -> None:
-    """Replace each target via an adjacent ``.tmp`` using ``os.replace``.
+    """Replace each target via a unique sibling temp file using ``os.replace``.
 
     Each ``os.replace`` is atomic per file, but the set as a whole is
-    not transactional.  Phase 1 stages every ``.tmp`` on disk; phase 2
+    not transactional.  Phase 1 stages every temp file on disk; phase 2
     swaps them into place one at a time.  If phase 1 fails, no target
-    has been touched — the stale ``.tmp`` files are cleaned up.  If
-    phase 2 fails partway through, earlier files already carry the new
+    has been touched — the staged temp files are cleaned up.  If phase
+    2 fails partway through, earlier files already carry the new
     version while later ones still carry the old; that is drift, and
     we raise :class:`PartialWriteError` so the caller can tell the
     operator exactly which files need manual reconciliation.
+
+    Temp files are created with :func:`tempfile.mkstemp` in the same
+    directory as their target so ``os.replace`` is a same-filesystem
+    rename.  Using a unique name (rather than an adjacent
+    deterministic ``.tmp`` suffix) avoids clobbering any pre-existing
+    file at that path — the bump must not collateral-damage stale
+    diagnostic artifacts or unrelated files a maintainer left behind.
     """
     tmp_paths: list[str] = []
     swapped: list[str] = []
     try:
         for path, content in writes:
-            tmp = path + ".tmp"
-            # Default text-mode newline translation is intentional: the
-            # planners produce ``\n`` in memory (because the readers used
-            # default text mode), and we want the writer to translate
-            # back to the platform's native line ending — preserving
-            # CRLF working trees on Windows that get LF in git.  Using
-            # ``newline=""`` here would force LF on Windows and
-            # unintentionally rewrite the manifests.
+            target_dir = os.path.dirname(path) or "."
+            target_base = os.path.basename(path)
+            # mkstemp returns an open fd; close it before reopening in
+            # text mode so the writer applies our encoding/newline
+            # behavior.  Default text-mode newline translation is
+            # intentional: the planners produce ``\n`` in memory
+            # (because the readers used default text mode) and we want
+            # the writer to translate back to the platform's native line
+            # ending — preserving CRLF working trees on Windows that get
+            # LF in git.  Using ``newline=""`` here would force LF on
+            # Windows and unintentionally rewrite the manifests.
+            fd, tmp = tempfile.mkstemp(
+                prefix=target_base + ".",
+                suffix=".tmp",
+                dir=target_dir,
+            )
+            os.close(fd)
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(content)
             tmp_paths.append(tmp)
@@ -395,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Precondition: all three files already agree.
     try:
-        versions = read_all_versions(repo_root)
+        versions, plugin_name = read_all_versions(repo_root)
     except ManifestReadError as exc:
         print(
             f"error: cannot read manifest files — {exc}; fix the manifest "
@@ -447,7 +480,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Plan the file edits.
     try:
-        writes = plan_writes(repo_root, current, new_version)
+        writes = plan_writes(repo_root, current, new_version, plugin_name)
     except ManifestReadError as exc:
         print(
             f"error: cannot read manifest files — {exc}; fix the manifest "

@@ -112,23 +112,26 @@ def compare(a: str, b: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+_FRONTMATTER_OPEN_RE = re.compile(r"\A---\s*(?:\r\n|\r|\n)")
+
+
 def _extract_frontmatter(content: str) -> str | None:
     """Return the YAML frontmatter block of *content*, or ``None`` when absent.
 
-    A frontmatter block opens with ``---`` on the first line and closes on
-    the next line that is exactly ``---`` (trailing whitespace allowed).
+    A frontmatter block opens when the first line is exactly ``---``
+    (trailing whitespace allowed) and closes on the next line that is
+    exactly ``---`` (trailing whitespace allowed).  ``startswith('---')``
+    alone would also match malformed inputs like ``---oops``, so the
+    opener is checked line-wise.
     """
-    if not content.startswith("---"):
+    open_match = _FRONTMATTER_OPEN_RE.match(content)
+    if open_match is None:
         return None
-    first_newline = content.find("\n")
-    if first_newline < 0:
-        return None
-    close_match = re.search(
-        r"^---\s*$", content[first_newline + 1:], re.MULTILINE
-    )
+    fm_start = open_match.end()
+    close_match = re.search(r"^---\s*$", content[fm_start:], re.MULTILINE)
     if close_match is None:
         return None
-    return content[first_newline + 1:first_newline + 1 + close_match.start()]
+    return content[fm_start:fm_start + close_match.start()]
 
 
 def _strip_yaml_scalar_quotes(value: str) -> str:
@@ -224,19 +227,19 @@ def plan_skill_md_edit(content: str, current: str, new: str) -> str:
 
     Edits are restricted to the frontmatter block so a stray ``version:`` line
     in the body cannot be rewritten.  Raises ``ValueError`` when the
-    anchored pattern does not match exactly once.
+    opening delimiter is malformed, when the frontmatter is unterminated,
+    or when the anchored version pattern does not match exactly once.
+    The opener check is line-wise (matching ``_FRONTMATTER_OPEN_RE``) so
+    inputs that begin with ``---oops`` are rejected rather than treated
+    as frontmatter.
     """
-    if not content.startswith("---"):
+    open_match = _FRONTMATTER_OPEN_RE.match(content)
+    if open_match is None:
         raise ValueError("SKILL.md missing opening '---' frontmatter delimiter")
-    first_newline = content.find("\n")
-    if first_newline < 0:
-        raise ValueError("SKILL.md frontmatter is truncated")
-    close_match = re.search(
-        r"^---\s*$", content[first_newline + 1:], re.MULTILINE
-    )
+    fm_start = open_match.end()
+    close_match = re.search(r"^---\s*$", content[fm_start:], re.MULTILINE)
     if close_match is None:
         raise ValueError("SKILL.md frontmatter is not terminated")
-    fm_start = first_newline + 1
     fm_end = fm_start + close_match.start()
     frontmatter = content[fm_start:fm_end]
 
@@ -307,17 +310,61 @@ def _plan_json_version_edit(
 
 
 def plan_plugin_json_edit(content: str, current: str, new: str) -> str:
-    """Return *content* of plugin.json with ``version`` changed to *new*."""
-    return _plan_json_version_edit(content, current, new, "plugin.json")
+    """Return *content* of plugin.json with the **top-level** ``version`` set to *new*.
 
-
-def plan_marketplace_json_edit(content: str, current: str, new: str) -> str:
-    """Return *content* of marketplace.json with the plugin ``version`` set to *new*.
-
-    The marketplace file is expected to contain exactly one plugin entry
-    whose version matches *current*; the single-match guard enforces that.
+    The text-level regex is followed by a structural verification step:
+    after substitution, the result is reparsed and the top-level
+    ``"version"`` field must equal *new*.  This catches the otherwise
+    silent failure mode where a compact top-level version coexists with
+    a pretty-printed nested ``"version"`` line — the regex would match
+    the nested line and report success while leaving the canonical
+    top-level field untouched.
     """
-    return _plan_json_version_edit(content, current, new, "marketplace.json")
+    result = _plan_json_version_edit(content, current, new, "plugin.json")
+    parsed = json.loads(result)
+    if not isinstance(parsed, dict) or parsed.get("version") != new:
+        raise ValueError(
+            "plugin.json: planner did not update the top-level "
+            "'version' field — the manifest must be pretty-printed "
+            "with the canonical top-level version key on its own "
+            "indented line"
+        )
+    return result
+
+
+def plan_marketplace_json_edit(
+    content: str, current: str, new: str, plugin_name: str
+) -> str:
+    """Return *content* of marketplace.json with the matching plugin's ``version`` set to *new*.
+
+    The matching plugin entry is identified by *plugin_name* (the same
+    convention used by :func:`read_marketplace_json_version`).  After
+    the text-level regex substitution, the result is reparsed and the
+    plugin entry whose ``"name"`` equals *plugin_name* must carry the
+    new version — otherwise the regex matched an unrelated nested
+    ``"version"`` line (e.g., inside a different plugin entry or a
+    sidecar object) and we refuse rather than silently corrupting the
+    file.
+    """
+    result = _plan_json_version_edit(content, current, new, "marketplace.json")
+    parsed = json.loads(result)
+    plugins = parsed.get("plugins") if isinstance(parsed, dict) else None
+    target_version: str | None = None
+    if isinstance(plugins, list):
+        for entry in plugins:
+            if isinstance(entry, dict) and entry.get("name") == plugin_name:
+                value = entry.get("version")
+                if isinstance(value, str):
+                    target_version = value
+                break
+    if target_version != new:
+        raise ValueError(
+            f"marketplace.json: planner did not update the version of "
+            f"the plugin entry named {plugin_name!r} — the manifest "
+            "must be pretty-printed with the matching plugin's version "
+            "key on its own indented line"
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------

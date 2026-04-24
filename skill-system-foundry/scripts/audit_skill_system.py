@@ -174,6 +174,15 @@ def check_version_consistency(system_root: str) -> list[str]:
         name_value = plugin_data.get("name")
         if isinstance(name_value, str):
             plugin_name = name_value
+        else:
+            # Surface the root cause at plugin.json — the marketplace
+            # lookup further down would otherwise emit a "name is
+            # unavailable" finding without pointing the operator at the
+            # file that actually needs editing.
+            findings.append(
+                f"{LEVEL_FAIL}: version drift — plugin.json: "
+                f"top-level 'name' is missing or not a string"
+            )
 
     # marketplace.json
     marketplace_version: str | None = None
