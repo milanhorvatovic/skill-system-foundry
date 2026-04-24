@@ -40,7 +40,10 @@ Exit codes:
         not inside a git repository, argparse error)
     3   precondition failed (the three manifest files already disagree)
     4   changelog generator probe or write failed
-    5   plan failed (regex matched zero or multiple times in a file)
+    5   plan failed (regex matched zero or multiple times) OR the first
+        write raised before any file was swapped (no drift introduced)
+    6   partial write — at least one file was swapped before the failure,
+        so version drift is now present on disk and must be reconciled
 """
 
 import argparse
@@ -71,6 +74,7 @@ EXIT_INVALID_INPUT = 2
 EXIT_DRIFT = 3
 EXIT_CHANGELOG_FAILED = 4
 EXIT_PLAN_FAILED = 5
+EXIT_PARTIAL_WRITE = 6
 
 GENERATOR_SCRIPT = os.path.join(_SCRIPTS_DIR, "generate_changelog.py")
 
@@ -402,6 +406,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         commit_writes(writes)
     except PartialWriteError as exc:
+        if not exc.swapped:
+            # The first write failed before any file was swapped; no drift.
+            print(f"error: write failed: {exc.cause}", file=sys.stderr)
+            return EXIT_PLAN_FAILED
         print(
             f"error: partial write — {exc.cause}.  Version drift is now "
             "present on disk and must be reconciled manually:",
@@ -413,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in exc.remaining:
             rel = os.path.relpath(path, repo_root)
             print(f"  still at  {current}: {rel}", file=sys.stderr)
-        return EXIT_PLAN_FAILED
+        return EXIT_PARTIAL_WRITE
     except OSError as exc:
         print(f"error: write failed: {exc}", file=sys.stderr)
         return EXIT_PLAN_FAILED

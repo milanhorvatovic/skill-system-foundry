@@ -450,10 +450,28 @@ class PartialWriteTests(unittest.TestCase):
                 rc, _, err = _invoke(
                     ["1.2.0"], cwd=repo, generator_stub_path=gen
                 )
-            self.assertEqual(rc, bump_version.EXIT_PLAN_FAILED)
+            self.assertEqual(rc, bump_version.EXIT_PARTIAL_WRITE)
             self.assertIn("partial write", err)
             self.assertIn("swapped to 1.2.0", err)
             self.assertIn("still at  1.1.0", err)
+
+    def test_first_write_failure_is_not_partial(self) -> None:
+        """A failure before any swap is a plain write failure — no drift."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+
+            def fail_every_call(src: str, dst: str) -> None:
+                raise OSError(13, "simulated phase-2 failure")
+
+            with mock.patch.object(bump_version.os, "replace", side_effect=fail_every_call):
+                rc, _, err = _invoke(
+                    ["1.2.0"], cwd=repo, generator_stub_path=gen
+                )
+            self.assertEqual(rc, bump_version.EXIT_PLAN_FAILED)
+            self.assertIn("write failed", err)
+            self.assertNotIn("partial write", err)
+            self.assertNotIn("drift is now present", err)
 
 
 # ===================================================================
