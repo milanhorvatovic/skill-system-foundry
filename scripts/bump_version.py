@@ -79,6 +79,16 @@ EXIT_PARTIAL_WRITE = 6
 GENERATOR_SCRIPT = os.path.join(_SCRIPTS_DIR, "generate_changelog.py")
 
 
+def _display_path(path: str, repo_root: str) -> str:
+    """Return *path* relative to *repo_root* with forward-slash separators.
+
+    Operator-facing output should not depend on the OS the bump ran on —
+    tests assert against the forward-slash form and maintainers copy-paste
+    these paths between Windows and POSIX shells.
+    """
+    return os.path.relpath(path, repo_root).replace(os.sep, "/")
+
+
 def find_repo_root(start: str) -> str | None:
     """Walk upward from *start* until a ``.git`` entry is found.
 
@@ -392,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(f"Planned bump: {current} → {new_version}")
         for path, _ in writes:
-            rel = os.path.relpath(path, repo_root)
+            rel = _display_path(path, repo_root)
             print(f"  would update {rel}: {current} → {new_version}")
         if changelog_exists:
             print()
@@ -416,10 +426,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         for path in exc.swapped:
-            rel = os.path.relpath(path, repo_root)
+            rel = _display_path(path, repo_root)
             print(f"  swapped to {new_version}: {rel}", file=sys.stderr)
         for path in exc.remaining:
-            rel = os.path.relpath(path, repo_root)
+            rel = _display_path(path, repo_root)
             print(f"  still at  {current}: {rel}", file=sys.stderr)
         return EXIT_PARTIAL_WRITE
     except OSError as exc:
@@ -449,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Bumped version: {current} → {new_version}")
     for path, _ in writes:
-        rel = os.path.relpath(path, repo_root)
+        rel = _display_path(path, repo_root)
         print(f"  updated {rel}")
     if changelog_exists:
         print("  updated CHANGELOG.md")
