@@ -484,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--in-place",
         action="store_true",
-        help="Splice the generated section into CHANGELOG.md at the repo root, directly after the H1 heading.",
+        help="Splice the generated section into CHANGELOG.md at the repo root, above the most recent release section (below any preamble).",
     )
     parser.add_argument(
         "--dry-run",
@@ -603,11 +603,12 @@ def main(argv: list[str] | None = None) -> int:
             # (not 2) because the underlying condition — unmapped commits
             # — is the same "needs human classification" signal the stdout
             # and --dry-run paths already surface with 3.
-            sys.stderr.write(
+            _write_preserving_lf(
                 f"error: refusing to write CHANGELOG.md with {len(unmapped)} "
                 "unmapped commit(s); classify them in scripts/lib/changelog.yaml "
                 "(or rewrite the commit subjects) and re-run.  Use "
-                "--in-place --dry-run to preview the partial output.\n"
+                "--in-place --dry-run to preview the partial output.\n",
+                sys.stderr,
             )
             return 3
 
@@ -631,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
         # OSError covers FileNotFoundError and PermissionError from
         # reading/writing CHANGELOG.md; ValueError: parse_yaml_subset
         # raises on unsupported YAML grammar.
-        sys.stderr.write(f"error: {exc}\n")
+        _write_preserving_lf(f"error: {exc}\n", sys.stderr)
         return 2
 
     return 3 if unmapped else 0
