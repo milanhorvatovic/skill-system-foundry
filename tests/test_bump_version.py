@@ -183,7 +183,10 @@ class InputValidationTests(unittest.TestCase):
             gen = os.path.join(repo, "scripts", "generate_changelog.py")
             rc, _, err = _invoke(["v1.2.0"], cwd=repo, generator_stub_path=gen)
             self.assertEqual(rc, bump_version.EXIT_INVALID_INPUT)
-            self.assertIn("must be X.Y.Z", err)
+            # The targeted v/+build check runs first so the operator
+            # sees the specific mistake rather than the generic shape
+            # error.
+            self.assertIn("'v' prefix", err)
 
     def test_rejects_build_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -193,7 +196,7 @@ class InputValidationTests(unittest.TestCase):
                 ["1.2.0+build"], cwd=repo, generator_stub_path=gen
             )
             self.assertEqual(rc, bump_version.EXIT_INVALID_INPUT)
-            self.assertIn("must be X.Y.Z", err)
+            self.assertIn("'+build'", err)
 
     def test_rejects_unparseable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

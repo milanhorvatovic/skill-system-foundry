@@ -2,9 +2,14 @@
 
 This module is local to the top-level ``scripts/`` tree.  It is intentionally
 independent from the meta-skill tree at ``skill-system-foundry/scripts/`` —
-no imports cross between the two trees.  The regex shape mirrors
-``RE_METADATA_VERSION`` inside the meta-skill's ``configuration.yaml``; keep
-them in lockstep by hand.
+no imports cross between the two trees.  ``SEMVER_RE`` here implements the
+strict SemVer 2.0.0 grammar (sans build metadata) needed by the release
+primitive: it rejects leading zeros, empty prerelease identifiers, and
+trailing newlines.  The meta-skill's ``RE_METADATA_VERSION`` in
+``configuration.yaml`` is intentionally looser because it acts as a foundry
+recommendation for skill authors rather than a release input validator;
+the two patterns are *not* kept in lockstep — release tooling depends only
+on the strict regex defined here.
 
 The module exposes three kinds of primitives:
 
@@ -30,10 +35,14 @@ import re
 # - prerelease identifiers must be non-empty, dot-separated, and either
 #   purely numeric (no leading zero) or alphanumeric/hyphen with at least
 #   one non-digit character.  ``1.2.3-alpha.`` is rejected.
+# The end anchor is ``\Z`` (end of string) rather than ``$`` because
+# Python's ``$`` also matches before a final ``\n``; combined with the
+# ``.match()`` calls below, ``$`` would accept ``"1.2.3\n"`` and silently
+# pass invalid CLI input through to the planner.
 SEMVER_RE = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"\A(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
-    r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$"
+    r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?\Z"
 )
 
 

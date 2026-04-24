@@ -109,6 +109,14 @@ class SemverRegexTests(unittest.TestCase):
         self.assertIsNone(version.SEMVER_RE.match("1.2.3-rc.01"))
         self.assertTrue(version.SEMVER_RE.match("1.2.3-rc.10"))
 
+    def test_rejects_trailing_newline(self) -> None:
+        # Python's ``$`` matches before a final ``\n``; the ``\Z``
+        # anchor rejects ``"1.2.3\n"`` so trailing newlines fail the
+        # CLI's stable invalid-input contract instead of leaking into
+        # the planner.
+        self.assertIsNone(version.SEMVER_RE.match("1.2.3\n"))
+        self.assertIsNone(version.SEMVER_RE.match("1.2.3-rc.1\n"))
+
 
 # ===================================================================
 # parse / compare

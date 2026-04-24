@@ -298,9 +298,11 @@ def commit_writes(writes: list[tuple[str, str]]) -> None:
                 dir=target_dir,
             )
             os.close(fd)
+            # Track the temp path immediately so the ``finally`` cleanup
+            # can remove it even if the upcoming open/write raises.
+            tmp_paths.append(tmp)
             with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(content)
-            tmp_paths.append(tmp)
         staged: list[tuple[str, str]] = list(zip([p for p, _ in writes], tmp_paths))
         for index, (path, tmp) in enumerate(staged):
             try:
@@ -399,20 +401,23 @@ def main(argv: list[str] | None = None) -> int:
         return code if isinstance(code, int) else EXIT_INVALID_INPUT
 
     new_version = args.new_version
-    # Reject shapes not covered by SEMVER_RE.
-    if not _version.SEMVER_RE.match(new_version):
-        print(
-            f"error: new_version must be X.Y.Z (with optional -prerelease "
-            f"suffix); got {new_version!r}",
-            file=sys.stderr,
-        )
-        return EXIT_INVALID_INPUT
-    # Build metadata is syntactically rejected by SEMVER_RE but be explicit
-    # for operators who might paste a ``1.2.3+build`` string from semver.org.
+    # ``v``-prefixed versions and ``+build`` metadata are also rejected
+    # by ``SEMVER_RE``, but operators frequently paste those forms from
+    # semver.org or git tag listings — emit a targeted message first so
+    # the diagnostic points at the specific mistake instead of the
+    # generic shape error below.
     if "+" in new_version or new_version.startswith("v"):
         print(
             f"error: new_version must not carry a 'v' prefix or '+build' "
             f"metadata; got {new_version!r}",
+            file=sys.stderr,
+        )
+        return EXIT_INVALID_INPUT
+    # Reject any remaining shapes not covered by SEMVER_RE.
+    if not _version.SEMVER_RE.match(new_version):
+        print(
+            f"error: new_version must be X.Y.Z (with optional -prerelease "
+            f"suffix); got {new_version!r}",
             file=sys.stderr,
         )
         return EXIT_INVALID_INPUT
