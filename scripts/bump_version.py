@@ -258,7 +258,14 @@ def commit_writes(writes: list[tuple[str, str]]) -> None:
     try:
         for path, content in writes:
             tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            # Default text-mode newline translation is intentional: the
+            # planners produce ``\n`` in memory (because the readers used
+            # default text mode), and we want the writer to translate
+            # back to the platform's native line ending — preserving
+            # CRLF working trees on Windows that get LF in git.  Using
+            # ``newline=""`` here would force LF on Windows and
+            # unintentionally rewrite the manifests.
+            with open(tmp, "w", encoding="utf-8") as fh:
                 fh.write(content)
             tmp_paths.append(tmp)
         staged: list[tuple[str, str]] = list(zip([p for p, _ in writes], tmp_paths))
@@ -318,7 +325,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Bump the version across SKILL.md, plugin.json, and "
-            "marketplace.json atomically."
+            "marketplace.json in lockstep with per-file atomic writes "
+            "(not a cross-file atomic transaction — see EXIT_PARTIAL_WRITE)."
         ),
     )
     parser.add_argument(

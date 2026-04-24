@@ -7,13 +7,16 @@ the subprocess path is exercised without pulling in git history or the
 real generator.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Iterator
 from unittest import mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -154,15 +157,12 @@ class _CapturedIO:
         self.stdout = ""
         self.stderr = ""
 
-    def capture(self):
-        import contextlib
-        import io
-
+    def capture(self) -> contextlib.AbstractContextManager[None]:
         out, err = io.StringIO(), io.StringIO()
         owner = self
 
         @contextlib.contextmanager
-        def _ctx():
+        def _ctx() -> Iterator[None]:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 yield
             owner.stdout = out.getvalue()

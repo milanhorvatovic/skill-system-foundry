@@ -99,7 +99,13 @@ def _skill_md_version(system_root: str) -> tuple[str | None, str | None]:
     path = os.path.join(system_root, "skill-system-foundry", FILE_SKILL_MD)
     if not os.path.exists(path):
         return None, f"{path} does not exist"
-    fm, _, _ = load_frontmatter(path)
+    try:
+        fm, _, _ = load_frontmatter(path)
+    except OSError as exc:
+        # A present-but-unreadable file (permissions, transient FS error)
+        # must surface as a structured finding instead of aborting the
+        # audit, mirroring how _read_plugin_json handles its own errors.
+        return None, f"{path} cannot be read: {exc}"
     if fm is None:
         return None, f"{path} has no frontmatter"
     if "_parse_error" in fm:

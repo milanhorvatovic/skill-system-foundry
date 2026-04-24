@@ -1756,6 +1756,29 @@ class CheckVersionConsistencyTests(unittest.TestCase):
             drift_errors = [e for e in errors if "version drift" in e]
             self.assertEqual(len(drift_errors), 1)
 
+    def test_unreadable_skill_md_produces_finding_not_traceback(self) -> None:
+        """A present-but-unreadable SKILL.md must surface as a finding.
+
+        ``_skill_md_version`` mirrors ``_read_plugin_json``'s contract:
+        OS-level read failures should turn into structured FAIL findings
+        rather than aborting the audit run.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            from unittest import mock
+
+            with mock.patch(
+                "audit_skill_system.load_frontmatter",
+                side_effect=OSError(13, "permission denied"),
+            ):
+                findings = check_version_consistency(tmp)
+            self.assertTrue(
+                any(
+                    "SKILL.md" in f and "cannot be read" in f
+                    for f in findings
+                )
+            )
+
     def test_empty_string_version_is_treated_as_drift(self) -> None:
         """``"version": ""`` must not silently bypass the comparison.
 
