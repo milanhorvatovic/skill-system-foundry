@@ -105,7 +105,19 @@ def _require_yaml_parser() -> typing.Callable[[str], typing.Any]:
             f"failed to load yaml_parser from {_YAML_PARSER_PATH}: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
-    return module.parse_yaml_subset
+    parse_yaml_subset = getattr(module, "parse_yaml_subset", None)
+    if parse_yaml_subset is None:
+        raise RuntimeError(
+            f"yaml_parser at {_YAML_PARSER_PATH} does not define "
+            "parse_yaml_subset; update this script if the parser API "
+            "was renamed."
+        )
+    if not callable(parse_yaml_subset):
+        raise RuntimeError(
+            f"yaml_parser at {_YAML_PARSER_PATH} exports parse_yaml_subset, "
+            "but it is not callable."
+        )
+    return parse_yaml_subset
 
 CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "lib", "changelog.yaml"
@@ -394,6 +406,25 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
     new_section = new_section.rstrip() + "\n"
     lines = existing.splitlines(keepends=True)
 
+    # Any non-empty existing file must begin with a '# ' H1 on its
+    # first non-empty, non-fenced line.  Run this check *before* the
+    # semver-anchor scan so a file that starts with ``## [1.0.0]`` (no
+    # parent H1) is rejected rather than anchored — anchoring would
+    # silently splice into a Keep-a-Changelog-shaped-but-H1-less file.
+    first_real_line: str | None = None
+    for _, line in _iter_heading_lines(existing):
+        if line.strip():
+            first_real_line = line
+            break
+
+    if first_real_line is not None and not first_real_line.startswith("# "):
+        raise RuntimeError(
+            "CHANGELOG.md is non-empty but does not begin with a '# ' H1 "
+            "heading; refusing to splice into unrecognized content.  Add "
+            "a '# Changelog' heading at the top (or delete the file) and "
+            "re-run."
+        )
+
     # Preferred anchor: the first existing release section outside any
     # fenced code block.  Only semver-shaped headings count — a
     # standard Keep-a-Changelog ``## [Unreleased]`` must not anchor the
@@ -404,18 +435,6 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
             head = "".join(lines[:idx]).rstrip("\n") + "\n\n"
             tail = "".join(lines[idx:])
             return head + new_section + "\n" + tail
-
-    # No release sections yet.  Synthesize a Keep-a-Changelog preamble
-    # only when the file is empty; refuse when the file has content
-    # whose first non-empty, non-fenced line is not the '# ' H1
-    # heading.  Checking only *the first* real line (rather than "any
-    # line starts with # ") stops the splice from accepting a
-    # malformed file with arbitrary leading text before the heading.
-    first_real_line: str | None = None
-    for _, line in _iter_heading_lines(existing):
-        if line.strip():
-            first_real_line = line
-            break
 
     if first_real_line is None:
         # Empty file, or only whitespace/fenced content — synthesize a
@@ -430,14 +449,9 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
         )
         return preamble + new_section
 
-    if not first_real_line.startswith("# "):
-        raise RuntimeError(
-            "CHANGELOG.md is non-empty but does not begin with a '# ' H1 "
-            "heading; refusing to synthesize a preamble on top of "
-            "unrecognized content.  Add a '# Changelog' heading at the top "
-            "(or delete the file) and re-run."
-        )
-
+    # H1 invariant is already enforced above; existing has a '# ' H1
+    # and no release anchor — append the new section at the end so any
+    # preamble (and optional ``## [Unreleased]``) is preserved.
     head = existing.rstrip("\n") + "\n\n"
     return head + new_section
 
@@ -589,8 +603,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if not _SEMVER_RE.match(args.version):
         parser.error(
-            f"--version must be X.Y.Z or vX.Y.Z (optional -prerelease / "
-            f"+build suffix); got {args.version!r}"
+            f"--version must be X.Y.Z or vX.Y.Z (optional -prerelease "
+            f"suffix); got {args.version!r}"
+        )
+    if "+" in args.version:
+        # SemVer build metadata (``+build.42``) is valid under the grammar
+        # but is not a publishable release version for this repository —
+        # release tags are ``vX.Y.Z`` only.  Worse, the duplicate-version
+        # guard intentionally collapses build metadata via
+        # ``_precedence_token``, so a ``## [1.2.0+1]`` heading spliced
+        # here would later block the real ``1.2.0`` release.  Reject at
+        # the CLI boundary.
+        parser.error(
+            f"--version must not include SemVer build metadata "
+            f"('+...' suffix); the release workflow publishes vX.Y.Z "
+            f"tags only, and a ``## [{args.version}]`` heading would "
+            f"block the plain version under the duplicate-check guard. "
+            f"got {args.version!r}"
         )
     if args.date is not None and not _is_iso_date(args.date):
         parser.error(
@@ -637,16 +666,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.in_place:
             existing = ""
             if os.path.exists(changelog_path):
-                # newline="" preserves LF on read; we write LF explicitly below
-                # to keep CHANGELOG.md stable across OSes (Windows CI would
-                # otherwise churn the whole file to CRLF).
-                with open(changelog_path, "r", encoding="utf-8", newline="") as fh:
+                # Default text mode (``newline=None``) normalizes CRLF/CR
+                # to LF on read so the splice logic — which uses
+                # ``rstrip("\n")`` and manual ``"\n\n"`` joins — sees
+                # LF-only content even on a Windows checkout with
+                # ``core.autocrlf=true``.  Writing with ``newline="\n"``
+                # pins LF on disk so CHANGELOG.md stays stable across
+                # OSes.
+                with open(changelog_path, "r", encoding="utf-8") as fh:
                     existing = fh.read()
             merged = splice_into_changelog(existing, section)
             if args.dry_run:
                 _write_preserving_lf(merged, sys.stdout)
             else:
-                with open(changelog_path, "w", encoding="utf-8", newline="") as fh:
+                with open(changelog_path, "w", encoding="utf-8", newline="\n") as fh:
                     fh.write(merged)
         else:
             _write_preserving_lf(section, sys.stdout)

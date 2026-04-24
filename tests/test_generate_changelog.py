@@ -561,6 +561,23 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertIn("H1", message)
         self.assertIn("refusing", message)
 
+    def test_missing_h1_before_semver_anchor_rejected(self) -> None:
+        # Regression guard: the H1 check used to run only when no
+        # semver-shaped heading was found, so a file that starts with
+        # ``## [1.0.0]`` (no parent '# ') would happily anchor and
+        # splice, producing a non-Keep-a-Changelog shape.  The check
+        # must run before the anchor scan.
+        existing = (
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        message = str(ctx.exception)
+        self.assertIn("H1", message)
+        self.assertIn("refusing", message)
+
     def test_only_unreleased_falls_back_to_append(self) -> None:
         # If the only ``## [`` heading is ``[Unreleased]`` (no real
         # release yet), there is no semver anchor, so the new release
@@ -882,6 +899,43 @@ class MainCliTests(unittest.TestCase):
             self.assertNotIn(b"\r\n", raw)
             self.assertIn(b"## [1.1.0]", raw)
 
+    def test_in_place_normalizes_crlf_on_read(self) -> None:
+        # Regression guard: a Windows checkout with ``core.autocrlf=true``
+        # yields CHANGELOG.md with CRLF line endings.  Previously the
+        # in-place read opened with ``newline=""`` which preserved CRLF
+        # and let stray ``\r`` characters survive the splice's
+        # ``rstrip("\n")`` / manual ``"\n\n"`` joins.  The read must
+        # use universal-newline translation so the splice sees LF-only
+        # content and the written file has no CRLF.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            # Write raw CRLF bytes, bypassing text-mode translation, to
+            # simulate a Windows checkout regardless of test platform.
+            with open(changelog, "wb") as fh:
+                fh.write(b"# Changelog\r\n\r\n## [1.0.0] - 2026-01-01\r\n")
+
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--in-place",
+                ])
+            self.assertEqual(rc, 0)
+            with open(changelog, "rb") as fh:
+                raw = fh.read()
+            self.assertNotIn(b"\r", raw, "no CR byte should survive the splice")
+            self.assertIn(b"## [1.1.0]", raw)
+            self.assertIn(b"## [1.0.0]", raw)
+
     def test_date_override_wins(self) -> None:
         with self._patch_git([("a", "Add X")]):
             with mock.patch("sys.stdout", new=io.StringIO()) as out, \
@@ -920,15 +974,18 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("error:", err.getvalue())
         self.assertIn("already contains", err.getvalue())
 
-    def test_build_metadata_version_accepted(self) -> None:
-        with self._patch_git([("aaa", "Add X")]):
-            with mock.patch("sys.stdout", new=io.StringIO()) as out, \
-                 mock.patch("sys.stderr", new=io.StringIO()):
-                rc = gc.main([
-                    "--since", "v1.0.0", "--version", "1.1.0+build.42",
-                ])
-        self.assertEqual(rc, 0)
-        self.assertIn("## [1.1.0+build.42]", out.getvalue())
+    def test_build_metadata_version_rejected(self) -> None:
+        # Release tags in this repo are ``vX.Y.Z`` only.  SemVer build
+        # metadata is valid under the grammar but would splice a
+        # ``## [X.Y.Z+build]`` heading that the duplicate-version guard
+        # later collapses to plain ``X.Y.Z`` — blocking the real
+        # release.  Reject at the CLI boundary.
+        for bad in ("1.1.0+build.42", "1.1.0+1", "v1.1.0+a"):
+            with mock.patch("sys.stderr", new=io.StringIO()) as err:
+                with self.assertRaises(SystemExit) as ctx:
+                    gc.main(["--since", "v1.0.0", "--version", bad])
+            self.assertEqual(ctx.exception.code, 2, f"should reject {bad!r}")
+            self.assertIn("build metadata", err.getvalue())
 
     def test_malformed_prerelease_rejected(self) -> None:
         # Lone dot is not a valid prerelease identifier per semver 2.0.0.
@@ -1280,6 +1337,50 @@ class RequireYamlParserTests(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("yaml_parser.py", message)
         self.assertIn("/nonexistent/yaml_parser.py", message)
+
+    def test_missing_parse_yaml_subset_attribute_surfaces_runtime_error(self) -> None:
+        # If the meta-skill's yaml_parser.py is ever refactored to
+        # rename or remove ``parse_yaml_subset``, the attribute miss
+        # must route through main()'s ``error: …`` / exit 2 contract,
+        # not escape as a bare ``AttributeError`` traceback.  Simulate
+        # the refactor by pointing the loader at a stub module file.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_path = os.path.join(tmp, "yaml_parser.py")
+            with open(stub_path, "w", encoding="utf-8") as fh:
+                fh.write("# intentionally missing parse_yaml_subset\n")
+            with mock.patch.object(gc, "_YAML_PARSER_PATH", stub_path):
+                with self.assertRaises(RuntimeError) as ctx:
+                    gc._require_yaml_parser()
+        message = str(ctx.exception)
+        self.assertIn("parse_yaml_subset", message)
+
+    def test_non_callable_parse_yaml_subset_surfaces_runtime_error(self) -> None:
+        # Same contract if parse_yaml_subset is redefined as a non-callable
+        # (e.g. a constant) in a downstream fork of the parser.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_path = os.path.join(tmp, "yaml_parser.py")
+            with open(stub_path, "w", encoding="utf-8") as fh:
+                fh.write("parse_yaml_subset = 42\n")
+            with mock.patch.object(gc, "_YAML_PARSER_PATH", stub_path):
+                with self.assertRaises(RuntimeError) as ctx:
+                    gc._require_yaml_parser()
+        message = str(ctx.exception)
+        self.assertIn("not callable", message)
+
+    def test_syntax_error_in_parser_file_surfaces_runtime_error(self) -> None:
+        # Broader exec_module guard: a SyntaxError while executing
+        # yaml_parser.py must surface as RuntimeError so main() can
+        # convert it to ``error: …`` / exit 2 instead of a traceback.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_path = os.path.join(tmp, "yaml_parser.py")
+            with open(stub_path, "w", encoding="utf-8") as fh:
+                fh.write("def broken(:\n")  # deliberate syntax error
+            with mock.patch.object(gc, "_YAML_PARSER_PATH", stub_path):
+                with self.assertRaises(RuntimeError) as ctx:
+                    gc._require_yaml_parser()
+        message = str(ctx.exception)
+        self.assertIn("yaml_parser", message)
+        self.assertIn("SyntaxError", message)
 
 
 if __name__ == "__main__":
