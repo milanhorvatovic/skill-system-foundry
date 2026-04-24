@@ -603,6 +603,21 @@ def resolve_until(version: str, repo_root: str) -> str:
     return f"refs/tags/{tag}" if tag_exists(tag, repo_root) else "HEAD"
 
 
+def _qualified_ref(ref: str, repo_root: str) -> str:
+    """Return ``refs/tags/{ref}`` when *ref* names a tag, else *ref* unchanged.
+
+    Prevents a branch that happens to share a tag's name from
+    shadowing the tag in ``git log <since>..<until>``.  Refs already
+    prefixed with ``refs/`` and non-tag inputs (commit SHAs, branches,
+    ``HEAD``) pass through untouched.
+    """
+    if ref.startswith("refs/"):
+        return ref
+    if tag_exists(ref, repo_root):
+        return f"refs/tags/{ref}"
+    return ref
+
+
 def find_repo_root(start: str) -> str:
     """Walk upward from *start* until a ``.git`` entry is found."""
     current = os.path.abspath(start)
@@ -632,7 +647,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--date",
         default=None,
-        help="Override the release date (YYYY-MM-DD). Defaults to tag commit date when the version tag exists, else today's UTC date.",
+        help=(
+            "Override the release date (YYYY-MM-DD).  Defaults to the "
+            "annotated tag's tagger date (falling back to the tagged "
+            "commit's committer date for lightweight tags) when the "
+            "version tag exists.  When the tag does not exist, stdout "
+            "and --in-place --dry-run previews fall back to today's "
+            "UTC date, but --in-place writes require --date explicitly "
+            "so a pre-tag release cannot be stamped with a guessed "
+            "date."
+        ),
+    )
+    parser.add_argument(
+        "--until",
+        default=None,
+        help=(
+            "Pin the upper bound of the commit range to a specific "
+            "ref (tag, branch, or SHA) instead of HEAD.  Only used "
+            "when the version tag does not yet exist; when the tag "
+            "does exist, the range always ends at the tag itself.  "
+            "Use this to preview and write the same commit range even "
+            "if new commits land on HEAD between the dry-run and the "
+            "final write."
+        ),
     )
     parser.add_argument(
         "--in-place",
@@ -659,10 +696,25 @@ def generate(
     repo_root: str,
     today: str,
     verb_map: dict[str, str],
+    until_override: str | None = None,
 ) -> tuple[str, list[tuple[str, str]]]:
-    """Pure function — returns ``(rendered_section, unmapped_commits)``."""
-    until = resolve_until(version, repo_root)
-    commits = collect_commits(since, until, repo_root)
+    """Pure function — returns ``(rendered_section, unmapped_commits)``.
+
+    ``until_override`` pins the upper bound explicitly (typically to
+    a stable SHA / branch / tag chosen by the operator so the same
+    commit set is used by both the dry-run preview and the in-place
+    write).  When omitted, the upper bound resolves to the verified
+    version tag if it exists, or ``HEAD`` otherwise.  Both ``since``
+    and ``until_override`` are qualified to ``refs/tags/<name>`` when
+    they name an existing tag so a branch sharing the name cannot
+    shadow the tag in the ``git log`` range.
+    """
+    since_ref = _qualified_ref(since, repo_root)
+    if until_override is not None:
+        until = _qualified_ref(until_override, repo_root)
+    else:
+        until = resolve_until(version, repo_root)
+    commits = collect_commits(since_ref, until, repo_root)
     buckets, unmapped = classify_commits(commits, verb_map)
     date = resolve_date(version, repo_root, date_override, today)
     section = render_section(normalize_version(version), date, buckets)
@@ -765,12 +817,14 @@ def main(argv: list[str] | None = None) -> int:
         # regenerate a published section (but is working in a clone
         # that has not fetched the tag yet) notices before accepting
         # output that silently widened the range to HEAD.
-        if not tag_present:
+        if not tag_present and args.until is None:
             _write_preserving_lf(
                 f"note: tag {tag!r} not found locally; collecting commits "
                 f"through HEAD and treating this as pre-tag generation.  "
-                f"If you meant to regenerate an already-published section, "
-                f"run ``git fetch --tags`` and re-invoke.\n",
+                f"Pass --until <ref> to pin the upper bound to a stable "
+                f"commit so the range does not drift between dry-run and "
+                f"write.  If you meant to regenerate an already-published "
+                f"section, run ``git fetch --tags`` and re-invoke.\n",
                 sys.stderr,
             )
 
@@ -804,6 +858,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=repo_root,
             today=today_iso(),
             verb_map=verb_map,
+            until_override=args.until,
         )
 
         report_unmapped(unmapped, sys.stderr)

@@ -822,6 +822,36 @@ class ResolveUntilTests(unittest.TestCase):
             self.assertEqual(gc.resolve_until("2.0.0", "/tmp"), "HEAD")
 
 
+class QualifiedRefTests(unittest.TestCase):
+    """_qualified_ref prevents branch/tag refname collisions."""
+
+    def test_tag_input_is_qualified(self) -> None:
+        with mock.patch.object(gc, "tag_exists", return_value=True):
+            self.assertEqual(
+                gc._qualified_ref("v1.0.0", "/tmp"), "refs/tags/v1.0.0"
+            )
+
+    def test_non_tag_input_passes_through(self) -> None:
+        # A SHA / branch / arbitrary ref that is not a tag must pass
+        # through unchanged so the operator can still point --since at
+        # a commit directly.
+        with mock.patch.object(gc, "tag_exists", return_value=False):
+            self.assertEqual(
+                gc._qualified_ref("deadbeef", "/tmp"), "deadbeef"
+            )
+
+    def test_already_qualified_ref_passes_through(self) -> None:
+        # Inputs already in ``refs/...`` form are trusted and not
+        # re-qualified (tag_exists is not called).
+        with mock.patch.object(
+            gc, "tag_exists", side_effect=AssertionError("should not be called"),
+        ):
+            self.assertEqual(
+                gc._qualified_ref("refs/heads/main", "/tmp"),
+                "refs/heads/main",
+            )
+
+
 # ===================================================================
 # generate() end-to-end (pure function)
 # ===================================================================
@@ -1187,6 +1217,35 @@ class MainCliTests(unittest.TestCase):
                 ])
         self.assertEqual(rc, 0)
         self.assertIn("## [1.2.0]", out.getvalue())
+
+    def test_until_flag_overrides_head_fallback(self) -> None:
+        # Regression guard: HEAD is unstable between dry-run and
+        # write — if any commit lands on HEAD in that window, the
+        # final write silently widens the range.  ``--until <ref>``
+        # pins the upper bound explicitly so both invocations work
+        # against the same commit set.  The note about HEAD must also
+        # stay silent when --until is used, since the operator has
+        # already taken control.
+        collect = mock.MagicMock(return_value=[("a", "Add X")])
+        with mock.patch.multiple(
+            gc,
+            tag_exists=mock.MagicMock(return_value=False),
+            collect_commits=collect,
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+        ):
+            with mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                rc = gc.main([
+                    "--since", "v1.0.0",
+                    "--version", "1.2.0",
+                    "--until", "abc123",
+                ])
+        self.assertEqual(rc, 0)
+        # collect_commits must be called with the pinned ref, not HEAD.
+        _, until, _ = collect.call_args[0]
+        self.assertEqual(until, "abc123")
+        # HEAD-fallback note must not fire when --until is provided.
+        self.assertNotIn("note:", err.getvalue())
 
     def test_missing_tag_emits_head_fallback_note(self) -> None:
         # Regression guard: silently widening the range to HEAD
