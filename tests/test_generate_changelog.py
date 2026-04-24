@@ -807,9 +807,15 @@ class ResolveDateTests(unittest.TestCase):
 
 
 class ResolveUntilTests(unittest.TestCase):
-    def test_tag_exists_returns_tag(self) -> None:
+    def test_tag_exists_returns_qualified_ref(self) -> None:
+        # Regression guard: bare refnames are ambiguous — if a branch
+        # shares the tag's name, ``git log v1.1.0..HEAD`` can resolve
+        # to the branch.  Returning ``refs/tags/v1.1.0`` forces the
+        # commit range against the verified tag.
         with mock.patch.object(gc, "tag_exists", return_value=True):
-            self.assertEqual(gc.resolve_until("1.1.0", "/tmp"), "v1.1.0")
+            self.assertEqual(
+                gc.resolve_until("1.1.0", "/tmp"), "refs/tags/v1.1.0"
+            )
 
     def test_tag_missing_returns_head(self) -> None:
         with mock.patch.object(gc, "tag_exists", return_value=False):
@@ -1182,6 +1188,41 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("## [1.2.0]", out.getvalue())
 
+    def test_missing_tag_emits_head_fallback_note(self) -> None:
+        # Regression guard: silently widening the range to HEAD
+        # when the tag is absent overloads two states — "generating
+        # the next unreleased section before tagging" vs.
+        # "retrospectively regenerating a published section in a
+        # clone that has not fetched the tag".  A one-line stderr
+        # note lets the operator notice the second case before
+        # accepting HEAD-wide output as a historical changelog.
+        with mock.patch.multiple(
+            gc,
+            tag_exists=mock.MagicMock(return_value=False),
+            collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+        ):
+            with mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.2.0",
+                ])
+        self.assertEqual(rc, 0)
+        err_text = err.getvalue()
+        self.assertIn("note:", err_text)
+        self.assertIn("v1.2.0", err_text)
+        self.assertIn("HEAD", err_text)
+        self.assertIn("git fetch --tags", err_text)
+
+    def test_existing_tag_does_not_emit_fallback_note(self) -> None:
+        # The fallback note must only fire when the tag is missing;
+        # retrospective regeneration of a tagged release is silent.
+        with self._patch_git([("a", "Add X")]):
+            with mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
+        self.assertNotIn("note:", err.getvalue())
+
     def test_stdout_mode_still_falls_back_to_today(self) -> None:
         # Previews (no --in-place) keep the today-fallback for
         # convenience; only the on-disk write is guarded.
@@ -1516,7 +1557,8 @@ class TagCommitDateTests(unittest.TestCase):
         # ``%(taggerdate:short)`` returns empty.  Fall back to the
         # tagged commit's committer date (``%cs``) — never the author
         # date (``%as``), which can predate rebased or cherry-picked
-        # releases.
+        # releases.  The fallback must target ``refs/tags/<tag>`` so
+        # a branch with the same name cannot shadow the tag.
         responses = iter(["\n", "2026-03-25\n"])
         with mock.patch.object(
             gc, "run_git", side_effect=lambda *_a, **_k: next(responses),
@@ -1526,6 +1568,7 @@ class TagCommitDateTests(unittest.TestCase):
         second_args = run.call_args_list[1][0][0]
         self.assertIn("--format=%cs", second_args)
         self.assertNotIn("--format=%as", second_args)
+        self.assertIn("refs/tags/v1.1.0", second_args)
 
 
 class CollectCommitsTests(unittest.TestCase):

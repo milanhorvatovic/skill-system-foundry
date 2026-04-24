@@ -286,17 +286,18 @@ def tag_commit_date(tag: str, repo_root: str) -> str:
     is intentionally not used: after a rebase or cherry-pick it can
     predate the actual release by days.
     """
+    qualified = f"refs/tags/{tag}"
     tagger_date = run_git(
-        [
-            "for-each-ref",
-            "--format=%(taggerdate:short)",
-            f"refs/tags/{tag}",
-        ],
+        ["for-each-ref", "--format=%(taggerdate:short)", qualified],
         repo_root,
     ).strip()
     if tagger_date:
         return tagger_date
-    return run_git(["log", "-1", "--format=%cs", tag], repo_root).strip()
+    # Qualify the ref explicitly: ``git log v1.1.0`` can resolve to a
+    # branch or other ref if a name collision exists, which would pick
+    # the wrong commit even though ``tag_exists`` already verified
+    # ``refs/tags/<name>``.  ``refs/tags/<tag>`` disambiguates.
+    return run_git(["log", "-1", "--format=%cs", qualified], repo_root).strip()
 
 
 def collect_commits(since: str, until: str, repo_root: str) -> list[tuple[str, str]]:
@@ -587,9 +588,19 @@ def resolve_date(
 
 
 def resolve_until(version: str, repo_root: str) -> str:
-    """Pick the commit range endpoint: the version tag if it exists, else HEAD."""
+    """Pick the commit range endpoint: the fully-qualified version tag if it exists, else HEAD.
+
+    When the tag exists we return ``refs/tags/<tag>`` rather than the
+    bare ``<tag>``.  Bare refnames are ambiguous in Git — if a branch
+    happens to share the tag's name, ``git log v1.1.0..HEAD`` would
+    resolve to the branch instead — and the fully-qualified form
+    forces the commit range against the verified tag.  The ``HEAD``
+    fallback is intentional for the pre-tag workflow (generate the
+    upcoming section before tagging); callers that need to detect the
+    fallback explicitly can still call ``tag_exists`` first.
+    """
     tag = _version_tag(version)
-    return tag if tag_exists(tag, repo_root) else "HEAD"
+    return f"refs/tags/{tag}" if tag_exists(tag, repo_root) else "HEAD"
 
 
 def find_repo_root(start: str) -> str:
@@ -744,6 +755,25 @@ def main(argv: list[str] | None = None) -> int:
         repo_root = find_repo_root(script_dir)
         verb_map = load_verb_mapping()
 
+        tag = _version_tag(args.version)
+        tag_present = tag_exists(tag, repo_root)
+
+        # The pre-tag / retrospective-regen split is load-bearing: the
+        # same command line behaves differently depending on whether
+        # ``refs/tags/<version>`` is present locally.  Surface the
+        # HEAD fallback on stderr so an operator who *meant* to
+        # regenerate a published section (but is working in a clone
+        # that has not fetched the tag yet) notices before accepting
+        # output that silently widened the range to HEAD.
+        if not tag_present:
+            _write_preserving_lf(
+                f"note: tag {tag!r} not found locally; collecting commits "
+                f"through HEAD and treating this as pre-tag generation.  "
+                f"If you meant to regenerate an already-published section, "
+                f"run ``git fetch --tags`` and re-invoke.\n",
+                sys.stderr,
+            )
+
         # The documented release flow generates CHANGELOG.md *before*
         # creating the tag.  In that case ``resolve_date`` would fall
         # back to today's date, which is wrong if the tag ends up on a
@@ -752,17 +782,20 @@ def main(argv: list[str] | None = None) -> int:
         # ``--in-place --dry-run`` — are explicitly exempt so the
         # preview/classify loop still works before the tag exists;
         # the guard fires only on the real write path.
-        if args.in_place and not args.dry_run and args.date is None:
-            tag = _version_tag(args.version)
-            if not tag_exists(tag, repo_root):
-                raise RuntimeError(
-                    f"--in-place requires --date when the version tag "
-                    f"{tag!r} does not exist yet; the generator would "
-                    f"otherwise stamp today's date on a release that may be "
-                    f"tagged on a different day.  Pass "
-                    f"--date YYYY-MM-DD explicitly (matching the date you "
-                    f"plan to tag) or create the tag first."
-                )
+        if (
+            args.in_place
+            and not args.dry_run
+            and args.date is None
+            and not tag_present
+        ):
+            raise RuntimeError(
+                f"--in-place requires --date when the version tag "
+                f"{tag!r} does not exist yet; the generator would "
+                f"otherwise stamp today's date on a release that may be "
+                f"tagged on a different day.  Pass "
+                f"--date YYYY-MM-DD explicitly (matching the date you "
+                f"plan to tag) or create the tag first."
+            )
 
         section, unmapped = generate(
             since=args.since,
