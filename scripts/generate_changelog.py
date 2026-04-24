@@ -3,11 +3,10 @@
 
 Reads commits between two refs, buckets them into Keep-a-Changelog
 sections (Added / Changed / Deprecated / Removed / Fixed / Security)
-via a first-word verb map loaded from
-``scripts/lib/configuration.yaml``, and emits a Keep-a-Changelog 1.1.0
-section.  Commits whose first word is not in the map are surfaced on
-stderr and are NOT written to the output — the human author then
-reclassifies them manually.
+via a first-word verb map loaded from ``scripts/lib/changelog.yaml``,
+and emits a Keep-a-Changelog 1.1.0 section.  Commits whose first word
+is not in the map are surfaced on stderr and are NOT written to the
+output — the human author then reclassifies them manually.
 
 Usage::
 
@@ -19,41 +18,88 @@ Usage::
 Exit codes:
 
     0   all commits were classified and output was produced
-    1   one or more commits were unmapped (human review required)
-    2   argparse usage error, or a runtime failure surfaced as a
-        message on stderr (e.g., missing --since ref, duplicate
-        version in CHANGELOG.md, unreadable configuration)
+    2   argparse usage error (argparse default), or a runtime failure
+        surfaced as an ``error: ...`` line on stderr (missing --since
+        ref, duplicate version in CHANGELOG.md, unreadable or invalid
+        configuration).  Reserved for genuine script failures so CI
+        can distinguish "broken invocation" from "needs classification"
+    3   one or more commits were unmapped (human review required).
+        Covers three surfaces: the stdout path (section printed,
+        unmapped listed on stderr), ``--in-place --dry-run`` (partial
+        merge printed, file unchanged), and ``--in-place`` without
+        --dry-run (the write is refused with an ``error: ...`` line on
+        stderr to avoid leaving a partial section on disk)
 
 The script is repository infrastructure, not part of the meta-skill.
-It borrows the meta-skill's YAML parser via a ``sys.path`` shim to
-avoid vendoring a second copy.  The script also does not implement
-``--json`` (a meta-skill convention) because its output is a single
-Markdown section consumed by humans during a release, and unmapped
-commits are surfaced on stderr in a line-oriented form already
-suitable for scripting.
+It borrows the meta-skill's YAML parser by loading
+``skill-system-foundry/scripts/lib/yaml_parser.py`` directly via
+``importlib.util`` — this avoids vendoring a second copy without
+reserving the ``lib`` package name on ``sys.path``.  The script also
+does not implement ``--json`` (a meta-skill convention) because its
+output is a single Markdown section consumed by humans during a
+release, and unmapped commits are surfaced on stderr in a
+line-oriented form already suitable for scripting.
+
+The generator always synthesizes a fresh ``## [version] - date``
+section from git history; it does not promote an existing
+``## [Unreleased]`` heading.  New releases are inserted below
+``## [Unreleased]`` when present, which matches this repository's
+ledger-style workflow (no Unreleased accumulator is maintained).
 """
 
 import argparse
 import datetime
+import importlib.util
 import os
 import re
 import subprocess
 import sys
 import typing
 
-# Borrow the meta-skill's stdlib-only YAML parser.  The skill directory
-# name contains a hyphen, which blocks plain imports, so insert the
-# path explicitly.  This is the only cross-boundary dependency; the
-# verb_mapping data itself lives in this repo's scripts/lib/ tree.
+# Load-bearing: this script reuses the meta-skill's stdlib-only YAML
+# parser rather than vendoring a second copy.  The file is loaded
+# directly via ``importlib.util`` so the ``lib`` package name on
+# ``sys.path`` is not claimed globally — a second ``scripts/lib/`` tree
+# in this repo (or a test that inserts one) would otherwise collide.
+# If ``skill-system-foundry/scripts/lib/yaml_parser.py`` is renamed or
+# relocated, update ``_YAML_PARSER_PATH`` below in the same change.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_FOUNDRY_SCRIPTS = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
-if _FOUNDRY_SCRIPTS not in sys.path:
-    sys.path.insert(0, _FOUNDRY_SCRIPTS)
+_YAML_PARSER_PATH = os.path.join(
+    _REPO_ROOT, "skill-system-foundry", "scripts", "lib", "yaml_parser.py"
+)
 
-from lib.yaml_parser import parse_yaml_subset  # noqa: E402
+
+def _require_yaml_parser() -> typing.Callable[[str], typing.Any]:
+    """Load the meta-skill's YAML parser or raise with an actionable message.
+
+    Deferred so the import failure routes through main()'s error
+    contract (``error: ...`` on stderr, exit 2) instead of escaping as
+    a traceback at module-load time.
+    """
+    if not os.path.exists(_YAML_PARSER_PATH):
+        raise RuntimeError(
+            f"cannot locate yaml_parser.py at {_YAML_PARSER_PATH}; "
+            "update _YAML_PARSER_PATH at the top of this file if "
+            "skill-system-foundry was moved or renamed."
+        )
+    spec = importlib.util.spec_from_file_location(
+        "_changelog_yaml_parser", _YAML_PARSER_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"importlib could not build a spec for {_YAML_PARSER_PATH}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except ImportError as exc:
+        raise RuntimeError(
+            f"failed to load yaml_parser from {_YAML_PARSER_PATH}: {exc}"
+        ) from exc
+    return module.parse_yaml_subset
 
 CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "lib", "configuration.yaml"
+    os.path.dirname(os.path.abspath(__file__)), "lib", "changelog.yaml"
 )
 
 SECTION_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security")
@@ -70,6 +116,24 @@ _SEMVER_RE = re.compile(
 )
 
 
+def _is_iso_date(value: str) -> bool:
+    """Return ``True`` when *value* is a real ``YYYY-MM-DD`` calendar date.
+
+    ``datetime.date.fromisoformat`` also accepts richer ISO forms
+    (e.g. ``20260322``), which would splice a heading the rest of the
+    toolchain does not recognize; enforce the hyphenated 10-char shape
+    first, then let ``fromisoformat`` reject impossible dates like
+    ``2026-13-45``.
+    """
+    if len(value) != 10 or value[4] != "-" or value[7] != "-":
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     """Return ``{verb: section}`` flattened from configuration.yaml.
 
@@ -81,6 +145,7 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     not in ``SECTION_ORDER`` — the renderer iterates ``SECTION_ORDER``
     only, so an unknown section would silently drop its commits.
     """
+    parse_yaml_subset = _require_yaml_parser()
     with open(config_path, "r", encoding="utf-8") as fh:
         text = fh.read()
     config = parse_yaml_subset(text)
@@ -110,6 +175,12 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
                 f"{type(verbs).__name__}; check {config_path}."
             )
         for verb in verbs:
+            if verb in flat:
+                raise RuntimeError(
+                    f"verb {verb!r} appears under both {flat[verb]!r} and "
+                    f"{section!r} in {config_path}; a verb must map to a "
+                    f"single section."
+                )
             flat[verb] = section
     return flat
 
@@ -131,6 +202,7 @@ def run_git(args: list[str], cwd: str) -> str:
 
 
 def tag_exists(ref: str, repo_root: str) -> bool:
+    """Return ``True`` when ``refs/tags/{ref}`` resolves in *repo_root*."""
     result = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}"],
         cwd=repo_root,
@@ -153,6 +225,11 @@ def collect_commits(since: str, until: str, repo_root: str) -> list[tuple[str, s
     not appear, and in a traditional-merge workflow their ``Merge pull
     request #N`` subjects would route to unmapped anyway.  Excluding
     them up-front keeps stderr output focused on real content commits.
+
+    Commits are returned newest-first (git's default for ``log``), and
+    ``render_section`` preserves that order in the rendered bullets.
+    Keep-a-Changelog does not mandate an ordering; reviewers are free
+    to reorder manually before tagging.
     """
     out = run_git(
         [
@@ -228,15 +305,53 @@ def render_section(
 
 
 _VERSION_LINE_RE = re.compile(r"^## \[([^\]]+)\]")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def _precedence_token(bracket_contents: str) -> str:
+    """Drop build metadata and a leading ``v`` so semver-equivalent versions collapse.
+
+    Per semver 2.0.0 §10, build metadata (``+...``) does not affect
+    precedence: ``1.0.0`` and ``1.0.0+build.42`` are equivalent for
+    ordering and uniqueness.  The splice guard must treat them as the
+    same version so a rebuilt release cannot smuggle a duplicate
+    section in under a build-metadata alias.  A leading ``v`` is also
+    stripped because ``normalize_version`` drops it from the emitted
+    heading: a hand-edited ``## [v1.1.0]`` in CHANGELOG.md must still
+    block a newly-emitted ``## [1.1.0]`` rather than silently coexist.
+    """
+    token = bracket_contents.split("+", 1)[0]
+    return token[1:] if token.startswith("v") else token
 
 
 def _extract_version(section: str) -> str | None:
-    """Return the ``X.Y.Z`` token from a section's ``## [X.Y.Z] - date`` heading."""
+    """Return the semver-precedence token from a section's heading.
+
+    Strips build metadata (see ``_precedence_token``); the prerelease
+    suffix (``-rc.1``) is preserved because it does affect precedence.
+    """
     for line in section.splitlines():
         match = _VERSION_LINE_RE.match(line)
         if match:
-            return match.group(1)
+            return _precedence_token(match.group(1))
     return None
+
+
+def _iter_heading_lines(text: str) -> typing.Iterator[tuple[int, str]]:
+    """Yield ``(index, line)`` for each top-level line outside fenced code blocks.
+
+    ``## [X.Y.Z]`` lines inside ```` ``` ```` / ``~~~`` fences are content
+    examples, not real release headings, and must not trip the splice's
+    duplicate-version guard or anchor scan.
+    """
+    in_fence = False
+    for idx, line in enumerate(text.splitlines()):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        yield idx, line
 
 
 def splice_into_changelog(existing: str, new_section: str) -> str:
@@ -250,12 +365,14 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
 
     Refuses to splice when the version already appears in *existing* —
     the release path should not silently produce a duplicate section.
+    Fenced code blocks are skipped during both scans so embedded
+    examples do not cause false positives.
     """
     version = _extract_version(new_section)
     if version and existing:
-        for line in existing.splitlines():
+        for _, line in _iter_heading_lines(existing):
             match = _VERSION_LINE_RE.match(line)
-            if match and match.group(1) == version:
+            if match and _precedence_token(match.group(1)) == version:
                 raise RuntimeError(
                     f"CHANGELOG.md already contains a section for {version}; "
                     "remove it first or run without --in-place to emit to stdout."
@@ -264,19 +381,30 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
     new_section = new_section.rstrip() + "\n"
     lines = existing.splitlines(keepends=True)
 
-    # Preferred anchor: the first existing release section.  Preserves
-    # any H1 + preamble block above it.
-    for idx, line in enumerate(lines):
-        if _VERSION_LINE_RE.match(line):
+    # Preferred anchor: the first existing release section outside any
+    # fenced code block.  Only semver-shaped headings count — a
+    # standard Keep-a-Changelog ``## [Unreleased]`` must not anchor the
+    # splice (new releases belong below Unreleased, not above it).
+    for idx, line in _iter_heading_lines(existing):
+        match = _VERSION_LINE_RE.match(line)
+        if match and _SEMVER_RE.match(match.group(1)):
             head = "".join(lines[:idx]).rstrip("\n") + "\n\n"
             tail = "".join(lines[idx:])
             return head + new_section + "\n" + tail
 
     # No release sections yet.  Synthesize a Keep-a-Changelog preamble
-    # when the file is empty or has no H1; otherwise append below the
-    # existing preamble so the first release lands at the bottom.
+    # only when the file is empty; refuse when the file has content
+    # without an H1 (silently demoting user text below a synthesized
+    # preamble + release would be more surprising than raising).
     has_h1 = any(line.startswith("# ") for line in lines)
     if not has_h1:
+        if existing:
+            raise RuntimeError(
+                "CHANGELOG.md is non-empty but has no '# ' H1 heading; "
+                "refusing to synthesize a preamble on top of unrecognized "
+                "content.  Add a '# Changelog' heading (or delete the file) "
+                "and re-run."
+            )
         preamble = (
             "# Changelog\n"
             "\n"
@@ -286,10 +414,15 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
             "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n"
             "\n"
         )
-        return preamble + new_section + (existing if existing else "")
+        return preamble + new_section
 
     head = existing.rstrip("\n") + "\n\n"
     return head + new_section
+
+
+def _version_tag(version: str) -> str:
+    """Return the ``vX.Y.Z`` tag name for *version*, adding ``v`` if missing."""
+    return version if version.startswith("v") else f"v{version}"
 
 
 def resolve_date(
@@ -301,11 +434,11 @@ def resolve_date(
     """Return the release date for *version*.
 
     Precedence: ``--date`` override > tag commit date (if the version
-    tag exists) > today's local date.
+    tag exists) > today's UTC date (see ``today_iso`` for rationale).
     """
     if override:
         return override
-    tag = version if version.startswith("v") else f"v{version}"
+    tag = _version_tag(version)
     if tag_exists(tag, repo_root):
         return tag_commit_date(tag, repo_root)
     return today
@@ -313,7 +446,7 @@ def resolve_date(
 
 def resolve_until(version: str, repo_root: str) -> str:
     """Pick the commit range endpoint: the version tag if it exists, else HEAD."""
-    tag = version if version.startswith("v") else f"v{version}"
+    tag = _version_tag(version)
     return tag if tag_exists(tag, repo_root) else "HEAD"
 
 
@@ -346,7 +479,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--date",
         default=None,
-        help="Override the release date (YYYY-MM-DD). Defaults to tag commit date when the version tag exists, else today's local date.",
+        help="Override the release date (YYYY-MM-DD). Defaults to tag commit date when the version tag exists, else today's UTC date.",
     )
     parser.add_argument(
         "--in-place",
@@ -391,11 +524,14 @@ def report_unmapped(
 
     *stream* must have a ``write(str)`` method; the caller picks stderr
     or stdout.  Entries are emitted in the order they were classified
-    so the output matches ``git log`` ordering.
+    so the output matches ``git log`` ordering.  Lines are routed
+    through ``_write_preserving_lf`` so stderr keeps the same LF
+    discipline as stdout on Windows.
     """
     for sha, subject in unmapped:
-        stream.write(
-            f"unmapped — review manually: {sha[:12]} {subject}\n"
+        _write_preserving_lf(
+            f"unmapped — review manually: {sha[:12]} {subject}\n",
+            stream,
         )
 
 
@@ -434,6 +570,10 @@ def main(argv: list[str] | None = None) -> int:
             f"--version must be X.Y.Z or vX.Y.Z (optional -prerelease / "
             f"+build suffix); got {args.version!r}"
         )
+    if args.date is not None and not _is_iso_date(args.date):
+        parser.error(
+            f"--date must be a valid YYYY-MM-DD calendar date; got {args.date!r}"
+        )
     if args.dry_run and not args.in_place:
         parser.error("--dry-run has no effect without --in-place")
 
@@ -455,6 +595,22 @@ def main(argv: list[str] | None = None) -> int:
 
         changelog_path = os.path.join(repo_root, "CHANGELOG.md")
 
+        if args.in_place and unmapped and not args.dry_run:
+            # Writing a partial section into CHANGELOG.md is a trap: the
+            # user would then have to delete it manually before re-running,
+            # because the duplicate-version guard blocks a second splice.
+            # Refuse and point at the preview workflow instead.  Exit 3
+            # (not 2) because the underlying condition — unmapped commits
+            # — is the same "needs human classification" signal the stdout
+            # and --dry-run paths already surface with 3.
+            sys.stderr.write(
+                f"error: refusing to write CHANGELOG.md with {len(unmapped)} "
+                "unmapped commit(s); classify them in scripts/lib/changelog.yaml "
+                "(or rewrite the commit subjects) and re-run.  Use "
+                "--in-place --dry-run to preview the partial output.\n"
+            )
+            return 3
+
         if args.in_place:
             existing = ""
             if os.path.exists(changelog_path):
@@ -471,15 +627,14 @@ def main(argv: list[str] | None = None) -> int:
                     fh.write(merged)
         else:
             _write_preserving_lf(section, sys.stdout)
-    except (RuntimeError, FileNotFoundError, ValueError) as exc:
-        # ValueError: parse_yaml_subset raises on grammar-gap constructs.
-        # Config shape errors are turned into RuntimeError by
-        # load_verb_mapping with precise isinstance-guarded messages, so
-        # no AttributeError path remains to catch.
+    except (RuntimeError, OSError, ValueError) as exc:
+        # OSError covers FileNotFoundError and PermissionError from
+        # reading/writing CHANGELOG.md; ValueError: parse_yaml_subset
+        # raises on unsupported YAML grammar.
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    return 1 if unmapped else 0
+    return 3 if unmapped else 0
 
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
-# Repository infrastructure configuration.
+# Changelog generator configuration.
 #
-# Separate from skill-system-foundry/scripts/lib/configuration.yaml,
-# which governs the meta-skill's own validation rules.  This file holds
-# configuration for tooling that operates on the repository itself
-# (release automation, changelog generation, etc.).
+# Consumed only by scripts/generate_changelog.py.  Kept separate from
+# skill-system-foundry/scripts/lib/configuration.yaml, which governs
+# the meta-skill's own validation rules.  The filename intentionally
+# differs (changelog.yaml vs configuration.yaml) so grep and wrong-file
+# edits cannot conflate the two.
 
 # ============================================================
-# Changelog Generation (scripts/generate_changelog.py)
+# Verb-to-section mapping (scripts/generate_changelog.py)
 # ============================================================
 # Maps the first word of a commit subject to a Keep-a-Changelog
 # section.  Commits whose first word is not listed here are surfaced
@@ -27,11 +28,11 @@ changelog:
       - Improve
       - Harden
       - Raise
-      - Apply
       - Migrate
       - Increase
       - Enforce
       - Restructure
+      - Bump
     Deprecated:
       - Deprecate
     Removed:

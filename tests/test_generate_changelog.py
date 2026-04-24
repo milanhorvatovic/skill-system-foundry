@@ -8,6 +8,7 @@ This keeps the suite fast and portable (CI runs on Linux and Windows).
 import io
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -53,7 +54,7 @@ class LoadVerbMappingTests(unittest.TestCase):
     def test_unknown_verb_missing(self) -> None:
         mapping = gc.load_verb_mapping()
         self.assertNotIn("Replace", mapping)
-        self.assertNotIn("Bump", mapping)
+        self.assertNotIn("Tweak", mapping)
 
     def test_security_and_deprecated_verbs_present(self) -> None:
         mapping = gc.load_verb_mapping()
@@ -62,9 +63,14 @@ class LoadVerbMappingTests(unittest.TestCase):
         self.assertEqual(mapping["Secure"], "Security")
         self.assertEqual(mapping["Mitigate"], "Security")
 
-    def test_unknown_section_rejected(self) -> None:
-        import tempfile
+    def test_bump_verb_routes_to_changed(self) -> None:
+        # Dependency-upgrade commits ("Bump X to Y") are the dominant
+        # non-"Update" verb in practice; without a mapping they would hit
+        # the unmapped path at every release.
+        mapping = gc.load_verb_mapping()
+        self.assertEqual(mapping["Bump"], "Changed")
 
+    def test_unknown_section_rejected(self) -> None:
         bad = (
             "changelog:\n"
             "  verb_mapping:\n"
@@ -88,8 +94,6 @@ class LoadVerbMappingTests(unittest.TestCase):
         # A scalar where a list is expected (e.g., ``Added: Add`` instead
         # of ``Added: [Add]``) should fail loudly — silently dropping the
         # section would leave its verbs unclassified at release time.
-        import tempfile
-
         bad = (
             "changelog:\n"
             "  verb_mapping:\n"
@@ -112,8 +116,6 @@ class LoadVerbMappingTests(unittest.TestCase):
         # A config file that lacks the ``changelog.verb_mapping`` block
         # must fail loudly rather than silently routing every commit to
         # unmapped with no explanation.
-        import tempfile
-
         with tempfile.NamedTemporaryFile(
             "w", suffix=".yaml", encoding="utf-8", delete=False,
         ) as fh:
@@ -126,12 +128,38 @@ class LoadVerbMappingTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_duplicate_verb_across_sections_rejected(self) -> None:
+        # A verb listed under two sections would otherwise silently
+        # route to whichever section loaded second — a YAML typo that
+        # quietly reclassifies commits.  Fail loudly so the duplicate
+        # is surfaced at config-load time.
+        bad = (
+            "changelog:\n"
+            "  verb_mapping:\n"
+            "    Added:\n"
+            "      - Add\n"
+            "    Changed:\n"
+            "      - Add\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write(bad)
+            path = fh.name
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gc.load_verb_mapping(path)
+            message = str(ctx.exception)
+            self.assertIn("'Add'", message)
+            self.assertIn("Added", message)
+            self.assertIn("Changed", message)
+        finally:
+            os.unlink(path)
+
     def test_non_mapping_verb_mapping_rejected(self) -> None:
         # ``verb_mapping: [Add, Fix]`` (a list instead of a mapping)
         # would previously raise ``AttributeError`` on ``.items()``;
         # it now raises ``RuntimeError`` with a clear message.
-        import tempfile
-
         with tempfile.NamedTemporaryFile(
             "w", suffix=".yaml", encoding="utf-8", delete=False,
         ) as fh:
@@ -281,15 +309,10 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertIn("## [1.0.0] - 2026-01-01", merged)
         self.assertIn("- Initial release", merged)
 
-    def test_no_h1_synthesizes_preamble(self) -> None:
+    def test_empty_existing_synthesizes_preamble_and_inserts_section(self) -> None:
         merged = gc.splice_into_changelog("", NEW_SECTION)
         self.assertTrue(merged.startswith("# Changelog"))
         self.assertIn("Keep a Changelog", merged)
-        self.assertIn("## [1.1.0]", merged)
-
-    def test_empty_existing_yields_preamble_plus_section(self) -> None:
-        merged = gc.splice_into_changelog("", NEW_SECTION)
-        # No leftover empty-file content.
         self.assertIn("## [1.1.0] - 2026-03-22", merged)
 
     def test_duplicate_version_raises(self) -> None:
@@ -351,6 +374,56 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertIn("## [1.1.0]", merged)
         self.assertIn("## [1.1.0-rc.1]", merged)
 
+    def test_build_metadata_matches_plain_release(self) -> None:
+        # Per semver 2.0.0 §10, build metadata does not affect
+        # precedence: 1.1.0 and 1.1.0+build.42 are the same version
+        # for uniqueness purposes.  The splice guard must refuse a
+        # new 1.1.0+build.42 when 1.1.0 already exists (and vice
+        # versa) rather than letting both coexist.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [1.1.0] - 2026-03-22\n"
+            "\n"
+            "- Existing\n"
+        )
+        new_with_build = "## [1.1.0+build.42] - 2026-04-01\n\n### Added\n\n- Add Y\n"
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, new_with_build)
+        self.assertIn("1.1.0", str(ctx.exception))
+        self.assertIn("already contains", str(ctx.exception))
+
+    def test_build_metadata_in_existing_matches_plain_new(self) -> None:
+        # Symmetric case: 1.1.0+build.42 already in CHANGELOG must
+        # block a new 1.1.0 (same version per semver precedence).
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [1.1.0+build.42] - 2026-03-22\n"
+            "\n"
+            "- Existing\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        self.assertIn("1.1.0", str(ctx.exception))
+        self.assertIn("already contains", str(ctx.exception))
+
+    def test_v_prefix_in_existing_matches_plain_new(self) -> None:
+        # ``normalize_version`` strips ``v`` from the emitted heading,
+        # so an existing ``## [v1.1.0]`` (common in hand-edited
+        # CHANGELOGs) must still block a newly-emitted ``## [1.1.0]``.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [v1.1.0] - 2026-03-22\n"
+            "\n"
+            "- Existing\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        self.assertIn("1.1.0", str(ctx.exception))
+        self.assertIn("already contains", str(ctx.exception))
+
     def test_preamble_is_preserved_between_h1_and_new_release(self) -> None:
         # Regression: splice used to insert between the H1 and the
         # preamble, pushing "All notable changes..." below the new
@@ -380,6 +453,47 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertLess(format_pos, new_pos)
         self.assertLess(new_pos, old_pos)
 
+    def test_fenced_version_heading_is_not_duplicate(self) -> None:
+        # A ``## [1.1.0]`` line inside a ``` fence is an example, not a
+        # real heading; it must not trip the duplicate-version guard.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "Example format:\n"
+            "\n"
+            "```md\n"
+            "## [1.1.0] - 2026-03-22\n"
+            "```\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        # The new 1.1.0 release splices above 1.0.0, and the fenced
+        # example survives unchanged above both.
+        fence_pos = merged.index("```md")
+        new_pos = merged.index("## [1.1.0] - 2026-03-22\n\n### Added")
+        old_pos = merged.index("## [1.0.0]")
+        self.assertLess(fence_pos, new_pos)
+        self.assertLess(new_pos, old_pos)
+
+    def test_fenced_version_heading_does_not_anchor_splice(self) -> None:
+        # Without a real release section, the splice must not treat a
+        # fenced example as an anchor and insert above it.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "```md\n"
+            "## [0.9.0] - 2026-01-01\n"
+            "```\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        fence_pos = merged.index("```md")
+        new_pos = merged.index("## [1.1.0]")
+        # New release lands below the fenced example, not above it.
+        self.assertLess(fence_pos, new_pos)
+
     def test_appends_when_h1_only_has_preamble_no_release(self) -> None:
         # No ``## [`` section yet — the new release lands below the
         # existing preamble rather than between the H1 and the text.
@@ -392,6 +506,57 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         preamble_pos = merged.index("All notable changes")
         new_pos = merged.index("## [1.1.0]")
         self.assertLess(preamble_pos, new_pos)
+
+    def test_unreleased_heading_is_not_an_anchor(self) -> None:
+        # The Keep-a-Changelog convention keeps ``## [Unreleased]`` above
+        # the latest release.  The splice must skip it as an anchor so
+        # the new release lands BELOW Unreleased, not above it.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [Unreleased]\n"
+            "\n"
+            "- In-flight change\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        unreleased_pos = merged.index("## [Unreleased]")
+        new_pos = merged.index("## [1.1.0]")
+        old_pos = merged.index("## [1.0.0]")
+        self.assertLess(unreleased_pos, new_pos)
+        self.assertLess(new_pos, old_pos)
+
+    def test_non_h1_existing_content_rejected(self) -> None:
+        # A non-empty CHANGELOG.md without a '# ' H1 heading is
+        # unrecognized content.  Silently synthesizing a preamble on
+        # top of it (and pushing the original text below the new
+        # release) would be more surprising than raising — the caller
+        # should add a heading or delete the file.
+        existing = "Some notes that are not a changelog yet.\n"
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        message = str(ctx.exception)
+        self.assertIn("H1", message)
+        self.assertIn("refusing", message)
+
+    def test_only_unreleased_falls_back_to_append(self) -> None:
+        # If the only ``## [`` heading is ``[Unreleased]`` (no real
+        # release yet), there is no semver anchor, so the new release
+        # appends below the existing preamble / Unreleased block.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "## [Unreleased]\n"
+            "\n"
+            "- In-flight change\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        unreleased_pos = merged.index("## [Unreleased]")
+        new_pos = merged.index("## [1.1.0]")
+        self.assertLess(unreleased_pos, new_pos)
 
 
 # ===================================================================
@@ -573,12 +738,15 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("## [1.1.0]", out.getvalue())
 
-    def test_unmapped_goes_to_stderr_and_exits_non_zero(self) -> None:
+    def test_unmapped_goes_to_stderr_and_exits_three(self) -> None:
+        # Exit 3 is the "soft failure" signal reserved for human-review
+        # situations; distinct from 2 (argparse / runtime error) so CI
+        # pipelines can branch on "needs classification" vs "broken".
         with self._patch_git([("zzz", "Replace the thing")]):
             with mock.patch("sys.stdout", new=io.StringIO()) as out, \
                  mock.patch("sys.stderr", new=io.StringIO()) as err:
                 rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, 3)
         self.assertIn("unmapped", err.getvalue())
         self.assertNotIn("Replace the thing", out.getvalue())
 
@@ -613,8 +781,6 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("--dry-run", err.getvalue())
 
     def test_in_place_writes_file(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = tmp
             os.makedirs(os.path.join(repo_root, ".git"))
@@ -642,8 +808,6 @@ class MainCliTests(unittest.TestCase):
             self.assertIn("## [1.0.0]", content)
 
     def test_dry_run_with_in_place_does_not_write(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = tmp
             os.makedirs(os.path.join(repo_root, ".git"))
@@ -674,8 +838,6 @@ class MainCliTests(unittest.TestCase):
         # On Windows, default text-mode writes convert \n to \r\n.
         # The in-place write opens with newline="" to pin LF so the
         # CHANGELOG.md does not churn across CI platforms.
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = tmp
             os.makedirs(os.path.join(repo_root, ".git"))
@@ -715,8 +877,6 @@ class MainCliTests(unittest.TestCase):
         # A duplicate-version splice raises RuntimeError; main() must
         # turn that into an "error: ..." line on stderr and return 2
         # rather than leaking a traceback.
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = tmp
             os.makedirs(os.path.join(repo_root, ".git"))
@@ -776,6 +936,131 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("error:", err.getvalue())
         self.assertIn("bad yaml token", err.getvalue())
+
+    def test_invalid_date_format_rejected(self) -> None:
+        # ``--date 2026-13-45`` would otherwise splice a malformed
+        # heading into CHANGELOG.md.  argparse.error exits with code 2.
+        with mock.patch("sys.stderr", new=io.StringIO()) as err:
+            with self.assertRaises(SystemExit) as ctx:
+                gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0",
+                    "--date", "2026-13-45",
+                ])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--date", err.getvalue())
+
+    def test_non_iso_date_rejected(self) -> None:
+        # Free-form strings like ``today`` must fail the format check
+        # rather than land in the rendered heading verbatim.
+        with mock.patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0",
+                    "--date", "today",
+                ])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_in_place_refuses_when_unmapped_exists(self) -> None:
+        # Writing a partial section under --in-place would trap the
+        # user: the duplicate-version guard blocks a clean re-run, so
+        # the recovery path is manual deletion.  Refuse and return 3
+        # (same "needs human classification" code as the stdout and
+        # --dry-run paths) so release automation can treat all three
+        # unmapped surfaces uniformly; 2 stays reserved for argparse
+        # and genuine runtime errors.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            original = "# Changelog\n\n## [1.0.0] - 2026-01-01\n"
+            with open(changelog, "w", encoding="utf-8") as fh:
+                fh.write(original)
+
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[
+                    ("aaa", "Add X"),
+                    ("zzz", "Replace bundle"),
+                ]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--in-place",
+                ])
+            self.assertEqual(rc, 3)
+            self.assertIn("refusing", err.getvalue())
+            with open(changelog, "r", encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), original)
+
+    def test_in_place_dry_run_allowed_with_unmapped(self) -> None:
+        # --in-place --dry-run only previews; no disk mutation, so
+        # emitting the partial merge to stdout is safe even with
+        # unmapped commits.  Preserves the "see what would happen"
+        # workflow for reclassification.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            original = "# Changelog\n\n## [1.0.0] - 2026-01-01\n"
+            with open(changelog, "w", encoding="utf-8") as fh:
+                fh.write(original)
+
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[
+                    ("aaa", "Add X"),
+                    ("zzz", "Replace bundle"),
+                ]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()) as out, \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0",
+                    "--in-place", "--dry-run",
+                ])
+            self.assertEqual(rc, 3)
+            self.assertIn("## [1.1.0]", out.getvalue())
+            with open(changelog, "r", encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), original)
+
+    def test_in_place_with_no_existing_changelog(self) -> None:
+        # --in-place against a repo without CHANGELOG.md must synthesize
+        # the Keep-a-Changelog preamble and write the new release to a
+        # fresh file rather than erroring on the missing path.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            self.assertFalse(os.path.exists(changelog))
+
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--in-place",
+                ])
+            self.assertEqual(rc, 0)
+            with open(changelog, "r", encoding="utf-8") as fh:
+                content = fh.read()
+            self.assertIn("# Changelog", content)
+            self.assertIn("Keep a Changelog", content)
+            self.assertIn("## [1.1.0]", content)
 
 # ===================================================================
 # first_word — edge cases
@@ -862,8 +1147,6 @@ class CollectCommitsTests(unittest.TestCase):
 
 class FindRepoRootTests(unittest.TestCase):
     def test_finds_git_dir_in_ancestor(self) -> None:
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             real_tmp = os.path.realpath(tmp)
             os.makedirs(os.path.join(real_tmp, ".git"))
@@ -872,17 +1155,12 @@ class FindRepoRootTests(unittest.TestCase):
             self.assertEqual(gc.find_repo_root(nested), real_tmp)
 
     def test_raises_when_no_git_anywhere(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            nested = os.path.join(tmp, "no-git-here")
-            os.makedirs(nested)
-            # Can't easily simulate "no .git anywhere up to filesystem root"
-            # because the real repo above would match.  Use a patched
-            # os.path.exists that always returns False.
-            with mock.patch.object(gc.os.path, "exists", return_value=False):
-                with self.assertRaises(RuntimeError):
-                    gc.find_repo_root(nested)
+        # Can't simulate "no .git anywhere up to filesystem root" with a
+        # real tempdir — the outer worktree has its own .git — so patch
+        # os.path.exists to return False for the whole walk.
+        with mock.patch.object(gc.os.path, "exists", return_value=False):
+            with self.assertRaises(RuntimeError):
+                gc.find_repo_root("/tmp/does-not-matter")
 
 
 class NormalizeVersionTests(unittest.TestCase):
@@ -900,6 +1178,58 @@ class TodayIsoTests(unittest.TestCase):
         self.assertEqual(len(result), 10)
         self.assertEqual(result[4], "-")
         self.assertEqual(result[7], "-")
+
+
+# ===================================================================
+# _write_preserving_lf — Windows buffer branch
+# ===================================================================
+
+
+class WritePreservingLfTests(unittest.TestCase):
+    """Covers both branches of the LF-preserving writer."""
+
+    def test_uses_buffer_write_when_available(self) -> None:
+        # Real stdout/stderr expose a ``buffer`` attribute; on Windows,
+        # text-mode ``write`` would rewrite \n to \r\n, so the function
+        # must route through the buffer with explicit UTF-8 bytes.
+        fake_buffer = mock.MagicMock()
+        fake_stream = mock.MagicMock(buffer=fake_buffer, spec=["buffer", "write"])
+        gc._write_preserving_lf("hello\nworld\n", fake_stream)
+        fake_buffer.write.assert_called_once_with(b"hello\nworld\n")
+        fake_stream.write.assert_not_called()
+
+    def test_falls_back_to_write_when_no_buffer(self) -> None:
+        # StringIO has no ``buffer`` attribute; the function must fall
+        # back to a plain text write so tests and other surrogates keep
+        # working.
+        buf = io.StringIO()
+        gc._write_preserving_lf("plain\n", buf)
+        self.assertEqual(buf.getvalue(), "plain\n")
+
+
+# ===================================================================
+# _require_yaml_parser — deferred import contract
+# ===================================================================
+
+
+class RequireYamlParserTests(unittest.TestCase):
+    """The parser load is deferred so failures route through exit 2."""
+
+    def test_returns_parser_when_available(self) -> None:
+        parse = gc._require_yaml_parser()
+        # Sanity-check it is actually the foundry's parser.
+        self.assertTrue(callable(parse))
+        self.assertEqual(parse("a: 1\n"), {"a": "1"})
+
+    def test_missing_parser_file_raises_actionable_runtime_error(self) -> None:
+        # Point the loader at a path that does not exist and confirm the
+        # error message tells the caller where to look and why.
+        with mock.patch.object(gc, "_YAML_PARSER_PATH", "/nonexistent/yaml_parser.py"):
+            with self.assertRaises(RuntimeError) as ctx:
+                gc._require_yaml_parser()
+        message = str(ctx.exception)
+        self.assertIn("yaml_parser.py", message)
+        self.assertIn("/nonexistent/yaml_parser.py", message)
 
 
 if __name__ == "__main__":

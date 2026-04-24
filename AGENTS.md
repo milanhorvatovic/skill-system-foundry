@@ -73,7 +73,7 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 ├── scripts/                         ← repository infrastructure (not part of the meta-skill)
 │   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
 │   └── lib/
-│       └── configuration.yaml       ← repo-infra config (distinct from skill-system-foundry/scripts/lib/configuration.yaml)
+│       └── changelog.yaml           ← verb→section map for the changelog generator
 ├── tests/                           ← comprehensive test suite (see tests/ for current files)
 │   ├── helpers.py                   ← shared test utilities
 │   └── test_*.py                    ← one test file per source module
@@ -119,7 +119,7 @@ These constraints are non-negotiable across the entire codebase:
 
 - **Standard library only** — no `pip install` dependencies in production code. Scripts must run anywhere Python 3.12+ is available.
 - **Python 3.12 compatibility** — do not use features from 3.13+.
-- **Validation rules in YAML** — limits, patterns, and reserved words live in `skill-system-foundry/scripts/lib/configuration.yaml`. Never hardcode validation rules in Python. (A separate `scripts/lib/configuration.yaml` at the repo root holds repo-infrastructure config — e.g., the changelog generator's verb mapping — and is not loaded by the meta-skill.)
+- **Validation rules in YAML** — limits, patterns, and reserved words live in `skill-system-foundry/scripts/lib/configuration.yaml`. Never hardcode validation rules in Python. (Repo-infrastructure tools keep their own YAML under `scripts/lib/` — e.g., `scripts/lib/changelog.yaml` for the changelog generator's verb mapping — and are not loaded by the meta-skill.)
 - **`os.path` only** — do not use `pathlib`. Do not mix the two.
 - **Type hints on all function signatures** — use builtin generics (`list`, `dict`, `tuple`) and `X | None`.
 - **`encoding="utf-8"` on all `open()` calls.**
@@ -215,3 +215,5 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 ## Release Process
 
 Version lives in `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`). Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
+
+When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section with `python scripts/generate_changelog.py --since vX.Y.Z --version X.Y.Z+1 --in-place` and commit the updated `CHANGELOG.md` before tagging.
