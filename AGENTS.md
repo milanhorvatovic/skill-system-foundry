@@ -70,6 +70,10 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── audit_skill_system.py    ← audit entire skill system
 │       ├── scaffold.py              ← scaffold new components from templates
 │       └── bundle.py                ← bundle for distribution (zip)
+├── scripts/                         ← repository infrastructure (not part of the meta-skill)
+│   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
+│   └── lib/
+│       └── changelog.yaml           ← verb→section map for the changelog generator
 ├── tests/                           ← comprehensive test suite (see tests/ for current files)
 │   ├── helpers.py                   ← shared test utilities
 │   └── test_*.py                    ← one test file per source module
@@ -115,7 +119,7 @@ These constraints are non-negotiable across the entire codebase:
 
 - **Standard library only** — no `pip install` dependencies in production code. Scripts must run anywhere Python 3.12+ is available.
 - **Python 3.12 compatibility** — do not use features from 3.13+.
-- **Validation rules in YAML** — limits, patterns, and reserved words live in `scripts/lib/configuration.yaml`. Never hardcode validation rules in Python.
+- **Validation rules in YAML** — limits, patterns, and reserved words live in `skill-system-foundry/scripts/lib/configuration.yaml`. Never hardcode validation rules in Python. (Repo-infrastructure tools keep their own YAML under `scripts/lib/` — e.g., `scripts/lib/changelog.yaml` for the changelog generator's verb mapping — and are not loaded by the meta-skill.)
 - **`os.path` only** — do not use `pathlib`. Do not mix the two.
 - **Type hints on all function signatures** — use builtin generics (`list`, `dict`, `tuple`) and `X | None`.
 - **`encoding="utf-8"` on all `open()` calls.**
@@ -123,7 +127,7 @@ These constraints are non-negotiable across the entire codebase:
 - **Validation functions return `(errors, passes)` tuples** — never raise exceptions for validation failures.
 - **Shell scripts use `set -euo pipefail`** and validate environment variables at the top with `${VAR:?}`.
 - **Actions pinned to commit SHAs** — not tags.
-- **All script entry points support `--json`** — machine-readable output via `to_json_output()` from `lib/reporting.py`.
+- **Meta-skill script entry points support `--json`** — entry points under `skill-system-foundry/scripts/` must provide machine-readable output via `to_json_output()` from `lib/reporting.py`. Repo-infrastructure scripts under the top-level `scripts/` tree (e.g., `scripts/generate_changelog.py`) are exempt: their output is consumed directly by humans during maintenance tasks, and line-oriented stderr diagnostics already cover the tooling surface.
 
 ## Development Workflow
 
@@ -182,9 +186,11 @@ Dependencies flow strictly downward: `roles → skills → capabilities`. Never 
 
 ## Code Organization
 
-- **Entry points** (`scripts/*.py`) — thin wrappers: argument parsing, output formatting, `sys.exit()`. Delegate everything to `scripts/lib/`.
-- **Library modules** (`scripts/lib/*.py`) — domain logic. No `print()` or `sys.exit()` except in dedicated output helpers (`reporting.py`).
-- **Constants** (`scripts/lib/constants.py`) — structural constants in Python, validation rules loaded from `configuration.yaml`. All YAML values are returned as strings by the custom parser — convert with `int()` in `constants.py`.
+The rules below apply to the meta-skill tree under `skill-system-foundry/scripts/`. Repo-infrastructure scripts under the top-level `scripts/` tree (e.g., `scripts/generate_changelog.py`) are self-contained maintenance tools — they are allowed to carry domain logic in the entry point rather than delegating to a `lib/` module, because they are invoked only by maintainers during releases and do not need to share logic with the meta-skill.
+
+- **Entry points** (`skill-system-foundry/scripts/*.py`) — thin wrappers: argument parsing, output formatting, `sys.exit()`. Delegate everything to `skill-system-foundry/scripts/lib/`.
+- **Library modules** (`skill-system-foundry/scripts/lib/*.py`) — domain logic. No `print()` or `sys.exit()` except in dedicated output helpers (`reporting.py`).
+- **Constants** (`skill-system-foundry/scripts/lib/constants.py`) — structural constants in Python, validation rules loaded from `configuration.yaml`. All YAML values are returned as strings by the custom parser — convert with `int()` in `constants.py`.
 - **Tests** (`tests/`) — one test file per source module. `unittest.TestCase` with descriptive class names grouped by feature. Section separators (`# ===...`) for visual clarity.
 
 ## Documentation Standards
@@ -211,3 +217,44 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 ## Release Process
 
 Version lives in `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`). Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
+
+When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section using the checklist below.
+
+1. **Preview** the section for the exact commit you intend to tag. Substitute the previous tag and the new release number (e.g., `--since v1.1.0 --version 1.2.0`) — not SemVer build metadata like `+1`. Pin `--until` so the range cannot drift between the preview and the write.
+
+   Unix-like shells:
+
+   ```sh
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --in-place --dry-run
+   ```
+
+   PowerShell:
+
+   ```powershell
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --in-place --dry-run
+   ```
+
+2. **Reclassify** any commits reported on stderr as `unmapped — review manually`:
+   - add their first-word verb to `scripts/lib/changelog.yaml`, or
+   - reword the commit subject.
+
+3. **Write** `CHANGELOG.md` only after the preview is clean. For a version whose tag does not yet exist, pass `--date YYYY-MM-DD` so the file gets a deterministic stamp, then commit the updated `CHANGELOG.md` before tagging.
+
+   Unix-like shells:
+
+   ```sh
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --date YYYY-MM-DD --in-place
+   ```
+
+   PowerShell:
+
+   ```powershell
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --date YYYY-MM-DD --in-place
+   ```
+
+4. **Expected failure modes:**
+   - `--in-place` refuses with exit 3 while any commit remains unmapped.
+   - `--in-place` refuses with `error:` and exit 2 if `--date` is omitted for a version whose tag does not yet exist.
+   - Previews (stdout and `--in-place --dry-run`) keep the today-fallback for date.
+
+5. **Retrospective regeneration** (the version tag already exists) does not need `--date` or `--until`. The generator uses the annotated tag's tagger date, falling back to the tagged commit's committer date for lightweight tags, so rebased or cherry-picked commits do not produce a stale author date.
