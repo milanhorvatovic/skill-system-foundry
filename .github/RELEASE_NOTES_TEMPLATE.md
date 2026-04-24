@@ -1,9 +1,5 @@
 <!--
-Release notes template — paste into the body of the GitHub Release
-when publishing a new version.  Replace every {VERSION} placeholder
-with the release number (e.g., 1.2.0).  Links use ``blob/v{VERSION}``
-so historical release pages keep pointing at the changelog and
-README as they shipped, not at whatever is on ``main`` later.
+Release notes template — paste into the body of the GitHub Release when publishing a new version.  Replace every {VERSION} placeholder with the release number (e.g., 1.2.0).  Links use ``blob/v{VERSION}`` so historical release pages keep pointing at the changelog and README as they shipped, not at whatever is on ``main`` later.
 -->
 
 ## What's changed
