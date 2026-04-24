@@ -172,6 +172,36 @@ class LoadVerbMappingTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_non_string_verb_element_rejected(self) -> None:
+        # Regression guard: a nested mapping in place of a plain verb
+        # string (e.g. ``- Add: true``) used to raise TypeError at
+        # ``verb in flat``, which main() does not catch — the traceback
+        # would escape instead of the documented error: / exit 2
+        # contract.  Validate each list element as a string first.
+        #
+        # parse_yaml_subset turns ``- key: value`` into ``[{"key":
+        # "value"}]`` inside the list, so this is the realistic shape
+        # a typo would produce.
+        bad = (
+            "changelog:\n"
+            "  verb_mapping:\n"
+            "    Added:\n"
+            "      - Add: true\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write(bad)
+            path = fh.name
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gc.load_verb_mapping(path)
+            message = str(ctx.exception)
+            self.assertIn("Added", message)
+            self.assertIn("must contain only strings", message)
+        finally:
+            os.unlink(path)
+
 
 # ===================================================================
 # Classification
@@ -560,6 +590,55 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("H1", message)
         self.assertIn("refusing", message)
+
+    def test_fenced_only_content_rejected(self) -> None:
+        # Regression guard: a file whose only content lives inside
+        # fenced code blocks leaves ``first_real_line`` unset because
+        # ``_iter_heading_lines`` skips fenced lines.  Synthesizing a
+        # preamble and returning ``preamble + new_section`` would
+        # silently drop the original content — an in-place run would
+        # be destructive.  Detect the non-empty-but-fenced-only case
+        # from the raw text and raise.
+        existing = (
+            "```md\n"
+            "## [0.9.0] - 2026-01-01\n"
+            "- draft note\n"
+            "```\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        message = str(ctx.exception)
+        self.assertIn("fenced", message)
+        self.assertIn("H1", message)
+
+    def test_indented_fence_does_not_toggle(self) -> None:
+        # CommonMark §4.5: indentation of 4+ spaces is an indented code
+        # block, not a fence.  The previous ``^\s*`` regex treated any
+        # leading whitespace as fence indentation, so a ``    ```md``
+        # line inside an ordered-list continuation could flip
+        # ``in_fence`` at the wrong time and mask a later release
+        # anchor.  With the CommonMark-accurate regex, the real
+        # ``## [1.0.0]`` heading below must still be treated as the
+        # anchor.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "1. Historical note\n"
+            "\n"
+            "        ```md\n"  # 8 spaces — not a fence
+            "        ## [9.9.9]\n"
+            "        ```\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        # New release lands immediately above the real 1.0.0 anchor,
+        # not at the end of the file.
+        new_pos = merged.index("## [1.1.0] - 2026-03-22\n\n### Added")
+        old_pos = merged.index("## [1.0.0] - 2026-01-01")
+        self.assertLess(new_pos, old_pos)
 
     def test_missing_h1_before_semver_anchor_rejected(self) -> None:
         # Regression guard: the H1 check used to run only when no
@@ -1213,6 +1292,25 @@ class RunGitTests(unittest.TestCase):
                 gc.run_git(["log"], "/tmp")
         self.assertIn("git log failed", str(ctx.exception))
         self.assertIn("boom", str(ctx.exception))
+
+    def test_pins_utf8_encoding(self) -> None:
+        # Regression guard: text=True without ``encoding`` decodes per
+        # process locale.  On Windows code pages, a UTF-8 commit
+        # subject then raises UnicodeDecodeError before ``returncode``
+        # is checked, crashing the generator with a traceback instead
+        # of producing output.  Pin UTF-8 with ``errors="replace"`` so
+        # decoding is locale-independent.
+        captured: dict = {}
+
+        def _record(*args: object, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return _fake_completed("ok\n")
+
+        with mock.patch.object(gc.subprocess, "run", side_effect=_record):
+            gc.run_git(["status"], "/tmp")
+        self.assertEqual(captured.get("encoding"), "utf-8")
+        self.assertEqual(captured.get("errors"), "replace")
+        self.assertTrue(captured.get("text"))
 
 
 class TagExistsTests(unittest.TestCase):

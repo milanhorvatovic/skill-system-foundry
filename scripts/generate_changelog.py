@@ -200,6 +200,16 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
                 f"{type(verbs).__name__}; check {config_path}."
             )
         for verb in verbs:
+            # Guard before dict key use: a nested mapping/list item in
+            # the YAML would otherwise raise TypeError at ``verb in
+            # flat``, and main() only catches RuntimeError/OSError/
+            # ValueError — the traceback would escape instead of the
+            # documented ``error: …`` / exit 2 contract.
+            if not isinstance(verb, str):
+                raise RuntimeError(
+                    f"verb_mapping[{section!r}] must contain only strings, "
+                    f"got {type(verb).__name__}; check {config_path}."
+                )
             if verb in flat:
                 raise RuntimeError(
                     f"verb {verb!r} appears under both {flat[verb]!r} and "
@@ -211,12 +221,21 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
 
 
 def run_git(args: list[str], cwd: str) -> str:
-    """Run a git command and return stdout.  Raises on non-zero exit."""
+    """Run a git command and return stdout.  Raises on non-zero exit.
+
+    Output is decoded as UTF-8 with ``errors="replace"`` rather than
+    the process locale so UTF-8 commit subjects do not crash the
+    generator on Windows code pages.  A handful of mojibake characters
+    in an unmappable commit is strictly better than a traceback that
+    aborts the entire release.
+    """
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -227,12 +246,20 @@ def run_git(args: list[str], cwd: str) -> str:
 
 
 def tag_exists(ref: str, repo_root: str) -> bool:
-    """Return ``True`` when ``refs/tags/{ref}`` resolves in *repo_root*."""
+    """Return ``True`` when ``refs/tags/{ref}`` resolves in *repo_root*.
+
+    Decodes stdout/stderr as UTF-8 for the same locale-independence
+    rationale as ``run_git``; we only inspect the return code here,
+    but tag names and git's stderr messages should still decode
+    without raising on Windows code pages.
+    """
     result = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}"],
         cwd=repo_root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return result.returncode == 0
@@ -330,7 +357,17 @@ def render_section(
 
 
 _VERSION_LINE_RE = re.compile(r"^## \[([^\]]+)\]")
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# CommonMark §4.5: a fenced code block opens on a line indented by 0-3
+# spaces and begins with at least three backticks or tildes.  The
+# previous ``^\s*`` was too loose — it toggled ``in_fence`` on any
+# indented ``` sequence (including 4+ spaces, which CommonMark treats
+# as an indented code block, not a fence) and could miss or mis-detect
+# release headings during the duplicate-version guard and anchor scan.
+# We also accept 3+ fence characters rather than exactly three so
+# longer closing fences (a common CommonMark idiom) match.  An
+# explicit info string (e.g. ``` ```python ```) is allowed after the
+# fence characters, so no trailing lookahead is imposed.
+_FENCE_RE = re.compile(r"^[ ]{0,3}(?:`{3,}|~{3,})")
 
 
 def _precedence_token(bracket_contents: str) -> str:
@@ -437,8 +474,22 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
             return head + new_section + "\n" + tail
 
     if first_real_line is None:
-        # Empty file, or only whitespace/fenced content — synthesize a
-        # full Keep-a-Changelog preamble for a brand-new file.
+        # ``first_real_line`` is populated from ``_iter_heading_lines``,
+        # which skips everything inside fenced code blocks.  So a file
+        # whose only content lives inside fences (a draft or a notes
+        # file) would reach this branch even though *existing* is not
+        # empty — synthesizing a preamble here would silently drop
+        # that content.  Inspect the raw text before deciding.
+        if existing.strip():
+            raise RuntimeError(
+                "CHANGELOG.md contains only fenced or whitespace content "
+                "with no '# ' H1 heading; refusing to synthesize a "
+                "preamble on top of it (that would discard the existing "
+                "content).  Add a '# Changelog' heading at the top (or "
+                "delete the file) and re-run."
+            )
+        # Truly empty (or whitespace-only) file — synthesize a full
+        # Keep-a-Changelog preamble for a brand-new changelog.
         preamble = (
             "# Changelog\n"
             "\n"
