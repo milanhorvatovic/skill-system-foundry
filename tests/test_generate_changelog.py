@@ -1159,6 +1159,29 @@ class MainCliTests(unittest.TestCase):
                 ])
             self.assertEqual(rc, 0)
 
+    def test_in_place_dry_run_bypasses_date_guard(self) -> None:
+        # Regression guard: the pre-tag ``--date`` requirement must
+        # only fire on the real write path.  ``--in-place --dry-run``
+        # is a preview — it never touches disk — so the today
+        # fallback is safe there.  If the guard fires here the
+        # documented preview/classify/write loop breaks, because
+        # operators cannot preview the upcoming section before the
+        # tag exists.
+        with mock.patch.multiple(
+            gc,
+            tag_exists=mock.MagicMock(return_value=False),
+            collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+        ):
+            with mock.patch("sys.stdout", new=io.StringIO()) as out, \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.2.0",
+                    "--in-place", "--dry-run",
+                ])
+        self.assertEqual(rc, 0)
+        self.assertIn("## [1.2.0]", out.getvalue())
+
     def test_stdout_mode_still_falls_back_to_today(self) -> None:
         # Previews (no --in-place) keep the today-fallback for
         # convenience; only the on-disk write is guarded.

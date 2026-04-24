@@ -748,9 +748,11 @@ def main(argv: list[str] | None = None) -> int:
         # creating the tag.  In that case ``resolve_date`` would fall
         # back to today's date, which is wrong if the tag ends up on a
         # different day.  Refuse an ``--in-place`` write that would
-        # commit a guessed date to disk — previews (stdout / --dry-run)
-        # still tolerate today's fallback for convenience.
-        if args.in_place and args.date is None:
+        # commit a guessed date to disk.  Previews — stdout and
+        # ``--in-place --dry-run`` — are explicitly exempt so the
+        # preview/classify loop still works before the tag exists;
+        # the guard fires only on the real write path.
+        if args.in_place and not args.dry_run and args.date is None:
             tag = _version_tag(args.version)
             if not tag_exists(tag, repo_root):
                 raise RuntimeError(
