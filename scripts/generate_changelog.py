@@ -276,13 +276,26 @@ def tag_exists(ref: str, repo_root: str) -> bool:
 
 
 def tag_commit_date(tag: str, repo_root: str) -> str:
-    """Return ``%cs`` (committer date, ISO short) for *tag*.
+    """Return the release date (ISO short) for *tag*.
 
-    ``%cs`` is the commit date rather than the author date (``%as``).
-    Author date can be older than the commit itself after a rebase,
-    cherry-pick, or amended commit, which would stamp a retrospective
-    changelog entry with a date that predates the actual release.
+    Prefers the annotated tag's own tagger date, which is the
+    authoritative signal for "when this release was cut".  For
+    lightweight tags (no tag object, just a ref pointing at a commit)
+    ``%(taggerdate:short)`` comes back empty, so we fall back to the
+    tagged commit's committer date (``%cs``).  Author date (``%as``)
+    is intentionally not used: after a rebase or cherry-pick it can
+    predate the actual release by days.
     """
+    tagger_date = run_git(
+        [
+            "for-each-ref",
+            "--format=%(taggerdate:short)",
+            f"refs/tags/{tag}",
+        ],
+        repo_root,
+    ).strip()
+    if tagger_date:
+        return tagger_date
     return run_git(["log", "-1", "--format=%cs", tag], repo_root).strip()
 
 

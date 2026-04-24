@@ -1475,21 +1475,34 @@ class TagExistsTests(unittest.TestCase):
 
 
 class TagCommitDateTests(unittest.TestCase):
-    def test_strips_trailing_newline(self) -> None:
-        with mock.patch.object(gc, "run_git", return_value="2026-03-22\n"):
-            self.assertEqual(gc.tag_commit_date("v1.1.0", "/tmp"), "2026-03-22")
-
-    def test_uses_committer_date_format(self) -> None:
-        # Regression guard: ``%as`` is the author date, which can be
-        # older than the actual tagged commit after a rebase or
-        # cherry-pick and would stamp a stale release date into
-        # CHANGELOG.md.  ``%cs`` is the commit date, which tracks the
-        # tag's actual timeline.
+    def test_returns_tagger_date_for_annotated_tag(self) -> None:
+        # Annotated tags carry their own tagger date.  That is the
+        # authoritative "when the release was cut" signal, and it can
+        # differ from the tagged commit's committer date when the tag
+        # is created days after the release-prep commit.
         with mock.patch.object(gc, "run_git", return_value="2026-03-22\n") as run:
-            gc.tag_commit_date("v1.1.0", "/tmp")
-        call_args = run.call_args[0][0]
-        self.assertIn("--format=%cs", call_args)
-        self.assertNotIn("--format=%as", call_args)
+            result = gc.tag_commit_date("v1.1.0", "/tmp")
+        self.assertEqual(result, "2026-03-22")
+        first_args = run.call_args_list[0][0][0]
+        self.assertIn("for-each-ref", first_args)
+        self.assertIn("--format=%(taggerdate:short)", first_args)
+        self.assertIn("refs/tags/v1.1.0", first_args)
+
+    def test_falls_back_to_committer_date_for_lightweight_tag(self) -> None:
+        # Lightweight tags are just refs pointing at a commit, so
+        # ``%(taggerdate:short)`` returns empty.  Fall back to the
+        # tagged commit's committer date (``%cs``) — never the author
+        # date (``%as``), which can predate rebased or cherry-picked
+        # releases.
+        responses = iter(["\n", "2026-03-25\n"])
+        with mock.patch.object(
+            gc, "run_git", side_effect=lambda *_a, **_k: next(responses),
+        ) as run:
+            result = gc.tag_commit_date("v1.1.0", "/tmp")
+        self.assertEqual(result, "2026-03-25")
+        second_args = run.call_args_list[1][0][0]
+        self.assertIn("--format=%cs", second_args)
+        self.assertNotIn("--format=%as", second_args)
 
 
 class CollectCommitsTests(unittest.TestCase):
