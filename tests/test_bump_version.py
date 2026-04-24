@@ -479,6 +479,46 @@ class PartialWriteTests(unittest.TestCase):
 # ===================================================================
 
 
+class MalformedManifestTests(unittest.TestCase):
+    """Malformed manifests must surface as EXIT_DRIFT, not as tracebacks."""
+
+    def test_invalid_plugin_json_returns_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            with open(
+                os.path.join(repo, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write("{not valid json")
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, err = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_DRIFT)
+            self.assertIn("plugin.json", err)
+            self.assertIn("cannot read manifest", err)
+
+    def test_missing_marketplace_json_returns_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            os.remove(os.path.join(repo, ".claude-plugin", "marketplace.json"))
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, err = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_DRIFT)
+            self.assertIn("marketplace.json", err)
+
+
+class ArgparseExitTests(unittest.TestCase):
+    """``main()`` must return an int even when argparse exits."""
+
+    def test_missing_required_arg_returns_invalid_input(self) -> None:
+        rc, _, _ = _invoke([], cwd=os.getcwd())
+        self.assertEqual(rc, bump_version.EXIT_INVALID_INPUT)
+
+    def test_help_flag_returns_ok(self) -> None:
+        rc, _, _ = _invoke(["--help"], cwd=os.getcwd())
+        self.assertEqual(rc, bump_version.EXIT_OK)
+
+
 class HeadShaTests(unittest.TestCase):
     def test_returns_none_outside_git(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

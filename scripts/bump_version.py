@@ -49,6 +49,7 @@ Exit codes:
 import argparse
 import datetime
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -126,17 +127,52 @@ def head_sha(repo_root: str) -> str | None:
     return sha or None
 
 
+class ManifestReadError(Exception):
+    """A manifest file could not be read or parsed.
+
+    Carries a human-readable per-file message that ``main()`` surfaces
+    under ``EXIT_DRIFT`` so a malformed manifest is treated as a
+    precondition failure rather than an uncaught traceback.
+    """
+
+
+def _safe_read(label: str, fn) -> str | None:
+    """Run *fn* and translate ``OSError``/``json.JSONDecodeError`` to
+    :class:`ManifestReadError` with a *label* prefix.
+    """
+    try:
+        return fn()
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ManifestReadError(f"{label}: {exc}") from exc
+
+
 def read_all_versions(repo_root: str) -> dict[str, str | None]:
-    """Return current version from each of the three manifest files."""
+    """Return current version from each of the three manifest files.
+
+    Raises :class:`ManifestReadError` when any manifest is missing,
+    unreadable, or contains invalid JSON / frontmatter — operator-facing
+    precondition failures that ``main()`` maps to ``EXIT_DRIFT``.
+    """
     skill_path = _version.skill_md_path(repo_root)
     plugin_path = _version.plugin_json_path(repo_root)
     market_path = _version.marketplace_json_path(repo_root)
-    plugin_name = _version.read_plugin_name(plugin_path)
+    plugin_name = _safe_read(
+        "plugin.json", lambda: _version.read_plugin_name(plugin_path)
+    )
     return {
-        "SKILL.md": _version.read_skill_md_version(skill_path),
-        "plugin.json": _version.read_plugin_json_version(plugin_path),
+        "SKILL.md": _safe_read(
+            "SKILL.md", lambda: _version.read_skill_md_version(skill_path)
+        ),
+        "plugin.json": _safe_read(
+            "plugin.json", lambda: _version.read_plugin_json_version(plugin_path)
+        ),
         "marketplace.json": (
-            _version.read_marketplace_json_version(market_path, plugin_name)
+            _safe_read(
+                "marketplace.json",
+                lambda: _version.read_marketplace_json_version(
+                    market_path, plugin_name
+                ),
+            )
             if plugin_name
             else None
         ),
@@ -149,18 +185,25 @@ def plan_writes(
     """Return ``[(path, new_content)]`` for every manifest file.
 
     Raises ``ValueError`` when any anchored regex does not match exactly
-    once — the caller maps that to exit 5.
+    once — the caller maps that to exit 5.  Raises
+    :class:`ManifestReadError` when a manifest cannot be read so the
+    caller can surface that as a precondition failure (``EXIT_DRIFT``)
+    rather than a stack trace.
     """
     skill_path = _version.skill_md_path(repo_root)
     plugin_path = _version.plugin_json_path(repo_root)
     market_path = _version.marketplace_json_path(repo_root)
 
-    with open(skill_path, "r", encoding="utf-8") as fh:
-        skill_content = fh.read()
-    with open(plugin_path, "r", encoding="utf-8") as fh:
-        plugin_content = fh.read()
-    with open(market_path, "r", encoding="utf-8") as fh:
-        market_content = fh.read()
+    def _read(label: str, path: str) -> str:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read()
+        except OSError as exc:
+            raise ManifestReadError(f"{label}: {exc}") from exc
+
+    skill_content = _read("SKILL.md", skill_path)
+    plugin_content = _read("plugin.json", plugin_path)
+    market_content = _read("marketplace.json", market_path)
 
     return [
         (skill_path, _version.plan_skill_md_edit(skill_content, current, new)),
@@ -287,7 +330,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    # ``parse_args`` raises ``SystemExit`` on bad input or ``--help``.  The
+    # script's contract is that ``main()`` returns an int, so translate the
+    # exit code: argparse error (2) → ``EXIT_INVALID_INPUT``; ``--help`` /
+    # explicit ``SystemExit(0)`` → ``EXIT_OK``; anything else passes through.
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        code = exc.code
+        if code is None or code == 0:
+            return EXIT_OK
+        if isinstance(code, int) and code == 2:
+            return EXIT_INVALID_INPUT
+        return code if isinstance(code, int) else EXIT_INVALID_INPUT
 
     new_version = args.new_version
     # Reject shapes not covered by SEMVER_RE.
@@ -318,7 +373,15 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_INVALID_INPUT
 
     # Precondition: all three files already agree.
-    versions = read_all_versions(repo_root)
+    try:
+        versions = read_all_versions(repo_root)
+    except ManifestReadError as exc:
+        print(
+            f"error: cannot read manifest files — {exc}; fix the manifest "
+            "and re-run.",
+            file=sys.stderr,
+        )
+        return EXIT_DRIFT
     missing = [name for name, value in versions.items() if value is None]
     if missing:
         print(
@@ -364,6 +427,13 @@ def main(argv: list[str] | None = None) -> int:
     # Plan the file edits.
     try:
         writes = plan_writes(repo_root, current, new_version)
+    except ManifestReadError as exc:
+        print(
+            f"error: cannot read manifest files — {exc}; fix the manifest "
+            "and re-run.",
+            file=sys.stderr,
+        )
+        return EXIT_DRIFT
     except ValueError as exc:
         print(f"error: plan failed: {exc}", file=sys.stderr)
         return EXIT_PLAN_FAILED

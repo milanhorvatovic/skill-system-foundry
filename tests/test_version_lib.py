@@ -93,6 +93,22 @@ class SemverRegexTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIsNone(version.SEMVER_RE.match(value))
 
+    def test_rejects_leading_zero_in_core(self) -> None:
+        for value in ("01.2.3", "1.02.3", "1.2.03"):
+            with self.subTest(value=value):
+                self.assertIsNone(version.SEMVER_RE.match(value))
+
+    def test_rejects_empty_or_trailing_prerelease_identifiers(self) -> None:
+        for value in ("1.2.3-alpha.", "1.2.3-.alpha", "1.2.3-alpha..1"):
+            with self.subTest(value=value):
+                self.assertIsNone(version.SEMVER_RE.match(value))
+
+    def test_rejects_leading_zero_in_numeric_prerelease(self) -> None:
+        # Per SemVer §9, numeric prerelease identifiers must not include
+        # leading zeros.  ``rc.01`` is invalid; ``rc.10`` is valid.
+        self.assertIsNone(version.SEMVER_RE.match("1.2.3-rc.01"))
+        self.assertTrue(version.SEMVER_RE.match("1.2.3-rc.10"))
+
 
 # ===================================================================
 # parse / compare
@@ -121,10 +137,28 @@ class CompareTests(unittest.TestCase):
         # A version with a prerelease is less than the same version without.
         self.assertEqual(version.compare("1.0.0-rc.1", "1.0.0"), -1)
         self.assertEqual(version.compare("1.0.0", "1.0.0-rc.1"), 1)
-        # Lexicographic fallback between two prereleases.
+        # Alphanumeric identifiers compare lexically.
         self.assertEqual(version.compare("1.0.0-alpha", "1.0.0-beta"), -1)
         self.assertEqual(version.compare("1.0.0-rc.2", "1.0.0-rc.1"), 1)
         self.assertEqual(version.compare("1.0.0-rc.1", "1.0.0-rc.1"), 0)
+
+    def test_prerelease_numeric_identifiers_compare_numerically(self) -> None:
+        # Lex order would put ``rc.10`` below ``rc.2``; SemVer §11 ranks
+        # numeric identifiers numerically.
+        self.assertEqual(version.compare("1.0.0-rc.10", "1.0.0-rc.2"), 1)
+        self.assertEqual(version.compare("1.0.0-rc.2", "1.0.0-rc.10"), -1)
+
+    def test_prerelease_numeric_below_alphanumeric(self) -> None:
+        # SemVer §11.4.3: numeric identifiers always have lower precedence
+        # than alphanumeric identifiers.
+        self.assertEqual(version.compare("1.0.0-1", "1.0.0-alpha"), -1)
+        self.assertEqual(version.compare("1.0.0-alpha", "1.0.0-1"), 1)
+
+    def test_prerelease_shorter_identifier_set_is_lower(self) -> None:
+        # SemVer §11.4.4: a smaller set of identifiers (with all preceding
+        # equal) has lower precedence than a larger set.
+        self.assertEqual(version.compare("1.0.0-alpha", "1.0.0-alpha.1"), -1)
+        self.assertEqual(version.compare("1.0.0-alpha.1", "1.0.0-alpha"), 1)
 
 
 # ===================================================================
@@ -236,6 +270,20 @@ class PlanSkillMdEditTests(unittest.TestCase):
             version.plan_skill_md_edit(
                 "---\nname: x\nmetadata:\n  version: 1.0.0\n", "1.0.0", "1.1.0"
             )
+
+    def test_plans_quoted_version_and_preserves_quote_style(self) -> None:
+        # ``read_skill_md_version`` strips matched surrounding quotes, so a
+        # quoted manifest must round-trip through the planner — preserving
+        # the exact quote character the file used.
+        for quote in ('"', "'"):
+            content = (
+                "---\nname: x\nmetadata:\n  "
+                f"version: {quote}1.0.0{quote}\n---\n"
+            )
+            with self.subTest(quote=quote):
+                out = version.plan_skill_md_edit(content, "1.0.0", "1.1.0")
+                self.assertIn(f"version: {quote}1.1.0{quote}", out)
+                self.assertNotIn(f"version: {quote}1.0.0{quote}", out)
 
 
 class PlanPluginJsonEditTests(unittest.TestCase):

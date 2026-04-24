@@ -209,8 +209,14 @@ def check_version_consistency(system_root: str) -> list[str]:
                             f"plugin '{plugin_name}' missing 'version' string"
                         )
 
-    # Only compare when all three were successfully read.
-    if skill_version and plugin_version and marketplace_version:
+    # Only compare when all three were successfully read.  Use ``is not None``
+    # so an empty-string version (e.g., ``"version": ""`` in plugin.json) is
+    # still compared and reported as drift instead of silently skipping.
+    if (
+        skill_version is not None
+        and plugin_version is not None
+        and marketplace_version is not None
+    ):
         if not (skill_version == plugin_version == marketplace_version):
             findings.append(
                 f"{LEVEL_FAIL}: version drift — "

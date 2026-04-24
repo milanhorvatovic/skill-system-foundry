@@ -25,7 +25,16 @@ import os
 import re
 
 
-SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?$")
+# Strict SemVer 2.0.0 (sans build metadata, which the foundry forbids):
+# - core identifiers reject leading zeros (``01.2.3`` is invalid);
+# - prerelease identifiers must be non-empty, dot-separated, and either
+#   purely numeric (no leading zero) or alphanumeric/hyphen with at least
+#   one non-digit character.  ``1.2.3-alpha.`` is rejected.
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$"
+)
 
 
 def parse(version: str) -> tuple[int, int, int, str]:
@@ -42,16 +51,44 @@ def parse(version: str) -> tuple[int, int, int, str]:
     return (int(major), int(minor), int(patch), pre)
 
 
+def _compare_prerelease(a: str, b: str) -> int:
+    """Compare two non-empty prerelease strings per SemVer 2.0.0 §11.4.
+
+    Identifiers are compared dot-by-dot: numeric identifiers compare
+    numerically and have lower precedence than alphanumeric ones; equal
+    identifiers fall through to the next position, and a shorter list of
+    identifiers (with all preceding equal) has lower precedence.
+    """
+    ids_a = a.split(".")
+    ids_b = b.split(".")
+    for x, y in zip(ids_a, ids_b):
+        x_num = x.isdigit()
+        y_num = y.isdigit()
+        if x_num and y_num:
+            xi, yi = int(x), int(y)
+            if xi != yi:
+                return -1 if xi < yi else 1
+        elif x_num and not y_num:
+            return -1
+        elif y_num and not x_num:
+            return 1
+        else:
+            if x != y:
+                return -1 if x < y else 1
+    if len(ids_a) == len(ids_b):
+        return 0
+    return -1 if len(ids_a) < len(ids_b) else 1
+
+
 def compare(a: str, b: str) -> int:
     """Return -1/0/1 comparing semver *a* against *b*.
 
-    Integer-tuple compare on ``(major, minor, patch)``.  Prerelease tie-breaker
-    follows the essential semver rule — a version with a prerelease is less
-    than the same version without one — but does not attempt to rank
-    prerelease identifiers against each other.  When both sides carry a
-    prerelease, the comparison falls back to lexicographic order of the
-    prerelease strings.  This is a deliberate simplification; document it
-    at call sites if strict ranking becomes necessary.
+    Integer-tuple compare on ``(major, minor, patch)``.  When the cores
+    are equal, prerelease precedence follows SemVer 2.0.0 §11: a version
+    with a prerelease is less than the same version without one, and two
+    prerelease strings are compared identifier-by-identifier (numeric
+    identifiers numerically, alphanumeric lexically, numerics ranking
+    below alphanumerics, fewer identifiers ranking below more).
     """
     major_a, minor_a, patch_a, pre_a = parse(a)
     major_b, minor_b, patch_b, pre_b = parse(b)
@@ -67,9 +104,7 @@ def compare(a: str, b: str) -> int:
         return 1
     if not pre_b:
         return -1
-    if pre_a < pre_b:
-        return -1
-    return 1
+    return _compare_prerelease(pre_a, pre_b)
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +240,14 @@ def plan_skill_md_edit(content: str, current: str, new: str) -> str:
     fm_end = fm_start + close_match.start()
     frontmatter = content[fm_start:fm_end]
 
+    # ``read_skill_md_version`` strips matched surrounding YAML quotes, so
+    # the same plan must accept both ``version: 1.2.3`` and
+    # ``version: "1.2.3"`` (and the single-quote form), preserving whichever
+    # the file already uses.  ``(?P=q)`` enforces matching open/close quotes.
     pattern = re.compile(
-        rf"^(?P<prefix>\s+version:\s*){re.escape(current)}(?P<suffix>\s*)$",
+        rf"^(?P<prefix>\s+version:\s*)"
+        rf"(?P<q>['\"]?){re.escape(current)}(?P=q)"
+        rf"(?P<suffix>\s*)$",
         re.MULTILINE,
     )
     matches = pattern.findall(frontmatter)
@@ -216,7 +257,10 @@ def plan_skill_md_edit(content: str, current: str, new: str) -> str:
             f"frontmatter, found {len(matches)}"
         )
     new_frontmatter = pattern.sub(
-        lambda m: f"{m.group('prefix')}{new}{m.group('suffix')}",
+        lambda m: (
+            f"{m.group('prefix')}{m.group('q')}{new}{m.group('q')}"
+            f"{m.group('suffix')}"
+        ),
         frontmatter,
         count=1,
     )

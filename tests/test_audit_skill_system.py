@@ -1752,6 +1752,26 @@ class CheckVersionConsistencyTests(unittest.TestCase):
             drift_errors = [e for e in errors if "version drift" in e]
             self.assertEqual(len(drift_errors), 1)
 
+    def test_empty_string_version_is_treated_as_drift(self) -> None:
+        """``"version": ""`` must not silently bypass the comparison.
+
+        Truthiness-based gating would skip the diff when any value is the
+        empty string; an explicit ``is not None`` check ensures the rule
+        still reports a mismatch between SKILL.md and the empty manifest.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="", market="1.1.0")
+            findings = check_version_consistency(tmp)
+            drift = [f for f in findings if "version drift" in f]
+            self.assertTrue(
+                any(
+                    "SKILL.md=1.1.0" in f
+                    and "plugin.json=" in f
+                    and "marketplace.json=1.1.0" in f
+                    for f in drift
+                )
+            )
+
 
 class AuditProseYamlAggregationTests(unittest.TestCase):
     """``--check-prose-yaml`` and ``--foundry-self`` on audit_skill_system."""
