@@ -5,19 +5,23 @@ so most tests operate on in-memory strings.  File-backed tests use
 ``tempfile`` to stay hermetic across Linux and Windows runners.
 """
 
+import importlib.util
 import json
 import os
-import sys
 import tempfile
 import unittest
 
-SCRIPTS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "scripts")
+# Load the module by explicit path so the import does not collide with the
+# meta-skill's ``lib`` package (which other tests pull onto sys.path first).
+_VERSION_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "scripts", "lib", "version.py")
 )
-if SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, SCRIPTS_DIR)
-
-from lib import version  # noqa: E402
+_spec = importlib.util.spec_from_file_location(
+    "repo_infra_version", _VERSION_PATH
+)
+assert _spec is not None and _spec.loader is not None
+version = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(version)
 
 
 SAMPLE_SKILL_MD = """\

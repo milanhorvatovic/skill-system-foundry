@@ -39,6 +39,7 @@ Examples:
 """
 
 import argparse
+import json
 import sys
 import os
 
@@ -72,6 +73,153 @@ from lib.constants import (
     collect_foundry_config_findings,
 )
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
+
+
+def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
+    """Load and return (data, error_message) from a plugin/marketplace JSON file.
+
+    The tuple's error slot is populated with a human-readable message when
+    the file is unreadable or not valid JSON, so the caller can emit a
+    FAIL finding without crashing the audit.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return None, f"cannot read: {exc}"
+    except json.JSONDecodeError as exc:
+        return None, f"invalid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
+    if not isinstance(data, dict):
+        return None, f"expected top-level object, got {type(data).__name__}"
+    return data, None
+
+
+def _skill_md_version(system_root: str) -> tuple[str | None, str | None]:
+    """Return ``(version, error)`` for ``skill-system-foundry/SKILL.md``."""
+    path = os.path.join(system_root, "skill-system-foundry", FILE_SKILL_MD)
+    if not os.path.exists(path):
+        return None, f"{path} does not exist"
+    fm, _, _ = load_frontmatter(path)
+    if fm is None:
+        return None, f"{path} has no frontmatter"
+    if "_parse_error" in fm:
+        return None, f"{path} YAML parse error: {fm['_parse_error']}"
+    metadata = fm.get("metadata")
+    if not isinstance(metadata, dict):
+        return None, f"{path} has no 'metadata' mapping"
+    value = metadata.get("version")
+    if not isinstance(value, str):
+        return None, f"{path} missing 'metadata.version' string"
+    return value, None
+
+
+def check_version_consistency(system_root: str) -> list[str]:
+    """Assert SKILL.md, plugin.json, and marketplace.json agree on version.
+
+    The rule is a pre-loop, repo-level check — it runs once before the
+    per-skill audit and is gated by the presence of
+    ``.claude-plugin/plugin.json`` so integrator skill systems (which do
+    not ship the plugin manifest) are unaffected.
+
+    Canonical source is ``skill-system-foundry/SKILL.md`` →
+    ``metadata.version``.  The rule emits one FAIL finding per file that
+    fails to expose a readable version, and a single summary FAIL when
+    the three known versions disagree.  No finding is emitted when all
+    three agree.
+    """
+    plugin_path = os.path.join(system_root, ".claude-plugin", "plugin.json")
+    if not os.path.exists(plugin_path):
+        return []
+
+    findings: list[str] = []
+
+    marketplace_path = os.path.join(
+        system_root, ".claude-plugin", "marketplace.json"
+    )
+
+    # SKILL.md
+    skill_version, skill_err = _skill_md_version(system_root)
+    if skill_err:
+        findings.append(f"{LEVEL_FAIL}: version drift — SKILL.md: {skill_err}")
+
+    # plugin.json
+    plugin_data, plugin_err = _read_plugin_json(plugin_path)
+    plugin_version: str | None = None
+    plugin_name: str | None = None
+    if plugin_err:
+        findings.append(
+            f"{LEVEL_FAIL}: version drift — plugin.json: {plugin_err}"
+        )
+    elif plugin_data is not None:
+        value = plugin_data.get("version")
+        if isinstance(value, str):
+            plugin_version = value
+        else:
+            findings.append(
+                f"{LEVEL_FAIL}: version drift — plugin.json: missing "
+                f"top-level 'version' string"
+            )
+        name_value = plugin_data.get("name")
+        if isinstance(name_value, str):
+            plugin_name = name_value
+
+    # marketplace.json
+    marketplace_version: str | None = None
+    if not os.path.exists(marketplace_path):
+        findings.append(
+            f"{LEVEL_FAIL}: version drift — marketplace.json: "
+            f"{marketplace_path} does not exist"
+        )
+    else:
+        market_data, market_err = _read_plugin_json(marketplace_path)
+        if market_err:
+            findings.append(
+                f"{LEVEL_FAIL}: version drift — marketplace.json: {market_err}"
+            )
+        elif market_data is not None:
+            plugins = market_data.get("plugins")
+            if not isinstance(plugins, list):
+                findings.append(
+                    f"{LEVEL_FAIL}: version drift — marketplace.json: "
+                    f"'plugins' is not a list"
+                )
+            elif plugin_name is None:
+                findings.append(
+                    f"{LEVEL_FAIL}: version drift — marketplace.json: "
+                    f"cannot match plugin entry because plugin.json 'name' is unavailable"
+                )
+            else:
+                matched = None
+                for entry in plugins:
+                    if isinstance(entry, dict) and entry.get("name") == plugin_name:
+                        matched = entry
+                        break
+                if matched is None:
+                    findings.append(
+                        f"{LEVEL_FAIL}: version drift — marketplace.json: "
+                        f"no plugin entry matches name '{plugin_name}'"
+                    )
+                else:
+                    value = matched.get("version")
+                    if isinstance(value, str):
+                        marketplace_version = value
+                    else:
+                        findings.append(
+                            f"{LEVEL_FAIL}: version drift — marketplace.json: "
+                            f"plugin '{plugin_name}' missing 'version' string"
+                        )
+
+    # Only compare when all three were successfully read.
+    if skill_version and plugin_version and marketplace_version:
+        if not (skill_version == plugin_version == marketplace_version):
+            findings.append(
+                f"{LEVEL_FAIL}: version drift — "
+                f"SKILL.md={skill_version}, plugin.json={plugin_version}, "
+                f"marketplace.json={marketplace_version} "
+                f"(canonical: SKILL.md)"
+            )
+
+    return findings
 
 
 def check_upward_references(content: str, component_type: str, allow_orchestration: bool = False) -> list[tuple[str, str]]:
@@ -172,6 +320,12 @@ def audit_skill_system(
     # When auditing the foundry itself, surface configuration.yaml
     # divergences detected at constants.py import.
     errors.extend(collect_foundry_config_findings(system_root))
+
+    # Repo-level rule: SKILL.md, plugin.json, and marketplace.json must
+    # declare the same version.  Silent skip when .claude-plugin/plugin.json
+    # is absent — that is how we distinguish the foundry repo root from an
+    # integrator's skill system.
+    errors.extend(check_version_consistency(system_root))
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     has_skills_dir = os.path.isdir(skills_dir)
