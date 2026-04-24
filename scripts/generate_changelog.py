@@ -174,6 +174,16 @@ def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
     with open(config_path, "r", encoding="utf-8") as fh:
         text = fh.read()
     config = parse_yaml_subset(text)
+    # ``parse_yaml_subset`` accepts any valid YAML document at the top
+    # level, so a typo like starting the file with ``- Add`` would
+    # return a list (or a scalar for ``42``).  Guard before ``.get``
+    # so AttributeError does not escape past main()'s
+    # RuntimeError/OSError/ValueError handler.
+    if not isinstance(config, dict):
+        raise RuntimeError(
+            f"{config_path} must contain a top-level mapping, got "
+            f"{type(config).__name__}."
+        )
     changelog = config.get("changelog")
     if not isinstance(changelog, dict) or "verb_mapping" not in changelog:
         raise RuntimeError(
@@ -637,13 +647,18 @@ def _write_preserving_lf(text: str, stream: typing.TextIO) -> None:
 
     On Windows, text-mode ``stream.write`` rewrites ``\\n`` to
     ``\\r\\n``.  When *stream* exposes a ``buffer`` attribute (real
-    stdout/stderr), bypass translation by writing UTF-8 bytes
-    directly; fall back to a plain ``write`` for test-time surrogates
-    like ``io.StringIO`` that have no ``buffer``.
+    stdout/stderr), bypass translation by writing bytes directly.
+    Encode with the stream's own ``encoding`` (with ``errors="replace"``
+    for robustness) so a Windows console still on a non-UTF-8 code
+    page does not turn the em dash in ``unmapped — review manually``
+    or a non-ASCII commit subject into mojibake.  Fall back to a
+    plain ``write`` for test-time surrogates like ``io.StringIO`` that
+    have no ``buffer``.
     """
     buffer = getattr(stream, "buffer", None)
     if buffer is not None:
-        buffer.write(text.encode("utf-8"))
+        encoding = getattr(stream, "encoding", None) or "utf-8"
+        buffer.write(text.encode(encoding, errors="replace"))
     else:
         stream.write(text)
 

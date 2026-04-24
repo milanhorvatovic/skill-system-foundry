@@ -172,6 +172,31 @@ class LoadVerbMappingTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_non_mapping_top_level_yaml_rejected(self) -> None:
+        # Defensive guard: if the YAML parser ever returns a non-dict
+        # top-level value (a list, a scalar), ``config.get("changelog")``
+        # would raise AttributeError and escape past main()'s
+        # RuntimeError/OSError/ValueError handler.  The foundry's
+        # current stdlib parser happens to coerce such input to ``{}``,
+        # so we stub the parser here to exercise the guard.
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", encoding="utf-8", delete=False,
+        ) as fh:
+            fh.write("(parser stubbed)\n")
+            path = fh.name
+        try:
+            with mock.patch.object(
+                gc, "_require_yaml_parser",
+                return_value=lambda _text: ["Add", "Fix"],
+            ):
+                with self.assertRaises(RuntimeError) as ctx:
+                    gc.load_verb_mapping(path)
+            message = str(ctx.exception)
+            self.assertIn("top-level mapping", message)
+            self.assertIn("list", message)
+        finally:
+            os.unlink(path)
+
     def test_non_string_verb_element_rejected(self) -> None:
         # Regression guard: a nested mapping in place of a plain verb
         # string (e.g. ``- Add: true``) used to raise TypeError at
@@ -1410,6 +1435,38 @@ class WritePreservingLfTests(unittest.TestCase):
         buf = io.StringIO()
         gc._write_preserving_lf("plain\n", buf)
         self.assertEqual(buf.getvalue(), "plain\n")
+
+    def test_uses_stream_encoding_when_set(self) -> None:
+        # Regression guard: hardcoding UTF-8 to ``stream.buffer``
+        # produces mojibake on Windows consoles whose code page is
+        # still cp1252.  Encode with the stream's own ``encoding``
+        # instead (with ``errors="replace"`` so an unmappable
+        # character becomes ``?`` rather than a traceback).
+        fake_buffer = mock.MagicMock()
+        fake_stream = mock.MagicMock(
+            buffer=fake_buffer,
+            encoding="cp1252",
+            spec=["buffer", "write", "encoding"],
+        )
+        gc._write_preserving_lf("smart quote — dash\n", fake_stream)
+        # The em dash ``—`` (U+2014) encodes as 0x97 in cp1252.
+        written = fake_buffer.write.call_args[0][0]
+        self.assertEqual(written, "smart quote — dash\n".encode("cp1252"))
+
+    def test_unmappable_character_does_not_raise(self) -> None:
+        # ``errors="replace"`` keeps the script alive when a commit
+        # subject contains a character the terminal encoding cannot
+        # represent — we would rather emit a ``?`` than abort the
+        # release with a traceback.
+        fake_buffer = mock.MagicMock()
+        fake_stream = mock.MagicMock(
+            buffer=fake_buffer,
+            encoding="ascii",
+            spec=["buffer", "write", "encoding"],
+        )
+        gc._write_preserving_lf("café\n", fake_stream)
+        written = fake_buffer.write.call_args[0][0]
+        self.assertEqual(written, b"caf?\n")
 
 
 # ===================================================================

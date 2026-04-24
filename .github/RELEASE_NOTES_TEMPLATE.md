@@ -1,12 +1,14 @@
 <!--
 Release notes template — paste into the body of the GitHub Release
 when publishing a new version.  Replace every {VERSION} placeholder
-with the release number (e.g., 1.2.0).
+with the release number (e.g., 1.2.0).  Links use ``blob/v{VERSION}``
+so historical release pages keep pointing at the changelog and
+README as they shipped, not at whatever is on ``main`` later.
 -->
 
 ## What's changed
 
-See the [changelog](https://github.com/milanhorvatovic/skill-system-foundry/blob/main/CHANGELOG.md) for the full list of changes.
+See the [changelog](https://github.com/milanhorvatovic/skill-system-foundry/blob/v{VERSION}/CHANGELOG.md) for the full list of changes in this release.
 
 ## Install
 
@@ -15,6 +17,8 @@ See the [changelog](https://github.com/milanhorvatovic/skill-system-foundry/blob
 ```bash
 npx skills add milanhorvatovic/skill-system-foundry
 ```
+
+Covers Claude Code, Codex, Cursor, Gemini CLI, Windsurf, Kiro, GitHub Copilot, Cline, OpenCode, and many more agents — see [skills.sh](https://skills.sh) for the full list.
 
 ### Claude Code plugin
 
@@ -31,7 +35,7 @@ gemini skills link milanhorvatovic/skill-system-foundry
 
 ### Manual (any tool)
 
-Download `skill-system-foundry-v{VERSION}.zip` from the assets below, extract into your project's skills directory (e.g., `.agents/skills/` or tool-specific equivalent), and see the main [README](https://github.com/milanhorvatovic/skill-system-foundry#installation) for per-tool installation paths.
+Download `skill-system-foundry-v{VERSION}.zip` from the assets below, extract into your project's skills directory (e.g., `.agents/skills/` or tool-specific equivalent), and see the main [README](https://github.com/milanhorvatovic/skill-system-foundry/blob/v{VERSION}/README.md#installation) for per-tool installation paths.
 
 ## Verify the bundle
 
