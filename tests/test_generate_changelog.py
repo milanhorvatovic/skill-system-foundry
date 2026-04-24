@@ -636,6 +636,60 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertIn("fenced", message)
         self.assertIn("H1", message)
 
+    def test_mixed_fence_markers_do_not_close_early(self) -> None:
+        # Regression guard: the previous boolean toggle closed the
+        # fence on any fence-looking line.  A ``` ``` block that
+        # contains a ``~~~`` sequence inside it would therefore close
+        # prematurely, exposing a ``## [X.Y.Z]`` inside the example
+        # as a real release heading and causing the splice to pick a
+        # wrong anchor.  CommonMark §4.5 requires the closing fence
+        # to use the same character as the opener.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "```md\n"
+            "Example showing nested tildes:\n"
+            "~~~\n"
+            "## [9.9.9] - 2099-01-01\n"
+            "~~~\n"
+            "```\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        # The fenced ``## [9.9.9]`` is still inside the code block and
+        # must not appear as a real heading; the new release anchors
+        # against the real ``## [1.0.0]`` below the block.
+        new_pos = merged.index("## [1.1.0] - 2026-03-22\n\n### Added")
+        old_pos = merged.index("## [1.0.0] - 2026-01-01")
+        self.assertLess(new_pos, old_pos)
+
+    def test_short_inner_fence_does_not_close_longer_opener(self) -> None:
+        # Regression guard: a ``````` (4-backtick) opener must only
+        # close on a ``````` or longer backtick run.  The previous
+        # toggle closed on any ```` ``` ```` run inside, exposing
+        # headings inside the example as real release anchors.
+        existing = (
+            "# Changelog\n"
+            "\n"
+            "````md\n"
+            "Triple backticks inside a four-backtick block:\n"
+            "```\n"
+            "## [9.9.9]\n"
+            "```\n"
+            "````\n"
+            "\n"
+            "## [1.0.0] - 2026-01-01\n"
+            "\n"
+            "- Initial release\n"
+        )
+        merged = gc.splice_into_changelog(existing, NEW_SECTION)
+        new_pos = merged.index("## [1.1.0] - 2026-03-22\n\n### Added")
+        old_pos = merged.index("## [1.0.0] - 2026-01-01")
+        self.assertLess(new_pos, old_pos)
+
     def test_indented_fence_does_not_toggle(self) -> None:
         # CommonMark §4.5: indentation of 4+ spaces is an indented code
         # block, not a fence.  The previous ``^\s*`` regex treated any
@@ -1050,6 +1104,78 @@ class MainCliTests(unittest.TestCase):
                 ])
         self.assertIn("## [1.1.0] - 2024-01-01", out.getvalue())
 
+    def test_in_place_refuses_without_date_when_tag_absent(self) -> None:
+        # Regression guard: the documented release flow generates
+        # CHANGELOG.md before creating the tag, so the target tag
+        # does not yet exist at generate time.  In that state
+        # ``resolve_date`` would fall back to today's date, which is
+        # wrong if the tag ends up being created on a different day.
+        # Refuse the in-place write and point the operator at --date
+        # so the stamp is deterministic.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=False),
+                collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.2.0", "--in-place",
+                ])
+            self.assertEqual(rc, 2)
+            message = err.getvalue()
+            self.assertIn("error:", message)
+            self.assertIn("--date", message)
+            self.assertIn("v1.2.0", message)
+
+    def test_in_place_allowed_without_date_when_tag_exists(self) -> None:
+        # The refusal is only for the "tag does not yet exist" case —
+        # retrospective regeneration of a tagged release must still
+        # work without --date since the tag's committer date is the
+        # authoritative source.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = tmp
+            os.makedirs(os.path.join(repo_root, ".git"))
+            changelog = os.path.join(repo_root, "CHANGELOG.md")
+            with open(changelog, "w", encoding="utf-8") as fh:
+                fh.write("# Changelog\n\n## [1.0.0] - 2026-01-01\n")
+            patches = mock.patch.multiple(
+                gc,
+                tag_exists=mock.MagicMock(return_value=True),
+                tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+                collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+                find_repo_root=mock.MagicMock(return_value=repo_root),
+            )
+            with patches, \
+                 mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.1.0", "--in-place",
+                ])
+            self.assertEqual(rc, 0)
+
+    def test_stdout_mode_still_falls_back_to_today(self) -> None:
+        # Previews (no --in-place) keep the today-fallback for
+        # convenience; only the on-disk write is guarded.
+        with mock.patch.multiple(
+            gc,
+            tag_exists=mock.MagicMock(return_value=False),
+            collect_commits=mock.MagicMock(return_value=[("a", "Add X")]),
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+        ):
+            with mock.patch("sys.stdout", new=io.StringIO()) as out, \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0", "--version", "1.2.0",
+                ])
+        self.assertEqual(rc, 0)
+        self.assertIn("## [1.2.0]", out.getvalue())
+
     def test_runtime_error_surfaced_and_exits_two(self) -> None:
         # A duplicate-version splice raises RuntimeError; main() must
         # turn that into an "error: ..." line on stderr and return 2
@@ -1352,6 +1478,18 @@ class TagCommitDateTests(unittest.TestCase):
     def test_strips_trailing_newline(self) -> None:
         with mock.patch.object(gc, "run_git", return_value="2026-03-22\n"):
             self.assertEqual(gc.tag_commit_date("v1.1.0", "/tmp"), "2026-03-22")
+
+    def test_uses_committer_date_format(self) -> None:
+        # Regression guard: ``%as`` is the author date, which can be
+        # older than the actual tagged commit after a rebase or
+        # cherry-pick and would stamp a stale release date into
+        # CHANGELOG.md.  ``%cs`` is the commit date, which tracks the
+        # tag's actual timeline.
+        with mock.patch.object(gc, "run_git", return_value="2026-03-22\n") as run:
+            gc.tag_commit_date("v1.1.0", "/tmp")
+        call_args = run.call_args[0][0]
+        self.assertIn("--format=%cs", call_args)
+        self.assertNotIn("--format=%as", call_args)
 
 
 class CollectCommitsTests(unittest.TestCase):

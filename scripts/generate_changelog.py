@@ -276,8 +276,14 @@ def tag_exists(ref: str, repo_root: str) -> bool:
 
 
 def tag_commit_date(tag: str, repo_root: str) -> str:
-    """Return ``%as`` (author date, ISO short) for *tag*."""
-    return run_git(["log", "-1", "--format=%as", tag], repo_root).strip()
+    """Return ``%cs`` (committer date, ISO short) for *tag*.
+
+    ``%cs`` is the commit date rather than the author date (``%as``).
+    Author date can be older than the commit itself after a rebase,
+    cherry-pick, or amended commit, which would stamp a retrospective
+    changelog entry with a date that predates the actual release.
+    """
+    return run_git(["log", "-1", "--format=%cs", tag], repo_root).strip()
 
 
 def collect_commits(since: str, until: str, repo_root: str) -> list[tuple[str, str]]:
@@ -369,15 +375,12 @@ def render_section(
 _VERSION_LINE_RE = re.compile(r"^## \[([^\]]+)\]")
 # CommonMark §4.5: a fenced code block opens on a line indented by 0-3
 # spaces and begins with at least three backticks or tildes.  The
-# previous ``^\s*`` was too loose — it toggled ``in_fence`` on any
-# indented ``` sequence (including 4+ spaces, which CommonMark treats
-# as an indented code block, not a fence) and could miss or mis-detect
-# release headings during the duplicate-version guard and anchor scan.
-# We also accept 3+ fence characters rather than exactly three so
-# longer closing fences (a common CommonMark idiom) match.  An
-# explicit info string (e.g. ``` ```python ```) is allowed after the
-# fence characters, so no trailing lookahead is imposed.
-_FENCE_RE = re.compile(r"^[ ]{0,3}(?:`{3,}|~{3,})")
+# captured group is the full marker run so callers can enforce the
+# CommonMark rule that closing fences must match the opener's
+# character family and be at least as long.  An info string
+# (e.g. ``` ```python ```) is allowed after the fence characters on
+# the opening line, so no trailing lookahead is imposed.
+_FENCE_RE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 
 
 def _precedence_token(bracket_contents: str) -> str:
@@ -412,16 +415,45 @@ def _extract_version(section: str) -> str | None:
 def _iter_heading_lines(text: str) -> typing.Iterator[tuple[int, str]]:
     """Yield ``(index, line)`` for each top-level line outside fenced code blocks.
 
-    ``## [X.Y.Z]`` lines inside ```` ``` ```` / ``~~~`` fences are content
-    examples, not real release headings, and must not trip the splice's
-    duplicate-version guard or anchor scan.
+    ``## [X.Y.Z]`` lines inside ```` ``` ```` / ``~~~`` fences are
+    content examples, not real release headings, and must not trip
+    the splice's duplicate-version guard or anchor scan.
+
+    Fence tracking follows CommonMark §4.5: a closing fence must use
+    the same marker character as the opener and be at least as long,
+    and may be followed only by whitespace.  A shorter or different
+    fence sequence inside the block (``~~~`` inside a ``` ``` block,
+    or three backticks inside a four-backtick block) is therefore
+    treated as content, not as a premature close.  The previous
+    implementation flipped a single boolean on any fence-looking
+    line, which could close the block too early and let the
+    anchor/duplicate scans see release headings that live inside
+    examples.
     """
-    in_fence = False
+    opener: str | None = None
     for idx, line in enumerate(text.splitlines()):
-        if _FENCE_RE.match(line):
-            in_fence = not in_fence
+        match = _FENCE_RE.match(line)
+        if match:
+            marker = match.group(1)
+            if opener is None:
+                # Opening fence — remember the full marker so the
+                # closing fence can be verified against it.
+                opener = marker
+                continue
+            # Inside a fence; only close on a matching marker character
+            # family, at least as long as the opener, with no trailing
+            # content other than whitespace.
+            closes = (
+                marker[0] == opener[0]
+                and len(marker) >= len(opener)
+                and line[match.end():].strip() == ""
+            )
+            if closes:
+                opener = None
+            # Whether or not it closed, the fence line itself is not
+            # yielded — it belongs to the fenced block.
             continue
-        if in_fence:
+        if opener is not None:
             continue
         yield idx, line
 
@@ -698,6 +730,24 @@ def main(argv: list[str] | None = None) -> int:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         repo_root = find_repo_root(script_dir)
         verb_map = load_verb_mapping()
+
+        # The documented release flow generates CHANGELOG.md *before*
+        # creating the tag.  In that case ``resolve_date`` would fall
+        # back to today's date, which is wrong if the tag ends up on a
+        # different day.  Refuse an ``--in-place`` write that would
+        # commit a guessed date to disk — previews (stdout / --dry-run)
+        # still tolerate today's fallback for convenience.
+        if args.in_place and args.date is None:
+            tag = _version_tag(args.version)
+            if not tag_exists(tag, repo_root):
+                raise RuntimeError(
+                    f"--in-place requires --date when the version tag "
+                    f"{tag!r} does not exist yet; the generator would "
+                    f"otherwise stamp today's date on a release that may be "
+                    f"tagged on a different day.  Pass "
+                    f"--date YYYY-MM-DD explicitly (matching the date you "
+                    f"plan to tag) or create the tag first."
+                )
 
         section, unmapped = generate(
             since=args.since,
