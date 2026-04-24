@@ -1736,25 +1736,34 @@ class CheckVersionConsistencyTests(unittest.TestCase):
 
         Without an explicit plugin.json finding the operator only sees a
         downstream "marketplace.json: name is unavailable" message and
-        is left to discover that plugin.json is the file to edit.
+        is left to discover that plugin.json is the file to edit.  An
+        empty or whitespace-only name is treated the same as missing
+        because it cannot match any plugin entry in marketplace.json.
         """
-        with tempfile.TemporaryDirectory() as tmp:
-            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
-            with open(
-                os.path.join(tmp, ".claude-plugin", "plugin.json"),
-                "w",
-                encoding="utf-8",
-            ) as fh:
-                fh.write('{\n  "version": "1.1.0"\n}\n')
-            findings = check_version_consistency(tmp)
-            self.assertTrue(
-                any(
-                    "plugin.json" in f
-                    and "'name' is missing or not a string" in f
-                    for f in findings
-                ),
-                f"expected plugin.json name-finding in {findings}",
-            )
+        for variant_name, plugin_body in [
+            ("missing", '{\n  "version": "1.1.0"\n}\n'),
+            ("empty", '{\n  "name": "",\n  "version": "1.1.0"\n}\n'),
+            ("whitespace", '{\n  "name": "   ",\n  "version": "1.1.0"\n}\n'),
+        ]:
+            with self.subTest(variant=variant_name):
+                with tempfile.TemporaryDirectory() as tmp:
+                    self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+                    with open(
+                        os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                        "w",
+                        encoding="utf-8",
+                    ) as fh:
+                        fh.write(plugin_body)
+                    findings = check_version_consistency(tmp)
+                    self.assertTrue(
+                        any(
+                            "plugin.json" in f
+                            and "'name' is missing, empty, or not a string"
+                            in f
+                            for f in findings
+                        ),
+                        f"expected plugin.json name-finding in {findings}",
+                    )
 
     def test_fails_when_no_matching_marketplace_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

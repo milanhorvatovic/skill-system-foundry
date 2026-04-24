@@ -8,8 +8,9 @@ script reports that drift via ``EXIT_PARTIAL_WRITE``.  Treat this as a
 best-effort lockstep bump, not a cross-file atomic transaction.
 
 The three files are the single source of truth for the release version.
-``audit_skill_system.py`` enforces that they agree; this script is the
-primitive for changing all three in lockstep.
+``skill-system-foundry/scripts/audit_skill_system.py`` enforces that
+they agree; this script is the primitive for changing all three in
+lockstep.
 
 Usage::
 
