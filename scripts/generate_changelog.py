@@ -329,8 +329,15 @@ def collect_commits(since: str, until: str, repo_root: str) -> list[tuple[str, s
         sha, subject = line.split("\x00", 1)
         sha = sha.strip()
         subject = subject.strip()
-        if sha and subject:
-            commits.append((sha, subject))
+        if not sha:
+            continue
+        # Keep empty-subject commits (body-only / purely machine
+        # commits) so classify_commits routes them to the unmapped
+        # path — their first word is the empty string, which is not
+        # in the verb map.  Dropping them here would bypass the
+        # unmapped-review safeguard and let the release run succeed
+        # while silently omitting a real commit from the changelog.
+        commits.append((sha, subject))
     return commits
 
 
@@ -663,12 +670,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Pin the upper bound of the commit range to a specific "
-            "ref (tag, branch, or SHA) instead of HEAD.  Only used "
-            "when the version tag does not yet exist; when the tag "
-            "does exist, the range always ends at the tag itself.  "
-            "Use this to preview and write the same commit range even "
-            "if new commits land on HEAD between the dry-run and the "
-            "final write."
+            "ref (tag, branch, or SHA).  When provided, this overrides "
+            "the default upper bound even if the version tag exists; "
+            "when omitted, the range ends at the version tag when it "
+            "exists and at HEAD when it does not.  Use this to "
+            "preview and write the same commit range even if new "
+            "commits land on HEAD between the dry-run and the final "
+            "write."
         ),
     )
     parser.add_argument(

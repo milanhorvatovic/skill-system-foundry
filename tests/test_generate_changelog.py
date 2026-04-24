@@ -1066,8 +1066,9 @@ class MainCliTests(unittest.TestCase):
 
     def test_in_place_write_preserves_lf_line_endings(self) -> None:
         # On Windows, default text-mode writes convert \n to \r\n.
-        # The in-place write opens with newline="" to pin LF so the
-        # CHANGELOG.md does not churn across CI platforms.
+        # The in-place write pins LF explicitly (via ``newline="\n"``
+        # on the output open) so CHANGELOG.md stays stable across CI
+        # platforms.
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = tmp
             os.makedirs(os.path.join(repo_root, ".git"))
@@ -1217,6 +1218,35 @@ class MainCliTests(unittest.TestCase):
                 ])
         self.assertEqual(rc, 0)
         self.assertIn("## [1.2.0]", out.getvalue())
+
+    def test_until_flag_overrides_even_when_tag_exists(self) -> None:
+        # Regression guard: --until must always override the upper
+        # bound, including the case where the version tag exists.
+        # The help text documents this behavior; an earlier draft
+        # only honored --until when the tag was absent, which
+        # silently ignored the operator's intent.  ``tag_exists``
+        # resolves True only for the version tag so the SHA-shaped
+        # --until value passes through _qualified_ref unchanged.
+        def _tag_exists(name: str, _repo: str) -> bool:
+            return name == "v1.1.0"
+        collect = mock.MagicMock(return_value=[("a", "Add X")])
+        with mock.patch.multiple(
+            gc,
+            tag_exists=mock.MagicMock(side_effect=_tag_exists),
+            tag_commit_date=mock.MagicMock(return_value="2026-03-22"),
+            collect_commits=collect,
+            find_repo_root=mock.MagicMock(return_value="/tmp/fake"),
+        ):
+            with mock.patch("sys.stdout", new=io.StringIO()), \
+                 mock.patch("sys.stderr", new=io.StringIO()):
+                rc = gc.main([
+                    "--since", "v1.0.0",
+                    "--version", "1.1.0",
+                    "--until", "deadbeef",
+                ])
+        self.assertEqual(rc, 0)
+        _, until, _ = collect.call_args[0]
+        self.assertEqual(until, "deadbeef")
 
     def test_until_flag_overrides_head_fallback(self) -> None:
         # Regression guard: HEAD is unstable between dry-run and
@@ -1649,6 +1679,20 @@ class CollectCommitsTests(unittest.TestCase):
     def test_empty_output_yields_empty_list(self) -> None:
         with mock.patch.object(gc, "run_git", return_value=""):
             self.assertEqual(gc.collect_commits("v1.0.0", "HEAD", "/tmp"), [])
+
+    def test_empty_subject_kept_for_unmapped_path(self) -> None:
+        # Regression guard: an empty ``%s`` subject (a body-only or
+        # purely machine-authored commit) used to be silently dropped
+        # before classification.  That bypassed the unmapped-review
+        # safeguard and let a release generate successfully with a
+        # real commit missing from the section.  Keep the tuple when
+        # the SHA is present so classify_commits can route it to the
+        # unmapped path — ``first_word("")`` returns "" which is not
+        # in the verb map.
+        raw = "aaa111\x00\n"
+        with mock.patch.object(gc, "run_git", return_value=raw):
+            commits = gc.collect_commits("v1.0.0", "HEAD", "/tmp")
+        self.assertEqual(commits, [("aaa111", "")])
 
 
 class FindRepoRootTests(unittest.TestCase):

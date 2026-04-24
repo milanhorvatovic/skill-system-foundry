@@ -218,4 +218,43 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 
 Version lives in `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`). Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
 
-When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section in two steps: first preview with `python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until $(git rev-parse HEAD) --in-place --dry-run` (substitute the previous tag and the new release number — e.g. `--since v1.1.0 --version 1.2.0`, not SemVer build metadata like `+1` — and pin `--until` to the commit you intend to tag so the range cannot drift between the preview and the write) and reclassify any commits reported on stderr as `unmapped — review manually` (add their first-word verb to `scripts/lib/changelog.yaml` or reword the commit subject), then re-run without `--dry-run` adding `--date YYYY-MM-DD` to write the file with a deterministic stamp and commit the updated `CHANGELOG.md` before tagging. The `--in-place` write refuses (exit 3) while any commit remains unmapped, and refuses with `error:` / exit 2 if `--date` is omitted for a version whose tag does not yet exist (previews — stdout and `--in-place --dry-run` — keep the today-fallback). Retrospective regeneration — when the version tag already exists — does not need `--date` or `--until`; the generator uses the annotated tag's tagger date (falling back to the tagged commit's committer date for lightweight tags) so rebased or cherry-picked commits do not produce a stale author date.
+When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section using the checklist below.
+
+1. **Preview** the section for the exact commit you intend to tag. Substitute the previous tag and the new release number (e.g., `--since v1.1.0 --version 1.2.0`) — not SemVer build metadata like `+1`. Pin `--until` so the range cannot drift between the preview and the write.
+
+   Unix-like shells:
+
+   ```sh
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --in-place --dry-run
+   ```
+
+   PowerShell:
+
+   ```powershell
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --in-place --dry-run
+   ```
+
+2. **Reclassify** any commits reported on stderr as `unmapped — review manually`:
+   - add their first-word verb to `scripts/lib/changelog.yaml`, or
+   - reword the commit subject.
+
+3. **Write** `CHANGELOG.md` only after the preview is clean. For a version whose tag does not yet exist, pass `--date YYYY-MM-DD` so the file gets a deterministic stamp, then commit the updated `CHANGELOG.md` before tagging.
+
+   Unix-like shells:
+
+   ```sh
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --date YYYY-MM-DD --in-place
+   ```
+
+   PowerShell:
+
+   ```powershell
+   python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --until "$(git rev-parse HEAD)" --date YYYY-MM-DD --in-place
+   ```
+
+4. **Expected failure modes:**
+   - `--in-place` refuses with exit 3 while any commit remains unmapped.
+   - `--in-place` refuses with `error:` and exit 2 if `--date` is omitted for a version whose tag does not yet exist.
+   - Previews (stdout and `--in-place --dry-run`) keep the today-fallback for date.
+
+5. **Retrospective regeneration** (the version tag already exists) does not need `--date` or `--until`. The generator uses the annotated tag's tagger date, falling back to the tagged commit's committer date for lightweight tags, so rebased or cherry-picked commits do not produce a stale author date.
