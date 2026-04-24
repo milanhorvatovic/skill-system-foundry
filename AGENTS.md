@@ -150,6 +150,12 @@ python scripts/audit_skill_system.py .
 
 The `--allow-nested-references` flag is needed because this meta-skill intentionally uses nested references. One warning about a missing `skills/` directory from the audit is expected in this distribution repository.
 
+The version-consistency rule in `audit_skill_system.py` (which compares `SKILL.md`, `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`) only fires when the audit root contains `.claude-plugin/plugin.json`. The `cd skill-system-foundry` invocation above therefore skips that rule by design — it is a repo-level check, not a skill-level check. To include it, run the audit from the repo root:
+
+```bash
+python skill-system-foundry/scripts/audit_skill_system.py .
+```
+
 #### Flag behavior
 
 | Flag | Effect | When to use |
@@ -216,7 +222,16 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 
 ## Release Process
 
-Version lives in `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`). Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
+Version lives in three files that must agree: `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`, canonical), `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`. The version-consistency rule in `audit_skill_system.py` fails the repo-root audit if they drift. Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
+
+Bump all three manifest files in lockstep with `scripts/bump_version.py`:
+
+```sh
+python scripts/bump_version.py NEXT_VERSION --dry-run   # preview the plan and changelog probe
+python scripts/bump_version.py NEXT_VERSION             # write the three files and prepend the changelog
+```
+
+The script rejects invalid semver, equal versions, and downgrades (unless `--allow-downgrade` is passed), refuses to run when the three files already disagree, and probes the changelog generator in `--dry-run` mode before touching disk. The changelog step below is only needed when calling the generator directly (for example, to regenerate a past release).
 
 When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section using the checklist below.
 

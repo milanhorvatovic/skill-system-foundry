@@ -53,10 +53,10 @@ def compare(a: str, b: str) -> int:
     prerelease strings.  This is a deliberate simplification; document it
     at call sites if strict ranking becomes necessary.
     """
-    ma, mi, pa, pre_a = parse(a)
-    mb, ni, pb, pre_b = parse(b)
-    core_a = (ma, mi, pa)
-    core_b = (mb, ni, pb)
+    major_a, minor_a, patch_a, pre_a = parse(a)
+    major_b, minor_b, patch_b, pre_b = parse(b)
+    core_a = (major_a, minor_a, patch_a)
+    core_b = (major_b, minor_b, patch_b)
     if core_a < core_b:
         return -1
     if core_a > core_b:

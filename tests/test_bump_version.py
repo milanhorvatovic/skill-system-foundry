@@ -426,6 +426,37 @@ class PlanFailureTests(unittest.TestCase):
 
 
 # ===================================================================
+# Partial write (phase 2 failure introduces drift; caller must report)
+# ===================================================================
+
+
+class PartialWriteTests(unittest.TestCase):
+    def test_phase2_failure_reports_swapped_and_remaining(self) -> None:
+        """When ``os.replace`` fails partway, the operator sees which files drifted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+
+            real_replace = os.replace
+            call_count = {"n": 0}
+
+            def fail_on_second(src: str, dst: str) -> None:
+                call_count["n"] += 1
+                if call_count["n"] == 2:
+                    raise OSError(13, "simulated phase-2 failure")
+                real_replace(src, dst)
+
+            with mock.patch.object(bump_version.os, "replace", side_effect=fail_on_second):
+                rc, _, err = _invoke(
+                    ["1.2.0"], cwd=repo, generator_stub_path=gen
+                )
+            self.assertEqual(rc, bump_version.EXIT_PLAN_FAILED)
+            self.assertIn("partial write", err)
+            self.assertIn("swapped to 1.2.0", err)
+            self.assertIn("still at  1.1.0", err)
+
+
+# ===================================================================
 # Helper units (head_sha returns None outside git)
 # ===================================================================
 

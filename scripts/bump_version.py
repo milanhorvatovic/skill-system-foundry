@@ -155,30 +155,52 @@ def plan_writes(
     ]
 
 
-def commit_writes(writes: list[tuple[str, str]]) -> None:
-    """Atomically (per-file) replace each target via an adjacent ``.tmp``.
+class PartialWriteError(OSError):
+    """Phase 2 of commit_writes failed partway through.
 
-    The write phase is deliberately short: plan is already validated,
-    each ``os.replace`` is atomic on POSIX and Windows.  If a late
-    replace fails, earlier files have already been swapped — the caller
-    surfaces this as a warning; we do not attempt to roll back because
-    the post-write state is still internally consistent (every touched
-    file carries the new version).
+    ``swapped`` lists the paths that were successfully replaced with
+    the new version; those files now disagree with the untouched ones.
+    The caller must surface this drift so the operator can reconcile
+    manually — ``os.replace`` is atomic per file, not across the set.
+    """
+
+    def __init__(self, swapped: list[str], remaining: list[str], cause: OSError) -> None:
+        super().__init__(str(cause))
+        self.swapped = swapped
+        self.remaining = remaining
+        self.cause = cause
+
+
+def commit_writes(writes: list[tuple[str, str]]) -> None:
+    """Replace each target via an adjacent ``.tmp`` using ``os.replace``.
+
+    Each ``os.replace`` is atomic per file, but the set as a whole is
+    not transactional.  Phase 1 stages every ``.tmp`` on disk; phase 2
+    swaps them into place one at a time.  If phase 1 fails, no target
+    has been touched — the stale ``.tmp`` files are cleaned up.  If
+    phase 2 fails partway through, earlier files already carry the new
+    version while later ones still carry the old; that is drift, and
+    we raise :class:`PartialWriteError` so the caller can tell the
+    operator exactly which files need manual reconciliation.
     """
     tmp_paths: list[str] = []
+    swapped: list[str] = []
     try:
         for path, content in writes:
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8", newline="") as fh:
                 fh.write(content)
             tmp_paths.append(tmp)
-        # Phase 2: swap every staged file into place.
-        staged: list[str] = list(tmp_paths)
-        for (path, _), tmp in zip(writes, staged):
-            os.replace(tmp, path)
+        staged: list[tuple[str, str]] = list(zip([p for p, _ in writes], tmp_paths))
+        for index, (path, tmp) in enumerate(staged):
+            try:
+                os.replace(tmp, path)
+            except OSError as exc:
+                remaining = [p for p, _ in staged[index:]]
+                raise PartialWriteError(swapped, remaining, exc) from exc
+            swapped.append(path)
             tmp_paths.remove(tmp)
     finally:
-        # Clean up any tmp files left over after a mid-phase failure.
         for leftover in tmp_paths:
             try:
                 os.remove(leftover)
@@ -296,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
             "error: version drift detected before bump — "
             + ", ".join(f"{k}={v}" for k, v in versions.items())
             + "; run `python skill-system-foundry/scripts/audit_skill_system.py "
-            ". --allow-orchestration` and reconcile before bumping.",
+            + repo_root
+            + "` and reconcile before bumping.",
             file=sys.stderr,
         )
         return EXIT_DRIFT
@@ -378,6 +401,19 @@ def main(argv: list[str] | None = None) -> int:
     # Execute the staged writes.
     try:
         commit_writes(writes)
+    except PartialWriteError as exc:
+        print(
+            f"error: partial write — {exc.cause}.  Version drift is now "
+            "present on disk and must be reconciled manually:",
+            file=sys.stderr,
+        )
+        for path in exc.swapped:
+            rel = os.path.relpath(path, repo_root)
+            print(f"  swapped to {new_version}: {rel}", file=sys.stderr)
+        for path in exc.remaining:
+            rel = os.path.relpath(path, repo_root)
+            print(f"  still at  {current}: {rel}", file=sys.stderr)
+        return EXIT_PLAN_FAILED
     except OSError as exc:
         print(f"error: write failed: {exc}", file=sys.stderr)
         return EXIT_PLAN_FAILED
