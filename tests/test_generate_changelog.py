@@ -542,6 +542,25 @@ class SpliceIntoChangelogTests(unittest.TestCase):
         self.assertIn("H1", message)
         self.assertIn("refusing", message)
 
+    def test_leading_text_before_h1_rejected(self) -> None:
+        # Regression guard: ``any line starts with '# '`` used to
+        # accept files with arbitrary leading text before the H1,
+        # which would let the splice land at the bottom of a
+        # malformed changelog.  Only a '# ' heading on the first
+        # non-empty, non-fenced line should satisfy the H1 check.
+        existing = (
+            "Preface paragraph that has no business being here.\n"
+            "\n"
+            "# Changelog\n"
+            "\n"
+            "All notable changes…\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            gc.splice_into_changelog(existing, NEW_SECTION)
+        message = str(ctx.exception)
+        self.assertIn("H1", message)
+        self.assertIn("refusing", message)
+
     def test_only_unreleased_falls_back_to_append(self) -> None:
         # If the only ``## [`` heading is ``[Unreleased]`` (no real
         # release yet), there is no semver anchor, so the new release
@@ -917,6 +936,37 @@ class MainCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 gc.main(["--since", "v1.0.0", "--version", "1.1.0-."])
         self.assertEqual(ctx.exception.code, 2)
+
+    def test_leading_zero_numeric_core_rejected(self) -> None:
+        # Semver 2.0.0 §2 forbids leading zeros on numeric identifiers
+        # in the core version.  ``01.2.3`` must not splice into
+        # CHANGELOG.md as a canonical release.
+        for bad in ("01.2.3", "1.02.3", "1.2.03", "v01.2.3"):
+            with mock.patch("sys.stderr", new=io.StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    gc.main(["--since", "v1.0.0", "--version", bad])
+            self.assertEqual(ctx.exception.code, 2, f"should reject {bad!r}")
+
+    def test_leading_zero_numeric_prerelease_rejected(self) -> None:
+        # Semver 2.0.0 §9: numeric prerelease identifiers must not have
+        # leading zeros.  ``1.2.3-01`` is invalid; ``1.2.3-0`` (plain 0)
+        # and ``1.2.3-0a`` (alphanumeric, not purely numeric) are valid.
+        for bad in ("1.1.0-01", "1.1.0-rc.01"):
+            with mock.patch("sys.stderr", new=io.StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    gc.main(["--since", "v1.0.0", "--version", bad])
+            self.assertEqual(ctx.exception.code, 2, f"should reject {bad!r}")
+
+    def test_valid_prerelease_edge_cases_accepted(self) -> None:
+        # Regression guard for the leading-zero tightening: ``0`` alone
+        # and alphanumeric identifiers that start with a digit must
+        # still pass.
+        for good in ("1.1.0-0", "1.1.0-0a", "1.1.0-rc.0", "1.1.0-alpha-1"):
+            with self._patch_git([("aaa", "Add X")]):
+                with mock.patch("sys.stdout", new=io.StringIO()), \
+                     mock.patch("sys.stderr", new=io.StringIO()):
+                    rc = gc.main(["--since", "v1.0.0", "--version", good])
+            self.assertEqual(rc, 0, f"should accept {good!r}")
 
     def test_value_error_from_config_surfaces_as_exit_two(self) -> None:
         # ValueError from the YAML parser (or anywhere in the pipeline)

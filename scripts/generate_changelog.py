@@ -92,9 +92,18 @@ def _require_yaml_parser() -> typing.Callable[[str], typing.Any]:
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-    except ImportError as exc:
+    except (SystemExit, KeyboardInterrupt):
+        # Do not swallow interpreter-teardown signals — they must
+        # propagate so the script exits the way the operator intended.
+        raise
+    except Exception as exc:
+        # ImportError, SyntaxError, or anything else raised while
+        # executing yaml_parser.py must route through main()'s
+        # ``error: …`` / exit 2 contract instead of escaping as a
+        # traceback.
         raise RuntimeError(
-            f"failed to load yaml_parser from {_YAML_PARSER_PATH}: {exc}"
+            f"failed to load yaml_parser from {_YAML_PARSER_PATH}: "
+            f"{type(exc).__name__}: {exc}"
         ) from exc
     return module.parse_yaml_subset
 
@@ -105,13 +114,17 @@ CONFIG_PATH = os.path.join(
 SECTION_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed", "Security")
 
 # Accepts X.Y.Z and vX.Y.Z with optional pre-release and/or build
-# metadata per semver 2.0.0 (e.g. 1.2.0-rc.1, 1.2.0+build.42).  Each
-# dot-separated identifier must have at least one character — this
-# excludes malformed inputs like ``1.2.0-.`` that a looser character
-# class would otherwise accept.
+# metadata per semver 2.0.0 (e.g. 1.2.0-rc.1, 1.2.0+build.42).  Numeric
+# identifiers (major/minor/patch and numeric prerelease identifiers)
+# must not carry leading zeros — semver 2.0.0 §2 and §9 forbid
+# ``01.2.3`` and ``1.2.3-01``.  Alphanumeric prerelease identifiers
+# (``rc1``, ``alpha-2``) are unrestricted.  Each dot-separated
+# identifier must have at least one character, which excludes
+# malformed inputs like ``1.2.0-.``.
 _SEMVER_RE = re.compile(
-    r"^v?\d+\.\d+\.\d+"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"^v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
@@ -135,7 +148,7 @@ def _is_iso_date(value: str) -> bool:
 
 
 def load_verb_mapping(config_path: str = CONFIG_PATH) -> dict[str, str]:
-    """Return ``{verb: section}`` flattened from configuration.yaml.
+    """Return ``{verb: section}`` flattened from ``scripts/lib/changelog.yaml``.
 
     The YAML stores sections as keys with verb lists as values (the
     natural way to read it); this inverts to a flat lookup for O(1)
@@ -394,27 +407,36 @@ def splice_into_changelog(existing: str, new_section: str) -> str:
 
     # No release sections yet.  Synthesize a Keep-a-Changelog preamble
     # only when the file is empty; refuse when the file has content
-    # without an H1 (silently demoting user text below a synthesized
-    # preamble + release would be more surprising than raising).
-    has_h1 = any(line.startswith("# ") for line in lines)
-    if not has_h1:
-        if existing:
-            raise RuntimeError(
-                "CHANGELOG.md is non-empty but has no '# ' H1 heading; "
-                "refusing to synthesize a preamble on top of unrecognized "
-                "content.  Add a '# Changelog' heading (or delete the file) "
-                "and re-run."
-            )
+    # whose first non-empty, non-fenced line is not the '# ' H1
+    # heading.  Checking only *the first* real line (rather than "any
+    # line starts with # ") stops the splice from accepting a
+    # malformed file with arbitrary leading text before the heading.
+    first_real_line: str | None = None
+    for _, line in _iter_heading_lines(existing):
+        if line.strip():
+            first_real_line = line
+            break
+
+    if first_real_line is None:
+        # Empty file, or only whitespace/fenced content — synthesize a
+        # full Keep-a-Changelog preamble for a brand-new file.
         preamble = (
             "# Changelog\n"
             "\n"
             "All notable changes to this project are documented in this file.\n"
             "\n"
-            "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\n"
-            "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n"
+            "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n"
             "\n"
         )
         return preamble + new_section
+
+    if not first_real_line.startswith("# "):
+        raise RuntimeError(
+            "CHANGELOG.md is non-empty but does not begin with a '# ' H1 "
+            "heading; refusing to synthesize a preamble on top of "
+            "unrecognized content.  Add a '# Changelog' heading at the top "
+            "(or delete the file) and re-run."
+        )
 
     head = existing.rstrip("\n") + "\n\n"
     return head + new_section

@@ -127,7 +127,7 @@ These constraints are non-negotiable across the entire codebase:
 - **Validation functions return `(errors, passes)` tuples** — never raise exceptions for validation failures.
 - **Shell scripts use `set -euo pipefail`** and validate environment variables at the top with `${VAR:?}`.
 - **Actions pinned to commit SHAs** — not tags.
-- **All script entry points support `--json`** — machine-readable output via `to_json_output()` from `lib/reporting.py`.
+- **Meta-skill script entry points support `--json`** — entry points under `skill-system-foundry/scripts/` must provide machine-readable output via `to_json_output()` from `lib/reporting.py`. Repo-infrastructure scripts under the top-level `scripts/` tree (e.g., `scripts/generate_changelog.py`) are exempt: their output is consumed directly by humans during maintenance tasks, and line-oriented stderr diagnostics already cover the tooling surface.
 
 ## Development Workflow
 
@@ -216,4 +216,4 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 
 Version lives in `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`). Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
 
-When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section in two steps: first preview with `python scripts/generate_changelog.py --since vX.Y.Z --version X.Y.Z+1 --in-place --dry-run` and reclassify any commits reported on stderr as `unmapped — review manually` (add their first-word verb to `scripts/lib/changelog.yaml` or reword the commit subject), then re-run without `--dry-run` to write the file and commit the updated `CHANGELOG.md` before tagging. The `--in-place` write refuses (exit 3) while any commit remains unmapped.
+When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section in two steps: first preview with `python scripts/generate_changelog.py --since vPREVIOUS_VERSION --version NEXT_VERSION --in-place --dry-run` (substitute the previous tag and the new release number — e.g. `--since v1.1.0 --version 1.2.0` — not SemVer build metadata like `+1`) and reclassify any commits reported on stderr as `unmapped — review manually` (add their first-word verb to `scripts/lib/changelog.yaml` or reword the commit subject), then re-run without `--dry-run` to write the file and commit the updated `CHANGELOG.md` before tagging. The `--in-place` write refuses (exit 3) while any commit remains unmapped.
