@@ -158,6 +158,8 @@ The version-consistency rule in `audit_skill_system.py` (which compares `SKILL.m
 python skill-system-foundry/scripts/audit_skill_system.py .
 ```
 
+The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocation runs in distribution-repo mode and emits one expected `WARN: No skills/ directory under system root — ran partial audit`. Skill-level checks still pass.
+
 #### Flag behavior
 
 | Flag | Effect | When to use |

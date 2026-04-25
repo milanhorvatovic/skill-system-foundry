@@ -589,15 +589,19 @@ def audit_skill_system(
     if verbose:
         print("\n== Router Table ==")
 
-    # Router-table audit is one of two rules that intentionally scan
-    # the meta-skill itself when system_root is a skill root (top-level
-    # SKILL.md).  See lib.discovery.find_skill_root for the rationale.
+    # Router-table audit is the only per-skill rule that intentionally
+    # scans a top-level SKILL.md (skill-root mode).  See
+    # lib.discovery.find_skill_root for the rationale.
     router_skills = list(registered_skills)
     skill_root_entry = find_skill_root(system_root)
-    if skill_root_entry is not None and not any(
-        s["path"] == skill_root_entry["path"] for s in router_skills
-    ):
-        router_skills.append(skill_root_entry)
+    if skill_root_entry is not None:
+        skill_root_path = skill_root_entry["path"]
+        already_listed = any(
+            os.path.abspath(s["path"]) == skill_root_path
+            for s in router_skills
+        )
+        if not already_listed:
+            router_skills.append(skill_root_entry)
 
     for skill in router_skills:
         rt_findings = audit_router_table(skill["path"])

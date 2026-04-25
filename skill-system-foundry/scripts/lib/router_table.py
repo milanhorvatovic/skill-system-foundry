@@ -158,10 +158,8 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
         return []
 
     with open(skill_md, "r", encoding="utf-8") as fh:
-        # Read body only — frontmatter cannot contain a router table.
-        # We intentionally pass the full content to ``parse_router_table``
-        # because the frontmatter delimiters ('---') are not pipe rows
-        # and won't be mistaken for a header.
+        # Pass the full content; YAML frontmatter delimiters ('---') are
+        # not pipe rows and cannot be mistaken for a router header.
         content = fh.read()
 
     rows = parse_router_table(content)
@@ -213,7 +211,8 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     for orphan in sorted(on_disk - declared):
         findings.append((
             LEVEL_FAIL,
-            f"{DIR_CAPABILITIES}/{orphan}/ has no matching router row",
+            f"{DIR_CAPABILITIES}/{orphan}/ has no matching router row "
+            f"(expected Path '{expected_path(orphan)}')",
         ))
 
     return findings
