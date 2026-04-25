@@ -307,15 +307,10 @@ def commit_writes(writes: list[tuple[str, str]]) -> None:
             # Track the temp path immediately so the ``finally`` cleanup
             # can remove it even if the upcoming open/write raises.
             tmp_paths.append(tmp)
-            # Pin LF newlines on disk to match the rest of the foundry
-            # release tooling (``generate_changelog.py`` does the same).
-            # Default text mode would translate ``\n`` → ``os.linesep``
-            # on write, producing CRLF manifests on Windows even for
-            # checkouts where the canonical form is LF, which would
-            # show up as a noisy diff on every cross-platform bump.
-            # Reading the manifests with default text mode already
-            # normalised CRLF/CR → LF in memory, so writing LF here
-            # round-trips cleanly.
+            # Pin LF newlines on disk (``newline="\n"``) to match the
+            # rest of the foundry release tooling — ``generate_changelog.py``
+            # does the same so cross-platform bumps stay deterministic
+            # regardless of the operator's checkout settings.
             with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(content)
         staged: list[tuple[str, str]] = list(zip([p for p, _ in writes], tmp_paths))

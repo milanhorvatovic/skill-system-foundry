@@ -173,7 +173,12 @@ def check_version_consistency(system_root: str) -> list[str]:
             )
         name_value = plugin_data.get("name")
         if isinstance(name_value, str) and name_value.strip():
-            plugin_name = name_value
+            # Store the stripped form so the marketplace lookup matches
+            # consistently — a manifest like ``"name": "  demo  "`` would
+            # otherwise pass validation here but never match a
+            # marketplace plugin entry whose ``"name": "demo"`` is
+            # already canonical.
+            plugin_name = name_value.strip()
         else:
             # Surface the root cause at plugin.json — the marketplace
             # lookup further down would otherwise emit a misleading

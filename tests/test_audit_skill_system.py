@@ -1765,6 +1765,32 @@ class CheckVersionConsistencyTests(unittest.TestCase):
                         f"expected plugin.json name-finding in {findings}",
                     )
 
+    def test_padded_plugin_name_matches_marketplace_after_strip(self) -> None:
+        """``plugin.json`` ``name`` with whitespace must match the canonical
+        marketplace entry after stripping.
+
+        Earlier the audit stored the raw ``name_value`` for the
+        marketplace lookup, so ``"  demo  "`` would pass the strip-truthy
+        gate but never match a marketplace plugin whose ``"name"`` is
+        ``"demo"``, producing a misleading "no plugin entry matches name
+        '  demo  '" finding.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            with open(
+                os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{\n  "name": "  demo  ",\n  "version": "1.1.0"\n}\n')
+            findings = check_version_consistency(tmp)
+            self.assertFalse(
+                any(
+                    "no plugin entry matches name" in f for f in findings
+                ),
+                f"unexpected mismatch finding in {findings}",
+            )
+
     def test_fails_when_no_matching_marketplace_plugin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
