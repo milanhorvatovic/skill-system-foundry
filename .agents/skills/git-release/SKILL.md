@@ -18,7 +18,13 @@ Guides the full release lifecycle for the Skill System Foundry — from version 
 
 ## Version Convention
 
-The repository uses **semver** (MAJOR.MINOR.PATCH) tracked in the `metadata.version` field of `skill-system-foundry/SKILL.md` frontmatter:
+The repository uses **semver** (MAJOR.MINOR.PATCH) tracked across three manifest files that must agree:
+
+- `skill-system-foundry/SKILL.md` — `metadata.version` in the frontmatter (the canonical declaration; the other two manifests are bumped to match)
+- `.claude-plugin/plugin.json` — `version` field
+- `.claude-plugin/marketplace.json` — `version` field for this skill's entry
+
+The canonical `SKILL.md` declaration looks like:
 
 ```yaml
 metadata:
@@ -27,7 +33,7 @@ metadata:
   spec: agentskills.io
 ```
 
-This is the single source of truth for the current version. Git tags mirror it as `v1.0.2`.
+The `audit_skill_system.py` version-drift rule (run from the repo root) fails the audit when these three files disagree, so editing only `SKILL.md` is no longer sufficient. Always bump them in lockstep via `scripts/bump_version.py` (or the dispatch workflow, which calls it). Git tags mirror the version as `v1.0.2`.
 
 ### When to Bump
 
@@ -35,7 +41,26 @@ This is the single source of truth for the current version. Git tags mirror it a
 - **MINOR** (1.0.2 → 1.1.0) — new features: new validation checks, new scripts, new reference documents, new template types, new bundling targets
 - **MAJOR** (1.0.2 → 2.0.0) — breaking changes: configuration.yaml schema changes that break existing setups, removed validation checks, renamed scripts, changed CLI arguments
 
-## Release Checklist
+## Dispatch-Driven Prep (Preferred)
+
+The `Release prep` workflow (`.github/workflows/release-prep.yml`) is the primary release-prep path. Trigger it from the GitHub Actions UI (or `gh workflow run release-prep.yml -f version=X.Y.Z`):
+
+1. Dispatch the workflow with the target version (`X.Y.Z`, no leading `v`, no prerelease).
+2. The workflow creates `release/v<X.Y.Z>`, runs the `bump_version.py` helper (manifest lockstep), prepends a generated section to `CHANGELOG.md`, runs `validate_skill.py` and `audit_skill_system.py` (the latter from repo root, which fires the version-drift rule), runs the full test matrix via the reusable `python-tests.yaml`, and opens a PR titled `Release v<X.Y.Z>`.
+3. Review the PR. The PR body lists any manual follow-ups (notably: edit `.agents/skills/git-release/SKILL.md` prose if any examples reference an outdated release).
+4. Re-trigger CI on the PR by closing and reopening it (GitHub does not fire PR workflows for PRs opened by `GITHUB_TOKEN`).
+5. Merge the PR to `main`.
+6. Tag and publish:
+   ```bash
+   gh release create v<X.Y.Z> --generate-notes
+   ```
+   The post-merge `release.yml` workflow bundles the zip, computes the SHA256 checksum, and uploads both as release assets.
+
+The workflow exposes a `dry_run` input that runs validation, bump, changelog generation, validate, and audit but skips the push and the PR — useful to verify a target version's gates before committing to a real prep.
+
+## Manual Release Checklist (Fallback)
+
+Use this path when the dispatch workflow is unavailable (for example, when running offline against a pre-tag commit, or when retrospectively regenerating a past release).
 
 ### Step 1: Verify Pre-Release State
 
@@ -72,26 +97,38 @@ All validation checks must pass (zero failures). Coverage must meet the 70% thre
 
 ### Step 2: Bump the Version
 
-Update `metadata.version` in `skill-system-foundry/SKILL.md`:
+Use the `bump_version.py` helper (under the repo's top-level `./scripts/`) to update all three manifest files (SKILL.md, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) in lockstep:
 
-```yaml
-metadata:
-  author: Milan Horvatovič
-  version: 1.1.0       # ← update this
-  spec: agentskills.io
+```bash
+python scripts/bump_version.py 1.1.0 --dry-run   # preview
+python scripts/bump_version.py 1.1.0             # write
 ```
 
-This is the only file where the version lives. There is no `pyproject.toml`, `setup.py`, or `package.json` to synchronize.
+The `audit_skill_system.py` version-drift rule will fail if these three files disagree, so editing only `SKILL.md` is no longer sufficient.
+
+### Step 2.5: Prepend the Changelog Section
+
+Use the `generate_changelog.py` helper (also under the repo's top-level `./scripts/`) to add a new release section to `CHANGELOG.md`. See the "Release Process" section of `CLAUDE.md` for the full preview-then-write checklist; the short form is:
+
+```bash
+PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*')
+python scripts/generate_changelog.py --since "$PREV" --version 1.1.0 \
+  --until "$(git rev-parse HEAD)" --date "$(date -u +%Y-%m-%d)" --in-place
+```
+
+The `--match` glob filters `git describe` to release-shaped tags so a stray non-release tag (debug, hotfix experiment) cannot widen or narrow the changelog range — the dispatch workflow uses the same glob for the same reason.
+
+Reclassify any commits the generator reports on stderr as `unmapped — review manually` (either by adding their first-word verb to the generator's `changelog.yaml` config or by rewording the commit subject) before re-running.
 
 ### Step 3: Commit and Push
 
 ```bash
-git add skill-system-foundry/SKILL.md
-git commit -m "Update version to 1.1.0"
+git add skill-system-foundry/SKILL.md .claude-plugin/plugin.json .claude-plugin/marketplace.json CHANGELOG.md
+git commit -m "Release v1.1.0"
 git push origin main
 ```
 
-Use the commit message format: `Update version to X.Y.Z`.
+Use the commit message format `Release vX.Y.Z` so the changelog generator filters the bump commit out of future regenerations. The full subject is matched against `_RELEASE_COMMIT_RE` in `scripts/generate_changelog.py`, which mirrors the strict SemVer grammar the generator already enforces on `--version` (no leading zeros, optional dot-separated prerelease suffix; build metadata is intentionally unsupported). Off-grammar subjects like `Release v1.2.0 (RC)` or `Release v1.2.3-..1` are deliberately not skipped — they route to `unmapped — review manually` so the operator either fixes the subject or reclassifies it deliberately.
 
 ### Step 4: Create the GitHub Release
 
@@ -161,10 +198,11 @@ The full CI pipeline for a release involves multiple workflows:
 
 | Workflow | Trigger | What It Does |
 |---|---|---|
-| `python-tests.yaml` | Push to `main`, PRs | Tests + coverage + badge update |
+| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage + badge update; reusable from `release-prep.yml` |
 | `shellcheck.yaml` | Changes to `.github/scripts/*.sh` | Lints shell scripts |
 | `codex-code-review.yaml` | PRs (non-draft) | AI-assisted code review |
-| `release.yml` | Release published | Bundles zip + uploads asset |
+| `release-prep.yml` | `workflow_dispatch` | Bumps version, prepends changelog, opens release PR |
+| `release.yml` | Release published | Bundles zip + uploads asset (zip + SHA256) |
 
 The coverage badge updates automatically on pushes to `main` via the `update-badge` job. It writes `coverage.json` to an orphan `badges` branch, which shields.io reads.
 
@@ -193,10 +231,10 @@ The bundle script applies stricter validation than the release workflow — it c
 
 ## Common Mistakes
 
-- Forgetting to bump `metadata.version` in SKILL.md before tagging
-- Version in SKILL.md not matching the git tag (e.g., `1.1.0` vs `v1.1.0`)
-- Tagging before pushing the version bump commit to `main`
-- Creating a release from a branch other than `main`
-- Not running validation before release — a broken SKILL.md ships in the zip
-- Writing release notes that reference internal details instead of user-facing changes
-- Forgetting to verify the zip asset downloads and validates after the workflow runs
+- Editing only `SKILL.md` and missing `.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json` — the version-drift audit rule will fail. Use `bump_version.py` (or the dispatch workflow) to keep the three files in lockstep.
+- Version in the manifests not matching the git tag (e.g., `1.1.0` vs `v1.1.0`).
+- Tagging before pushing the bump commit to `main`.
+- Creating a release from a branch other than `main`.
+- Skipping validation — a broken SKILL.md ships in the zip.
+- Forgetting to verify the zip asset downloads and validates after `release.yml` runs.
+- Using a commit subject other than `Release vX.Y.Z` for the bump — the changelog generator skip filter only matches that exact shape.

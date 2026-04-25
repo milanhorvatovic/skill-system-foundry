@@ -168,6 +168,12 @@ On Linux and macOS the expected output is `skill-system-foundry-vX.Y.Z.zip: OK`.
      --system-root /path/to/project/.agents --output my-skill.zip
    ```
 
+## Releases
+
+Shipped versions and what changed between them are tracked in [CHANGELOG.md](CHANGELOG.md). Each release is also published as a versioned zip on the [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) page (with a SHA256 checksum file alongside it; see the [GitHub Releases](#github-releases) installation section for verification commands).
+
+Maintainer release flow at a glance: dispatch the `Release prep` workflow with the new version → review and merge the auto-opened release PR → run `gh release create vX.Y.Z --generate-notes`. The post-merge `release.yml` workflow then bundles the zip and publishes the assets. Detailed steps live in the `git-release` skill under `.agents/skills/git-release/SKILL.md`.
+
 ## Repository Structure
 
 ```
