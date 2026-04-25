@@ -114,65 +114,35 @@ jobs:
       - name: Bump version
         env:
           VERSION: ${{ inputs.version }}
+        # ``bump_version.py`` is the single writer for both the manifest
+        # files and ``CHANGELOG.md``: it updates SKILL.md / plugin.json /
+        # marketplace.json in lockstep, then invokes
+        # ``generate_changelog.py --in-place`` to prepend the new
+        # section.  The previous-tag, until-ref, and date are derived
+        # internally from the manifest's current version, ``HEAD``, and
+        # today (UTC), so we do not run ``git describe`` ourselves and
+        # do not call the changelog generator a second time — a second
+        # ``--in-place`` invocation would trip the duplicate-section
+        # guard once a section for ``$VERSION`` is already present.
         run: python scripts/bump_version.py "$VERSION"
 
-      - name: Resolve changelog range
-        id: range
-        # Resolve PREV / UNTIL / DATE once and reuse them across the
-        # preview and the in-place write so a step that straddles
-        # midnight UTC, or a stray amend between the two calls, cannot
-        # produce two different ranges or release dates.  The
-        # --match glob filters 'git describe' to release-shaped tags
-        # only — a non-release tag (debug, hotfix experiment) would
-        # otherwise silently widen or narrow the changelog range.
+      - name: Extract release section for PR body
+        # Pull the section ``bump_version.py`` just prepended out of
+        # ``CHANGELOG.md`` (everything from the first ``## [`` heading
+        # up to — but not including — the next one).  Written outside
+        # the workspace so the later ``git add -A`` cannot accidentally
+        # stage the artifact alongside the bump.
         run: |
-          PREV=$(git describe --tags --abbrev=0 --match='v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
-          if [[ -z "$PREV" ]]; then
-            echo "::error::no release-shaped tag (vX.Y.Z) found via 'git describe'; release-prep.yml requires at least one prior release tag."
+          awk '
+            /^## \[/ { count++; if (count == 2) exit }
+            count >= 1 { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/pr-body-section.md"
+          if [[ ! -s "$RUNNER_TEMP/pr-body-section.md" ]]; then
+            echo "::error::could not extract release section from CHANGELOG.md; bump_version.py did not prepend a section."
             exit 1
           fi
-          UNTIL=$(git rev-parse HEAD)
-          DATE=$(date -u +%Y-%m-%d)
-          {
-            echo "prev=$PREV"
-            echo "until=$UNTIL"
-            echo "date=$DATE"
-          } >> "$GITHUB_OUTPUT"
-          echo "Previous tag: $PREV"
-          echo "Until SHA:    $UNTIL"
-          echo "Release date: $DATE"
-
-      - name: Generate changelog section (preview for PR body)
-        env:
-          VERSION: ${{ inputs.version }}
-          PREV: ${{ steps.range.outputs.prev }}
-          UNTIL: ${{ steps.range.outputs.until }}
-          DATE: ${{ steps.range.outputs.date }}
-        # Write outside the workspace so the next 'git add -A' does
-        # not accidentally stage the artifact alongside the bump.
-        run: |
-          python scripts/generate_changelog.py \
-            --since "$PREV" \
-            --version "$VERSION" \
-            --until "$UNTIL" \
-            --date "$DATE" \
-            > "$RUNNER_TEMP/pr-body-section.md"
-          echo "--- preview ---"
+          echo "--- extracted ---"
           cat "$RUNNER_TEMP/pr-body-section.md"
-
-      - name: Apply changelog (in place)
-        env:
-          VERSION: ${{ inputs.version }}
-          PREV: ${{ steps.range.outputs.prev }}
-          UNTIL: ${{ steps.range.outputs.until }}
-          DATE: ${{ steps.range.outputs.date }}
-        run: |
-          python scripts/generate_changelog.py \
-            --since "$PREV" \
-            --version "$VERSION" \
-            --until "$UNTIL" \
-            --date "$DATE" \
-            --in-place
 
       - name: Validate skill (foundry self)
         working-directory: skill-system-foundry

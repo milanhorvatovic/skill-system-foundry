@@ -150,14 +150,16 @@ _SEMVER_RE = re.compile(
 # the full subject so a hand-edited subject like ``Release v1.2.0 (RC)``
 # still routes through the verb map (and thus to unmapped) and forces
 # the operator to either fix the subject or reclassify deliberately.
-# The version grammar mirrors ``_SEMVER_RE`` exactly (no leading zeros
-# in numeric identifiers; non-empty dot-separated prerelease
-# identifiers) so an off-grammar prerelease like ``Release v1.2.3-..1``
-# or ``Release v1.2.3-.rc`` still routes through unmapped instead of
-# being silently elided.  Build metadata (``+...``) is intentionally
-# unsupported here: release tags and bump commits are ``vX.Y.Z`` (with
-# optional prerelease suffix) only, so ``Release v1.2.0+build.1`` must
-# also surface for review rather than be elided.
+# The version grammar mirrors the core-version and prerelease portions
+# of ``_SEMVER_RE`` (no leading zeros in numeric identifiers; non-empty
+# dot-separated prerelease identifiers), so an off-grammar prerelease
+# like ``Release v1.2.3-..1`` or ``Release v1.2.3-.rc`` still routes
+# through unmapped instead of being silently elided.  Build metadata
+# (``+...``) is intentionally unsupported here — release tags and bump
+# commits are ``vX.Y.Z`` (with optional prerelease suffix) only, so
+# ``Release v1.2.0+build.1`` must also surface for review rather than
+# be elided.  This is a deliberate divergence from ``_SEMVER_RE``,
+# which does accept ``+build`` metadata on the ``--version`` input.
 _RELEASE_COMMIT_RE = re.compile(
     r"^Release v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
     r"(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
