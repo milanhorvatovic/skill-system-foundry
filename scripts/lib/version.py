@@ -39,10 +39,13 @@ import re
 # Python's ``$`` also matches before a final ``\n``; combined with the
 # ``.match()`` calls below, ``$`` would accept ``"1.2.3\n"`` and silently
 # pass invalid CLI input through to the planner.
+# Digits are written as ``[0-9]`` rather than ``\d`` so non-ASCII
+# decimal-digit codepoints (e.g., Arabic-Indic ``٢``) cannot satisfy
+# the grammar — SemVer identifiers are ASCII-only.
 SEMVER_RE = re.compile(
-    r"\A(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
-    r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?\Z"
+    r"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?\Z"
 )
 
 
@@ -151,33 +154,64 @@ def _strip_yaml_scalar_quotes(value: str) -> str:
     return value
 
 
-def read_skill_md_version(path: str) -> str | None:
-    """Read ``metadata.version`` from a SKILL.md file.
+def _direct_metadata_version_match(frontmatter: str) -> tuple[int, str] | None:
+    """Locate ``metadata.version`` as a *direct* child of ``metadata:``.
 
-    Returns ``None`` when the file has no frontmatter, when the frontmatter
-    has no ``metadata`` block, or when ``metadata.version`` is absent.
-    Raises ``OSError`` when the file cannot be read.
+    Returns ``(indent_width, raw_value)`` for the matched line, or ``None``
+    when no such direct child exists.  ``indent_width`` is the number of
+    leading whitespace columns for direct children of the metadata block;
+    callers can use it to anchor a planner regex at the same depth.
+
+    Tracking the indent width is necessary because YAML permits nested
+    mappings under ``metadata`` — a deeper ``metadata.compatibility.version``
+    must not be returned in place of the canonical
+    ``metadata.version`` when the latter is absent.
     """
-    with open(path, "r", encoding="utf-8") as fh:
-        content = fh.read()
-    frontmatter = _extract_frontmatter(content)
-    if frontmatter is None:
-        return None
     in_metadata = False
+    metadata_indent: int | None = None
     for line in frontmatter.splitlines():
         if not line.strip():
             continue
         if line.rstrip() == "metadata:":
             in_metadata = True
             continue
-        if in_metadata:
-            if line and not line[0].isspace():
-                # Left the metadata block without finding version.
-                return None
-            match = re.match(r"^\s+version:\s*(\S.*)$", line)
-            if match:
-                return _strip_yaml_scalar_quotes(match.group(1))
+        if not in_metadata:
+            continue
+        if line[0:1] and not line[0].isspace():
+            # Left the metadata block (next top-level key) without
+            # finding a direct version child.
+            return None
+        indent = len(line) - len(line.lstrip())
+        if metadata_indent is None:
+            metadata_indent = indent
+        if indent != metadata_indent:
+            # Nested mapping at deeper indent — not a direct child.
+            continue
+        match = re.match(r"^[ \t]+version:\s*(\S.*)$", line)
+        if match:
+            return metadata_indent, match.group(1)
     return None
+
+
+def read_skill_md_version(path: str) -> str | None:
+    """Read ``metadata.version`` from a SKILL.md file.
+
+    Returns ``None`` when the file has no frontmatter, when the frontmatter
+    has no ``metadata`` block, or when ``metadata.version`` is absent
+    **as a direct child** of ``metadata:``.  Nested keys at deeper
+    indentation (e.g., ``metadata.compatibility.version``) are not
+    accepted in place of the canonical field.  Raises ``OSError`` when
+    the file cannot be read.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        content = fh.read()
+    frontmatter = _extract_frontmatter(content)
+    if frontmatter is None:
+        return None
+    found = _direct_metadata_version_match(frontmatter)
+    if found is None:
+        return None
+    return _strip_yaml_scalar_quotes(found[1])
 
 
 def read_plugin_json_version(path: str) -> str | None:
@@ -234,13 +268,14 @@ def read_plugin_name(path: str) -> str | None:
 def plan_skill_md_edit(content: str, current: str, new: str) -> str:
     """Return *content* with ``metadata.version`` changed from *current* to *new*.
 
-    Edits are restricted to the frontmatter block so a stray ``version:`` line
-    in the body cannot be rewritten.  Raises ``ValueError`` when the
-    opening delimiter is malformed, when the frontmatter is unterminated,
-    or when the anchored version pattern does not match exactly once.
-    The opener check is line-wise (matching ``_FRONTMATTER_OPEN_RE``) so
-    inputs that begin with ``---oops`` are rejected rather than treated
-    as frontmatter.
+    The edit is anchored to the **direct child** of the frontmatter
+    ``metadata:`` block, scoped by the indent width discovered while
+    reading.  A nested key like ``metadata.compatibility.version`` is
+    therefore neither read by the reader nor edited by this planner.
+    Raises ``ValueError`` when the opening delimiter is malformed, when
+    the frontmatter is unterminated, when the metadata block lacks a
+    direct ``version`` child, or when the anchored pattern does not
+    match exactly once at the expected depth.
     """
     open_match = _FRONTMATTER_OPEN_RE.match(content)
     if open_match is None:
@@ -252,12 +287,23 @@ def plan_skill_md_edit(content: str, current: str, new: str) -> str:
     fm_end = fm_start + close_match.start()
     frontmatter = content[fm_start:fm_end]
 
+    found = _direct_metadata_version_match(frontmatter)
+    if found is None:
+        raise ValueError(
+            "SKILL.md frontmatter has no direct 'metadata.version' "
+            "child to edit"
+        )
+    indent_width, _ = found
+
     # ``read_skill_md_version`` strips matched surrounding YAML quotes, so
     # the same plan must accept both ``version: 1.2.3`` and
     # ``version: "1.2.3"`` (and the single-quote form), preserving whichever
     # the file already uses.  ``(?P=q)`` enforces matching open/close quotes.
+    # The prefix is anchored at exactly the metadata-child indent width
+    # so a nested ``version:`` at deeper indentation cannot be edited
+    # in place of the canonical field.
     pattern = re.compile(
-        rf"^(?P<prefix>\s+version:\s*)"
+        rf"^(?P<prefix>[ \t]{{{indent_width}}}version:\s*)"
         rf"(?P<q>['\"]?){re.escape(current)}(?P=q)"
         rf"(?P<suffix>\s*)$",
         re.MULTILINE,
@@ -265,8 +311,8 @@ def plan_skill_md_edit(content: str, current: str, new: str) -> str:
     matches = pattern.findall(frontmatter)
     if len(matches) != 1:
         raise ValueError(
-            f"expected exactly one 'version: {current}' line in SKILL.md "
-            f"frontmatter, found {len(matches)}"
+            f"expected exactly one 'version: {current}' line at the "
+            f"metadata indent in SKILL.md frontmatter, found {len(matches)}"
         )
     new_frontmatter = pattern.sub(
         lambda m: (

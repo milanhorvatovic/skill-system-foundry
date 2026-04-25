@@ -117,6 +117,14 @@ class SemverRegexTests(unittest.TestCase):
         self.assertIsNone(version.SEMVER_RE.match("1.2.3\n"))
         self.assertIsNone(version.SEMVER_RE.match("1.2.3-rc.1\n"))
 
+    def test_rejects_non_ascii_digits(self) -> None:
+        # ``\d`` is Unicode-aware in Python; ``[0-9]`` keeps the
+        # grammar ASCII-only as SemVer requires.  Arabic-Indic digit
+        # ``٢`` (U+0662) and Bengali ``২`` (U+09E8) must not satisfy
+        # core or prerelease numeric identifiers.
+        self.assertIsNone(version.SEMVER_RE.match("1.2.٣"))  # core
+        self.assertIsNone(version.SEMVER_RE.match("1.2.3-rc.٢"))  # prerelease
+
 
 # ===================================================================
 # parse / compare
@@ -197,6 +205,47 @@ class ReadSkillMdVersionTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("---oops\nmetadata:\n  version: 1.0.0\n---\n")
             self.assertIsNone(version.read_skill_md_version(path))
+
+    def test_does_not_pick_up_nested_version_under_metadata(self) -> None:
+        """A nested ``metadata.compatibility.version`` must not be returned.
+
+        Once the scan enters ``metadata:``, an indent-only check would
+        accept any deeper ``version:`` line as the canonical value.  The
+        reader anchors on the first child indent and rejects deeper
+        keys so the bump primitive cannot mistake a compatibility hint
+        for the canonical release version.
+        """
+        body = (
+            "---\n"
+            "name: x\n"
+            "metadata:\n"
+            "  compatibility:\n"
+            "    version: 9.9.9\n"
+            "  author: Someone\n"
+            "---\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "SKILL.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            self.assertIsNone(version.read_skill_md_version(path))
+
+    def test_returns_direct_version_alongside_nested_block(self) -> None:
+        """Direct ``metadata.version`` is returned even with deeper siblings."""
+        body = (
+            "---\n"
+            "name: x\n"
+            "metadata:\n"
+            "  compatibility:\n"
+            "    version: 9.9.9\n"
+            "  version: 1.1.0\n"
+            "---\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "SKILL.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            self.assertEqual(version.read_skill_md_version(path), "1.1.0")
 
     def test_returns_none_when_metadata_missing_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,6 +345,40 @@ class PlanSkillMdEditTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             version.plan_skill_md_edit(bad, "1.0.0", "1.1.0")
         self.assertIn("missing opening", str(ctx.exception))
+
+    def test_does_not_edit_nested_version_under_metadata(self) -> None:
+        """The planner edits the direct ``metadata.version`` only.
+
+        With a deeper ``compatibility.version`` matching the same
+        current value, the planner must edit only the canonical line
+        — the nested key stays at its original value.
+        """
+        body = (
+            "---\n"
+            "name: x\n"
+            "metadata:\n"
+            "  compatibility:\n"
+            "    version: 1.0.0\n"
+            "  version: 1.0.0\n"
+            "---\n"
+        )
+        out = version.plan_skill_md_edit(body, "1.0.0", "1.1.0")
+        # The direct child moved to 1.1.0; the deeper sibling stays.
+        self.assertIn("  version: 1.1.0", out)
+        self.assertIn("    version: 1.0.0", out)
+
+    def test_rejects_when_no_direct_version_child(self) -> None:
+        """No direct ``metadata.version`` is a planner error, not a mis-edit."""
+        body = (
+            "---\n"
+            "metadata:\n"
+            "  compatibility:\n"
+            "    version: 1.0.0\n"
+            "---\n"
+        )
+        with self.assertRaises(ValueError) as ctx:
+            version.plan_skill_md_edit(body, "1.0.0", "1.1.0")
+        self.assertIn("direct 'metadata.version'", str(ctx.exception))
 
     def test_plans_quoted_version_and_preserves_quote_style(self) -> None:
         # ``read_skill_md_version`` strips matched surrounding quotes, so a
