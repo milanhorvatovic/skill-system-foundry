@@ -1,7 +1,8 @@
 """Tests for lib/discovery.py.
 
-Covers ``find_skill_dirs`` discovery in both system-root mode (with
-``skills/`` directory) and skill-root mode (top-level ``SKILL.md``).
+Covers ``find_skill_dirs`` (system-root, deployed-system layout),
+``find_skill_root`` (skill-root mode for meta-skill audits), and
+``find_roles``.
 """
 
 import os
@@ -17,7 +18,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.discovery import find_skill_dirs, find_roles
+from lib.discovery import find_skill_dirs, find_skill_root, find_roles
 
 
 def _write_capability(cap_dir: str, body: str = "# Capability\n") -> None:
@@ -59,59 +60,34 @@ class FindSkillDirsSystemRootTests(unittest.TestCase):
 
 
 # ===================================================================
-# find_skill_dirs — skill-root mode
+# find_skill_root — skill-root mode
 # ===================================================================
 
 
-class FindSkillDirsSkillRootTests(unittest.TestCase):
-    """Top-level ``SKILL.md`` discovery (single-skill layout)."""
+class FindSkillRootTests(unittest.TestCase):
+    """``SKILL.md`` at system_root yields a synthetic registered entry."""
 
-    def test_top_level_skill_md_registers_root(self) -> None:
-        """A SKILL.md at system_root registers system_root as a skill."""
+    def test_top_level_skill_md_returns_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
-            entries = find_skill_dirs(skill_dir)
-        registered = [e for e in entries if e["type"] == "registered"]
-        self.assertEqual(len(registered), 1)
-        self.assertEqual(registered[0]["name"], "my-meta-skill")
-        self.assertEqual(registered[0]["path"], os.path.abspath(skill_dir))
+            entry = find_skill_root(skill_dir)
+        self.assertIsNotNone(entry)
+        assert entry is not None  # for the type checker
+        self.assertEqual(entry["name"], "my-meta-skill")
+        self.assertEqual(entry["type"], "registered")
+        self.assertEqual(entry["path"], os.path.abspath(skill_dir))
 
-    def test_top_level_skill_with_capabilities(self) -> None:
+    def test_no_skill_md_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            skill_dir = os.path.join(tmp, "my-meta-skill")
-            write_skill_md(skill_dir, name="my-meta-skill")
-            _write_capability(os.path.join(skill_dir, "capabilities", "alpha"))
-            _write_capability(os.path.join(skill_dir, "capabilities", "beta"))
-            entries = find_skill_dirs(skill_dir)
-        names = sorted((e["name"], e["type"]) for e in entries)
-        self.assertEqual(
-            names,
-            [
-                ("alpha", "capability"),
-                ("beta", "capability"),
-                ("my-meta-skill", "registered"),
-            ],
-        )
-        # Capability entries record the meta-skill as parent.
-        for e in entries:
-            if e["type"] == "capability":
-                self.assertEqual(e["parent"], "my-meta-skill")
+            self.assertIsNone(find_skill_root(tmp))
 
-    def test_skill_root_and_skills_dir_coexist(self) -> None:
-        """Both modes can apply at once; results are concatenated."""
+    def test_only_returns_top_level_not_subdirectory_skill(self) -> None:
+        """find_skill_root checks only system_root itself, not nested skills."""
         with tempfile.TemporaryDirectory() as tmp:
-            outer = os.path.join(tmp, "outer-skill")
-            write_skill_md(outer, name="outer-skill")
-            inner = os.path.join(outer, "skills", "inner-skill")
+            inner = os.path.join(tmp, "skills", "inner-skill")
             write_skill_md(inner, name="inner-skill")
-            entries = find_skill_dirs(outer)
-        names = sorted(e["name"] for e in entries if e["type"] == "registered")
-        self.assertEqual(names, ["inner-skill", "outer-skill"])
-
-    def test_no_skill_md_no_skills_dir_returns_empty(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(find_skill_dirs(tmp), [])
+            self.assertIsNone(find_skill_root(tmp))
 
 
 # ===================================================================

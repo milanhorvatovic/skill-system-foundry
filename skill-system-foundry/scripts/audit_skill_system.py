@@ -59,6 +59,7 @@ from lib.reporting import (
 from lib.discovery import (
     find_skill_dirs,
     find_roles,
+    find_skill_root,
     check_line_count,
     read_file,
 )
@@ -73,6 +74,7 @@ from lib.constants import (
     collect_foundry_config_findings,
 )
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
+from lib.router_table import audit_router_table
 
 
 def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
@@ -578,6 +580,35 @@ def audit_skill_system(
             elif verbose:
                 print(
                     f"  ✓ {skill['name']}/capabilities/{cap}/{FILE_CAPABILITY_MD}"
+                )
+
+    # --- Router Table ---
+    if verbose:
+        print("\n== Router Table ==")
+
+    # Router-table audit is one of two rules that intentionally scan
+    # the meta-skill itself when system_root is a skill root (top-level
+    # SKILL.md).  See lib.discovery.find_skill_root for the rationale.
+    router_skills = list(registered_skills)
+    skill_root_entry = find_skill_root(system_root)
+    if skill_root_entry is not None and not any(
+        s["path"] == skill_root_entry["path"] for s in router_skills
+    ):
+        router_skills.append(skill_root_entry)
+
+    for skill in router_skills:
+        rt_findings = audit_router_table(skill["path"])
+        for level, message in rt_findings:
+            errors.append(f"{level}: {skill['name']} {message}")
+        if not rt_findings and verbose:
+            cap_dir = os.path.join(skill["path"], DIR_CAPABILITIES)
+            if os.path.isdir(cap_dir):
+                print(
+                    f"  ✓ {skill['name']}: router table consistent"
+                )
+            else:
+                print(
+                    f"  - {skill['name']}: standalone (no router)"
                 )
 
     # --- Manifest ---

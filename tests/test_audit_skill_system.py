@@ -118,9 +118,16 @@ def _create_full_valid_system(system_root: str) -> None:
     Includes a skill with a capability, a role composing 2+ skills,
     and a manifest — all checks pass with zero errors.
     """
-    # Skill with capability
+    # Skill with capability — router table required by the router-table rule
     skill_dir = os.path.join(system_root, "skills", "demo-skill")
-    write_skill_md(skill_dir)
+    router_body = (
+        "# Demo Skill\n\n"
+        "## Capabilities\n\n"
+        "| Capability | Trigger | Path |\n"
+        "|---|---|---|\n"
+        "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+    )
+    write_skill_md(skill_dir, body=router_body)
     cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
     _write_capability_md(cap_dir, body="# My Capability\n")
 
@@ -856,14 +863,20 @@ class AuditCapabilityEntryNamingTests(unittest.TestCase):
         """A capability with capability.md passes the naming check."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
-            write_skill_md(skill_dir)
+            router_body = (
+                "# Demo Skill\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(skill_dir, body=router_body)
             cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
             _write_capability_md(cap_dir, body="# My Capability\n")
             errors = audit_skill_system(tmpdir, verbose=False)
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         naming_fails = [
             e for e in fail_errors
-            if "capability.md" in e or "SKILL.md" in e
+            if "must use" in e or "entry file" in e
         ]
         self.assertEqual(naming_fails, [])
 
@@ -882,6 +895,102 @@ class AuditCapabilityEntryNamingTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         parse_fails = [e for e in fail_errors if "parse error" in e.lower()]
         self.assertGreaterEqual(len(parse_fails), 1)
+
+
+class AuditRouterTableTests(unittest.TestCase):
+    """Integration tests for the Router Table section.
+
+    The unit tests for parsing and per-skill auditing live in
+    ``test_router_table.py``.  These tests verify that
+    ``audit_skill_system`` discovers the right skills and prefixes
+    findings correctly.
+    """
+
+    _CANONICAL_TABLE = (
+        "## Capabilities\n\n"
+        "| Capability | Trigger | Path |\n"
+        "|---|---|---|\n"
+        "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+    )
+
+    def test_clean_router_via_skills_dir_has_no_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n\n" + self._CANONICAL_TABLE)
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(cap_dir)
+            errors = audit_skill_system(tmpdir, verbose=False)
+        router_errors = [
+            e for e in errors
+            if "router" in e.lower() or "no matching router row" in e
+        ]
+        self.assertEqual(router_errors, [])
+
+    def test_missing_table_in_skill_root_mode_fails(self) -> None:
+        """A meta-skill at top level with capabilities/ but no router table fails."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "my-meta-skill")
+            write_skill_md(skill_dir, name="my-meta-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "alpha")
+            _write_capability_md(cap_dir)
+            errors = audit_skill_system(skill_dir, verbose=False)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        router_fails = [
+            e for e in fail_errors if "no router table" in e
+        ]
+        self.assertEqual(len(router_fails), 1)
+        self.assertIn("my-meta-skill", router_fails[0])
+
+    def test_orphan_directory_fails(self) -> None:
+        """A capability directory with no router row produces a FAIL."""
+        table = (
+            "## Capabilities\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| alpha | t | capabilities/alpha/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n\n" + table)
+            _write_capability_md(os.path.join(skill_dir, "capabilities", "alpha"))
+            _write_capability_md(os.path.join(skill_dir, "capabilities", "extra"))
+            errors = audit_skill_system(tmpdir, verbose=False)
+        orphan_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "no matching router row" in e
+        ]
+        self.assertEqual(len(orphan_fails), 1)
+        self.assertIn("demo-skill", orphan_fails[0])
+
+    def test_row_without_directory_fails(self) -> None:
+        table = (
+            "## Capabilities\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| ghost | t | capabilities/ghost/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n\n" + table)
+            os.makedirs(os.path.join(skill_dir, "capabilities"))
+            errors = audit_skill_system(tmpdir, verbose=False)
+        resolution_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "does not resolve" in e
+        ]
+        self.assertEqual(len(resolution_fails), 1)
+        self.assertIn("demo-skill", resolution_fails[0])
+
+    def test_standalone_skill_is_no_op(self) -> None:
+        """A skill without capabilities/ produces no router-table findings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            errors = audit_skill_system(tmpdir, verbose=False)
+        router_errors = [
+            e for e in errors if "router" in e.lower() or "matching router" in e
+        ]
+        self.assertEqual(router_errors, [])
 
 
 class AuditManifestTests(unittest.TestCase):
