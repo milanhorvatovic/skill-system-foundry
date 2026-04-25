@@ -365,19 +365,28 @@ def first_word(subject: str) -> str:
 def classify_commits(
     commits: list[tuple[str, str]],
     verb_map: dict[str, str],
-) -> tuple[dict[str, list[str]], list[tuple[str, str]]]:
-    """Split commits into ``{section: [subject]}`` and ``[(sha, subject)]`` unmapped.
+) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split commits into ``({section: [subject]}, [unmapped], [skipped_release])``.
 
     Multi-verb subjects (``Update X and add Y``) use the first word
     only; every commit subject in this repo already starts with a
     verb, so the first word is the intended classifier.
+
+    Release-bump commits matching ``_RELEASE_COMMIT_RE`` are returned
+    in the third element (``skipped_release``) rather than dropped on
+    the floor so callers can audit which meta-commits the generator
+    elided — a maintainer regenerating an old section needs to be
+    able to see why a smaller-than-expected commit count came back.
     """
     buckets: dict[str, list[str]] = {s: [] for s in SECTION_ORDER}
     unmapped: list[tuple[str, str]] = []
+    skipped_release: list[tuple[str, str]] = []
     for sha, subject in commits:
         if _RELEASE_COMMIT_RE.match(subject):
-            # Release-prep bump commits are meta — skip silently so they
-            # neither pollute the changelog nor surface as unmapped noise.
+            # Release-prep bump commits are meta — keep them out of
+            # both the buckets and the unmapped list, but expose them
+            # via skipped_release so the caller can log the elision.
+            skipped_release.append((sha, subject))
             continue
         verb = first_word(subject)
         section = verb_map.get(verb)
@@ -385,7 +394,7 @@ def classify_commits(
             unmapped.append((sha, subject))
             continue
         buckets[section].append(subject)
-    return buckets, unmapped
+    return buckets, unmapped, skipped_release
 
 
 def render_section(
@@ -724,8 +733,8 @@ def generate(
     today: str,
     verb_map: dict[str, str],
     until_override: str | None = None,
-) -> tuple[str, list[tuple[str, str]]]:
-    """Pure function — returns ``(rendered_section, unmapped_commits)``.
+) -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
+    """Pure function — returns ``(rendered_section, unmapped, skipped_release)``.
 
     ``until_override`` pins the upper bound explicitly (typically to
     a stable SHA / branch / tag chosen by the operator so the same
@@ -735,6 +744,11 @@ def generate(
     and ``until_override`` are qualified to ``refs/tags/<name>`` when
     they name an existing tag so a branch sharing the name cannot
     shadow the tag in the ``git log`` range.
+
+    The third tuple element lists release-bump commits that the
+    generator elided from the rendered section (see
+    ``_RELEASE_COMMIT_RE``).  Callers should surface these on stderr
+    so the elision is auditable.
     """
     since_ref = _qualified_ref(since, repo_root)
     if until_override is not None:
@@ -742,10 +756,10 @@ def generate(
     else:
         until = resolve_until(version, repo_root)
     commits = collect_commits(since_ref, until, repo_root)
-    buckets, unmapped = classify_commits(commits, verb_map)
+    buckets, unmapped, skipped_release = classify_commits(commits, verb_map)
     date = resolve_date(version, repo_root, date_override, today)
     section = render_section(normalize_version(version), date, buckets)
-    return section, unmapped
+    return section, unmapped, skipped_release
 
 
 def report_unmapped(
@@ -763,6 +777,24 @@ def report_unmapped(
     for sha, subject in unmapped:
         _write_preserving_lf(
             f"unmapped — review manually: {sha[:12]} {subject}\n",
+            stream,
+        )
+
+
+def report_skipped_release(
+    skipped: list[tuple[str, str]],
+    stream: typing.TextIO,
+) -> None:
+    """Write ``note: skipped release-bump commit: <sha> <subject>`` for each entry.
+
+    Emitted as informational stderr noise so a maintainer regenerating
+    an older changelog section can see which release-prep meta-commits
+    the generator elided.  Does not affect exit codes — these are
+    intentional drops, not classification gaps.
+    """
+    for sha, subject in skipped:
+        _write_preserving_lf(
+            f"note: skipped release-bump commit: {sha[:12]} {subject}\n",
             stream,
         )
 
@@ -878,7 +910,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"plan to tag) or create the tag first."
             )
 
-        section, unmapped = generate(
+        section, unmapped, skipped_release = generate(
             since=args.since,
             version=args.version,
             date_override=args.date,
@@ -888,6 +920,7 @@ def main(argv: list[str] | None = None) -> int:
             until_override=args.until,
         )
 
+        report_skipped_release(skipped_release, sys.stderr)
         report_unmapped(unmapped, sys.stderr)
 
         changelog_path = os.path.join(repo_root, "CHANGELOG.md")

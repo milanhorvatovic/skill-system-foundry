@@ -242,37 +242,41 @@ class ClassifyCommitsTests(unittest.TestCase):
             ("bbb", "Fix bug Y"),
             ("ccc", "Update module Z"),
         ]
-        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
         self.assertEqual(buckets["Added"], ["Add feature X"])
         self.assertEqual(buckets["Fixed"], ["Fix bug Y"])
         self.assertEqual(buckets["Changed"], ["Update module Z"])
         self.assertEqual(buckets["Removed"], [])
         self.assertEqual(unmapped, [])
+        self.assertEqual(skipped, [])
 
     def test_unmapped_verb_routed(self) -> None:
         commits = [("zzz", "Replace bundle.py with simple zip")]
-        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
         for section in gc.SECTION_ORDER:
             self.assertEqual(buckets[section], [])
         self.assertEqual(unmapped, [("zzz", "Replace bundle.py with simple zip")])
+        self.assertEqual(skipped, [])
 
     def test_multi_verb_uses_first_word(self) -> None:
         commits = [("abc", "Update X and add Y")]
-        buckets, _ = gc.classify_commits(commits, VERB_MAP)
+        buckets, _, _ = gc.classify_commits(commits, VERB_MAP)
         self.assertEqual(buckets["Changed"], ["Update X and add Y"])
 
     def test_extended_verb_restructure(self) -> None:
         commits = [("rrr", "Restructure foundry into router")]
         map_with_restructure = {**VERB_MAP, "Restructure": "Changed"}
-        buckets, unmapped = gc.classify_commits(commits, map_with_restructure)
+        buckets, unmapped, skipped = gc.classify_commits(commits, map_with_restructure)
         self.assertEqual(buckets["Changed"], ["Restructure foundry into router"])
         self.assertEqual(unmapped, [])
+        self.assertEqual(skipped, [])
 
     def test_empty_commit_list(self) -> None:
-        buckets, unmapped = gc.classify_commits([], VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits([], VERB_MAP)
         for section in gc.SECTION_ORDER:
             self.assertEqual(buckets[section], [])
         self.assertEqual(unmapped, [])
+        self.assertEqual(skipped, [])
 
     def test_preserves_order(self) -> None:
         commits = [
@@ -280,32 +284,35 @@ class ClassifyCommitsTests(unittest.TestCase):
             ("2", "Add B"),
             ("3", "Add C"),
         ]
-        buckets, _ = gc.classify_commits(commits, VERB_MAP)
+        buckets, _, _ = gc.classify_commits(commits, VERB_MAP)
         self.assertEqual(buckets["Added"], ["Add A", "Add B", "Add C"])
 
     def test_release_bump_commit_is_skipped(self) -> None:
         # Bump commits produced by release-prep.yml ("Release vX.Y.Z")
-        # must not appear in the section they introduce, and must not
+        # must not appear in the section they introduce, must not
         # surface on stderr as unmapped (the verb is intentionally not
-        # mapped — see issue #106).
+        # mapped — see issue #106), and must be reported via the
+        # skipped_release channel so the elision is auditable.
         commits = [
             ("aaa", "Add real feature"),
             ("bbb", "Release v1.2.0"),
             ("ccc", "Fix real bug"),
         ]
-        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
         self.assertEqual(buckets["Added"], ["Add real feature"])
         self.assertEqual(buckets["Fixed"], ["Fix real bug"])
         for section in gc.SECTION_ORDER:
             self.assertNotIn("Release v1.2.0", buckets[section])
         self.assertEqual(unmapped, [])
+        self.assertEqual(skipped, [("bbb", "Release v1.2.0")])
 
     def test_release_bump_with_prerelease_suffix_is_skipped(self) -> None:
         commits = [("rrr", "Release v2.0.0-rc.1")]
-        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
         for section in gc.SECTION_ORDER:
             self.assertEqual(buckets[section], [])
         self.assertEqual(unmapped, [])
+        self.assertEqual(skipped, [("rrr", "Release v2.0.0-rc.1")])
 
     def test_release_with_extra_text_is_not_skipped(self) -> None:
         # A hand-edited subject like "Release v1.2.0 (RC)" does not match
@@ -313,20 +320,22 @@ class ClassifyCommitsTests(unittest.TestCase):
         # (here, to unmapped) so the operator notices and either fixes
         # the subject or reclassifies deliberately.
         commits = [("ddd", "Release v1.2.0 (RC)")]
-        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
         for section in gc.SECTION_ORDER:
             self.assertEqual(buckets[section], [])
         self.assertEqual(unmapped, [("ddd", "Release v1.2.0 (RC)")])
+        self.assertEqual(skipped, [])
 
     def test_release_without_v_prefix_is_not_skipped(self) -> None:
         # The release-prep workflow always commits "Release vX.Y.Z".
         # A bare "Release 1.2.0" is therefore an off-pattern subject and
         # should still route to unmapped.
         commits = [("eee", "Release 1.2.0")]
-        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
         for section in gc.SECTION_ORDER:
             self.assertEqual(buckets[section], [])
         self.assertEqual(unmapped, [("eee", "Release 1.2.0")])
+        self.assertEqual(skipped, [])
 
 
 # ===================================================================
@@ -914,7 +923,7 @@ class GenerateTests(unittest.TestCase):
         with mock.patch.object(gc, "tag_exists", return_value=True), \
              mock.patch.object(gc, "tag_commit_date", return_value="2026-03-22"), \
              mock.patch.object(gc, "collect_commits", return_value=commits):
-            section, unmapped = gc.generate(
+            section, unmapped, _ = gc.generate(
                 since="v1.0.0",
                 version="1.1.0",
                 date_override=None,
@@ -936,7 +945,7 @@ class GenerateTests(unittest.TestCase):
         with mock.patch.object(gc, "tag_exists", return_value=True), \
              mock.patch.object(gc, "tag_commit_date", return_value="2026-03-22"), \
              mock.patch.object(gc, "collect_commits", return_value=commits):
-            section, unmapped = gc.generate(
+            section, unmapped, _ = gc.generate(
                 since="v1.0.0",
                 version="1.1.0",
                 date_override=None,
@@ -952,7 +961,7 @@ class GenerateTests(unittest.TestCase):
         with mock.patch.object(gc, "tag_exists", return_value=True), \
              mock.patch.object(gc, "tag_commit_date", return_value="2026-03-22"), \
              mock.patch.object(gc, "collect_commits", return_value=[]):
-            section, unmapped = gc.generate(
+            section, unmapped, _ = gc.generate(
                 since="v1.0.0",
                 version="1.1.0",
                 date_override=None,
@@ -985,6 +994,24 @@ class ReportUnmappedTests(unittest.TestCase):
     def test_empty_list_writes_nothing(self) -> None:
         buf = io.StringIO()
         gc.report_unmapped([], buf)
+        self.assertEqual(buf.getvalue(), "")
+
+
+class ReportSkippedReleaseTests(unittest.TestCase):
+    def test_writes_sha_prefix_and_subject(self) -> None:
+        buf = io.StringIO()
+        gc.report_skipped_release(
+            [("abcdef1234567890abc", "Release v1.2.0")],
+            buf,
+        )
+        out = buf.getvalue()
+        self.assertIn("note: skipped release-bump commit", out)
+        self.assertIn("abcdef123456", out)
+        self.assertIn("Release v1.2.0", out)
+
+    def test_empty_list_writes_nothing(self) -> None:
+        buf = io.StringIO()
+        gc.report_skipped_release([], buf)
         self.assertEqual(buf.getvalue(), "")
 
 
@@ -1024,6 +1051,23 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 3)
         self.assertIn("unmapped", err.getvalue())
         self.assertNotIn("Replace the thing", out.getvalue())
+
+    def test_release_bump_skipped_with_stderr_note_and_exit_zero(self) -> None:
+        # End-to-end: a Release vX.Y.Z bump commit must (a) be elided
+        # from rendered output, (b) produce a 'note: skipped
+        # release-bump commit' line on stderr so the elision is
+        # auditable, and (c) not change the exit code (it is an
+        # intentional drop, not a classification gap).
+        commits = [("aaa", "Add feature"), ("bbb", "Release v1.2.0")]
+        with self._patch_git(commits):
+            with mock.patch("sys.stdout", new=io.StringIO()) as out, \
+                 mock.patch("sys.stderr", new=io.StringIO()) as err:
+                rc = gc.main(["--since", "v1.0.0", "--version", "1.1.0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("- Add feature", out.getvalue())
+        self.assertNotIn("Release v1.2.0", out.getvalue())
+        self.assertIn("note: skipped release-bump commit", err.getvalue())
+        self.assertIn("Release v1.2.0", err.getvalue())
 
     def test_invalid_version_is_rejected(self) -> None:
         with mock.patch("sys.stderr", new=io.StringIO()) as err:

@@ -18,10 +18,12 @@ on:
         type: string
       dry_run:
         description: >-
-          When true, run validation/bump/changelog/validate/audit but
-          skip pushing the branch, running the test matrix, and
-          opening the PR.  Use to verify the workflow itself without
-          producing a release artifact.
+          When true, run input validation, bump, changelog generation,
+          validate, and audit — but skip pushing the branch, running
+          the reusable test matrix, and opening the PR.  Useful to
+          verify input correctness and the gates against the current
+          main; it does NOT exercise the reusable workflow_call to
+          python-tests.yaml or the gh pr create step.
         required: false
         type: boolean
         default: false
@@ -101,26 +103,41 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: python scripts/bump_version.py "$VERSION"
 
-      - name: Resolve previous tag
-        id: prev
+      - name: Resolve changelog range
+        id: range
+        # Resolve PREV / UNTIL / DATE once and reuse them across the
+        # preview and the in-place write so a step that straddles
+        # midnight UTC, or a stray amend between the two calls, cannot
+        # produce two different ranges or release dates.  The
+        # --match glob filters 'git describe' to release-shaped tags
+        # only — a non-release tag (debug, hotfix experiment) would
+        # otherwise silently widen or narrow the changelog range.
         run: |
-          PREV=$(git describe --tags --abbrev=0)
+          PREV=$(git describe --tags --abbrev=0 --match='v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
           if [[ -z "$PREV" ]]; then
-            echo "::error::no previous tag found via 'git describe --tags --abbrev=0'; release-prep.yml requires at least one prior release tag."
+            echo "::error::no release-shaped tag (vX.Y.Z) found via 'git describe'; release-prep.yml requires at least one prior release tag."
             exit 1
           fi
-          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          UNTIL=$(git rev-parse HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            echo "prev=$PREV"
+            echo "until=$UNTIL"
+            echo "date=$DATE"
+          } >> "$GITHUB_OUTPUT"
           echo "Previous tag: $PREV"
+          echo "Until SHA:    $UNTIL"
+          echo "Release date: $DATE"
 
       - name: Generate changelog section (preview for PR body)
         env:
           VERSION: ${{ inputs.version }}
-          PREV: ${{ steps.prev.outputs.prev }}
+          PREV: ${{ steps.range.outputs.prev }}
+          UNTIL: ${{ steps.range.outputs.until }}
+          DATE: ${{ steps.range.outputs.date }}
         # Write outside the workspace so the next 'git add -A' does
         # not accidentally stage the artifact alongside the bump.
         run: |
-          UNTIL=$(git rev-parse HEAD)
-          DATE=$(date -u +%Y-%m-%d)
           python scripts/generate_changelog.py \
             --since "$PREV" \
             --version "$VERSION" \
@@ -133,10 +150,10 @@ jobs:
       - name: Apply changelog (in place)
         env:
           VERSION: ${{ inputs.version }}
-          PREV: ${{ steps.prev.outputs.prev }}
+          PREV: ${{ steps.range.outputs.prev }}
+          UNTIL: ${{ steps.range.outputs.until }}
+          DATE: ${{ steps.range.outputs.date }}
         run: |
-          UNTIL=$(git rev-parse HEAD)
-          DATE=$(date -u +%Y-%m-%d)
           python scripts/generate_changelog.py \
             --since "$PREV" \
             --version "$VERSION" \
