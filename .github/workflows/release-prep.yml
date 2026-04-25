@@ -1,0 +1,239 @@
+name: Release prep
+
+# Dispatch-driven release preparation: bumps the version across the
+# three manifest files in lockstep, prepends a generated changelog
+# section, runs validation/audit/tests, and opens a release PR.  See
+# issue #106 for the rationale and CLAUDE.md (Release Process) for the
+# post-merge tag/publish flow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Semver version to release (X.Y.Z, no leading v, no
+          prerelease suffix).  Pre-releases are intentionally not
+          supported by this workflow.
+        required: true
+        type: string
+      dry_run:
+        description: >-
+          When true, run validation/bump/changelog/validate/audit but
+          skip pushing the branch, running the test matrix, and
+          opening the PR.  Use to verify the workflow itself without
+          producing a release artifact.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Workflow-wide concurrency: a release-prep PR should land before
+# another is opened.  cancel-in-progress: false so a queued dispatch
+# does not abort an in-flight one.
+concurrency:
+  group: release-prep
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.config.outputs.branch }}
+    steps:
+      - name: Validate version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version input must match ^[0-9]+\\.[0-9]+\\.[0-9]+$ (X.Y.Z, no leading v, no prerelease); got '$VERSION'"
+            exit 1
+          fi
+          echo "Version: $VERSION"
+
+      - name: Configure outputs
+        id: config
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "branch=release/v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: main
+          # Full history so 'git describe --tags --abbrev=0' can find
+          # the previous release tag for the changelog range.
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # @v5 as 5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Abort if release branch exists on remote
+        env:
+          BRANCH: ${{ steps.config.outputs.branch }}
+        run: |
+          if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+            echo "::error::remote branch '$BRANCH' already exists; another release prep is in flight or a previous one was not cleaned up."
+            exit 1
+          fi
+          echo "Remote branch '$BRANCH' is free."
+
+      - name: Create release branch
+        env:
+          BRANCH: ${{ steps.config.outputs.branch }}
+        run: git checkout -b "$BRANCH"
+
+      - name: Bump version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python scripts/bump_version.py "$VERSION"
+
+      - name: Resolve previous tag
+        id: prev
+        run: |
+          PREV=$(git describe --tags --abbrev=0)
+          if [[ -z "$PREV" ]]; then
+            echo "::error::no previous tag found via 'git describe --tags --abbrev=0'; release-prep.yml requires at least one prior release tag."
+            exit 1
+          fi
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous tag: $PREV"
+
+      - name: Generate changelog section (preview for PR body)
+        env:
+          VERSION: ${{ inputs.version }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        # Write outside the workspace so the next 'git add -A' does
+        # not accidentally stage the artifact alongside the bump.
+        run: |
+          UNTIL=$(git rev-parse HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          python scripts/generate_changelog.py \
+            --since "$PREV" \
+            --version "$VERSION" \
+            --until "$UNTIL" \
+            --date "$DATE" \
+            > "$RUNNER_TEMP/pr-body-section.md"
+          echo "--- preview ---"
+          cat "$RUNNER_TEMP/pr-body-section.md"
+
+      - name: Apply changelog (in place)
+        env:
+          VERSION: ${{ inputs.version }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: |
+          UNTIL=$(git rev-parse HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          python scripts/generate_changelog.py \
+            --since "$PREV" \
+            --version "$VERSION" \
+            --until "$UNTIL" \
+            --date "$DATE" \
+            --in-place
+
+      - name: Validate skill (foundry self)
+        working-directory: skill-system-foundry
+        run: python scripts/validate_skill.py . --allow-nested-references --foundry-self --verbose
+
+      - name: Audit skill system (repo root, includes version-drift rule)
+        run: python skill-system-foundry/scripts/audit_skill_system.py .
+
+      - name: Commit release bump
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git add -A
+          git commit -m "Release v$VERSION"
+
+      - name: Push release branch
+        if: ${{ ! inputs.dry_run }}
+        env:
+          BRANCH: ${{ steps.config.outputs.branch }}
+        run: git push origin "$BRANCH"
+
+      - name: Upload PR body artifact
+        if: ${{ ! inputs.dry_run }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # @v4 as 4.6.2
+        with:
+          name: release-pr-body
+          path: ${{ runner.temp }}/pr-body-section.md
+          if-no-files-found: error
+
+  test:
+    needs: prepare
+    if: ${{ ! inputs.dry_run }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/python-tests.yaml
+    with:
+      ref: ${{ needs.prepare.outputs.branch }}
+    secrets: inherit
+
+  open-pr:
+    needs: [prepare, test]
+    if: ${{ ! inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: main
+
+      - name: Download PR body artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
+        with:
+          name: release-pr-body
+          path: ${{ runner.temp }}
+
+      - name: Compose PR body
+        env:
+          VERSION: ${{ inputs.version }}
+          PREP_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "Prepared by [release-prep run]($PREP_RUN_URL)."
+            echo
+            echo "## Changelog section"
+            echo
+            cat "$RUNNER_TEMP/pr-body-section.md"
+            echo
+            echo "## Manual follow-up before merge"
+            echo
+            echo "- Review and edit version prose in \`.agents/skills/git-release/SKILL.md\` if any examples reference an outdated release."
+            echo "- Re-run CI: GitHub does not trigger PR workflows for PRs opened by \`GITHUB_TOKEN\`. Close and reopen the PR (a human action) to fire \`python-tests.yaml\` against the head."
+            echo
+            echo "## Post-merge"
+            echo
+            echo "After this PR merges to \`main\`:"
+            echo
+            echo '```sh'
+            echo "gh release create v$VERSION --generate-notes"
+            echo '```'
+            echo
+            echo "The existing \`release.yml\` workflow then bundles the zip, computes the SHA256 checksum, and uploads both as release assets."
+          } > "$RUNNER_TEMP/pr-body.md"
+
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Release v$VERSION" \
+            --body-file "$RUNNER_TEMP/pr-body.md"
