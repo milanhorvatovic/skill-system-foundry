@@ -4,7 +4,8 @@ Validate the entire skill system structure for consistency.
 
 Checks: spec compliance, dependency direction, role composition,
 manifest consistency, nesting depth, shared resource usage,
-capability entry naming, and structural rules.
+capability entry naming, router-table consistency, and structural
+rules.
 
 Usage:
     python scripts/audit_skill_system.py <system-root> [--verbose]
@@ -19,22 +20,24 @@ Options:
                      roles.
     --json           Output results as machine-readable JSON.
 
-The <system-root> should contain a skills/ directory with skill
-subdirectories. This is the deployed system layout (e.g.,
-.agents/ or a standalone system directory), not the distribution
-repository root. See references/directory-structure.md for the
-expected layout.
+The audit runs in two modes:
 
-If skills/ is missing, the script runs a partial audit and emits a
-warning. Use a deployed system root for full audit coverage.
+* **System-root mode** — <system-root> contains a skills/ directory
+  with skill subdirectories.  This is the deployed system layout
+  (e.g., .agents/ or a standalone system directory).  All per-skill
+  rules iterate skills/<name>/.
+* **Skill-root mode** — <system-root> contains SKILL.md directly,
+  i.e., it is itself a skill (typically the foundry meta-skill or any
+  integrator-built meta-skill).  The router-table consistency rule
+  also fires on this skill.
 
-Note: point this at the deployed system root (the directory
-containing skills/), not at a specific skill directory or
-distribution repository root.
+If neither mode applies (no skills/ and no top-level SKILL.md), the
+script runs a partial audit and emits a warning.
 
 Examples:
     python scripts/audit_skill_system.py /path/to/project/.agents
     python scripts/audit_skill_system.py /path/to/system --verbose
+    python scripts/audit_skill_system.py /path/to/my-meta-skill
     python scripts/audit_skill_system.py /path/to/system --json
 """
 
@@ -704,9 +707,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "system_root",
         help=(
-            "Path to the skill system root (contains skills/, roles/). "
-            "This is the deployed system layout, not the distribution "
-            "repository root."
+            "Path to a skill system root (contains skills/, roles/) or "
+            "to a single skill root (contains SKILL.md directly).  "
+            "Skill-root mode triggers the router-table rule on the "
+            "target skill itself."
         ),
     )
     parser.add_argument(
