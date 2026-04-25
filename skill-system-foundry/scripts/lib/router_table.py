@@ -6,13 +6,21 @@ parses that table and reports drift between the router rows and the
 ``capabilities/`` directory.
 
 The audit fires only on skills that have a ``capabilities/`` directory.
-Standalone skills (no router, no capabilities) are a no-op.
+Standalone skills (no router, no capabilities) are a no-op.  A skill
+that has a router-shaped table but no ``capabilities/`` directory is
+also a no-op — the rule's contract is "audit drift when both halves
+exist", which matches the standalone-vs-router architecture.
 
 Trigger column content is treated as opaque — its only audit role is to
 identify the canonical 3-column header.  The Path column must be the
 literal string ``capabilities/<name>/capability.md`` (no backticks, no
 markdown link, no fragment, no leading ``./``).  The Capability column
 must equal ``<name>`` from the Path column.
+
+The router header tuple lives here, not in ``configuration.yaml``: it
+is a parser-coupled structural constant (analogous to
+``DIR_CAPABILITIES`` and ``FILE_SKILL_MD`` in ``constants.py``), not a
+tunable validation rule like a limit, pattern, or reserved word.
 """
 
 import os
@@ -74,6 +82,12 @@ def parse_router_table(body: str) -> list[tuple[str, str, str]] | None:
     Code fences are *not* stripped before scanning — a router-shaped
     table inside a fenced block still counts, because an AI agent
     consuming the SKILL.md sees that content too.
+
+    A header line that matches the tuple but is not followed by a
+    Markdown separator row (``|---|---|---|``) does not terminate the
+    scan — the parser advances past the pseudo-header and keeps looking
+    for a real table.  This lets a SKILL.md describe the header shape in
+    prose without blocking discovery of the actual router below.
     """
     lines = body.splitlines()
     i = 0
@@ -142,7 +156,9 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     * A router row's Path cell is not the literal
       ``capabilities/<name>/capability.md``.
     * A router row's Capability cell does not equal the ``<name>``
-      segment of its Path cell.
+      segment of its Path cell.  The path segment is still recorded as
+      "declared", so the orphan check below does not double-flag the
+      on-disk directory.
     * A router row's Path does not resolve to an existing
       ``capability.md``.
     * A capability subdirectory has a ``capability.md`` but no
