@@ -140,6 +140,21 @@ _SEMVER_RE = re.compile(
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
+# Subjects produced by the ``release-prep.yml`` workflow's bump commit.
+# These are meta-commits that should not appear in the changelog of the
+# version they introduce — the section they prepend already records the
+# real changes.  They are also not candidates for "unmapped — review
+# manually" stderr noise: the verb ``Release`` is intentionally absent
+# from ``changelog.yaml`` (see issue #106), so without this filter every
+# subsequent release would surface a stale warning.  The pattern matches
+# the full subject so a hand-edited subject like ``Release v1.2.0 (RC)``
+# still routes through the verb map (and thus to unmapped) and forces
+# the operator to either fix the subject or reclassify deliberately.
+_RELEASE_COMMIT_RE = re.compile(
+    r"^Release v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z.-]+)?$"
+)
+
 
 def _is_iso_date(value: str) -> bool:
     """Return ``True`` when *value* is a real ``YYYY-MM-DD`` calendar date.
@@ -360,6 +375,10 @@ def classify_commits(
     buckets: dict[str, list[str]] = {s: [] for s in SECTION_ORDER}
     unmapped: list[tuple[str, str]] = []
     for sha, subject in commits:
+        if _RELEASE_COMMIT_RE.match(subject):
+            # Release-prep bump commits are meta — skip silently so they
+            # neither pollute the changelog nor surface as unmapped noise.
+            continue
         verb = first_word(subject)
         section = verb_map.get(verb)
         if section is None:

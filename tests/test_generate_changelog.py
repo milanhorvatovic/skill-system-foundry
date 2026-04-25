@@ -283,6 +283,51 @@ class ClassifyCommitsTests(unittest.TestCase):
         buckets, _ = gc.classify_commits(commits, VERB_MAP)
         self.assertEqual(buckets["Added"], ["Add A", "Add B", "Add C"])
 
+    def test_release_bump_commit_is_skipped(self) -> None:
+        # Bump commits produced by release-prep.yml ("Release vX.Y.Z")
+        # must not appear in the section they introduce, and must not
+        # surface on stderr as unmapped (the verb is intentionally not
+        # mapped — see issue #106).
+        commits = [
+            ("aaa", "Add real feature"),
+            ("bbb", "Release v1.2.0"),
+            ("ccc", "Fix real bug"),
+        ]
+        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        self.assertEqual(buckets["Added"], ["Add real feature"])
+        self.assertEqual(buckets["Fixed"], ["Fix real bug"])
+        for section in gc.SECTION_ORDER:
+            self.assertNotIn("Release v1.2.0", buckets[section])
+        self.assertEqual(unmapped, [])
+
+    def test_release_bump_with_prerelease_suffix_is_skipped(self) -> None:
+        commits = [("rrr", "Release v2.0.0-rc.1")]
+        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        for section in gc.SECTION_ORDER:
+            self.assertEqual(buckets[section], [])
+        self.assertEqual(unmapped, [])
+
+    def test_release_with_extra_text_is_not_skipped(self) -> None:
+        # A hand-edited subject like "Release v1.2.0 (RC)" does not match
+        # the strict pattern and must still route through the verb map
+        # (here, to unmapped) so the operator notices and either fixes
+        # the subject or reclassifies deliberately.
+        commits = [("ddd", "Release v1.2.0 (RC)")]
+        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        for section in gc.SECTION_ORDER:
+            self.assertEqual(buckets[section], [])
+        self.assertEqual(unmapped, [("ddd", "Release v1.2.0 (RC)")])
+
+    def test_release_without_v_prefix_is_not_skipped(self) -> None:
+        # The release-prep workflow always commits "Release vX.Y.Z".
+        # A bare "Release 1.2.0" is therefore an off-pattern subject and
+        # should still route to unmapped.
+        commits = [("eee", "Release 1.2.0")]
+        buckets, unmapped = gc.classify_commits(commits, VERB_MAP)
+        for section in gc.SECTION_ORDER:
+            self.assertEqual(buckets[section], [])
+        self.assertEqual(unmapped, [("eee", "Release 1.2.0")])
+
 
 # ===================================================================
 # Rendering
