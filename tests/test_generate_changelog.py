@@ -337,6 +337,25 @@ class ClassifyCommitsTests(unittest.TestCase):
         self.assertEqual(unmapped, [("eee", "Release 1.2.0")])
         self.assertEqual(skipped, [])
 
+    def test_release_with_malformed_prerelease_is_not_skipped(self) -> None:
+        # Off-grammar prereleases ("-..1", "-.rc", leading zero in a
+        # numeric prerelease identifier) and build metadata are not
+        # valid SemVer.  The skip filter mirrors _SEMVER_RE so these
+        # subjects route to unmapped rather than being silently elided
+        # (which would defeat the "force a deliberate reclassification"
+        # guard).
+        commits = [
+            ("f1", "Release v1.2.3-..1"),
+            ("f2", "Release v1.2.3-.rc"),
+            ("f3", "Release v1.2.3-01"),
+            ("f4", "Release v1.2.0+build.1"),
+        ]
+        buckets, unmapped, skipped = gc.classify_commits(commits, VERB_MAP)
+        for section in gc.SECTION_ORDER:
+            self.assertEqual(buckets[section], [])
+        self.assertEqual(skipped, [])
+        self.assertEqual([sha for sha, _ in unmapped], ["f1", "f2", "f3", "f4"])
+
 
 # ===================================================================
 # Rendering

@@ -105,10 +105,12 @@ The `audit_skill_system.py` version-drift rule will fail if these three files di
 Use the `generate_changelog.py` helper (also under the repo's top-level `./scripts/`) to add a new release section to `CHANGELOG.md`. See the "Release Process" section of `CLAUDE.md` for the full preview-then-write checklist; the short form is:
 
 ```bash
-PREV=$(git describe --tags --abbrev=0)
+PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*')
 python scripts/generate_changelog.py --since "$PREV" --version 1.1.0 \
   --until "$(git rev-parse HEAD)" --date "$(date -u +%Y-%m-%d)" --in-place
 ```
+
+The `--match` glob filters `git describe` to release-shaped tags so a stray non-release tag (debug, hotfix experiment) cannot widen or narrow the changelog range — the dispatch workflow uses the same glob for the same reason.
 
 Reclassify any commits the generator reports on stderr as `unmapped — review manually` (either by adding their first-word verb to the generator's `changelog.yaml` config or by rewording the commit subject) before re-running.
 
@@ -120,7 +122,7 @@ git commit -m "Release v1.1.0"
 git push origin main
 ```
 
-Use the commit message format `Release vX.Y.Z` so the changelog generator filters the bump commit out of future regenerations (the generator skips subjects matching `^Release v\d+\.\d+\.\d+`).
+Use the commit message format `Release vX.Y.Z` so the changelog generator filters the bump commit out of future regenerations. The full subject is matched against `_RELEASE_COMMIT_RE` in `scripts/generate_changelog.py`, which mirrors the strict SemVer grammar the generator already enforces on `--version` (no leading zeros, optional dot-separated prerelease suffix; build metadata is intentionally unsupported). Off-grammar subjects like `Release v1.2.0 (RC)` or `Release v1.2.3-..1` are deliberately not skipped — they route to `unmapped — review manually` so the operator either fixes the subject or reclassifies it deliberately.
 
 ### Step 4: Create the GitHub Release
 

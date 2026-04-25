@@ -28,9 +28,13 @@ on:
         type: boolean
         default: false
 
+# Default the workflow-wide token to read-only so steps that only
+# clone, install dependencies, and run scripts cannot accidentally
+# push or open a PR.  The two jobs that actually need write scopes
+# elevate explicitly via job-level ``permissions`` (``prepare`` writes
+# the release branch, ``open-pr`` opens the release PR).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 # Workflow-wide concurrency: a release-prep PR should land before
 # another is opened.  cancel-in-progress: false so a queued dispatch
@@ -42,15 +46,24 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    # Needs write to push the release branch; the rest of the steps
+    # (checkout, dependency install, bump, changelog, validate, audit,
+    # commit) only read.  Granted at the job level so the workflow-wide
+    # default stays read-only.
+    permissions:
+      contents: write
     outputs:
       branch: ${{ steps.config.outputs.branch }}
     steps:
       - name: Validate version input
         env:
           VERSION: ${{ inputs.version }}
+        # Mirror ``bump_version.py``'s strict SemVer core grammar so a
+        # leading-zero version (``01.2.3``) is rejected at the dispatch
+        # gate rather than after checkout/setup.
         run: |
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version input must match ^[0-9]+\\.[0-9]+\\.[0-9]+$ (X.Y.Z, no leading v, no prerelease); got '$VERSION'"
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::version input must match ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ (X.Y.Z, no leading zeros, no leading v, no prerelease); got '$VERSION'"
             exit 1
           fi
           echo "Version: $VERSION"
@@ -207,6 +220,12 @@ jobs:
     needs: [prepare, test]
     if: ${{ ! inputs.dry_run }}
     runs-on: ubuntu-latest
+    # Needs ``pull-requests: write`` for ``gh pr create`` and
+    # ``contents: read`` for the checkout.  Granted at the job level so
+    # the workflow-wide default stays read-only.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
