@@ -202,7 +202,6 @@ jobs:
     uses: ./.github/workflows/python-tests.yaml
     with:
       ref: ${{ needs.prepare.outputs.branch }}
-    secrets: inherit
 
   open-pr:
     needs: [prepare, test]

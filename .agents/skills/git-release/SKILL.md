@@ -58,8 +58,6 @@ Use this path when the dispatch workflow is unavailable (for example, when runni
 
 ### Step 1: Verify Pre-Release State
 
-### Step 1: Verify Pre-Release State
-
 Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yml` triggers on `release: published` and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
 
 ```bash
