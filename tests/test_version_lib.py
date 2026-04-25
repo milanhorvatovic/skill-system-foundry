@@ -379,11 +379,11 @@ class PlanMarketplaceJsonEditTests(unittest.TestCase):
                 SAMPLE_MARKETPLACE_JSON, "9.9.9", "1.2.0", "example"
             )
 
-    def test_refuses_when_named_plugin_not_updated(self) -> None:
-        # If the regex matches a "version" line in the wrong plugin (e.g.,
-        # because the named plugin's version is in a non-supported
-        # format), the post-sub structural check must fail rather than
-        # silently corrupting the file.
+    def test_updates_named_plugin_when_others_share_version(self) -> None:
+        # A marketplace with two plugin entries at the same current
+        # version must still be editable — the planner scopes to the
+        # named entry by trying each candidate substitution and
+        # accepting the unique one that lands on the target plugin.
         content = (
             '{\n'
             '  "plugins": [\n'
@@ -398,11 +398,31 @@ class PlanMarketplaceJsonEditTests(unittest.TestCase):
             '  ]\n'
             '}\n'
         )
-        # Two matching lines exist → planner already rejects via
-        # "found 2" ValueError.  Verify the message.
+        out = version.plan_marketplace_json_edit(
+            content, "1.1.0", "1.2.0", "example"
+        )
+        parsed = json.loads(out)
+        # The named plugin moves to 1.2.0; the other stays at 1.1.0.
+        plugins_by_name = {p["name"]: p["version"] for p in parsed["plugins"]}
+        self.assertEqual(plugins_by_name["example"], "1.2.0")
+        self.assertEqual(plugins_by_name["other"], "1.1.0")
+
+    def test_refuses_when_named_plugin_absent(self) -> None:
+        content = (
+            '{\n'
+            '  "plugins": [\n'
+            '    {\n'
+            '      "name": "other",\n'
+            '      "version": "1.1.0"\n'
+            '    }\n'
+            '  ]\n'
+            '}\n'
+        )
         with self.assertRaises(ValueError) as ctx:
-            version.plan_marketplace_json_edit(content, "1.1.0", "1.2.0", "example")
-        self.assertIn("found 2", str(ctx.exception))
+            version.plan_marketplace_json_edit(
+                content, "1.1.0", "1.2.0", "example"
+            )
+        self.assertIn("found 0", str(ctx.exception))
 
 
 # ===================================================================

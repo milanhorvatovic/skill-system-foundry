@@ -529,7 +529,26 @@ class MalformedManifestTests(unittest.TestCase):
             rc, _, err = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
             self.assertEqual(rc, bump_version.EXIT_DRIFT)
             self.assertIn("plugin.json", err)
-            self.assertIn("missing or empty 'name'", err)
+            self.assertIn(
+                "missing, empty, or whitespace-only 'name'", err
+            )
+
+    def test_whitespace_only_plugin_name_is_rejected(self) -> None:
+        """Whitespace-only ``name`` must be treated as missing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            with open(
+                os.path.join(repo, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{\n  "name": "   ",\n  "version": "1.1.0"\n}\n')
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, err = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_DRIFT)
+            self.assertIn(
+                "missing, empty, or whitespace-only 'name'", err
+            )
 
 
 class ArgparseExitTests(unittest.TestCase):
@@ -542,6 +561,33 @@ class ArgparseExitTests(unittest.TestCase):
     def test_help_flag_returns_ok(self) -> None:
         rc, _, _ = _invoke(["--help"], cwd=os.getcwd())
         self.assertEqual(rc, bump_version.EXIT_OK)
+
+
+class NewlineHandlingTests(unittest.TestCase):
+    """``commit_writes`` pins LF newlines on disk for cross-platform reproducibility."""
+
+    def test_writes_lf_newlines_regardless_of_platform_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, _ = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_OK)
+            # Open in binary so we see the on-disk bytes verbatim.
+            for rel in (
+                "skill-system-foundry/SKILL.md",
+                ".claude-plugin/plugin.json",
+                ".claude-plugin/marketplace.json",
+            ):
+                with self.subTest(file=rel):
+                    with open(
+                        os.path.join(repo, *rel.split("/")), "rb"
+                    ) as fh:
+                        raw = fh.read()
+                    self.assertNotIn(
+                        b"\r\n",
+                        raw,
+                        f"expected LF-only on disk for {rel}",
+                    )
 
 
 class TempFileSafetyTests(unittest.TestCase):

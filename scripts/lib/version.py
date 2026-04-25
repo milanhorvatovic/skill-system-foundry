@@ -347,33 +347,69 @@ def plan_marketplace_json_edit(
     """Return *content* of marketplace.json with the matching plugin's ``version`` set to *new*.
 
     The matching plugin entry is identified by *plugin_name* (the same
-    convention used by :func:`read_marketplace_json_version`).  After
-    the text-level regex substitution, the result is reparsed and the
-    plugin entry whose ``"name"`` equals *plugin_name* must carry the
-    new version — otherwise the regex matched an unrelated nested
-    ``"version"`` line (e.g., inside a different plugin entry or a
-    sidecar object) and we refuse rather than silently corrupting the
-    file.
+    convention used by :func:`read_marketplace_json_version`).  Unlike
+    :func:`plan_plugin_json_edit`, this planner does **not** require
+    the file to contain exactly one ``"version"`` line — a marketplace
+    is allowed to ship multiple plugin entries that may share a
+    version, plus arbitrary sidecar metadata.  Instead, it iterates
+    every candidate ``"version": "<current>"`` line, simulates the
+    substitution, reparses, and accepts the unique simulation that
+    sets the named plugin's ``"version"`` field to *new*.
+
+    Raises ``ValueError`` when zero candidate substitutions hit the
+    target plugin (the manifest does not contain the named plugin in
+    the supported pretty-printed shape) or more than one does (the
+    edit is ambiguous and would silently corrupt unrelated metadata).
+    The same ``ValueError`` flavor as :func:`_plan_json_version_edit`
+    is preserved so the bump primitive's exit-code mapping stays
+    consistent.
     """
-    result = _plan_json_version_edit(content, current, new, "marketplace.json")
-    parsed = json.loads(result)
-    plugins = parsed.get("plugins") if isinstance(parsed, dict) else None
-    target_version: str | None = None
-    if isinstance(plugins, list):
-        for entry in plugins:
-            if isinstance(entry, dict) and entry.get("name") == plugin_name:
-                value = entry.get("version")
-                if isinstance(value, str):
-                    target_version = value
-                break
-    if target_version != new:
+    pattern = re.compile(
+        rf'^(?P<prefix>\s+"version"\s*:\s*"){re.escape(current)}'
+        rf'(?P<suffix>"\s*,?\s*)$',
+        re.MULTILINE,
+    )
+    matches = list(pattern.finditer(content))
+    if not matches:
         raise ValueError(
-            f"marketplace.json: planner did not update the version of "
-            f"the plugin entry named {plugin_name!r} — the manifest "
-            "must be pretty-printed with the matching plugin's version "
-            "key on its own indented line"
+            f"expected at least one '\"version\": \"{current}\"' line in "
+            f"marketplace.json, found 0 (the planner requires a "
+            "pretty-printed JSON manifest with the version key on its "
+            "own line)"
         )
-    return result
+
+    accepted: list[str] = []
+    for match in matches:
+        candidate = (
+            content[:match.start()]
+            + f"{match.group('prefix')}{new}{match.group('suffix')}"
+            + content[match.end():]
+        )
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        plugins = parsed.get("plugins") if isinstance(parsed, dict) else None
+        if not isinstance(plugins, list):
+            continue
+        for entry in plugins:
+            if (
+                isinstance(entry, dict)
+                and entry.get("name") == plugin_name
+                and entry.get("version") == new
+            ):
+                accepted.append(candidate)
+                break
+
+    if len(accepted) != 1:
+        raise ValueError(
+            f"marketplace.json: expected exactly one candidate edit "
+            f"that updates the version of the plugin entry named "
+            f"{plugin_name!r}, found {len(accepted)} (the manifest must "
+            "be pretty-printed with the matching plugin's version key "
+            "on its own indented line)"
+        )
+    return accepted[0]
 
 
 # ---------------------------------------------------------------------------

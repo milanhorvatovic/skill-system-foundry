@@ -181,11 +181,16 @@ def read_all_versions(repo_root: str) -> tuple[dict[str, str | None], str]:
     plugin_name = _safe_read(
         "plugin.json", lambda: _version.read_plugin_name(plugin_path)
     )
-    if not plugin_name:
+    # Strip and re-check so a whitespace-only ``"name": "   "`` (which
+    # would never match a marketplace entry) is rejected at its source
+    # rather than producing a confusing downstream "no matching plugin
+    # entry" failure.  Mirrors ``check_version_consistency`` in the audit.
+    if not plugin_name or not plugin_name.strip():
         raise ManifestReadError(
-            "plugin.json: missing or empty 'name' — cannot match the "
-            "plugin entry in marketplace.json"
+            "plugin.json: missing, empty, or whitespace-only 'name' — "
+            "cannot match the plugin entry in marketplace.json"
         )
+    plugin_name = plugin_name.strip()
     versions: dict[str, str | None] = {
         "SKILL.md": _safe_read(
             "SKILL.md", lambda: _version.read_skill_md_version(skill_path)
@@ -302,7 +307,16 @@ def commit_writes(writes: list[tuple[str, str]]) -> None:
             # Track the temp path immediately so the ``finally`` cleanup
             # can remove it even if the upcoming open/write raises.
             tmp_paths.append(tmp)
-            with open(tmp, "w", encoding="utf-8") as fh:
+            # Pin LF newlines on disk to match the rest of the foundry
+            # release tooling (``generate_changelog.py`` does the same).
+            # Default text mode would translate ``\n`` → ``os.linesep``
+            # on write, producing CRLF manifests on Windows even for
+            # checkouts where the canonical form is LF, which would
+            # show up as a noisy diff on every cross-platform bump.
+            # Reading the manifests with default text mode already
+            # normalised CRLF/CR → LF in memory, so writing LF here
+            # round-trips cleanly.
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(content)
         staged: list[tuple[str, str]] = list(zip([p for p, _ in writes], tmp_paths))
         for index, (path, tmp) in enumerate(staged):
