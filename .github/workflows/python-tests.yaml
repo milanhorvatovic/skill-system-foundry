@@ -5,6 +5,17 @@ on:
   push:
     branches:
       - main
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          Git ref (branch, tag, or commit SHA) to check out for testing.
+          When empty, actions/checkout uses the event's default ref.
+          Used by release-prep.yml to test the bumped release branch
+          before opening the release PR.
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -21,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # @v5 as 5.6.0
@@ -83,7 +96,11 @@ jobs:
 
   update-badge:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    # Restrict to genuine pushes to main; this skips reusable
+    # workflow_call invocations (e.g. release-prep.yml) where
+    # github.event_name is the caller's event (workflow_dispatch) and
+    # the badge must not be updated from a release branch's coverage.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
