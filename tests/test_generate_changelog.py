@@ -339,9 +339,12 @@ class ClassifyCommitsTests(unittest.TestCase):
 
     def test_release_with_malformed_prerelease_is_not_skipped(self) -> None:
         # Off-grammar prereleases ("-..1", "-.rc", leading zero in a
-        # numeric prerelease identifier) and build metadata are not
-        # valid SemVer.  The skip filter mirrors _SEMVER_RE so these
-        # subjects route to unmapped rather than being silently elided
+        # numeric prerelease identifier) are not valid SemVer; build
+        # metadata ("+build.1") IS valid SemVer but is intentionally
+        # off-policy for release-bump commits in this repo (release
+        # tags and bump subjects are vX.Y.Z with optional prerelease
+        # only).  The skip filter therefore leaves all of these
+        # subjects in unmapped rather than silently eliding them
         # (which would defeat the "force a deliberate reclassification"
         # guard).
         commits = [

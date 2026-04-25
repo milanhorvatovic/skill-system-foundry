@@ -93,8 +93,14 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
+      # No ``pip install`` step: ``bump_version.py``,
+      # ``generate_changelog.py``, ``validate_skill.py``, and
+      # ``audit_skill_system.py`` are stdlib-only (a non-negotiable
+      # repository constraint).  ``coverage`` is the only dev dependency
+      # and is exercised by the reusable ``python-tests.yaml``, which
+      # runs in its own ``contents: read`` job.  Skipping the install
+      # here keeps third-party package execution out of the
+      # ``contents: write`` prepare job.
 
       - name: Abort if release branch exists on remote
         env:

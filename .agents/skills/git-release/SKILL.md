@@ -20,17 +20,18 @@ Guides the full release lifecycle for the Skill System Foundry — from version 
 
 The repository uses **semver** (MAJOR.MINOR.PATCH) tracked across three manifest files that must agree:
 
-- `skill-system-foundry/SKILL.md` — `metadata.version` in the frontmatter (the canonical declaration; the other two manifests are bumped to match):
-
-  ```yaml
-  metadata:
-    author: Milan Horvatovič
-    version: 1.0.2
-    spec: agentskills.io
-  ```
-
+- `skill-system-foundry/SKILL.md` — `metadata.version` in the frontmatter (the canonical declaration; the other two manifests are bumped to match)
 - `.claude-plugin/plugin.json` — `version` field
 - `.claude-plugin/marketplace.json` — `version` field for this skill's entry
+
+The canonical `SKILL.md` declaration looks like:
+
+```yaml
+metadata:
+  author: Milan Horvatovič
+  version: 1.0.2
+  spec: agentskills.io
+```
 
 The `audit_skill_system.py` version-drift rule (run from the repo root) fails the audit when these three files disagree, so editing only `SKILL.md` is no longer sufficient. Always bump them in lockstep via `scripts/bump_version.py` (or the dispatch workflow, which calls it). Git tags mirror the version as `v1.0.2`.
 
