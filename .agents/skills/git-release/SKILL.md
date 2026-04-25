@@ -40,7 +40,7 @@ This is the single source of truth for the current version. Git tags mirror it a
 The `Release prep` workflow (`.github/workflows/release-prep.yml`) is the primary release-prep path. Trigger it from the GitHub Actions UI (or `gh workflow run release-prep.yml -f version=X.Y.Z`):
 
 1. Dispatch the workflow with the target version (`X.Y.Z`, no leading `v`, no prerelease).
-2. The workflow creates `release/v<X.Y.Z>`, runs `bump_version.py` (manifest lockstep), prepends a generated section to `CHANGELOG.md`, runs `validate_skill.py` and `audit_skill_system.py` (the latter from repo root, which fires the version-drift rule), runs the full test matrix via the reusable `python-tests.yaml`, and opens a PR titled `Release v<X.Y.Z>`.
+2. The workflow creates `release/v<X.Y.Z>`, runs the `bump_version.py` helper (manifest lockstep), prepends a generated section to `CHANGELOG.md`, runs `validate_skill.py` and `audit_skill_system.py` (the latter from repo root, which fires the version-drift rule), runs the full test matrix via the reusable `python-tests.yaml`, and opens a PR titled `Release v<X.Y.Z>`.
 3. Review the PR. The PR body lists any manual follow-ups (notably: edit `.agents/skills/git-release/SKILL.md` prose if any examples reference an outdated release).
 4. Re-trigger CI on the PR by closing and reopening it (GitHub does not fire PR workflows for PRs opened by `GITHUB_TOKEN`).
 5. Merge the PR to `main`.
@@ -93,7 +93,7 @@ All validation checks must pass (zero failures). Coverage must meet the 70% thre
 
 ### Step 2: Bump the Version
 
-Use `scripts/bump_version.py` to update all three manifest files (SKILL.md, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) in lockstep:
+Use the `bump_version.py` helper (under the repo's top-level `./scripts/`) to update all three manifest files (SKILL.md, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) in lockstep:
 
 ```bash
 python scripts/bump_version.py 1.1.0 --dry-run   # preview
@@ -104,7 +104,7 @@ The `audit_skill_system.py` version-drift rule will fail if these three files di
 
 ### Step 2.5: Prepend the Changelog Section
 
-Use `scripts/generate_changelog.py` to add a new release section to `CHANGELOG.md`. See the "Release Process" section of `CLAUDE.md` for the full preview-then-write checklist; the short form is:
+Use the `generate_changelog.py` helper (also under the repo's top-level `./scripts/`) to add a new release section to `CHANGELOG.md`. See the "Release Process" section of `CLAUDE.md` for the full preview-then-write checklist; the short form is:
 
 ```bash
 PREV=$(git describe --tags --abbrev=0)
@@ -112,7 +112,7 @@ python scripts/generate_changelog.py --since "$PREV" --version 1.1.0 \
   --until "$(git rev-parse HEAD)" --date "$(date -u +%Y-%m-%d)" --in-place
 ```
 
-Reclassify any commits the generator reports on stderr as `unmapped — review manually` (either by adding their first-word verb to `scripts/lib/changelog.yaml` or by rewording the commit subject) before re-running.
+Reclassify any commits the generator reports on stderr as `unmapped — review manually` (either by adding their first-word verb to the generator's `changelog.yaml` config or by rewording the commit subject) before re-running.
 
 ### Step 3: Commit and Push
 
