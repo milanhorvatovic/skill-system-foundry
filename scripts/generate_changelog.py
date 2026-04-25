@@ -150,6 +150,9 @@ _SEMVER_RE = re.compile(
 # the full subject so a hand-edited subject like ``Release v1.2.0 (RC)``
 # still routes through the verb map (and thus to unmapped) and forces
 # the operator to either fix the subject or reclassify deliberately.
+# The version grammar mirrors ``_SEMVER_RE`` (no leading zeros, optional
+# prerelease suffix) so the elision criterion stays consistent with what
+# the rest of the script considers a valid release version.
 _RELEASE_COMMIT_RE = re.compile(
     r"^Release v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
     r"(?:-[0-9A-Za-z.-]+)?$"

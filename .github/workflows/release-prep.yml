@@ -163,9 +163,14 @@ jobs:
 
       - name: Validate skill (foundry self)
         working-directory: skill-system-foundry
-        run: python scripts/validate_skill.py . --allow-nested-references --foundry-self --verbose
+        run: python scripts/validate_skill.py . --allow-nested-references --foundry-self
 
       - name: Audit skill system (repo root, includes version-drift rule)
+        # One warning about a missing 'skills/' directory is expected
+        # in this distribution repository (per CLAUDE.md, distribution-
+        # repo mode).  The audit script exits 0 on warnings and
+        # non-zero only on LEVEL_FAIL findings, so the warning does
+        # not fail the step.
         run: python skill-system-foundry/scripts/audit_skill_system.py .
 
       - name: Commit release bump
