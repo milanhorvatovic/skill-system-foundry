@@ -29,6 +29,7 @@ from audit_skill_system import (
     _build_parser,
     check_upward_references,
     check_role_composition,
+    check_version_consistency,
     audit_skill_system,
     main,
 )
@@ -1565,6 +1566,298 @@ class AuditFoundryConfigFindingsTests(unittest.TestCase):
             if e.startswith("FAIL: [foundry] scripts/lib/configuration.yaml")
         ]
         self.assertEqual(len(tagged), 1)
+
+
+class CheckVersionConsistencyTests(unittest.TestCase):
+    """``check_version_consistency`` compares versions across three manifests.
+
+    The rule fires only when ``.claude-plugin/plugin.json`` is present under
+    the audit root (the foundry-repo heuristic), so every test builds that
+    file.  Skipped-path behavior has its own test.
+    """
+
+    def _write(self, root: str, *, skill: str, plugin: str, market: str) -> None:
+        os.makedirs(os.path.join(root, "skill-system-foundry"), exist_ok=True)
+        os.makedirs(os.path.join(root, ".claude-plugin"), exist_ok=True)
+        with open(
+            os.path.join(root, "skill-system-foundry", "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as fh:
+            fh.write(
+                "---\n"
+                "name: demo\n"
+                "description: >\n"
+                "  Demo skill used for drift tests.\n"
+                "metadata:\n"
+                f"  version: {skill}\n"
+                "---\n\n# Demo\n"
+            )
+        with open(
+            os.path.join(root, ".claude-plugin", "plugin.json"),
+            "w",
+            encoding="utf-8",
+        ) as fh:
+            fh.write(
+                '{\n'
+                '  "name": "demo",\n'
+                f'  "version": "{plugin}"\n'
+                '}\n'
+            )
+        with open(
+            os.path.join(root, ".claude-plugin", "marketplace.json"),
+            "w",
+            encoding="utf-8",
+        ) as fh:
+            fh.write(
+                '{\n'
+                '  "name": "demo",\n'
+                '  "plugins": [\n'
+                '    {\n'
+                '      "name": "demo",\n'
+                f'      "version": "{market}"\n'
+                '    }\n'
+                '  ]\n'
+                '}\n'
+            )
+
+    def test_skipped_when_plugin_json_absent(self) -> None:
+        """Integrator skill systems without .claude-plugin/ are unaffected."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(check_version_consistency(tmp), [])
+
+    def test_passes_when_all_three_agree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            self.assertEqual(check_version_consistency(tmp), [])
+
+    def test_fails_on_single_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.2.0", market="1.1.0")
+            findings = check_version_consistency(tmp)
+            self.assertEqual(len(findings), 1)
+            msg = findings[0]
+            self.assertIn(LEVEL_FAIL, msg)
+            self.assertIn("SKILL.md=1.1.0", msg)
+            self.assertIn("plugin.json=1.2.0", msg)
+            self.assertIn("marketplace.json=1.1.0", msg)
+            self.assertIn("canonical: SKILL.md", msg)
+
+    def test_fails_on_three_way_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.2.0", market="1.3.0")
+            findings = check_version_consistency(tmp)
+            self.assertEqual(len(findings), 1)
+            self.assertIn("SKILL.md=1.1.0", findings[0])
+            self.assertIn("plugin.json=1.2.0", findings[0])
+            self.assertIn("marketplace.json=1.3.0", findings[0])
+
+    def test_skipped_when_foundry_skill_md_missing(self) -> None:
+        """An integrator skill system with its own plugin manifest but no
+        ``skill-system-foundry/SKILL.md`` must not trigger the rule.
+
+        The gate requires both files to exist so the audit only fires for
+        the foundry distribution repository itself.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".claude-plugin"))
+            with open(
+                os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{"name":"demo","version":"1.1.0"}')
+            with open(
+                os.path.join(tmp, ".claude-plugin", "marketplace.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write(
+                    '{"plugins":[{"name":"demo","version":"1.1.0"}]}'
+                )
+            self.assertEqual(check_version_consistency(tmp), [])
+
+    def test_fails_on_malformed_plugin_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            with open(
+                os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write("{ not valid json")
+            findings = check_version_consistency(tmp)
+            self.assertTrue(findings)
+            self.assertTrue(
+                any("plugin.json" in f and "invalid JSON" in f for f in findings)
+            )
+
+    def test_fails_when_plugin_version_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            with open(
+                os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{"name":"demo"}')
+            findings = check_version_consistency(tmp)
+            self.assertTrue(
+                any("missing top-level 'version'" in f for f in findings)
+            )
+
+    def test_fails_when_marketplace_json_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "skill-system-foundry"))
+            os.makedirs(os.path.join(tmp, ".claude-plugin"))
+            with open(
+                os.path.join(tmp, "skill-system-foundry", "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write(
+                    "---\nname: demo\ndescription: y\nmetadata:\n"
+                    "  version: 1.1.0\n---\n"
+                )
+            with open(
+                os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{"name":"demo","version":"1.1.0"}')
+            findings = check_version_consistency(tmp)
+            self.assertTrue(
+                any("marketplace.json" in f and "does not exist" in f
+                    for f in findings)
+            )
+
+    def test_emits_plugin_json_finding_when_name_invalid(self) -> None:
+        """Missing/invalid plugin.json 'name' must be flagged at its source.
+
+        Without an explicit plugin.json finding the operator only sees a
+        downstream "marketplace.json: name is unavailable" message and
+        is left to discover that plugin.json is the file to edit.  An
+        empty or whitespace-only name is treated the same as missing
+        because it cannot match any plugin entry in marketplace.json.
+        """
+        for variant_name, plugin_body in [
+            ("missing", '{\n  "version": "1.1.0"\n}\n'),
+            ("empty", '{\n  "name": "",\n  "version": "1.1.0"\n}\n'),
+            ("whitespace", '{\n  "name": "   ",\n  "version": "1.1.0"\n}\n'),
+        ]:
+            with self.subTest(variant=variant_name):
+                with tempfile.TemporaryDirectory() as tmp:
+                    self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+                    with open(
+                        os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                        "w",
+                        encoding="utf-8",
+                    ) as fh:
+                        fh.write(plugin_body)
+                    findings = check_version_consistency(tmp)
+                    self.assertTrue(
+                        any(
+                            "plugin.json" in f
+                            and "'name' is missing, empty, or not a string"
+                            in f
+                            for f in findings
+                        ),
+                        f"expected plugin.json name-finding in {findings}",
+                    )
+
+    def test_padded_plugin_name_matches_marketplace_after_strip(self) -> None:
+        """``plugin.json`` ``name`` with whitespace must match the canonical
+        marketplace entry after stripping.
+
+        Earlier the audit stored the raw ``name_value`` for the
+        marketplace lookup, so ``"  demo  "`` would pass the strip-truthy
+        gate but never match a marketplace plugin whose ``"name"`` is
+        ``"demo"``, producing a misleading "no plugin entry matches name
+        '  demo  '" finding.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            with open(
+                os.path.join(tmp, ".claude-plugin", "plugin.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write('{\n  "name": "  demo  ",\n  "version": "1.1.0"\n}\n')
+            findings = check_version_consistency(tmp)
+            self.assertFalse(
+                any(
+                    "no plugin entry matches name" in f for f in findings
+                ),
+                f"unexpected mismatch finding in {findings}",
+            )
+
+    def test_fails_when_no_matching_marketplace_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            with open(
+                os.path.join(tmp, ".claude-plugin", "marketplace.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                fh.write(
+                    '{"plugins":[{"name":"other","version":"1.1.0"}]}'
+                )
+            findings = check_version_consistency(tmp)
+            self.assertTrue(
+                any("no plugin entry matches name 'demo'" in f
+                    for f in findings)
+            )
+
+    def test_audit_skill_system_surfaces_rule(self) -> None:
+        """The rule runs as part of ``audit_skill_system()`` output."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="9.9.9", market="1.1.0")
+            errors = audit_skill_system(tmp, verbose=False)
+            drift_errors = [e for e in errors if "version drift" in e]
+            self.assertEqual(len(drift_errors), 1)
+
+    def test_unreadable_skill_md_produces_finding_not_traceback(self) -> None:
+        """A present-but-unreadable SKILL.md must surface as a finding.
+
+        ``_skill_md_version`` mirrors ``_read_plugin_json``'s contract:
+        OS-level read failures should turn into structured FAIL findings
+        rather than aborting the audit run.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="1.1.0", market="1.1.0")
+            from unittest import mock
+
+            with mock.patch(
+                "audit_skill_system.load_frontmatter",
+                side_effect=OSError(13, "permission denied"),
+            ):
+                findings = check_version_consistency(tmp)
+            self.assertTrue(
+                any(
+                    "SKILL.md" in f and "cannot be read" in f
+                    for f in findings
+                )
+            )
+
+    def test_empty_string_version_is_treated_as_drift(self) -> None:
+        """``"version": ""`` must not silently bypass the comparison.
+
+        Truthiness-based gating would skip the diff when any value is the
+        empty string; an explicit ``is not None`` check ensures the rule
+        still reports a mismatch between SKILL.md and the empty manifest.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, skill="1.1.0", plugin="", market="1.1.0")
+            findings = check_version_consistency(tmp)
+            drift = [f for f in findings if "version drift" in f]
+            self.assertTrue(
+                any(
+                    "SKILL.md=1.1.0" in f
+                    and "plugin.json=" in f
+                    and "marketplace.json=1.1.0" in f
+                    for f in drift
+                )
+            )
 
 
 class AuditProseYamlAggregationTests(unittest.TestCase):

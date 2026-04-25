@@ -1,0 +1,478 @@
+"""Shared version-string helpers for repo-infrastructure scripts.
+
+This module is local to the top-level ``scripts/`` tree.  It is intentionally
+independent from the meta-skill tree at ``skill-system-foundry/scripts/`` —
+no imports cross between the two trees.  ``SEMVER_RE`` here implements the
+strict SemVer 2.0.0 grammar (sans build metadata) needed by the release
+primitive: it rejects leading zeros, empty prerelease identifiers, and
+trailing newlines.  The meta-skill's ``RE_METADATA_VERSION`` in
+``configuration.yaml`` is intentionally looser because it acts as a foundry
+recommendation for skill authors rather than a release input validator;
+the two patterns are *not* kept in lockstep — release tooling depends only
+on the strict regex defined here.
+
+The module exposes three kinds of primitives:
+
+* semver validation (``SEMVER_RE``, ``parse``, ``compare``)
+* read helpers that extract the current version from each manifest file
+  (``read_skill_md_version``, ``read_plugin_json_version``,
+  ``read_marketplace_json_version``)
+* plan-edit helpers that return new file content with the version field
+  replaced (``plan_skill_md_edit``, ``plan_plugin_json_edit``,
+  ``plan_marketplace_json_edit``).  Each plan-edit helper raises
+  ``ValueError`` when the anchored regex matches zero or multiple times,
+  so callers can surface a structural failure instead of writing a
+  subtly wrong file.
+"""
+
+import json
+import os
+import re
+
+
+# Strict SemVer 2.0.0 (sans build metadata, which the foundry forbids):
+# - core identifiers reject leading zeros (``01.2.3`` is invalid);
+# - prerelease identifiers must be non-empty, dot-separated, and either
+#   purely numeric (no leading zero) or alphanumeric/hyphen with at least
+#   one non-digit character.  ``1.2.3-alpha.`` is rejected.
+# The end anchor is ``\Z`` (end of string) rather than ``$`` because
+# Python's ``$`` also matches before a final ``\n``; combined with the
+# ``.match()`` calls below, ``$`` would accept ``"1.2.3\n"`` and silently
+# pass invalid CLI input through to the planner.
+# Digits are written as ``[0-9]`` rather than ``\d`` so non-ASCII
+# decimal-digit codepoints (e.g., Arabic-Indic ``٢``) cannot satisfy
+# the grammar — SemVer identifiers are ASCII-only.
+SEMVER_RE = re.compile(
+    r"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?\Z"
+)
+
+
+def parse(version: str) -> tuple[int, int, int, str]:
+    """Split *version* into ``(major, minor, patch, prerelease)``.
+
+    The prerelease component is the substring after the first ``-`` (empty
+    string when absent).  Build metadata is rejected by ``SEMVER_RE``.
+    Raises ``ValueError`` when *version* does not match ``SEMVER_RE``.
+    """
+    if not SEMVER_RE.match(version):
+        raise ValueError(f"not a valid semver: {version!r}")
+    core, _, pre = version.partition("-")
+    major, minor, patch = core.split(".")
+    return (int(major), int(minor), int(patch), pre)
+
+
+def _compare_prerelease(a: str, b: str) -> int:
+    """Compare two non-empty prerelease strings per SemVer 2.0.0 §11.4.
+
+    Identifiers are compared dot-by-dot: numeric identifiers compare
+    numerically and have lower precedence than alphanumeric ones; equal
+    identifiers fall through to the next position, and a shorter list of
+    identifiers (with all preceding equal) has lower precedence.
+    """
+    ids_a = a.split(".")
+    ids_b = b.split(".")
+    for x, y in zip(ids_a, ids_b):
+        x_num = x.isdigit()
+        y_num = y.isdigit()
+        if x_num and y_num:
+            xi, yi = int(x), int(y)
+            if xi != yi:
+                return -1 if xi < yi else 1
+        elif x_num and not y_num:
+            return -1
+        elif y_num and not x_num:
+            return 1
+        else:
+            if x != y:
+                return -1 if x < y else 1
+    if len(ids_a) == len(ids_b):
+        return 0
+    return -1 if len(ids_a) < len(ids_b) else 1
+
+
+def compare(a: str, b: str) -> int:
+    """Return -1/0/1 comparing semver *a* against *b*.
+
+    Integer-tuple compare on ``(major, minor, patch)``.  When the cores
+    are equal, prerelease precedence follows SemVer 2.0.0 §11: a version
+    with a prerelease is less than the same version without one, and two
+    prerelease strings are compared identifier-by-identifier (numeric
+    identifiers numerically, alphanumeric lexically, numerics ranking
+    below alphanumerics, fewer identifiers ranking below more).
+    """
+    major_a, minor_a, patch_a, pre_a = parse(a)
+    major_b, minor_b, patch_b, pre_b = parse(b)
+    core_a = (major_a, minor_a, patch_a)
+    core_b = (major_b, minor_b, patch_b)
+    if core_a < core_b:
+        return -1
+    if core_a > core_b:
+        return 1
+    if pre_a == pre_b:
+        return 0
+    if not pre_a:
+        return 1
+    if not pre_b:
+        return -1
+    return _compare_prerelease(pre_a, pre_b)
+
+
+# ---------------------------------------------------------------------------
+# read helpers
+# ---------------------------------------------------------------------------
+
+
+_FRONTMATTER_OPEN_RE = re.compile(r"\A---\s*(?:\r\n|\r|\n)")
+
+
+def _extract_frontmatter(content: str) -> str | None:
+    """Return the YAML frontmatter block of *content*, or ``None`` when absent.
+
+    A frontmatter block opens when the first line is exactly ``---``
+    (trailing whitespace allowed) and closes on the next line that is
+    exactly ``---`` (trailing whitespace allowed).  ``startswith('---')``
+    alone would also match malformed inputs like ``---oops``, so the
+    opener is checked line-wise.
+    """
+    open_match = _FRONTMATTER_OPEN_RE.match(content)
+    if open_match is None:
+        return None
+    fm_start = open_match.end()
+    close_match = re.search(r"^---\s*$", content[fm_start:], re.MULTILINE)
+    if close_match is None:
+        return None
+    return content[fm_start:fm_start + close_match.start()]
+
+
+def _strip_yaml_scalar_quotes(value: str) -> str:
+    """Strip matched surrounding single/double quotes from a YAML scalar."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
+def _direct_metadata_version_match(frontmatter: str) -> tuple[int, str] | None:
+    """Locate ``metadata.version`` as a *direct* child of ``metadata:``.
+
+    Returns ``(indent_width, raw_value)`` for the matched line, or ``None``
+    when no such direct child exists.  ``indent_width`` is the number of
+    leading whitespace columns for direct children of the metadata block;
+    callers can use it to anchor a planner regex at the same depth.
+
+    Tracking the indent width is necessary because YAML permits nested
+    mappings under ``metadata`` — a deeper ``metadata.compatibility.version``
+    must not be returned in place of the canonical
+    ``metadata.version`` when the latter is absent.
+    """
+    in_metadata = False
+    metadata_indent: int | None = None
+    for line in frontmatter.splitlines():
+        if not line.strip():
+            continue
+        if line.rstrip() == "metadata:":
+            in_metadata = True
+            continue
+        if not in_metadata:
+            continue
+        if line[0:1] and not line[0].isspace():
+            # Left the metadata block (next top-level key) without
+            # finding a direct version child.
+            return None
+        indent = len(line) - len(line.lstrip())
+        if metadata_indent is None:
+            metadata_indent = indent
+        if indent != metadata_indent:
+            # Nested mapping at deeper indent — not a direct child.
+            continue
+        match = re.match(r"^[ \t]+version:\s*(\S.*)$", line)
+        if match:
+            return metadata_indent, match.group(1)
+    return None
+
+
+def read_skill_md_version(path: str) -> str | None:
+    """Read ``metadata.version`` from a SKILL.md file.
+
+    Returns ``None`` when the file has no frontmatter, when the frontmatter
+    has no ``metadata`` block, or when ``metadata.version`` is absent
+    **as a direct child** of ``metadata:``.  Nested keys at deeper
+    indentation (e.g., ``metadata.compatibility.version``) are not
+    accepted in place of the canonical field.  Raises ``OSError`` when
+    the file cannot be read.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        content = fh.read()
+    frontmatter = _extract_frontmatter(content)
+    if frontmatter is None:
+        return None
+    found = _direct_metadata_version_match(frontmatter)
+    if found is None:
+        return None
+    return _strip_yaml_scalar_quotes(found[1])
+
+
+def read_plugin_json_version(path: str) -> str | None:
+    """Read the top-level ``version`` field from ``plugin.json``.
+
+    Returns ``None`` when the key is absent or not a string.  Raises
+    ``OSError`` / ``json.JSONDecodeError`` on file or parse errors — the
+    caller decides whether to surface those as a FAIL or a crash.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    value = data.get("version") if isinstance(data, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def read_marketplace_json_version(
+    path: str, plugin_name: str
+) -> str | None:
+    """Read ``plugins[name=<plugin_name>].version`` from ``marketplace.json``.
+
+    Matches the plugin entry by ``name`` (mirroring the convention used by
+    ``tests/test_claude_distribution_metadata.py``).  Returns ``None`` when
+    no matching entry exists or when the entry lacks a string ``version``.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        return None
+    plugins = data.get("plugins")
+    if not isinstance(plugins, list):
+        return None
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("name") == plugin_name:
+            value = entry.get("version")
+            return value if isinstance(value, str) else None
+    return None
+
+
+def read_plugin_name(path: str) -> str | None:
+    """Read the top-level ``name`` field from ``plugin.json``."""
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    value = data.get("name") if isinstance(data, dict) else None
+    return value if isinstance(value, str) else None
+
+
+# ---------------------------------------------------------------------------
+# plan-edit helpers
+# ---------------------------------------------------------------------------
+
+
+def plan_skill_md_edit(content: str, current: str, new: str) -> str:
+    """Return *content* with ``metadata.version`` changed from *current* to *new*.
+
+    The edit is anchored to the **direct child** of the frontmatter
+    ``metadata:`` block, scoped by the indent width discovered while
+    reading.  A nested key like ``metadata.compatibility.version`` is
+    therefore neither read by the reader nor edited by this planner.
+    Raises ``ValueError`` when the opening delimiter is malformed, when
+    the frontmatter is unterminated, when the metadata block lacks a
+    direct ``version`` child, or when the anchored pattern does not
+    match exactly once at the expected depth.
+    """
+    open_match = _FRONTMATTER_OPEN_RE.match(content)
+    if open_match is None:
+        raise ValueError("SKILL.md missing opening '---' frontmatter delimiter")
+    fm_start = open_match.end()
+    close_match = re.search(r"^---\s*$", content[fm_start:], re.MULTILINE)
+    if close_match is None:
+        raise ValueError("SKILL.md frontmatter is not terminated")
+    fm_end = fm_start + close_match.start()
+    frontmatter = content[fm_start:fm_end]
+
+    found = _direct_metadata_version_match(frontmatter)
+    if found is None:
+        raise ValueError(
+            "SKILL.md frontmatter has no direct 'metadata.version' "
+            "child to edit"
+        )
+    indent_width, _ = found
+
+    # ``read_skill_md_version`` strips matched surrounding YAML quotes, so
+    # the same plan must accept both ``version: 1.2.3`` and
+    # ``version: "1.2.3"`` (and the single-quote form), preserving whichever
+    # the file already uses.  ``(?P=q)`` enforces matching open/close quotes.
+    # The prefix is anchored at exactly the metadata-child indent width
+    # so a nested ``version:`` at deeper indentation cannot be edited
+    # in place of the canonical field.
+    pattern = re.compile(
+        rf"^(?P<prefix>[ \t]{{{indent_width}}}version:\s*)"
+        rf"(?P<q>['\"]?){re.escape(current)}(?P=q)"
+        rf"(?P<suffix>\s*)$",
+        re.MULTILINE,
+    )
+    matches = pattern.findall(frontmatter)
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected exactly one 'version: {current}' line at the "
+            f"metadata indent in SKILL.md frontmatter, found {len(matches)}"
+        )
+    new_frontmatter = pattern.sub(
+        lambda m: (
+            f"{m.group('prefix')}{m.group('q')}{new}{m.group('q')}"
+            f"{m.group('suffix')}"
+        ),
+        frontmatter,
+        count=1,
+    )
+    return content[:fm_start] + new_frontmatter + content[fm_end:]
+
+
+def _plan_json_version_edit(
+    content: str, current: str, new: str, label: str
+) -> str:
+    """Replace a ``"version": "<current>"`` line with *new*.
+
+    **Formatting contract.**  This helper edits the file as text — it
+    does not parse and re-emit JSON, so file shape (key order,
+    indentation, trailing newline) is preserved verbatim.  In return it
+    requires the manifest to be **pretty-printed** with the
+    ``"version"`` key on its own indented line.  A compact one-line JSON
+    document will pass JSON validation and the precondition read but
+    fail the planner with a ``ValueError`` — reformat the manifest or
+    use a structural JSON editor instead.  All foundry-shipped
+    manifests follow the pretty-printed convention.
+
+    The anchored pattern targets an indented key at any depth but refuses to
+    run unless exactly one line matches.  *label* is used only in error
+    messages so the caller's ``ValueError`` is actionable.
+    """
+    pattern = re.compile(
+        rf'^(?P<prefix>\s+"version"\s*:\s*"){re.escape(current)}'
+        rf'(?P<suffix>"\s*,?\s*)$',
+        re.MULTILINE,
+    )
+    matches = pattern.findall(content)
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected exactly one '\"version\": \"{current}\"' line in "
+            f"{label}, found {len(matches)} (the planner requires a "
+            "pretty-printed JSON manifest with the version key on its "
+            "own line)"
+        )
+    return pattern.sub(
+        lambda m: f"{m.group('prefix')}{new}{m.group('suffix')}",
+        content,
+        count=1,
+    )
+
+
+def plan_plugin_json_edit(content: str, current: str, new: str) -> str:
+    """Return *content* of plugin.json with the **top-level** ``version`` set to *new*.
+
+    The text-level regex is followed by a structural verification step:
+    after substitution, the result is reparsed and the top-level
+    ``"version"`` field must equal *new*.  This catches the otherwise
+    silent failure mode where a compact top-level version coexists with
+    a pretty-printed nested ``"version"`` line — the regex would match
+    the nested line and report success while leaving the canonical
+    top-level field untouched.
+    """
+    result = _plan_json_version_edit(content, current, new, "plugin.json")
+    parsed = json.loads(result)
+    if not isinstance(parsed, dict) or parsed.get("version") != new:
+        raise ValueError(
+            "plugin.json: planner did not update the top-level "
+            "'version' field — the manifest must be pretty-printed "
+            "with the canonical top-level version key on its own "
+            "indented line"
+        )
+    return result
+
+
+def plan_marketplace_json_edit(
+    content: str, current: str, new: str, plugin_name: str
+) -> str:
+    """Return *content* of marketplace.json with the matching plugin's ``version`` set to *new*.
+
+    The matching plugin entry is identified by *plugin_name* (the same
+    convention used by :func:`read_marketplace_json_version`).  Unlike
+    :func:`plan_plugin_json_edit`, this planner does **not** require
+    the file to contain exactly one ``"version"`` line — a marketplace
+    is allowed to ship multiple plugin entries that may share a
+    version, plus arbitrary sidecar metadata.  Instead, it iterates
+    every candidate ``"version": "<current>"`` line, simulates the
+    substitution, reparses, and accepts the unique simulation that
+    sets the named plugin's ``"version"`` field to *new*.
+
+    Raises ``ValueError`` when zero candidate substitutions hit the
+    target plugin (the manifest does not contain the named plugin in
+    the supported pretty-printed shape) or more than one does (the
+    edit is ambiguous and would silently corrupt unrelated metadata).
+    The same ``ValueError`` flavor as :func:`_plan_json_version_edit`
+    is preserved so the bump primitive's exit-code mapping stays
+    consistent.
+    """
+    pattern = re.compile(
+        rf'^(?P<prefix>\s+"version"\s*:\s*"){re.escape(current)}'
+        rf'(?P<suffix>"\s*,?\s*)$',
+        re.MULTILINE,
+    )
+    matches = list(pattern.finditer(content))
+    if not matches:
+        raise ValueError(
+            f"expected at least one '\"version\": \"{current}\"' line in "
+            f"marketplace.json, found 0 (the planner requires a "
+            "pretty-printed JSON manifest with the version key on its "
+            "own line)"
+        )
+
+    accepted: list[str] = []
+    for match in matches:
+        candidate = (
+            content[:match.start()]
+            + f"{match.group('prefix')}{new}{match.group('suffix')}"
+            + content[match.end():]
+        )
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        plugins = parsed.get("plugins") if isinstance(parsed, dict) else None
+        if not isinstance(plugins, list):
+            continue
+        for entry in plugins:
+            if (
+                isinstance(entry, dict)
+                and entry.get("name") == plugin_name
+                and entry.get("version") == new
+            ):
+                accepted.append(candidate)
+                break
+
+    if len(accepted) != 1:
+        raise ValueError(
+            f"marketplace.json: expected exactly one candidate edit "
+            f"that updates the version of the plugin entry named "
+            f"{plugin_name!r}, found {len(accepted)} (the manifest must "
+            "be pretty-printed with the matching plugin's version key "
+            "on its own indented line)"
+        )
+    return accepted[0]
+
+
+# ---------------------------------------------------------------------------
+# path helpers
+# ---------------------------------------------------------------------------
+
+
+def skill_md_path(repo_root: str) -> str:
+    """Return the path to ``skill-system-foundry/SKILL.md`` under *repo_root*."""
+    return os.path.join(repo_root, "skill-system-foundry", "SKILL.md")
+
+
+def plugin_json_path(repo_root: str) -> str:
+    """Return the path to ``.claude-plugin/plugin.json`` under *repo_root*."""
+    return os.path.join(repo_root, ".claude-plugin", "plugin.json")
+
+
+def marketplace_json_path(repo_root: str) -> str:
+    """Return the path to ``.claude-plugin/marketplace.json`` under *repo_root*."""
+    return os.path.join(repo_root, ".claude-plugin", "marketplace.json")
