@@ -237,6 +237,15 @@ class AuditSkillSystemEmptyTests(unittest.TestCase):
         partial_warns = [e for e in warn_errors if "partial audit" in e]
         self.assertGreaterEqual(len(partial_warns), 1)
 
+    def test_skill_root_mode_suppresses_partial_audit_warn(self) -> None:
+        """A top-level SKILL.md makes the audit a single-skill audit, not partial."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "my-meta-skill")
+            write_skill_md(skill_dir, name="my-meta-skill")
+            errors = audit_skill_system(skill_dir, verbose=False)
+        partial_warns = [e for e in errors if "partial audit" in e]
+        self.assertEqual(partial_warns, [])
+
     def test_empty_skills_directory_passes(self) -> None:
         """A system root with an empty skills/ directory passes."""
         with tempfile.TemporaryDirectory() as tmpdir:

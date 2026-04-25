@@ -363,6 +363,9 @@ def audit_skill_system(
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     has_skills_dir = os.path.isdir(skills_dir)
+    has_top_level_skill = os.path.isfile(
+        os.path.join(system_root, FILE_SKILL_MD)
+    )
 
     # Discover components
     skills = find_skill_dirs(system_root)
@@ -376,7 +379,10 @@ def audit_skill_system(
               f"{len(roles)} roles")
         print()
 
-    if not has_skills_dir:
+    # Partial-audit WARN fires only when the audit cannot reach any
+    # skill at all.  In skill-root mode (top-level SKILL.md), the audit
+    # is a first-class single-skill audit — not a partial run.
+    if not has_skills_dir and not has_top_level_skill:
         errors.append(
             f"{LEVEL_WARN}: No {DIR_SKILLS}/ directory under system root — ran partial audit "
             "(distribution-repo mode). Point to deployed system root for full coverage."
@@ -579,10 +585,20 @@ def audit_skill_system(
         print("\n== Manifest ==")
 
     if not has_skills_dir:
-        # No skills/ directory — this is a distribution repo, not a deployed
-        # skill system.  Manifest check is not applicable.
+        # No skills/ directory — either a distribution repo or skill-root
+        # mode (top-level SKILL.md).  Manifest is a deployed-system
+        # concept and is not applicable in either case.
         if verbose:
-            print("  - skipped (no skills/ directory \u2014 not a deployed skill system)")
+            if has_top_level_skill:
+                print(
+                    "  - skipped (skill-root mode \u2014 manifest is a "
+                    "deployed-system concept)"
+                )
+            else:
+                print(
+                    "  - skipped (no skills/ directory \u2014 not a "
+                    "deployed skill system)"
+                )
     else:
         manifest_path = os.path.join(system_root, FILE_MANIFEST)
         if not os.path.exists(manifest_path):
