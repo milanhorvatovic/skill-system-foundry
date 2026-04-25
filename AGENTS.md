@@ -158,7 +158,7 @@ The version-consistency rule in `audit_skill_system.py` (which compares `SKILL.m
 python skill-system-foundry/scripts/audit_skill_system.py .
 ```
 
-The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocation runs in distribution-repo mode and emits one expected `WARN: No skills/ directory under system root — ran partial audit`. Skill-level checks still pass.
+The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocation runs in distribution-repo mode and emits one expected `WARN: No skills/ directory under system root — ran partial audit`. Per-skill rules (including the router-table rule) are skipped under that invocation — it only adds the repo-level version-consistency check on top of what the `cd skill-system-foundry` invocation already covers. To audit the meta-skill's own router table, the `cd skill-system-foundry && python scripts/audit_skill_system.py .` invocation above (skill-root mode) is the canonical self-check.
 
 #### Flag behavior
 

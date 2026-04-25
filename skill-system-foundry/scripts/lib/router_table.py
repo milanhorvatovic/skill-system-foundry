@@ -81,7 +81,12 @@ def parse_router_table(body: str) -> list[tuple[str, str, str]] | None:
 
     Code fences are *not* stripped before scanning — a router-shaped
     table inside a fenced block still counts, because an AI agent
-    consuming the SKILL.md sees that content too.
+    consuming the SKILL.md sees that content too.  Combined with the
+    first-table-wins rule above, this means a fenced documentation
+    example placed *before* the canonical router will be picked up
+    instead of it.  Authors who want to document the format in prose
+    should keep the example below the canonical router or use a
+    non-router header shape in the example.
 
     A header line that matches the tuple but is not followed by a
     Markdown separator row (``|---|---|---|``) does not terminate the
@@ -201,7 +206,9 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             findings.append((
                 LEVEL_FAIL,
                 f"router row '{capability}' has malformed Path '{path}' "
-                f"(expected '{DIR_CAPABILITIES}/<name>/{FILE_CAPABILITY_MD}')",
+                f"(expected literal '{DIR_CAPABILITIES}/<name>/{FILE_CAPABILITY_MD}'"
+                " — Path is parsed literally, no backticks, links, fragments,"
+                " or leading './'; header formatting is tolerated, path is not)",
             ))
             continue
         if capability != segment:
