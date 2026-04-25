@@ -600,6 +600,24 @@ def audit_skill_system(
     if skill_root_entry is not None:
         router_skills.append(skill_root_entry)
 
+    # Also audit directories under skills/ that have capabilities/ but
+    # no SKILL.md.  find_skill_dirs filters these out, so without this
+    # second pass the router-table rule cannot see them — yet the
+    # presence of capabilities/ proves they are meant to be router
+    # skills.  audit_router_table will emit the missing-SKILL.md FAIL.
+    seen_paths = {os.path.abspath(s["path"]) for s in router_skills}
+    if has_skills_dir:
+        for entry in os.listdir(skills_dir):
+            entry_path = os.path.join(skills_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            if os.path.abspath(entry_path) in seen_paths:
+                continue
+            if os.path.isdir(os.path.join(entry_path, DIR_CAPABILITIES)):
+                router_skills.append(
+                    {"name": entry, "path": entry_path, "type": "registered"}
+                )
+
     for skill in router_skills:
         rt_findings = audit_router_table(skill["path"])
         for level, message in rt_findings:

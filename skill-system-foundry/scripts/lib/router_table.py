@@ -136,6 +136,7 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
 
     Failure modes (all FAIL):
 
+    * ``capabilities/`` exists but ``SKILL.md`` is missing.
     * ``capabilities/`` exists but ``SKILL.md`` has no router-shaped
       table.
     * A router row's Path cell is not the literal
@@ -153,9 +154,14 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
 
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
     if not os.path.isfile(skill_md):
-        # The missing-SKILL.md case is reported by other rules; do not
-        # double-flag here.
-        return []
+        # find_skill_dirs silently drops directories without SKILL.md,
+        # so no other rule reaches this case.  Flag it here; the
+        # presence of capabilities/ proves the directory is meant to be
+        # a router skill.
+        return [(
+            LEVEL_FAIL,
+            f"has {DIR_CAPABILITIES}/ but no {FILE_SKILL_MD}",
+        )]
 
     with open(skill_md, "r", encoding="utf-8") as fh:
         # Pass the full content; YAML frontmatter delimiters ('---') are

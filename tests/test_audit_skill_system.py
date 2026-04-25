@@ -992,6 +992,23 @@ class AuditRouterTableTests(unittest.TestCase):
         ]
         self.assertEqual(router_errors, [])
 
+    def test_missing_skill_md_with_capabilities_still_surfaces_fail(self) -> None:
+        """A directory under skills/ with capabilities/ but no SKILL.md
+        is invisible to find_skill_dirs.  The router-table rule must
+        still surface the missing-SKILL.md FAIL via its second-pass
+        discovery, otherwise the gap is silent.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            os.makedirs(skill_dir)
+            _write_capability_md(os.path.join(skill_dir, "capabilities", "alpha"))
+            errors = audit_skill_system(tmpdir, verbose=False)
+        skill_md_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "SKILL.md" in e
+        ]
+        self.assertGreaterEqual(len(skill_md_fails), 1)
+
 
 class AuditManifestTests(unittest.TestCase):
     """Tests for manifest checks in audit_skill_system."""

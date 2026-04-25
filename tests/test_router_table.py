@@ -154,11 +154,17 @@ class AuditRouterTableNoOpTests(unittest.TestCase):
             write_skill_md(tmp)
             self.assertEqual(audit_router_table(tmp), [])
 
-    def test_missing_skill_md_returns_empty(self) -> None:
-        """Missing SKILL.md is flagged elsewhere; this rule does not double-flag."""
+    def test_missing_skill_md_with_capabilities_fails(self) -> None:
+        """capabilities/ without SKILL.md is a router skill that lost its
+        entry point — find_skill_dirs would otherwise drop it silently,
+        so this rule owns the FAIL."""
         with tempfile.TemporaryDirectory() as tmp:
             _write_capability(os.path.join(tmp, "capabilities", "alpha"))
-            self.assertEqual(audit_router_table(tmp), [])
+            findings = audit_router_table(tmp)
+        self.assertEqual(len(findings), 1)
+        level, msg = findings[0]
+        self.assertEqual(level, LEVEL_FAIL)
+        self.assertIn("no SKILL.md", msg)
 
 
 # ===================================================================
