@@ -619,6 +619,29 @@ class TempFileSafetyTests(unittest.TestCase):
                 self.assertEqual(fh.read(), "MAINTAINER ARTIFACT — DO NOT TOUCH")
 
 
+class PermissionPreservationTests(unittest.TestCase):
+    """``commit_writes`` must restore the target's mode on the staged file.
+
+    ``tempfile.mkstemp`` creates files with mode ``0o600``; without an
+    explicit ``chmod`` step a successful bump would silently downgrade
+    the manifests to owner-only.  Skipped on Windows where POSIX mode
+    bits do not survive the round trip.
+    """
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits not meaningful on Windows")
+    def test_target_mode_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _build_fake_repo(tmp)
+            plugin_path = os.path.join(repo, ".claude-plugin", "plugin.json")
+            os.chmod(plugin_path, 0o644)
+            before_mode = os.stat(plugin_path).st_mode & 0o777
+            gen = os.path.join(repo, "scripts", "generate_changelog.py")
+            rc, _, _ = _invoke(["1.2.0"], cwd=repo, generator_stub_path=gen)
+            self.assertEqual(rc, bump_version.EXIT_OK)
+            after_mode = os.stat(plugin_path).st_mode & 0o777
+            self.assertEqual(after_mode, before_mode)
+
+
 class HeadShaTests(unittest.TestCase):
     def test_returns_none_outside_git(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

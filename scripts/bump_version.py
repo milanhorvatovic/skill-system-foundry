@@ -7,10 +7,10 @@ first and last swap leaves the manifests inconsistent on disk and the
 script reports that drift via ``EXIT_PARTIAL_WRITE``.  Treat this as a
 best-effort lockstep bump, not a cross-file atomic transaction.
 
-The three files are the single source of truth for the release version.
-``skill-system-foundry/scripts/audit_skill_system.py`` enforces that
-they agree; this script is the primitive for changing all three in
-lockstep.
+``skill-system-foundry/SKILL.md`` is the canonical source for the
+release version.  ``skill-system-foundry/scripts/audit_skill_system.py``
+enforces that ``plugin.json`` and ``marketplace.json`` agree with it;
+this script is the primitive for changing all three files in lockstep.
 
 Usage::
 
@@ -289,15 +289,16 @@ def commit_writes(writes: list[tuple[str, str]]) -> None:
         for path, content in writes:
             target_dir = os.path.dirname(path) or "."
             target_base = os.path.basename(path)
-            # mkstemp returns an open fd; close it before reopening in
-            # text mode so the writer applies our encoding/newline
-            # behavior.  Default text-mode newline translation is
-            # intentional: the planners produce ``\n`` in memory
-            # (because the readers used default text mode) and we want
-            # the writer to translate back to the platform's native line
-            # ending — preserving CRLF working trees on Windows that get
-            # LF in git.  Using ``newline=""`` here would force LF on
-            # Windows and unintentionally rewrite the manifests.
+            # mkstemp creates the file with mode 0600 by default; capture
+            # the target's existing mode so we can restore it on the
+            # staged file before ``os.replace`` installs it.  Without the
+            # chmod step a successful bump would silently downgrade the
+            # manifests to owner-only, surprising for files that ship in
+            # release artifacts and shared worktrees.
+            try:
+                target_mode = os.stat(path).st_mode
+            except OSError:
+                target_mode = None
             fd, tmp = tempfile.mkstemp(
                 prefix=target_base + ".",
                 suffix=".tmp",
@@ -313,6 +314,14 @@ def commit_writes(writes: list[tuple[str, str]]) -> None:
             # regardless of the operator's checkout settings.
             with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(content)
+            if target_mode is not None:
+                try:
+                    os.chmod(tmp, target_mode)
+                except OSError:
+                    # Best-effort: a chmod failure on the staged file is
+                    # not worth aborting the bump over.  ``os.replace``
+                    # below will still install the new content.
+                    pass
         staged: list[tuple[str, str]] = list(zip([p for p, _ in writes], tmp_paths))
         for index, (path, tmp) in enumerate(staged):
             try:
