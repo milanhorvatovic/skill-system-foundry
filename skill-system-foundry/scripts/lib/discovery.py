@@ -72,6 +72,52 @@ def find_skill_root(system_root: str) -> dict[str, str] | None:
     }
 
 
+def find_router_audit_targets(system_root: str) -> list[dict[str, str]]:
+    """Return every directory the router-table rule should audit.
+
+    Combines three sources, in the following priority:
+
+    1. Registered skills under ``<system_root>/skills/<name>/`` (those
+       that have a ``SKILL.md``) — from ``find_skill_dirs``.
+    2. The skill-root entry — present when ``<system_root>/SKILL.md``
+       exists (skill-root mode for meta-skills).
+    3. Capability-bearing directories under ``<system_root>/skills/``
+       that are missing ``SKILL.md`` — ``find_skill_dirs`` filters these
+       out, but the presence of ``capabilities/`` proves they were meant
+       to be router skills, so the router-table rule needs to see them.
+
+    The returned entries are in the same shape as ``find_skill_dirs``
+    items (``name``, ``path``, ``type=registered``).  Paths are
+    deduplicated by absolute path, so each directory is audited at most
+    once.
+    """
+    skills_dir = os.path.join(system_root, DIR_SKILLS)
+    has_skills_dir = os.path.isdir(skills_dir)
+
+    targets: list[dict[str, str]] = [
+        s for s in find_skill_dirs(system_root) if s["type"] == "registered"
+    ]
+
+    skill_root_entry = find_skill_root(system_root)
+    if skill_root_entry is not None:
+        targets.append(skill_root_entry)
+
+    seen_paths = {os.path.abspath(t["path"]) for t in targets}
+    if has_skills_dir:
+        for entry in os.listdir(skills_dir):
+            entry_path = os.path.join(skills_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            if os.path.abspath(entry_path) in seen_paths:
+                continue
+            if os.path.isdir(os.path.join(entry_path, DIR_CAPABILITIES)):
+                targets.append(
+                    {"name": entry, "path": entry_path, "type": "registered"}
+                )
+
+    return targets
+
+
 def find_roles(system_root: str) -> list[dict[str, str]]:
     """Find all role files."""
     roles = []

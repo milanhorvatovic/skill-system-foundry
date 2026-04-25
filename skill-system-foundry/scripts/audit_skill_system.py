@@ -62,7 +62,7 @@ from lib.reporting import (
 from lib.discovery import (
     find_skill_dirs,
     find_roles,
-    find_skill_root,
+    find_router_audit_targets,
     check_line_count,
     read_file,
 )
@@ -590,33 +590,10 @@ def audit_skill_system(
         print("\n== Router Table ==")
 
     # Router-table audit is the only per-skill rule that intentionally
-    # scans a top-level SKILL.md (skill-root mode).  See
-    # lib.discovery.find_skill_root for the rationale.  Registered
-    # skills always live at <system_root>/skills/<name> while a
-    # skill-root entry's path is system_root itself, so the two sets
-    # are disjoint and we can append unconditionally.
-    router_skills = list(registered_skills)
-    skill_root_entry = find_skill_root(system_root)
-    if skill_root_entry is not None:
-        router_skills.append(skill_root_entry)
-
-    # Also audit directories under skills/ that have capabilities/ but
-    # no SKILL.md.  find_skill_dirs filters these out, so without this
-    # second pass the router-table rule cannot see them — yet the
-    # presence of capabilities/ proves they are meant to be router
-    # skills.  audit_router_table will emit the missing-SKILL.md FAIL.
-    seen_paths = {os.path.abspath(s["path"]) for s in router_skills}
-    if has_skills_dir:
-        for entry in os.listdir(skills_dir):
-            entry_path = os.path.join(skills_dir, entry)
-            if not os.path.isdir(entry_path):
-                continue
-            if os.path.abspath(entry_path) in seen_paths:
-                continue
-            if os.path.isdir(os.path.join(entry_path, DIR_CAPABILITIES)):
-                router_skills.append(
-                    {"name": entry, "path": entry_path, "type": "registered"}
-                )
+    # scans a top-level SKILL.md (skill-root mode) and also reaches
+    # capability-bearing directories that find_skill_dirs filters out.
+    # find_router_audit_targets returns the union of those sources.
+    router_skills = find_router_audit_targets(system_root)
 
     for skill in router_skills:
         rt_findings = audit_router_table(skill["path"])

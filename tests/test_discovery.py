@@ -1,8 +1,9 @@
 """Tests for lib/discovery.py.
 
 Covers ``find_skill_dirs`` (system-root, deployed-system layout),
-``find_skill_root`` (skill-root mode for meta-skill audits), and
-``find_roles``.
+``find_skill_root`` (skill-root mode for meta-skill audits),
+``find_router_audit_targets`` (union of the above plus capability-only
+directories), and ``find_roles``.
 """
 
 import os
@@ -18,7 +19,12 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.discovery import find_skill_dirs, find_skill_root, find_roles
+from lib.discovery import (
+    find_roles,
+    find_router_audit_targets,
+    find_skill_dirs,
+    find_skill_root,
+)
 
 
 def _write_capability(cap_dir: str, body: str = "# Capability\n") -> None:
@@ -88,6 +94,56 @@ class FindSkillRootTests(unittest.TestCase):
             inner = os.path.join(tmp, "skills", "inner-skill")
             write_skill_md(inner, name="inner-skill")
             self.assertIsNone(find_skill_root(tmp))
+
+
+# ===================================================================
+# find_router_audit_targets — union of registered, skill-root, and
+# capability-only directories
+# ===================================================================
+
+
+class FindRouterAuditTargetsTests(unittest.TestCase):
+    def test_empty_root_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(find_router_audit_targets(tmp), [])
+
+    def test_includes_registered_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_skill_md(os.path.join(tmp, "skills", "alpha"), name="alpha")
+            write_skill_md(os.path.join(tmp, "skills", "beta"), name="beta")
+            names = sorted(t["name"] for t in find_router_audit_targets(tmp))
+        self.assertEqual(names, ["alpha", "beta"])
+
+    def test_includes_skill_root_when_top_level_skill_md_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-meta-skill")
+            write_skill_md(skill_dir, name="my-meta-skill")
+            names = [t["name"] for t in find_router_audit_targets(skill_dir)]
+        self.assertEqual(names, ["my-meta-skill"])
+
+    def test_includes_capability_only_directory_without_skill_md(self) -> None:
+        """A skills/<name>/ with capabilities/ but no SKILL.md must surface."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ghost_dir = os.path.join(tmp, "skills", "ghost")
+            _write_capability(os.path.join(ghost_dir, "capabilities", "alpha"))
+            names = [t["name"] for t in find_router_audit_targets(tmp)]
+        self.assertEqual(names, ["ghost"])
+
+    def test_does_not_double_count_registered_with_capabilities(self) -> None:
+        """A skill that has both SKILL.md and capabilities/ appears once."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "skills", "alpha")
+            write_skill_md(skill_dir, name="alpha")
+            _write_capability(os.path.join(skill_dir, "capabilities", "cap"))
+            targets = find_router_audit_targets(tmp)
+        names = [t["name"] for t in targets]
+        self.assertEqual(names, ["alpha"])
+
+    def test_skips_files_that_are_not_directories_under_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "skills"))
+            write_text(os.path.join(tmp, "skills", "stray.md"), "# stray\n")
+            self.assertEqual(find_router_audit_targets(tmp), [])
 
 
 # ===================================================================
