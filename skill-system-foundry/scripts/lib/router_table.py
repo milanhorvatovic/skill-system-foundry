@@ -311,6 +311,13 @@ def _recover_segment(path_cell: str) -> str | None:
     — then re-runs the strict parser.  Returns ``None`` if nothing
     recoverable is left.
 
+    Shape validation is delegated entirely to ``_parse_path_cell`` (the
+    final ``return``) — this helper only handles decoration stripping.
+    Pathological inputs (e.g., embedded parentheses) are rejected by
+    the strict re-parse rather than by this function, so a future
+    contributor can extend the decoration set without re-deriving the
+    canonical-path semantics.
+
     The audit uses the recovered segment to suppress the orphan check
     so a single author error (e.g., wrapping the path in backticks)
     surfaces as exactly one FAIL ("malformed Path") instead of also
