@@ -192,7 +192,8 @@ def parse_router_table(
     ``LEVEL_WARN`` when a second canonical-headed table is found later
     in the body.  Returns ``None`` if no Markdown table whose header is
     exactly ``Capability | Trigger | Path`` (after stripping ``*``,
-    backticks, and whitespace) appears in *body*.
+    underscores, backticks, and whitespace — see
+    ``ROUTER_HEADER_STRIP_CHARS``) appears in *body*.
 
     Mid-table rows whose column count differs from the header are
     recorded as FAIL findings and skipped, but scanning continues so
