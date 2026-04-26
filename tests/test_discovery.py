@@ -179,6 +179,27 @@ class FindRouterAuditTargetsTests(unittest.TestCase):
             write_text(os.path.join(tmp, "skills", "stray.md"), "# stray\n")
             self.assertEqual(find_router_audit_targets(tmp), [])
 
+    def test_returns_union_when_top_level_skill_and_skills_tree_coexist(self) -> None:
+        """A directory that is itself a skill *and* hosts a skills/ tree
+        (e.g., an integrator's meta-skill kept alongside deployed skills)
+        must surface every audit target — the meta-skill at the top
+        level and each subdirectory under skills/.  Names must not
+        collide because the candidate iterator never walks the system
+        root itself.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            write_skill_md(tmp, name="integrator-meta-skill")
+            write_skill_md(os.path.join(tmp, "skills", "alpha"), name="alpha")
+            _write_capability(
+                os.path.join(tmp, "skills", "alpha", "capabilities", "cap")
+            )
+            write_skill_md(os.path.join(tmp, "skills", "beta"), name="beta")
+            targets = find_router_audit_targets(tmp)
+        names = sorted(t["name"] for t in targets)
+        self.assertEqual(
+            names, ["alpha", "beta", os.path.basename(os.path.abspath(tmp))]
+        )
+
 
 # ===================================================================
 # find_roles
