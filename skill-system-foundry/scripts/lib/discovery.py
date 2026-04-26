@@ -81,18 +81,14 @@ def find_skill_dirs(system_root: str) -> list[dict[str, str]]:
     return skills
 
 
-def find_skill_root(system_root: str) -> dict[str, str] | None:
+def _top_level_skill_entry(system_root: str) -> dict[str, str] | None:
     """Return a synthetic registered-skill entry when SKILL.md sits at *system_root*.
 
-    This complements ``find_skill_dirs`` for the *skill-root mode* —
-    auditing a single skill directory (the foundry meta-skill or any
+    Complements ``find_skill_dirs`` for the *skill-root mode* — auditing
+    a single skill directory (the foundry meta-skill or any
     integrator-built meta-skill) without first deploying it under a
-    ``skills/`` tree.
-
-    Used by rules that are intentionally meta-skill-aware (currently the
-    router-table consistency rule).  Other per-skill rules continue to
-    iterate ``find_skill_dirs`` only, because their pre-existing
-    heuristics were not designed to scan meta-skill prose.
+    ``skills/`` tree.  Only consumed by ``find_router_audit_targets``;
+    promote to public when a second caller appears.
     """
     if not os.path.isfile(os.path.join(system_root, FILE_SKILL_MD)):
         return None
@@ -148,7 +144,7 @@ def find_router_audit_targets(system_root: str) -> list[dict[str, str]]:
             "type": "registered",
         })
 
-    skill_root_entry = find_skill_root(system_root)
+    skill_root_entry = _top_level_skill_entry(system_root)
     if skill_root_entry is not None:
         targets.append(skill_root_entry)
 

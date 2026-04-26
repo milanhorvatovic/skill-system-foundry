@@ -1,7 +1,7 @@
 """Tests for lib/discovery.py.
 
 Covers ``find_skill_dirs`` (system-root, deployed-system layout),
-``find_skill_root`` (skill-root mode for meta-skill audits),
+``_top_level_skill_entry`` (skill-root mode for meta-skill audits — private helper, exercised here as the only non-trivial discovery branch),
 ``find_router_audit_targets`` (union of the above plus capability-only
 directories), and ``find_roles``.
 """
@@ -20,10 +20,10 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from lib.discovery import (
+    _top_level_skill_entry,
     find_roles,
     find_router_audit_targets,
     find_skill_dirs,
-    find_skill_root,
 )
 
 
@@ -66,18 +66,18 @@ class FindSkillDirsSystemRootTests(unittest.TestCase):
 
 
 # ===================================================================
-# find_skill_root — skill-root mode
+# _top_level_skill_entry — skill-root mode
 # ===================================================================
 
 
-class FindSkillRootTests(unittest.TestCase):
+class TopLevelSkillEntryTests(unittest.TestCase):
     """``SKILL.md`` at system_root yields a synthetic registered entry."""
 
     def test_top_level_skill_md_returns_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
-            entry = find_skill_root(skill_dir)
+            entry = _top_level_skill_entry(skill_dir)
         self.assertIsNotNone(entry)
         assert entry is not None  # for the type checker
         self.assertEqual(entry["name"], "my-meta-skill")
@@ -88,14 +88,14 @@ class FindSkillRootTests(unittest.TestCase):
         self.assertEqual(entry["path"], skill_dir)
 
     def test_relative_path_is_preserved(self) -> None:
-        """find_skill_root must not abspath-promote the caller's path."""
+        """_top_level_skill_entry must not abspath-promote the caller's path."""
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
             saved_cwd = os.getcwd()
             try:
                 os.chdir(tmp)
-                entry = find_skill_root("my-meta-skill")
+                entry = _top_level_skill_entry("my-meta-skill")
             finally:
                 os.chdir(saved_cwd)
         assert entry is not None
@@ -111,7 +111,7 @@ class FindSkillRootTests(unittest.TestCase):
             saved_cwd = os.getcwd()
             try:
                 os.chdir(skill_dir)
-                entry = find_skill_root(".")
+                entry = _top_level_skill_entry(".")
             finally:
                 os.chdir(saved_cwd)
         assert entry is not None
@@ -120,14 +120,14 @@ class FindSkillRootTests(unittest.TestCase):
 
     def test_no_skill_md_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(find_skill_root(tmp))
+            self.assertIsNone(_top_level_skill_entry(tmp))
 
     def test_only_returns_top_level_not_subdirectory_skill(self) -> None:
-        """find_skill_root checks only system_root itself, not nested skills."""
+        """_top_level_skill_entry checks only system_root itself, not nested skills."""
         with tempfile.TemporaryDirectory() as tmp:
             inner = os.path.join(tmp, "skills", "inner-skill")
             write_skill_md(inner, name="inner-skill")
-            self.assertIsNone(find_skill_root(tmp))
+            self.assertIsNone(_top_level_skill_entry(tmp))
 
 
 # ===================================================================
