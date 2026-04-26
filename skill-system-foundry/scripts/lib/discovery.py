@@ -150,10 +150,19 @@ def find_router_audit_targets(system_root: str) -> list[dict[str, str]]:
     ``capabilities/`` and without a router table simply returns ``[]``.
 
     Returned entries match the ``find_skill_dirs`` shape (``name``,
-    ``path``, ``type=registered``).  The skill-root entry (when
-    present) cannot collide with a ``skills/`` candidate because the
-    candidate iterator only walks ``<system_root>/skills/<entry>``,
-    never ``<system_root>`` itself — so no dedup is needed.
+    ``path``, ``type=registered``).  Appending the skill-root entry
+    (when present) cannot duplicate a ``skills/`` candidate's
+    ``path`` because the candidate iterator only walks
+    ``<system_root>/skills/<entry>``, never ``<system_root>``
+    itself — so no path-level dedup is needed and the same directory
+    is never audited twice.  Names may still overlap (e.g., a
+    top-level SKILL.md whose frontmatter ``name`` is ``alpha`` next
+    to a ``skills/alpha/`` candidate); each target is audited
+    independently because ``path`` is the dispatch key, but the
+    finding prefix derived from ``name`` will be ambiguous in that
+    pathological case.  Integrators are expected to keep the
+    meta-skill's frontmatter name distinct from any deployed skill
+    under ``skills/``.
     """
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     targets: list[dict[str, str]] = []
