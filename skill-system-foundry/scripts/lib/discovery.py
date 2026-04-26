@@ -1,6 +1,7 @@
 """Component discovery: find skills and roles in a skill system."""
 
 import os
+from typing import NamedTuple
 
 from .constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
@@ -8,37 +9,43 @@ from .constants import (
 )
 
 
-def _iter_skill_candidates(skills_dir: str) -> list[dict[str, bool | str]]:
+class _SkillCandidate(NamedTuple):
+    """One immediate subdirectory of a ``skills/`` tree.
+
+    ``has_skill_md`` and ``has_capabilities`` flag which halves of the
+    router contract are present on disk.
+    """
+    name: str
+    path: str
+    has_skill_md: bool
+    has_capabilities: bool
+
+
+def _iter_skill_candidates(skills_dir: str) -> list[_SkillCandidate]:
     """One pass over ``<skills_dir>/<entry>``.
 
-    Returns one entry per immediate subdirectory, annotated with which
-    of the two router halves are present:
-
-    * ``has_skill_md`` — ``SKILL.md`` exists at the top of the entry.
-    * ``has_capabilities`` — ``capabilities/`` exists at the top of the
-      entry.
-
-    Returns ``[]`` when *skills_dir* is missing.  This is the single
-    source of truth for "what is a skill candidate"; both
-    ``find_skill_dirs`` and ``find_router_audit_targets`` consume it.
+    Returns one entry per immediate subdirectory.  Returns ``[]`` when
+    *skills_dir* is missing.  This is the single source of truth for
+    "what is a skill candidate"; both ``find_skill_dirs`` and
+    ``find_router_audit_targets`` consume it.
     """
     if not os.path.isdir(skills_dir):
         return []
-    candidates: list[dict[str, bool | str]] = []
+    candidates: list[_SkillCandidate] = []
     for entry in os.listdir(skills_dir):
         entry_path = os.path.join(skills_dir, entry)
         if not os.path.isdir(entry_path):
             continue
-        candidates.append({
-            "name": entry,
-            "path": entry_path,
-            "has_skill_md": os.path.isfile(
+        candidates.append(_SkillCandidate(
+            name=entry,
+            path=entry_path,
+            has_skill_md=os.path.isfile(
                 os.path.join(entry_path, FILE_SKILL_MD)
             ),
-            "has_capabilities": os.path.isdir(
+            has_capabilities=os.path.isdir(
                 os.path.join(entry_path, DIR_CAPABILITIES)
             ),
-        })
+        ))
     return candidates
 
 
@@ -51,15 +58,13 @@ def find_skill_dirs(system_root: str) -> list[dict[str, str]]:
     skills: list[dict[str, str]] = []
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     for cand in _iter_skill_candidates(skills_dir):
-        domain = cand["name"]
-        domain_path = cand["path"]
-        if cand["has_skill_md"]:
+        if cand.has_skill_md:
             skills.append(
-                {"name": domain, "path": domain_path, "type": "registered"}
+                {"name": cand.name, "path": cand.path, "type": "registered"}
             )
 
-        if cand["has_capabilities"]:
-            cap_dir = os.path.join(domain_path, DIR_CAPABILITIES)
+        if cand.has_capabilities:
+            cap_dir = os.path.join(cand.path, DIR_CAPABILITIES)
             for cap in os.listdir(cap_dir):
                 cap_path = os.path.join(cap_dir, cap)
                 cap_skill = os.path.join(cap_path, FILE_CAPABILITY_MD)
@@ -69,7 +74,7 @@ def find_skill_dirs(system_root: str) -> list[dict[str, str]]:
                             "name": cap,
                             "path": cap_path,
                             "type": "capability",
-                            "parent": domain,
+                            "parent": cand.name,
                         }
                     )
 
@@ -123,28 +128,26 @@ def find_router_audit_targets(system_root: str) -> list[dict[str, str]]:
     ``capabilities/`` and without a router table simply returns ``[]``.
 
     Returned entries match the ``find_skill_dirs`` shape (``name``,
-    ``path``, ``type=registered``).  Paths are deduplicated by absolute
-    path.
+    ``path``, ``type=registered``).  The skill-root entry (when
+    present) cannot collide with a ``skills/`` candidate because the
+    candidate iterator only walks ``<system_root>/skills/<entry>``,
+    never ``<system_root>`` itself — so no dedup is needed.
     """
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     targets: list[dict[str, str]] = []
-    seen_paths: set[str] = set()
 
     for cand in _iter_skill_candidates(skills_dir):
-        if not (cand["has_skill_md"] or cand["has_capabilities"]):
+        if not (cand.has_skill_md or cand.has_capabilities):
             continue
-        abs_path = os.path.abspath(cand["path"])
-        seen_paths.add(abs_path)
         targets.append({
-            "name": str(cand["name"]),
-            "path": str(cand["path"]),
+            "name": cand.name,
+            "path": cand.path,
             "type": "registered",
         })
 
     skill_root_entry = find_skill_root(system_root)
     if skill_root_entry is not None:
-        if skill_root_entry["path"] not in seen_paths:
-            targets.append(skill_root_entry)
+        targets.append(skill_root_entry)
 
     return targets
 
