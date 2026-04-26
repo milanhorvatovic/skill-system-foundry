@@ -64,6 +64,23 @@ class FindSkillDirsSystemRootTests(unittest.TestCase):
         cap_entry = [e for e in entries if e["type"] == "capability"][0]
         self.assertEqual(cap_entry["parent"], "demo-skill")
 
+    def test_capabilities_are_returned_in_sorted_order(self) -> None:
+        """Capability entries are sorted so output is deterministic across filesystems.
+
+        ``os.listdir`` order is filesystem-defined; sorting in
+        ``find_skill_dirs`` keeps audit output stable on APFS, ext4,
+        and NTFS alike.  The capabilities are created here in a
+        non-alphabetical order to make the sort meaningful.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            for cap in ("zeta", "alpha", "mu"):
+                _write_capability(os.path.join(skill_dir, "capabilities", cap))
+            entries = find_skill_dirs(tmp)
+        cap_names = [e["name"] for e in entries if e["type"] == "capability"]
+        self.assertEqual(cap_names, ["alpha", "mu", "zeta"])
+
 
 # ===================================================================
 # find_router_audit_targets — skill-root mode (top-level SKILL.md)

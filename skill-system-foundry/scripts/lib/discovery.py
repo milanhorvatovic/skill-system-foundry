@@ -70,7 +70,11 @@ def find_skill_dirs(system_root: str) -> list[dict[str, str]]:
 
         if cand.has_capabilities:
             cap_dir = os.path.join(cand.path, DIR_CAPABILITIES)
-            for cap in os.listdir(cap_dir):
+            # ``os.listdir`` order is filesystem-defined and differs
+            # between APFS, ext4, and NTFS — sort so downstream audit
+            # output (and any caller iterating the returned list) is
+            # deterministic, matching the skill-candidate sort above.
+            for cap in sorted(os.listdir(cap_dir)):
                 cap_path = os.path.join(cap_dir, cap)
                 cap_skill = os.path.join(cap_path, FILE_CAPABILITY_MD)
                 if os.path.isdir(cap_path) and os.path.exists(cap_skill):
