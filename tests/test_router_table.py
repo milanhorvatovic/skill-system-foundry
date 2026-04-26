@@ -53,7 +53,7 @@ def _parse_rows(body: str) -> list[tuple[str, str, str]]:
 
     Asserts that the parser found a router table and reported no FAIL
     findings, then returns the row list.  WARN findings (e.g., the
-    "second router-shaped table" warning) are tolerated here; tests
+    "additional router-shaped table" warning) are tolerated here; tests
     that need to assert on warnings call ``parse_router_table``
     directly.  Tests for the ``None`` case also call the parser
     directly.
@@ -113,7 +113,7 @@ class ParseRouterTableTests(unittest.TestCase):
         self.assertEqual(names, ["alpha", "beta"])
         warns = [f for f in findings if f[0] == LEVEL_WARN]
         self.assertEqual(len(warns), 1)
-        self.assertIn("second router-shaped table", warns[0][1])
+        self.assertIn("additional router-shaped table", warns[0][1])
 
     def test_third_router_table_emits_second_warning(self) -> None:
         """Three canonical-headed tables → two WARN findings (one per extra)."""
@@ -650,7 +650,7 @@ class AuditRouterTableFailureTests(unittest.TestCase):
         warns = [f for f in findings if f[0] == LEVEL_WARN]
         fails = [f for f in findings if f[0] == LEVEL_FAIL]
         self.assertEqual(len(warns), 1)
-        self.assertIn("second router-shaped table", warns[0][1])
+        self.assertIn("additional router-shaped table", warns[0][1])
         self.assertEqual(fails, [])
 
 

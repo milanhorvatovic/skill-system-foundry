@@ -277,7 +277,7 @@ def _scan_extra_router_tables(
                 if sep_cells is not None and _is_separator_row(sep_cells):
                     findings.append((
                         LEVEL_WARN,
-                        f"second router-shaped table found at line "
+                        f"additional router-shaped table found at line "
                         f"{k + 1}; only the first is audited — "
                         f"consolidate or remove the extra table",
                     ))
@@ -375,10 +375,13 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     * (FAIL) A row inside the router table is structurally malformed
       (wrong number of columns).  Subsequent valid rows are still
       parsed.
-    * (WARN) A second canonical-headed router table appears in
-      ``SKILL.md``.  Only the first is audited; the warning directs
-      the author to consolidate.  Emitted before per-row checks so it
-      precedes findings that originate from the parsed (first) table.
+    * (WARN) A second (or later) canonical-headed router table appears
+      in ``SKILL.md``.  Only the first is audited; the warning directs
+      the author to consolidate.  Emitted before the per-row audit
+      checks (empty Trigger, malformed Path, duplicate row, missing
+      target, orphan directory) — parse-row malformation FAILs from
+      the first table still appear ahead of the WARN because they are
+      emitted by ``parse_router_table`` itself.
     * (FAIL) A router row's Trigger cell is empty.  Trigger content is
       otherwise opaque, but emptiness is a structural failure (a
       half-edited row).
@@ -415,7 +418,9 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             f"{DIR_CAPABILITIES}/ exists but {FILE_SKILL_MD} is missing",
         )]
 
-    parsed: tuple[list[tuple[str, str, str]], list[str]] | None = None
+    parsed: tuple[
+        list[tuple[str, str, str]], list[tuple[str, str]]
+    ] | None = None
     if has_skill_md:
         with open(skill_md, "r", encoding="utf-8") as fh:
             content = fh.read()

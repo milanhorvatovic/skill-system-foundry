@@ -1032,7 +1032,7 @@ class AuditRouterTableTests(unittest.TestCase):
             errors = audit_skill_system(tmpdir, verbose=False)
         warns = [
             e for e in errors
-            if e.startswith(LEVEL_WARN) and "second router-shaped table" in e
+            if e.startswith(LEVEL_WARN) and "additional router-shaped table" in e
         ]
         self.assertEqual(len(warns), 1)
         self.assertIn("demo-skill", warns[0])
