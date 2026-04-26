@@ -129,6 +129,34 @@ class ParseRouterTableTests(unittest.TestCase):
         names = [r[0] for r in rows or []]
         self.assertEqual(names, ["alpha", "beta"])
 
+    def test_tilde_fenced_table_is_ignored(self) -> None:
+        """Tilde fences (``~~~``) are stripped on par with backticks."""
+        body = (
+            "# Skill\n\n"
+            "~~~markdown\n"
+            + CANONICAL_TABLE
+            + "~~~\n"
+        )
+        self.assertIsNone(parse_router_table(body))
+
+    def test_tilde_fenced_decoy_does_not_shadow_real_router(self) -> None:
+        decoy = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| decoy | x | capabilities/decoy/capability.md |\n"
+        )
+        body = (
+            "# Skill\n\n"
+            "~~~markdown\n"
+            + decoy
+            + "~~~\n\n"
+            "## Capabilities\n\n"
+            + CANONICAL_TABLE
+        )
+        rows = parse_router_table(body)
+        names = [r[0] for r in rows or []]
+        self.assertEqual(names, ["alpha", "beta"])
+
     def test_trigger_cell_with_escaped_pipe_is_preserved(self) -> None:
         """A Trigger cell containing ``\\|`` must not truncate the table."""
         body = (

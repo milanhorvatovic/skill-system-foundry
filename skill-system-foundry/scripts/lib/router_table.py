@@ -46,16 +46,28 @@ def _strip_fenced_regions(body: str) -> str:
     Keeps line numbers stable so error messages from upstream tooling
     still line up, while ensuring fenced documentation examples cannot
     shadow the canonical router table (first-table-wins).
+
+    Recognizes both backtick (```` ``` ````) and tilde (``~~~``)
+    CommonMark fences.  A fence is closed by a marker of the same
+    family — opening with ```` ``` ```` and closing with ``~~~`` is
+    not balanced and would leave the rest of the document treated as
+    fenced.
     """
     lines = body.splitlines()
-    in_fence = False
+    fence_marker: str | None = None
     out: list[str] = []
     for line in lines:
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
+        stripped = line.lstrip()
+        if fence_marker is None:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                fence_marker = stripped[:3]
+                out.append("")
+                continue
+            out.append(line)
+        else:
+            if stripped.startswith(fence_marker):
+                fence_marker = None
             out.append("")
-            continue
-        out.append("" if in_fence else line)
     return "\n".join(out)
 
 
@@ -241,9 +253,7 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             findings.append((
                 LEVEL_FAIL,
                 f"router row '{capability}' has malformed Path '{path}' "
-                f"(expected literal '{DIR_CAPABILITIES}/<name>/{FILE_CAPABILITY_MD}'"
-                " — Path is parsed literally, no backticks, links, fragments,"
-                " or leading './'; header formatting is tolerated, path is not)",
+                f"(expected literal '{DIR_CAPABILITIES}/<name>/{FILE_CAPABILITY_MD}')",
             ))
             continue
         if capability != segment:
