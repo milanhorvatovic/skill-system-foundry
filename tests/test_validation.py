@@ -8,6 +8,7 @@ minimum length warnings.
 
 import os
 import sys
+import tempfile
 import unittest
 
 SCRIPTS_DIR = os.path.abspath(
@@ -16,7 +17,12 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.validation import parse_allowed_tools_tokens, validate_name
+from helpers import write_capability_md, write_skill_md, write_text
+from lib.validation import (
+    parse_allowed_tools_tokens,
+    validate_name,
+    validate_tool_coherence,
+)
 from lib.constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -636,6 +642,224 @@ class ParseAllowedToolsTokensTests(unittest.TestCase):
         tokens = parse_allowed_tools_tokens("bash Bash")
         self.assertIn("bash", tokens)
         self.assertIn("Bash", tokens)
+
+
+# ===================================================================
+# validate_tool_coherence
+# ===================================================================
+
+
+def _bash_fence_body(tag: str = "bash") -> str:
+    return f"# Skill\n\n```{tag}\necho hi\n```\n"
+
+
+class ValidateToolCoherenceTests(unittest.TestCase):
+    """End-to-end behaviour of the fence/script vs allowed-tools rule."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.skill_dir = self._tmp.name
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    # --- Fence check ---
+
+    def test_bash_fence_with_bash_declared_silent(self) -> None:
+        write_skill_md(
+            self.skill_dir, allowed_tools="Bash", body=_bash_fence_body(),
+        )
+        errors, passes = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": "Bash"},
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(any("'Bash' declared" in p for p in passes))
+
+    def test_bash_fence_without_bash_declaration_fails(self) -> None:
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, passes = validate_tool_coherence(
+            self.skill_dir, {"description": "no bash declared"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertIn("Bash", fail_errors[0])
+        self.assertIn("SKILL.md", fail_errors[0])
+
+    def test_no_fence_no_scripts_silent(self) -> None:
+        write_skill_md(
+            self.skill_dir, body="# Skill\n\nplain text body\n",
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "trivial"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(fail_errors, [])
+        self.assertEqual(warn_errors, [])
+
+    def test_bash_arg_form_satisfies_rule(self) -> None:
+        write_skill_md(
+            self.skill_dir,
+            allowed_tools="Bash(git add *)",
+            body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir,
+            {"allowed-tools": "Bash(git add *)"},
+        )
+        self.assertEqual(errors, [])
+
+    def test_tilde_bash_fence_detected(self) -> None:
+        body = "# Skill\n\n~~~bash\necho hi\n~~~\n"
+        write_skill_md(self.skill_dir, body=body)
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "tilde fence"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+
+    def test_lowercase_bash_in_allowed_tools_does_not_satisfy(self) -> None:
+        # Per harness semantics, lowercase ``bash`` does not grant the
+        # PascalCase Bash tool.
+        write_skill_md(
+            self.skill_dir, allowed_tools="bash", body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": "bash"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+
+    def test_capability_fence_without_declaration_fails(self) -> None:
+        write_skill_md(
+            self.skill_dir, body="# Skill\n\nplain body\n",
+        )
+        write_capability_md(
+            self.skill_dir, "demo", body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "capability has fence"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertIn(
+            os.path.join("capabilities", "demo", "capability.md"),
+            fail_errors[0],
+        )
+
+    def test_other_fence_languages_supported(self) -> None:
+        for tag in ("sh", "shell", "zsh"):
+            with tempfile.TemporaryDirectory() as fresh:
+                write_skill_md(fresh, body=_bash_fence_body(tag))
+                errors, _ = validate_tool_coherence(
+                    fresh, {"description": "fence kind " + tag},
+                )
+                fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+                self.assertEqual(
+                    len(fail_errors), 1,
+                    f"fence ``{tag}`` should trigger FAIL: {errors!r}",
+                )
+
+    def test_allowed_tools_absent_with_fence_fails(self) -> None:
+        # The painful failure mode: field missing entirely.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(self.skill_dir, {})
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+
+    def test_yaml_list_form_of_allowed_tools(self) -> None:
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir,
+            {"allowed-tools": ["Bash", "Read"]},
+        )
+        self.assertEqual(errors, [])
+
+    def test_fence_inside_frontmatter_not_counted(self) -> None:
+        # A bash fence inside a frontmatter folded description (between
+        # the ``---`` markers) must not trigger the rule.
+        content = (
+            "---\n"
+            "name: demo-skill\n"
+            "description: >\n"
+            "  A description that mentions ```bash``` inline.\n"
+            "---\n\n"
+            "# Skill\n\nplain body\n"
+        )
+        write_text(os.path.join(self.skill_dir, "SKILL.md"), content)
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "..."},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fail_errors, [])
+
+    # --- Script-presence check ---
+
+    def test_scripts_dir_without_bash_declaration_warns(self) -> None:
+        write_skill_md(self.skill_dir, body="# Skill\n")
+        write_text(
+            os.path.join(self.skill_dir, "scripts", "noop.sh"),
+            "#!/usr/bin/env bash\n",
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "scripts present"},
+        )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("scripts/", warn_errors[0])
+        self.assertIn("Bash", warn_errors[0])
+
+    def test_empty_scripts_dir_still_warns(self) -> None:
+        write_skill_md(self.skill_dir, body="# Skill\n")
+        os.makedirs(os.path.join(self.skill_dir, "scripts"))
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "empty scripts dir"},
+        )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+
+    def test_scripts_dir_with_bash_declared_silent(self) -> None:
+        write_skill_md(
+            self.skill_dir, allowed_tools="Bash", body="# Skill\n",
+        )
+        write_text(
+            os.path.join(self.skill_dir, "scripts", "noop.sh"),
+            "#!/usr/bin/env bash\n",
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": "Bash"},
+        )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+
+    def test_scripts_absent_with_no_fence_silent(self) -> None:
+        write_skill_md(self.skill_dir, body="# Skill\n")
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "neither signal"},
+        )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+
+    def test_both_signals_present_fence_fails_and_scripts_warns(self) -> None:
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        write_text(
+            os.path.join(self.skill_dir, "scripts", "noop.sh"),
+            "#!/usr/bin/env bash\n",
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "both signals"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertEqual(len(warn_errors), 1)
+
+    def test_allowed_tools_absent_with_scripts_warns(self) -> None:
+        write_skill_md(self.skill_dir, body="# Skill\n")
+        os.makedirs(os.path.join(self.skill_dir, "scripts"))
+        errors, _ = validate_tool_coherence(self.skill_dir, {})
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
 
 
 if __name__ == "__main__":

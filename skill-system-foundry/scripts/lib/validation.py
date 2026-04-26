@@ -1,6 +1,8 @@
 """Shared validation functions for skill-system-foundry scripts."""
 
 import difflib
+import glob
+import os
 import re
 
 from .constants import (
@@ -12,8 +14,13 @@ from .constants import (
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
     HARNESS_TOOLS_CLAUDE_CODE,
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
+    TOOL_FENCE_LANGUAGES,
+    DIR_CAPABILITIES, DIR_SCRIPTS,
+    FILE_CAPABILITY_MD, FILE_SKILL_MD,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
+from .fence_scan import has_fence_with_language
+from .frontmatter import load_frontmatter
 
 
 # Regex used to strip the optional ``(...)`` argument suffix from
@@ -344,3 +351,147 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
         passes.append("frontmatter: all keys recognized")
 
     return errors, passes
+
+
+def validate_tool_coherence(
+    skill_root: str, frontmatter: dict | None,
+) -> tuple[list[str], list[str]]:
+    """Check that fence-language and `scripts/` signals match `allowed-tools`.
+
+    For every harness tool with a configured fence-language mapping
+    (``TOOL_FENCE_LANGUAGES``), verify that ``allowed-tools`` declares
+    the tool whenever:
+
+    - any of the in-scope Markdown files (SKILL.md and
+      ``capabilities/**/capability.md``) contains a fenced code block
+      whose language token is in the tool's mapping → FAIL, or
+    - the skill carries a top-level ``scripts/`` directory and the tool
+      is ``Bash`` (today the only tool with a script-presence rule —
+      keyed off mapping membership of ``"bash"`` so additional tools
+      can opt in by adding their own configuration entry) → WARN.
+
+    *frontmatter* is the parent skill's frontmatter dict (or ``None``
+    for skills without frontmatter / when called in capability mode
+    with the parent's frontmatter passed in by the caller).  When the
+    frontmatter declares the harness tool, both checks for that tool
+    are skipped.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+
+    declared = (
+        parse_allowed_tools_tokens(frontmatter.get("allowed-tools"))
+        if isinstance(frontmatter, dict)
+        else set()
+    )
+
+    in_scope_files = _gather_in_scope_files(skill_root)
+    has_scripts_dir = os.path.isdir(
+        os.path.join(skill_root, DIR_SCRIPTS)
+    )
+
+    for tool_name in sorted(TOOL_FENCE_LANGUAGES.keys()):
+        languages = TOOL_FENCE_LANGUAGES[tool_name]
+        if tool_name in declared:
+            passes.append(
+                f"tool-coherence: '{tool_name}' declared in allowed-tools"
+            )
+            continue
+
+        # Fence check (FAIL)
+        offending: list[str] = []
+        for path in in_scope_files:
+            if _file_has_fence_in_languages(path, languages):
+                offending.append(os.path.relpath(path, skill_root))
+        if offending:
+            errors.append(
+                f"{LEVEL_FAIL}: [foundry] '{tool_name}' fence(s) found in "
+                f"{', '.join(sorted(offending))} but '{tool_name}' is not "
+                "declared in 'allowed-tools' — the harness will block the "
+                f"tool at runtime.  Add '{tool_name}' (or scoped form like "
+                f"'{tool_name}(...)') to 'allowed-tools' frontmatter."
+            )
+
+        # Script-presence check (WARN) — currently only meaningful for
+        # tools whose fence-language set includes "bash" (i.e. shell
+        # primitives that scripts/ would invoke).  Other tools can opt
+        # in later by adding their own check; today this stays
+        # data-driven via the fence-language set.
+        if has_scripts_dir and "bash" in languages:
+            errors.append(
+                f"{LEVEL_WARN}: [foundry] skill has a 'scripts/' directory "
+                f"but '{tool_name}' is not declared in 'allowed-tools' — "
+                f"add '{tool_name}' if scripts will run via the harness "
+                f"shell tool."
+            )
+
+    return errors, passes
+
+
+def _gather_in_scope_files(skill_root: str) -> list[str]:
+    """Return absolute paths of files the coherence rule scans for fences.
+
+    Scope: ``SKILL.md`` at the skill root + every
+    ``capabilities/<name>/capability.md`` one directory deep.  Returns
+    sorted, deduplicated paths so finding ordering is stable across
+    platforms.
+    """
+    seen: set[str] = set()
+    matches: list[str] = []
+    candidates: list[str] = []
+    skill_md = os.path.join(skill_root, FILE_SKILL_MD)
+    if os.path.isfile(skill_md):
+        candidates.append(skill_md)
+    capability_glob = os.path.join(
+        skill_root, DIR_CAPABILITIES, "*", FILE_CAPABILITY_MD,
+    )
+    candidates.extend(glob.glob(capability_glob))
+    for path in candidates:
+        absolute = os.path.abspath(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        matches.append(absolute)
+    matches.sort()
+    return matches
+
+
+def _file_has_fence_in_languages(
+    file_path: str, languages: frozenset[str],
+) -> bool:
+    """Return True when *file_path* contains a fence whose language is
+    in *languages*.  Frontmatter is stripped before scanning so a
+    fence inside a folded description does not count.
+
+    Unreadable files are treated as ``False`` — coherence findings
+    must not depend on the rule being a filesystem-existence oracle;
+    the caller's other checks already report I/O failures elsewhere.
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    except (OSError, UnicodeDecodeError):
+        return False
+    body = _strip_frontmatter_for_scan(content)
+    return has_fence_with_language(body, languages)
+
+
+def _strip_frontmatter_for_scan(content: str) -> str:
+    """Drop a leading ``---``-delimited frontmatter block if present.
+
+    Mirrors ``prose_yaml._strip_frontmatter``'s intent — fences inside
+    a folded-block description must not be counted as body fences.
+    Uses ``load_frontmatter``'s splitter indirectly via re-using the
+    project's frontmatter convention (a leading ``---`` line opens the
+    block; the next standalone ``---`` line closes it).  Lines after
+    the closing delimiter form the scannable body.
+    """
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return content
+    for index in range(1, len(lines)):
+        if lines[index].rstrip("\r\n") == "---":
+            return "".join(lines[index + 1:])
+    return content
