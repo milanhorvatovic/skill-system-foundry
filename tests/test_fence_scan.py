@@ -112,6 +112,28 @@ class ExtractFencesShapeTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["text"], "echo hi")
 
+    def test_info_string_suffix_after_language_token(self) -> None:
+        # CommonMark allows arbitrary info-string content after the
+        # language token (separated by whitespace).  The extractor
+        # captures the language and discards the suffix.
+        text = "```yaml example.yml\nkey: value\n```\n"
+        records = extract_fences(text)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["language"], "yaml")
+        self.assertEqual(records[0]["state"], "closed")
+
+    def test_info_string_suffix_with_tab_separator(self) -> None:
+        text = "```bash\textra-info\necho hi\n```\n"
+        records = extract_fences(text)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["language"], "bash")
+
+    def test_info_string_suffix_on_tilde_fence(self) -> None:
+        text = "~~~yaml example.yml\nkey: value\n~~~\n"
+        records = extract_fences(text)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["language"], "yaml")
+
 
 # ===================================================================
 # extract_fences — fence_chars filter

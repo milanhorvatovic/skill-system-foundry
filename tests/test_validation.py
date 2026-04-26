@@ -747,6 +747,27 @@ class ValidateToolCoherenceTests(unittest.TestCase):
             fail_errors[0],
         )
 
+    def test_nested_capability_fence_detected(self) -> None:
+        # Capabilities nested below the conventional one-level depth
+        # must still be scanned — matches the recursive glob used by
+        # the prose-YAML check.
+        write_skill_md(
+            self.skill_dir, body="# Skill\n\nplain body\n",
+        )
+        nested = os.path.join(
+            self.skill_dir, "capabilities", "group", "sub", "capability.md",
+        )
+        write_text(nested, _bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "nested capability"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertIn(
+            os.path.join("capabilities", "group", "sub", "capability.md"),
+            fail_errors[0],
+        )
+
     def test_other_fence_languages_supported(self) -> None:
         for tag in ("sh", "shell", "zsh"):
             with tempfile.TemporaryDirectory() as fresh:

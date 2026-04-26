@@ -20,7 +20,7 @@ from .constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 from .fence_scan import has_fence_with_language
-from .frontmatter import load_frontmatter
+from .frontmatter import strip_frontmatter_for_scan
 
 
 # Regex used to strip the optional ``(...)`` argument suffix from
@@ -434,9 +434,10 @@ def _gather_in_scope_files(skill_root: str) -> list[str]:
     """Return absolute paths of files the coherence rule scans for fences.
 
     Scope: ``SKILL.md`` at the skill root + every
-    ``capabilities/<name>/capability.md`` one directory deep.  Returns
-    sorted, deduplicated paths so finding ordering is stable across
-    platforms.
+    ``capabilities/**/capability.md`` (any depth) — matches the
+    recursive glob used by ``prose_yaml.find_in_scope_files`` so the
+    two coherence rules agree on what is in scope.  Returns sorted,
+    deduplicated paths so finding ordering is stable across platforms.
     """
     seen: set[str] = set()
     matches: list[str] = []
@@ -445,9 +446,9 @@ def _gather_in_scope_files(skill_root: str) -> list[str]:
     if os.path.isfile(skill_md):
         candidates.append(skill_md)
     capability_glob = os.path.join(
-        skill_root, DIR_CAPABILITIES, "*", FILE_CAPABILITY_MD,
+        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
     )
-    candidates.extend(glob.glob(capability_glob))
+    candidates.extend(glob.glob(capability_glob, recursive=True))
     for path in candidates:
         absolute = os.path.abspath(path)
         if absolute in seen:
@@ -474,24 +475,5 @@ def _file_has_fence_in_languages(
             content = fh.read()
     except (OSError, UnicodeDecodeError):
         return False
-    body = _strip_frontmatter_for_scan(content)
+    body = strip_frontmatter_for_scan(content)
     return has_fence_with_language(body, languages)
-
-
-def _strip_frontmatter_for_scan(content: str) -> str:
-    """Drop a leading ``---``-delimited frontmatter block if present.
-
-    Mirrors ``prose_yaml._strip_frontmatter``'s intent — fences inside
-    a folded-block description must not be counted as body fences.
-    Uses ``load_frontmatter``'s splitter indirectly via re-using the
-    project's frontmatter convention (a leading ``---`` line opens the
-    block; the next standalone ``---`` line closes it).  Lines after
-    the closing delimiter form the scannable body.
-    """
-    lines = content.splitlines(keepends=True)
-    if not lines or lines[0].rstrip("\r\n") != "---":
-        return content
-    for index in range(1, len(lines)):
-        if lines[index].rstrip("\r\n") == "---":
-            return "".join(lines[index + 1:])
-    return content

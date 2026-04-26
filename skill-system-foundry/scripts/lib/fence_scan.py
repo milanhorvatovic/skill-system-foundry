@@ -15,7 +15,7 @@ callers that want frontmatter excluded must strip it before invoking
 import re
 
 
-_OPEN_FENCE_RE = re.compile(r"^(`{3}|~{3})([^\s`~]*)\s*$")
+_OPEN_FENCE_RE = re.compile(r"^(`{3}|~{3})([^\s`~]*)(\s.*)?$")
 
 
 def extract_fences(
@@ -33,10 +33,9 @@ def extract_fences(
       (matches the existing ``prose_yaml`` invisibility rule).
     - The opener line is followed immediately by an optional language
       token (no leading whitespace between the fence characters and the
-      token).  Anything trailing the token (e.g. an info-string suffix
-      separated by whitespace) is currently treated as invalid and the
-      opener is skipped.  This is conservative — relax later if a
-      consumer needs info-string support.
+      token).  Anything trailing the token after at least one whitespace
+      character is treated as a CommonMark info-string suffix and is
+      discarded — the language token alone is captured.
     - The closer is a column-0 line of exactly three identical fence
       characters of the **same kind** as the opener (a backtick fence
       closes only on backticks; a tilde fence closes only on tildes).

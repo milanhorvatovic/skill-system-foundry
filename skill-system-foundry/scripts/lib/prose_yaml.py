@@ -27,56 +27,13 @@ from .constants import (
     PROSE_YAML_IN_SCOPE_GLOBS, PROSE_YAML_OPT_OUT_MARKER,
 )
 from .fence_scan import extract_fences
-from .frontmatter import split_frontmatter
+from .frontmatter import strip_frontmatter_for_scan
 from .reporting import parse_finding_string, to_posix
 from .yaml_parser import parse_yaml_subset
 
 
 _BACKTICK_ONLY = frozenset({"`"})
 _YAML_CASE_VARIANTS = frozenset({"yaml", "yml"})
-
-
-def _strip_frontmatter(markdown_text: str) -> str:
-    """Drop a leading ``---``-delimited frontmatter block if present.
-
-    The prose-YAML check promises that frontmatter is not scanned —
-    without this, a ``yaml`` fence embedded in a folded description
-    would be validated as if it were body content.
-
-    Delegates to :func:`lib.frontmatter.split_frontmatter` so delimiter
-    rules stay in sync with ``load_frontmatter``.  To avoid misreading
-    a Markdown thematic break (``---`` at column 0) as frontmatter,
-    the candidate block is validated by ``parse_yaml_subset`` — only
-    content that parses as a YAML mapping is treated as frontmatter
-    and stripped.
-    """
-    frontmatter_raw, body_raw = split_frontmatter(markdown_text)
-    if frontmatter_raw is None:
-        return markdown_text
-    if body_raw is None:
-        # Opener present but no closing delimiter.  The block is
-        # ambiguous — malformed frontmatter vs a thematic break at
-        # line 1 of a file that happens not to have another ``---``.
-        # Stay conservative and scan the original text so body fences
-        # still reach the validator; ``load_frontmatter`` surfaces the
-        # parse error separately when frontmatter was in fact intended.
-        return markdown_text
-    frontmatter_str = frontmatter_raw.strip()
-    if frontmatter_str == "":
-        # Explicitly-empty frontmatter (``---\\n---\\n``) is still
-        # frontmatter for scope purposes — strip it.
-        return body_raw
-    try:
-        parsed = parse_yaml_subset(frontmatter_str, [])
-    except (ValueError, KeyError):
-        return markdown_text
-    # ``parse_yaml_subset`` returns ``{}`` for prose-like content too
-    # (lines with no ``key:`` pairs), so an empty dict is not enough
-    # evidence that the block is frontmatter.  Require at least one
-    # parsed key before stripping.
-    if not isinstance(parsed, dict) or not parsed:
-        return markdown_text
-    return body_raw
 
 
 def extract_yaml_fences(markdown_text: str) -> list[dict]:
@@ -201,7 +158,7 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
     Frontmatter blocks are **not** scanned; this function only
     inspects fenced code in the body.
     """
-    body = _strip_frontmatter(markdown_text)
+    body = strip_frontmatter_for_scan(markdown_text)
     return _validate_records(file_path, extract_yaml_fences(body))
 
 
@@ -370,7 +327,7 @@ def collect_prose_findings(
             )
             per_file_counts.append((display_path, 0))
             continue
-        records = extract_yaml_fences(_strip_frontmatter(text))
+        records = extract_yaml_fences(strip_frontmatter_for_scan(text))
         parsed_count = sum(1 for r in records if r["state"] == "parsed")
         checked += parsed_count
         per_file_counts.append((display_path, len(records)))
