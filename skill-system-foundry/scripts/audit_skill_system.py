@@ -28,8 +28,12 @@ The audit runs in two modes:
   rules iterate skills/<name>/.
 * **Skill-root mode** — <system-root> contains SKILL.md directly,
   i.e., it is itself a skill (typically the foundry meta-skill or any
-  integrator-built meta-skill).  The router-table consistency rule
-  also fires on this skill.
+  integrator-built meta-skill).  In this mode the top-level SKILL.md
+  is audited by the router-table consistency rule only; checks that
+  iterate discovered skills (spec compliance, dependency direction,
+  shared resources, capability entry naming, etc.) walk skills/<name>/
+  and do not treat the top-level skill as a discovered skill unless a
+  skills/ directory is also present.
 
 If neither mode applies (no skills/ and no top-level SKILL.md), the
 script runs a partial audit and emits a warning.

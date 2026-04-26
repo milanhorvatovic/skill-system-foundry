@@ -13,12 +13,14 @@ was deleted; a ``capabilities/`` directory without a router table means
 the router section was removed.  Standalone skills (neither half
 present) are a no-op.
 
-Trigger column content is treated as opaque — its only audit role is to
-identify the canonical 3-column header.  Cells may include the escape
-sequence ``\\|`` to embed a literal pipe.  The Path column must be the
-literal string ``capabilities/<name>/capability.md`` (no backticks, no
-markdown link, no fragment, no leading ``./``).  The Capability column
-must equal ``<name>`` from the Path column.
+Trigger column content is otherwise treated as opaque — its text helps
+identify the canonical 3-column header, and each router row must have
+a non-empty Trigger cell (an empty cell is a structural FAIL — see
+``audit_router_table``).  Cells may include the escape sequence ``\\|``
+to embed a literal pipe.  The Path column must be the literal string
+``capabilities/<name>/capability.md`` (no backticks, no markdown link,
+no fragment, no leading ``./``).  The Capability column must equal
+``<name>`` from the Path column.
 
 The router header tuple lives in ``constants.py`` (alongside
 ``DIR_CAPABILITIES`` and ``FILE_SKILL_MD``) — it is a structural
