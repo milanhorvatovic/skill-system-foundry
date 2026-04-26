@@ -5,22 +5,24 @@ whose header is ``| Capability | Trigger | Path |``.  This module
 parses that table and reports drift between the router rows and the
 ``capabilities/`` directory.
 
-The audit fires only on skills that have a ``capabilities/`` directory.
-Standalone skills (no router, no capabilities) are a no-op.  A skill
-that has a router-shaped table but no ``capabilities/`` directory is
-also a no-op — the rule's contract is "audit drift when both halves
-exist", which matches the standalone-vs-router architecture.
+The audit fires on any router skill — that is, any skill where either
+the ``SKILL.md`` declares a router table **or** a ``capabilities/``
+directory exists on disk.  When only one half is present the rule
+FAILs: a router table without ``capabilities/`` means the on-disk tree
+was deleted; a ``capabilities/`` directory without a router table means
+the router section was removed.  Standalone skills (neither half
+present) are a no-op.
 
 Trigger column content is treated as opaque — its only audit role is to
-identify the canonical 3-column header.  The Path column must be the
+identify the canonical 3-column header.  Cells may include the escape
+sequence ``\\|`` to embed a literal pipe.  The Path column must be the
 literal string ``capabilities/<name>/capability.md`` (no backticks, no
 markdown link, no fragment, no leading ``./``).  The Capability column
 must equal ``<name>`` from the Path column.
 
-The router header tuple lives here, not in ``configuration.yaml``: it
-is a parser-coupled structural constant (analogous to
-``DIR_CAPABILITIES`` and ``FILE_SKILL_MD`` in ``constants.py``), not a
-tunable validation rule like a limit, pattern, or reserved word.
+The router header tuple lives in ``constants.py`` (alongside
+``DIR_CAPABILITIES`` and ``FILE_SKILL_MD``) — it is a structural
+constant, not a tunable validation rule.
 """
 
 import os
@@ -30,23 +32,49 @@ from .constants import (
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
+    ROUTER_HEADERS,
+    ROUTER_HEADER_STRIP_CHARS,
 )
 
 
-ROUTER_HEADERS: tuple[str, str, str] = ("Capability", "Trigger", "Path")
-HEADER_STRIP_CHARS = " *`"
+_PIPE_ESCAPE_PLACEHOLDER = "\x00PIPE\x00"
+
+
+def _strip_fenced_regions(body: str) -> str:
+    """Replace fenced code blocks with blank lines.
+
+    Keeps line numbers stable so error messages from upstream tooling
+    still line up, while ensuring fenced documentation examples cannot
+    shadow the canonical router table (first-table-wins).
+    """
+    lines = body.splitlines()
+    in_fence = False
+    out: list[str] = []
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append("")
+            continue
+        out.append("" if in_fence else line)
+    return "\n".join(out)
 
 
 def _split_row(line: str) -> list[str] | None:
     """Split a Markdown table row into trimmed cells.
 
-    Returns ``None`` if *line* is not a pipe-delimited row.
+    Honors the CommonMark ``\\|`` escape so a Trigger cell containing
+    a literal pipe does not truncate the table.  Returns ``None`` if
+    *line* is not a pipe-delimited row.
     """
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return None
     inner = stripped[1:-1]
-    return [cell.strip() for cell in inner.split("|")]
+    inner = inner.replace("\\|", _PIPE_ESCAPE_PLACEHOLDER)
+    return [
+        cell.strip().replace(_PIPE_ESCAPE_PLACEHOLDER, "|")
+        for cell in inner.split("|")
+    ]
 
 
 def _is_separator_row(cells: list[str]) -> bool:
@@ -62,7 +90,7 @@ def _is_separator_row(cells: list[str]) -> bool:
 
 def _normalize_header_cell(cell: str) -> str:
     """Strip ``*``, backticks, and surrounding whitespace from a header cell."""
-    return cell.strip().strip(HEADER_STRIP_CHARS).strip()
+    return cell.strip().strip(ROUTER_HEADER_STRIP_CHARS).strip()
 
 
 def _is_router_header(cells: list[str]) -> bool:
@@ -79,32 +107,25 @@ def parse_router_table(body: str) -> list[tuple[str, str, str]] | None:
     ``Capability | Trigger | Path`` (after stripping ``*``, backticks,
     and whitespace) appears in *body*.
 
-    Code fences are *not* stripped before scanning — a router-shaped
-    table inside a fenced block still counts, because an AI agent
-    consuming the SKILL.md sees that content too.  Combined with the
-    first-table-wins rule above, this means a fenced documentation
-    example placed *before* the canonical router will be picked up
-    instead of it.  Authors who want to document the format in prose
-    should keep the example below the canonical router or use a
-    non-router header shape in the example.
+    Fenced code blocks are stripped before scanning so a documentation
+    example in a ```` ```markdown ```` block cannot shadow the canonical
+    router (first-table-wins).
 
     A header line that matches the tuple but is not followed by a
     Markdown separator row (``|---|---|---|``) does not terminate the
     scan — the parser advances past the pseudo-header and keeps looking
-    for a real table.  This lets a SKILL.md describe the header shape in
-    prose without blocking discovery of the actual router below.
+    for a real table.
     """
-    lines = body.splitlines()
+    cleaned = _strip_fenced_regions(body)
+    lines = cleaned.splitlines()
     i = 0
     while i < len(lines):
         cells = _split_row(lines[i])
         if cells is not None and _is_router_header(cells):
-            # Expect a separator row immediately after the header.
             if i + 1 >= len(lines):
                 return None
             sep_cells = _split_row(lines[i + 1])
             if sep_cells is None or not _is_separator_row(sep_cells):
-                # Not a real table — keep scanning for a later one.
                 i += 1
                 continue
             rows: list[tuple[str, str, str]] = []
@@ -114,7 +135,7 @@ def parse_router_table(body: str) -> list[tuple[str, str, str]] | None:
                 if row_cells is None:
                     break
                 if len(row_cells) != len(ROUTER_HEADERS):
-                    # Malformed row — stop the table here.
+                    # Mid-table malformed row — stop the table here.
                     break
                 rows.append(
                     (row_cells[0], row_cells[1], row_cells[2])
@@ -149,57 +170,71 @@ def _parse_path_cell(path_cell: str) -> str | None:
 def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     """Audit the router table of the skill at *skill_path*.
 
-    Returns a list of ``(level, message)`` tuples.  Returns ``[]`` when
-    the skill has no ``capabilities/`` directory (standalone skill —
-    rule does not apply) or when all checks pass.
+    Returns a list of ``(level, message)`` tuples.  Returns ``[]`` for
+    standalone skills (no ``SKILL.md`` router table and no
+    ``capabilities/`` directory) and when all checks pass.
 
     Failure modes (all FAIL):
 
     * ``capabilities/`` exists but ``SKILL.md`` is missing.
+    * ``SKILL.md`` has a router table but ``capabilities/`` is missing.
     * ``capabilities/`` exists but ``SKILL.md`` has no router-shaped
       table.
     * A router row's Path cell is not the literal
       ``capabilities/<name>/capability.md``.
     * A router row's Capability cell does not equal the ``<name>``
       segment of its Path cell.  The path segment is still recorded as
-      "declared", so the orphan check below does not double-flag the
-      on-disk directory.
+      "declared" so the orphan check does not double-flag the on-disk
+      directory.
     * A router row's Path does not resolve to an existing
       ``capability.md``.
     * A capability subdirectory has a ``capability.md`` but no
       matching router row.
     """
     cap_dir = os.path.join(skill_path, DIR_CAPABILITIES)
-    if not os.path.isdir(cap_dir):
-        return []
+    has_cap_dir = os.path.isdir(cap_dir)
 
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
-    if not os.path.isfile(skill_md):
+    has_skill_md = os.path.isfile(skill_md)
+
+    if has_cap_dir and not has_skill_md:
         # find_skill_dirs silently drops directories without SKILL.md,
         # so no other rule reaches this case.  Flag it here; the
         # presence of capabilities/ proves the directory is meant to be
         # a router skill.
         return [(
             LEVEL_FAIL,
-            f"has {DIR_CAPABILITIES}/ but no {FILE_SKILL_MD}",
+            f"{DIR_CAPABILITIES}/ exists but {FILE_SKILL_MD} is missing",
         )]
 
-    with open(skill_md, "r", encoding="utf-8") as fh:
-        # Pass the full content; YAML frontmatter delimiters ('---') are
-        # not pipe rows and cannot be mistaken for a router header.
-        content = fh.read()
+    rows: list[tuple[str, str, str]] | None = None
+    if has_skill_md:
+        with open(skill_md, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        rows = parse_router_table(content)
 
-    rows = parse_router_table(content)
-    if rows is None:
+    if not has_cap_dir and rows is None:
+        # Standalone skill — neither half of the rule is present.
+        return []
+
+    if has_cap_dir and rows is None:
         return [(
             LEVEL_FAIL,
             f"{FILE_SKILL_MD} has {DIR_CAPABILITIES}/ but no router "
             f"table with header 'Capability | Trigger | Path'",
         )]
 
+    if not has_cap_dir and rows is not None:
+        return [(
+            LEVEL_FAIL,
+            f"{FILE_SKILL_MD} declares a router table but "
+            f"{DIR_CAPABILITIES}/ is missing",
+        )]
+
     findings: list[tuple[str, str]] = []
     declared: set[str] = set()
 
+    assert rows is not None  # narrowed above for the type checker
     for capability, _trigger, path in rows:
         segment = _parse_path_cell(path)
         if segment is None:
@@ -220,7 +255,7 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             # Continue with the path-based name so existence/orphan
             # checks still cover the cell that is on disk.
         declared.add(segment)
-        resolved = os.path.join(skill_path, path)
+        resolved = os.path.normpath(os.path.join(skill_path, path))
         if not os.path.isfile(resolved):
             findings.append((
                 LEVEL_FAIL,

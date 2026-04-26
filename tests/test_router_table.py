@@ -99,17 +99,52 @@ class ParseRouterTableTests(unittest.TestCase):
         rows = parse_router_table(body)
         self.assertEqual(rows, [("alpha", "t", "capabilities/alpha/capability.md")])
 
-    def test_table_inside_code_fence_is_recognized(self) -> None:
-        """Decision: don't strip fences — fenced tables count."""
+    def test_table_inside_code_fence_is_ignored(self) -> None:
+        """Fenced tables are stripped so doc examples cannot shadow the canonical router."""
         body = (
             "# Skill\n\n"
             "```markdown\n"
             + CANONICAL_TABLE
             + "```\n"
         )
+        self.assertIsNone(parse_router_table(body))
+
+    def test_fenced_doc_table_does_not_shadow_real_router(self) -> None:
+        """A fenced example placed before the real router must not win."""
+        decoy = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| decoy | x | capabilities/decoy/capability.md |\n"
+        )
+        body = (
+            "# Skill\n\n"
+            "Example format:\n\n"
+            "```markdown\n"
+            + decoy
+            + "```\n\n"
+            "## Capabilities\n\n"
+            + CANONICAL_TABLE
+        )
         rows = parse_router_table(body)
-        self.assertIsNotNone(rows)
-        self.assertEqual(len(rows or []), 2)
+        names = [r[0] for r in rows or []]
+        self.assertEqual(names, ["alpha", "beta"])
+
+    def test_trigger_cell_with_escaped_pipe_is_preserved(self) -> None:
+        """A Trigger cell containing ``\\|`` must not truncate the table."""
+        body = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| alpha | when alpha \\| beta is needed | capabilities/alpha/capability.md |\n"
+            "| gamma | t | capabilities/gamma/capability.md |\n"
+        )
+        rows = parse_router_table(body)
+        self.assertEqual(
+            rows,
+            [
+                ("alpha", "when alpha | beta is needed", "capabilities/alpha/capability.md"),
+                ("gamma", "t", "capabilities/gamma/capability.md"),
+            ],
+        )
 
     def test_header_without_separator_is_skipped(self) -> None:
         """A header row without a following separator is not a real table."""
@@ -164,7 +199,17 @@ class AuditRouterTableNoOpTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         level, msg = findings[0]
         self.assertEqual(level, LEVEL_FAIL)
-        self.assertIn("no SKILL.md", msg)
+        self.assertIn("SKILL.md is missing", msg)
+
+    def test_router_table_without_capabilities_dir_fails(self) -> None:
+        """SKILL.md declares a router but capabilities/ tree was deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, CANONICAL_TABLE, capability_dirs=[])
+            findings = audit_router_table(tmp)
+        self.assertEqual(len(findings), 1)
+        level, msg = findings[0]
+        self.assertEqual(level, LEVEL_FAIL)
+        self.assertIn("capabilities/ is missing", msg)
 
 
 # ===================================================================

@@ -71,6 +71,13 @@ PH_CAPABILITY_NAME = "<capability-name>"
 PH_CAPABILITY_TITLE = "<Capability Name>"
 PH_ROLE_TITLE = "<Role Name>"
 
+# Router Table — structural tokens for the SKILL.md router-table parser
+# (see lib/router_table.py).  Header values are matched after stripping
+# the characters in ROUTER_HEADER_STRIP_CHARS, so authors may decorate
+# the header (e.g., '**Capability**') without breaking discovery.
+ROUTER_HEADERS: tuple[str, str, str] = ("Capability", "Trigger", "Path")
+ROUTER_HEADER_STRIP_CHARS = " *`"
+
 # ===================================================================
 # Validation Rules (loaded from configuration.yaml)
 # ===================================================================
