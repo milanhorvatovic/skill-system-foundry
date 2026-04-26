@@ -282,7 +282,11 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
       "declared" so the orphan check does not double-flag the on-disk
       directory.
     * Two rows declare the same capability segment (duplicate router
-      entry).
+      entry).  Detected only when both rows have parseable Path cells —
+      two rows whose Paths both fail ``_parse_path_cell`` already each
+      surface a "malformed Path" FAIL, so the duplicate is not silently
+      lost; it is reported as two independent malformed rows rather
+      than one duplicate.
     * A router row's Path does not resolve to an existing
       ``capability.md``.
     * A capability subdirectory has a ``capability.md`` but no
