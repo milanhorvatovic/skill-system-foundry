@@ -1,6 +1,7 @@
 """Shared validation functions for skill-system-foundry scripts."""
 
 import difflib
+import re
 
 from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
@@ -9,8 +10,51 @@ from .constants import (
     RE_METADATA_VERSION,
     MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
+    HARNESS_TOOLS_CLAUDE_CODE,
+    RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
+
+
+# Regex used to strip the optional ``(...)`` argument suffix from
+# ``allowed-tools`` tokens before comparison.  Nested parens in
+# ``allowed-tools`` patterns are not realistic in practice, so a
+# non-greedy match is sufficient.
+_RE_PAREN_ARGS = re.compile(r"\([^)]*\)")
+
+
+def parse_allowed_tools_tokens(value: object) -> set[str]:
+    """Normalise an ``allowed-tools`` frontmatter value to bare tokens.
+
+    The agentskills.io spec defines ``allowed-tools`` as a
+    space-separated string; Claude Code accepts both that and a YAML
+    list.  Tokens may carry an optional ``(...)`` argument pattern
+    (e.g. ``Bash(git add *)``).  This helper accepts either form,
+    strips the parenthesised suffix, and returns the bare tokens as a
+    set so consumers can do membership / superset checks without
+    reparsing.
+
+    Returns an empty set for ``None``, non-string / non-list scalars,
+    or empty / whitespace-only input.
+    """
+    if value is None:
+        return set()
+    raw_pieces: list[str] = []
+    if isinstance(value, str):
+        raw_pieces.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                raw_pieces.append(item)
+    else:
+        return set()
+    tokens: set[str] = set()
+    for piece in raw_pieces:
+        cleaned = _RE_PAREN_ARGS.sub("", piece)
+        for token in cleaned.split():
+            if token:
+                tokens.add(token)
+    return tokens
 
 
 def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:

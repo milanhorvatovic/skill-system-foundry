@@ -16,7 +16,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.validation import validate_name
+from lib.validation import parse_allowed_tools_tokens, validate_name
 from lib.constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -565,6 +565,77 @@ class ValidateNameMultipleErrorsTests(unittest.TestCase):
         ]
         self.assertEqual(len(length_fails), 1)
         self.assertEqual(len(uppercase_fails), 1)
+
+
+# ===================================================================
+# parse_allowed_tools_tokens
+# ===================================================================
+
+
+class ParseAllowedToolsTokensTests(unittest.TestCase):
+    """Normalisation of ``allowed-tools`` values to bare tokens."""
+
+    def test_string_space_separated(self) -> None:
+        self.assertEqual(
+            parse_allowed_tools_tokens("Bash Read Write"),
+            {"Bash", "Read", "Write"},
+        )
+
+    def test_yaml_list_form(self) -> None:
+        self.assertEqual(
+            parse_allowed_tools_tokens(["Bash", "Read", "Write"]),
+            {"Bash", "Read", "Write"},
+        )
+
+    def test_yaml_list_with_argument_pattern(self) -> None:
+        self.assertEqual(
+            parse_allowed_tools_tokens(
+                ["Bash(git add *)", "Read"],
+            ),
+            {"Bash", "Read"},
+        )
+
+    def test_strips_paren_arguments(self) -> None:
+        self.assertEqual(
+            parse_allowed_tools_tokens("Bash(git add *) Read"),
+            {"Bash", "Read"},
+        )
+
+    def test_multiple_paren_args_in_string(self) -> None:
+        # Spec example: ``Bash(git:*) Bash(jq:*) Read``.  Both
+        # restricted Bash entries collapse to a single ``Bash`` token.
+        self.assertEqual(
+            parse_allowed_tools_tokens("Bash(git:*) Bash(jq:*) Read"),
+            {"Bash", "Read"},
+        )
+
+    def test_empty_string_returns_empty_set(self) -> None:
+        self.assertEqual(parse_allowed_tools_tokens(""), set())
+
+    def test_whitespace_only_returns_empty_set(self) -> None:
+        self.assertEqual(parse_allowed_tools_tokens("   \t  "), set())
+
+    def test_none_returns_empty_set(self) -> None:
+        self.assertEqual(parse_allowed_tools_tokens(None), set())
+
+    def test_empty_list_returns_empty_set(self) -> None:
+        self.assertEqual(parse_allowed_tools_tokens([]), set())
+
+    def test_non_string_non_list_returns_empty_set(self) -> None:
+        self.assertEqual(parse_allowed_tools_tokens(42), set())
+        self.assertEqual(parse_allowed_tools_tokens({"Bash": 1}), set())
+
+    def test_list_with_non_string_elements_skipped(self) -> None:
+        self.assertEqual(
+            parse_allowed_tools_tokens(["Bash", 42, None, "Read"]),
+            {"Bash", "Read"},
+        )
+
+    def test_case_sensitive(self) -> None:
+        # Lowercase ``bash`` is distinct from PascalCase ``Bash``.
+        tokens = parse_allowed_tools_tokens("bash Bash")
+        self.assertIn("bash", tokens)
+        self.assertIn("Bash", tokens)
 
 
 if __name__ == "__main__":
