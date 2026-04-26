@@ -995,8 +995,8 @@ class AuditRouterTableTests(unittest.TestCase):
     def test_missing_skill_md_with_capabilities_still_surfaces_fail(self) -> None:
         """A directory under skills/ with capabilities/ but no SKILL.md
         is invisible to find_skill_dirs.  The router-table rule must
-        still surface the missing-SKILL.md FAIL via its second-pass
-        discovery, otherwise the gap is silent.
+        still surface the missing-SKILL.md FAIL — find_router_audit_targets
+        catches the directory via its capabilities/ half.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skills", "demo-skill")

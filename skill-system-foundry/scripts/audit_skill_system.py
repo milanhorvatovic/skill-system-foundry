@@ -592,7 +592,9 @@ def audit_skill_system(
     # Router-table audit is the only per-skill rule that intentionally
     # scans a top-level SKILL.md (skill-root mode) and also reaches
     # capability-bearing directories that find_skill_dirs filters out.
-    # find_router_audit_targets returns the union of those sources.
+    # find_router_audit_targets returns every directory where the rule
+    # could possibly fire (one half or both present); audit_router_table
+    # itself returns [] for the no-router half-case.
     router_skills = find_router_audit_targets(system_root)
 
     for skill in router_skills:
@@ -600,14 +602,15 @@ def audit_skill_system(
         for level, message in rt_findings:
             errors.append(f"{level}: {skill['name']} {message}")
         if not rt_findings and verbose:
-            cap_dir = os.path.join(skill["path"], DIR_CAPABILITIES)
-            if os.path.isdir(cap_dir):
+            # Confirm cleanliness only for actual router skills.  A
+            # registered standalone (SKILL.md, no router, no
+            # capabilities/) returns [] from audit_router_table — there
+            # is nothing to confirm, so stay quiet.
+            if os.path.isdir(
+                os.path.join(skill["path"], DIR_CAPABILITIES)
+            ):
                 print(
                     f"  ✓ {skill['name']}: router table consistent"
-                )
-            else:
-                print(
-                    f"  - {skill['name']}: standalone (no router)"
                 )
 
     # --- Manifest ---
