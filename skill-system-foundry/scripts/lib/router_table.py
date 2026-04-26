@@ -144,8 +144,13 @@ def _split_row(line: str) -> list[str] | None:
 
 
 def _is_separator_row(cells: list[str]) -> bool:
-    """A separator row's cells are made of dashes, optional colons, and spaces."""
-    if not cells:
+    """A separator row's cells are made of dashes, optional colons, and spaces.
+
+    Also requires the cell count to match ``ROUTER_HEADERS`` so a
+    malformed separator (e.g., ``|---|---|`` under the canonical
+    3-column header) does not promote a non-table to the router table.
+    """
+    if len(cells) != len(ROUTER_HEADERS):
         return False
     for cell in cells:
         bare = cell.replace(":", "").replace("-", "").replace(" ", "")

@@ -276,6 +276,20 @@ class ParseRouterTableTests(unittest.TestCase):
         )
         self.assertIsNone(parse_router_table(body))
 
+    def test_canonical_header_with_two_cell_separator_returns_none(self) -> None:
+        """A canonical 3-cell header followed by a 2-cell separator is not a router table.
+
+        Without this guard a malformed table (e.g., authoring mistake or
+        prose example) would be promoted to the canonical router and
+        cause spurious failures elsewhere in the audit.
+        """
+        body = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|\n"
+            "| alpha | t | capabilities/alpha/capability.md |\n"
+        )
+        self.assertIsNone(parse_router_table(body))
+
     def test_empty_body_returns_none(self) -> None:
         self.assertIsNone(parse_router_table(""))
 
