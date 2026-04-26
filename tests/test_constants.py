@@ -105,6 +105,105 @@ class YamlConformanceConfigTests(unittest.TestCase):
         )
 
 
+class AllowedToolsCatalogTests(unittest.TestCase):
+    """Per-harness catalog constants exposed by ``allowed_tools.catalogs``."""
+
+    def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
+        # Names listed in the Claude Code skills documentation.
+        for tool in ("Bash", "Read", "Edit", "Write", "Grep", "Glob",
+                     "WebFetch", "WebSearch", "NotebookEdit", "Task", "Skill"):
+            self.assertIn(tool, constants.HARNESS_TOOLS_CLAUDE_CODE)
+
+    def test_cli_tools_excludes_pascalcase_harness_names(self) -> None:
+        for tool in ("Bash", "Read", "Edit"):
+            self.assertNotIn(tool, constants.CLI_TOOLS_CLAUDE_CODE)
+
+    def test_cli_tools_includes_lowercase_generic_set(self) -> None:
+        for tool in ("bash", "python", "git", "gh", "docker"):
+            self.assertIn(tool, constants.CLI_TOOLS_CLAUDE_CODE)
+
+    def test_known_tools_is_union(self) -> None:
+        self.assertEqual(
+            constants.KNOWN_TOOLS,
+            constants.HARNESS_TOOLS_CLAUDE_CODE
+            | constants.CLI_TOOLS_CLAUDE_CODE,
+        )
+
+    def test_known_tools_recognises_lowercase_bash(self) -> None:
+        # Backwards-compat: existing skills may list lowercase ``bash``.
+        # Recognition INFO must continue to treat it as known.
+        self.assertIn("bash", constants.KNOWN_TOOLS)
+
+    def test_known_tools_recognises_pascalcase_bash(self) -> None:
+        self.assertIn("Bash", constants.KNOWN_TOOLS)
+
+
+class ToolShapeRegexTests(unittest.TestCase):
+    """Token-shape regexes used by pattern-fallback recognition."""
+
+    def test_mcp_regex_matches_canonical_form(self) -> None:
+        self.assertTrue(
+            constants.RE_MCP_TOOL_NAME.match("mcp__server__tool"),
+        )
+
+    def test_mcp_regex_matches_mixed_case(self) -> None:
+        # Real MCP tool names mix case (e.g. Atlassian, addCommentToJiraIssue).
+        self.assertTrue(
+            constants.RE_MCP_TOOL_NAME.match(
+                "mcp__claude_ai_Atlassian__addCommentToJiraIssue"
+            ),
+        )
+
+    def test_mcp_regex_rejects_single_underscore(self) -> None:
+        self.assertIsNone(
+            constants.RE_MCP_TOOL_NAME.match("mcp_server__tool"),
+        )
+
+    def test_mcp_regex_rejects_missing_separator(self) -> None:
+        self.assertIsNone(
+            constants.RE_MCP_TOOL_NAME.match("mcp__servertool"),
+        )
+
+    def test_harness_shape_matches_pascalcase(self) -> None:
+        self.assertTrue(constants.RE_HARNESS_TOOL_SHAPE.match("Bash"))
+        self.assertTrue(constants.RE_HARNESS_TOOL_SHAPE.match("WebFetch"))
+
+    def test_harness_shape_matches_with_argument(self) -> None:
+        self.assertTrue(
+            constants.RE_HARNESS_TOOL_SHAPE.match("Bash(git add *)"),
+        )
+
+    def test_harness_shape_rejects_lowercase(self) -> None:
+        self.assertIsNone(constants.RE_HARNESS_TOOL_SHAPE.match("bash"))
+
+    def test_harness_shape_rejects_dashed(self) -> None:
+        self.assertIsNone(
+            constants.RE_HARNESS_TOOL_SHAPE.match("Some-Tool"),
+        )
+
+
+class ToolFenceLanguagesTests(unittest.TestCase):
+    """``TOOL_FENCE_LANGUAGES`` mapping shape and contents."""
+
+    def test_keyed_by_harness_tool_name(self) -> None:
+        self.assertIn("Bash", constants.TOOL_FENCE_LANGUAGES)
+
+    def test_bash_languages_starter_set(self) -> None:
+        self.assertEqual(
+            constants.TOOL_FENCE_LANGUAGES["Bash"],
+            frozenset({"bash", "sh", "shell", "zsh"}),
+        )
+
+    def test_values_are_frozensets(self) -> None:
+        for languages in constants.TOOL_FENCE_LANGUAGES.values():
+            self.assertIsInstance(languages, frozenset)
+
+    def test_keys_are_harness_tools(self) -> None:
+        # Every fence-language mapping must point at a recognised harness tool.
+        for tool_name in constants.TOOL_FENCE_LANGUAGES.keys():
+            self.assertIn(tool_name, constants.HARNESS_TOOLS_CLAUDE_CODE)
+
+
 class MissingSectionFailFastTests(unittest.TestCase):
     """Re-importing ``lib.constants`` against a config missing a
     required section raises ``RuntimeError`` at import time."""
@@ -165,6 +264,20 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 self._full_config_minus("yaml_conformance")
             )
         self.assertIn("yaml_conformance", str(ctx.exception))
+
+    def test_missing_tool_fence_languages_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus("tool_fence_languages")
+            )
+        self.assertIn("tool_fence_languages", str(ctx.exception))
+
+    def test_missing_allowed_tools_catalogs_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("allowed_tools", "catalogs")
+            )
+        self.assertIn("catalogs", str(ctx.exception))
 
     def _full_config_minus_nested(self, parent: str, child: str) -> str:
         """Return configuration text with *parent.child* stripped out.
