@@ -245,6 +245,35 @@ KNOWN_TOOLS = HARNESS_TOOLS_CLAUDE_CODE | CLI_TOOLS_CLAUDE_CODE
 RE_MCP_TOOL_NAME = re.compile(r"^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$")
 RE_HARNESS_TOOL_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]*(\(.*\))?$")
 
+# Tool fence-language signals (allowed-tools coherence rule).  Maps
+# a harness-tool name to the set of Markdown fence-language tokens
+# that count as "this tool is used in the body."  Sibling
+# ``TOOLS_INDICATING_SCRIPTS`` is the set of tools whose YAML entry
+# carries ``scripts_dir_indicator: true`` — those tools are also
+# expected to be declared whenever the skill carries a top-level
+# ``scripts/`` directory (WARN, not FAIL — non-shell ``scripts/``
+# trees are legitimate).  Adding a tool is a YAML edit only.
+if "fence_languages" not in _allowed_tools:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.allowed_tools.fence_languages'; this foundry build "
+        "is incomplete."
+    )
+_fence_languages = _allowed_tools["fence_languages"]
+TOOL_FENCE_LANGUAGES: dict[str, frozenset[str]] = {
+    tool_name: frozenset(entry["languages"])
+    for tool_name, entry in _fence_languages.items()
+}
+# The stdlib-only YAML subset parser returns every scalar as a
+# string (see ``yaml_parser.parse_yaml_subset``), so the boolean
+# ``scripts_dir_indicator`` arrives as the literal ``"true"``.
+# Compare against the string explicitly rather than ``is True``.
+TOOLS_INDICATING_SCRIPTS: frozenset[str] = frozenset(
+    tool_name
+    for tool_name, entry in _fence_languages.items()
+    if entry.get("scripts_dir_indicator") == "true"
+)
+
 # Metadata sub-field validation (foundry conventions — spec allows arbitrary values)
 _metadata = _skill["metadata"]
 RE_METADATA_VERSION = re.compile(_metadata["version"]["pattern"])
@@ -315,18 +344,6 @@ if "yaml_conformance" not in _config:
 _yaml_conf = _config["yaml_conformance"]
 YAML_CONFORMANCE_CONSTRUCT_IDS = tuple(_yaml_conf["construct_ids"])
 
-# --- Tool Fence Languages (allowed-tools coherence rule) ---
-if "tool_fence_languages" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'tool_fence_languages'; this foundry build is incomplete."
-    )
-_tool_fences = _config["tool_fence_languages"]
-TOOL_FENCE_LANGUAGES: dict[str, frozenset[str]] = {
-    tool_name: frozenset(languages)
-    for tool_name, languages in _tool_fences.items()
-}
-
 # --- Codex Configuration (agents/openai.yaml) ---
 _codex = _config["codex_config"]
 _codex_iface = _codex["interface"]
@@ -347,8 +364,8 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
-del _allowed_tools, _catalogs, _claude_code_catalog
+del _allowed_tools, _catalogs, _claude_code_catalog, _fence_languages
 del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
-del _prose, _yaml_conf, _tool_fences
+del _prose, _yaml_conf

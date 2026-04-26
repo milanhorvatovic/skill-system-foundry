@@ -203,6 +203,18 @@ class ToolFenceLanguagesTests(unittest.TestCase):
         for tool_name in constants.TOOL_FENCE_LANGUAGES.keys():
             self.assertIn(tool_name, constants.HARNESS_TOOLS_CLAUDE_CODE)
 
+    def test_tools_indicating_scripts_includes_bash(self) -> None:
+        # ``Bash`` is the only tool today with ``scripts_dir_indicator: true``;
+        # the set must include it so the WARN check fires.
+        self.assertIn("Bash", constants.TOOLS_INDICATING_SCRIPTS)
+
+    def test_tools_indicating_scripts_subset_of_harness_tools(self) -> None:
+        for tool_name in constants.TOOLS_INDICATING_SCRIPTS:
+            self.assertIn(tool_name, constants.HARNESS_TOOLS_CLAUDE_CODE)
+
+    def test_tools_indicating_scripts_is_frozenset(self) -> None:
+        self.assertIsInstance(constants.TOOLS_INDICATING_SCRIPTS, frozenset)
+
 
 class MissingSectionFailFastTests(unittest.TestCase):
     """Re-importing ``lib.constants`` against a config missing a
@@ -265,12 +277,14 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("yaml_conformance", str(ctx.exception))
 
-    def test_missing_tool_fence_languages_raises(self) -> None:
+    def test_missing_allowed_tools_fence_languages_raises(self) -> None:
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
-                self._full_config_minus("tool_fence_languages")
+                self._full_config_minus_nested(
+                    "allowed_tools", "fence_languages",
+                )
             )
-        self.assertIn("tool_fence_languages", str(ctx.exception))
+        self.assertIn("fence_languages", str(ctx.exception))
 
     def test_missing_allowed_tools_catalogs_raises(self) -> None:
         with self.assertRaises(RuntimeError) as ctx:

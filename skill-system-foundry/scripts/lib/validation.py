@@ -14,7 +14,7 @@ from .constants import (
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
     HARNESS_TOOLS_CLAUDE_CODE,
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
-    TOOL_FENCE_LANGUAGES,
+    TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
     DIR_CAPABILITIES, DIR_SCRIPTS,
     FILE_CAPABILITY_MD, FILE_SKILL_MD,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
@@ -414,17 +414,17 @@ def validate_tool_coherence(
                 f"'{tool_name}(...)') to 'allowed-tools' frontmatter."
             )
 
-        # Script-presence check (WARN) — currently only meaningful for
-        # tools whose fence-language set includes "bash" (i.e. shell
-        # primitives that scripts/ would invoke).  Other tools can opt
-        # in later by adding their own check; today this stays
-        # data-driven via the fence-language set.
-        if has_scripts_dir and "bash" in languages:
+        # Script-presence check (WARN) — fires only for tools whose
+        # YAML entry sets ``scripts_dir_indicator: true``.  Keeps the
+        # coupling between "tool" and "scripts/ is a presence signal"
+        # explicit in configuration, so adding a future tool is one
+        # YAML edit and the rule does not depend on a magic
+        # fence-language string.
+        if has_scripts_dir and tool_name in TOOLS_INDICATING_SCRIPTS:
             errors.append(
                 f"{LEVEL_WARN}: [foundry] skill has a 'scripts/' directory "
                 f"but '{tool_name}' is not declared in 'allowed-tools' — "
-                f"add '{tool_name}' if scripts will run via the harness "
-                f"shell tool."
+                f"add '{tool_name}' if scripts will run via the harness."
             )
 
     return errors, passes

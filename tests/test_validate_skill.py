@@ -3138,27 +3138,13 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
             ]
             self.assertEqual(warn_bash, [])
 
-    def test_capability_mode_consults_parent_frontmatter(self) -> None:
-        # Parent declares Bash; capability has bash fence — silent.
-        with tempfile.TemporaryDirectory() as tmp:
-            skill_dir = os.path.join(tmp, "demo-skill")
-            write_skill_md(
-                skill_dir, allowed_tools="Bash", body="# Skill\n",
-            )
-            write_capability_md(
-                skill_dir, "demo",
-                body="# Capability\n\n```bash\necho hi\n```\n",
-            )
-            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
-            errors, _ = validate_skill(cap_dir, is_capability=True)
-            bash_fails = [
-                e for e in errors
-                if e.startswith(LEVEL_FAIL) and "Bash" in e
-            ]
-            self.assertEqual(bash_fails, [])
-
-    def test_capability_mode_parent_missing_bash_fails(self) -> None:
-        # Parent does not declare Bash; capability has bash fence — FAIL.
+    def test_capability_mode_skips_coherence_rule(self) -> None:
+        # Coherence is owned by the skill-level invocation — running
+        # ``validate_skill`` against a single capability must not emit
+        # tool-coherence findings even when the capability body has
+        # a bash fence and the parent skill does not declare Bash.
+        # Otherwise auditing one capability would surface findings
+        # scoped to the whole sibling tree.
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "demo-skill")
             write_skill_md(skill_dir, body="# Skill\n")
@@ -3168,11 +3154,36 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
             )
             cap_dir = os.path.join(skill_dir, "capabilities", "demo")
             errors, _ = validate_skill(cap_dir, is_capability=True)
+            coherence_findings = [
+                e for e in errors
+                if "Bash" in e and (
+                    "fence" in e or "scripts/" in e
+                )
+            ]
+            self.assertEqual(coherence_findings, [])
+
+    def test_skill_level_invocation_catches_capability_fence(self) -> None:
+        # The complement to the test above: the skill-level run is
+        # the one that owns coherence, so it must surface a FAIL when
+        # a capability body has a bash fence and Bash is undeclared.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n")
+            write_capability_md(
+                skill_dir, "demo",
+                body="# Capability\n\n```bash\necho hi\n```\n",
+            )
+            errors, _ = validate_skill(skill_dir)
             bash_fails = [
                 e for e in errors
                 if e.startswith(LEVEL_FAIL) and "Bash" in e
+                and "fence" in e
             ]
             self.assertEqual(len(bash_fails), 1)
+            self.assertIn(
+                os.path.join("capabilities", "demo", "capability.md"),
+                bash_fails[0],
+            )
 
     def test_yaml_list_form_in_frontmatter_works_through_pipeline(self) -> None:
         # The wider validator currently expects a string and will WARN

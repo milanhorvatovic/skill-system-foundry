@@ -95,6 +95,24 @@ skill:
           - make
           - cargo
           - go
+    # Fence/script-presence signals for the coherence rule.  Maps a
+    # harness-tool name (PascalCase, must appear in
+    # ``catalogs.claude_code.harness_tools``) to its body-fence
+    # languages and an explicit flag indicating that a top-level
+    # ``scripts/`` directory is a presence signal for the same tool.
+    # Adding a tool is a YAML edit only — no Python changes required.
+    fence_languages:
+      Bash:
+        languages:
+          - bash
+          - sh
+          - shell
+          - zsh
+        # ``scripts/`` typically holds shell helpers invoked through
+        # the harness Bash tool.  Other tools (e.g. NotebookEdit) do
+        # not have an analogous filesystem signal — leave the flag
+        # off or omit it.
+        scripts_dir_indicator: true
 
   # metadata sub-field validation (foundry conventions — spec allows arbitrary values)
   metadata:
@@ -142,23 +160,6 @@ skill:
     - shared
     - capabilities
     - agents
-
-# ============================================================
-# Tool Fence Languages (allowed-tools coherence rule)
-# ============================================================
-# Maps harness-tool names (PascalCase, matching the entries in
-# allowed_tools.catalogs.claude_code.harness_tools) to the set of
-# Markdown fence-language tokens that signal usage of that tool in
-# SKILL.md or capability bodies.  When a body contains a fence whose
-# language is in the list and `allowed-tools` does not declare the
-# harness tool, validate_tool_coherence emits a FAIL.  Adding a new
-# tool is a YAML edit only — no Python changes required.
-tool_fence_languages:
-  Bash:
-    - bash
-    - sh
-    - shell
-    - zsh
 
 # ============================================================
 # Plain Scalar Divergence Detection
