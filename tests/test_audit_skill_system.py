@@ -1356,6 +1356,28 @@ class AuditVerboseBranchTests(unittest.TestCase):
                 audit_skill_system(tmpdir, verbose=True)
         self.assertIn("skipped", stdout.getvalue())
 
+    def test_verbose_skill_root_mode_announces_synthetic_audit_target(self) -> None:
+        """Skill-root mode prints a header line naming the synthetic target.
+
+        find_skill_dirs only walks <root>/skills/, so the existing
+        "Found: 0 skills, 0 capabilities, 0 roles" line would otherwise
+        contradict the per-skill findings the router-table rule emits
+        for the top-level SKILL.md.  The extra line keeps the verbose
+        header honest.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "my-meta-skill")
+            write_skill_md(skill_dir, name="my-meta-skill")
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                audit_skill_system(skill_dir, verbose=True)
+        output = stdout.getvalue()
+        self.assertIn("Skill-root mode: also auditing skill at", output)
+        # Resolved path appears (audit_skill_system abspaths system_root
+        # before printing, so the operator sees a real directory rather
+        # than a relative ".").
+        self.assertIn(os.path.abspath(skill_dir), output)
+
     def test_verbose_manifest_no_skills_section(self) -> None:
         """A manifest without a skills key prints 'no skills section'."""
         with tempfile.TemporaryDirectory() as tmpdir:
