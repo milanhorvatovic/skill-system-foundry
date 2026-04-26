@@ -1009,6 +1009,34 @@ class AuditRouterTableTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(skill_md_fails), 1)
 
+    def test_second_router_table_surfaces_warn_through_audit(self) -> None:
+        """A duplicate router table in SKILL.md surfaces a WARN through audit_skill_system."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | "
+                "capabilities/my-cap/capability.md |\n"
+                "\n## Stale duplicate\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| ignored | x | capabilities/ignored/capability.md |\n"
+            )
+            write_skill_md(skill_dir, body=body)
+            _write_capability_md(
+                os.path.join(skill_dir, "capabilities", "my-cap")
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "second router-shaped table" in e
+        ]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("demo-skill", warns[0])
+
 
 class AuditManifestTests(unittest.TestCase):
     """Tests for manifest checks in audit_skill_system."""

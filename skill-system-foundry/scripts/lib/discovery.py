@@ -24,7 +24,11 @@ class _SkillCandidate(NamedTuple):
 def _iter_skill_candidates(skills_dir: str) -> list[_SkillCandidate]:
     """One pass over ``<skills_dir>/<entry>``.
 
-    Returns one entry per immediate subdirectory.  Returns ``[]`` when
+    Returns one entry per immediate subdirectory, sorted by name so
+    findings emitted by downstream rules (notably the router-table
+    audit, which produces per-row findings) stay stable across
+    platforms — ``os.listdir`` order is filesystem-defined and
+    differs between APFS, ext4, and NTFS.  Returns ``[]`` when
     *skills_dir* is missing.  This is the single source of truth for
     "what is a skill candidate"; both ``find_skill_dirs`` and
     ``find_router_audit_targets`` consume it.
@@ -32,7 +36,7 @@ def _iter_skill_candidates(skills_dir: str) -> list[_SkillCandidate]:
     if not os.path.isdir(skills_dir):
         return []
     candidates: list[_SkillCandidate] = []
-    for entry in os.listdir(skills_dir):
+    for entry in sorted(os.listdir(skills_dir)):
         entry_path = os.path.join(skills_dir, entry)
         if not os.path.isdir(entry_path):
             continue

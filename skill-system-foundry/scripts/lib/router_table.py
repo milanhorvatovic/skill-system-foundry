@@ -32,6 +32,7 @@ from .constants import (
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
+    LEVEL_WARN,
     ROUTER_HEADERS,
     ROUTER_HEADER_STRIP_CHARS,
 )
@@ -171,22 +172,32 @@ def _is_router_header(cells: list[str]) -> bool:
 
 def parse_router_table(
     body: str,
-) -> tuple[list[tuple[str, str, str]], list[str]] | None:
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]] | None:
     """Return rows of the first router-shaped table in *body*.
 
-    Returns ``(rows, parse_errors)`` where ``rows`` is a list of
+    Returns ``(rows, findings)`` where ``rows`` is a list of
     ``(capability, trigger, path)`` tuples with each cell stripped, and
-    ``parse_errors`` is a list of human-readable messages for rows that
-    were structurally malformed (e.g., wrong column count) but appeared
-    inside the table region.  Returns ``None`` if no Markdown table
-    whose header is exactly ``Capability | Trigger | Path`` (after
-    stripping ``*``, backticks, and whitespace) appears in *body*.
+    ``findings`` is a list of ``(level, message)`` tuples — ``LEVEL_FAIL``
+    for structural row malformations inside the matched table, and
+    ``LEVEL_WARN`` when a second canonical-headed table is found later
+    in the body.  Returns ``None`` if no Markdown table whose header is
+    exactly ``Capability | Trigger | Path`` (after stripping ``*``,
+    backticks, and whitespace) appears in *body*.
 
     Mid-table rows whose column count differs from the header are
-    recorded in ``parse_errors`` and skipped, but scanning continues
-    so trailing valid rows still appear in ``rows``.  This prevents a
+    recorded as FAIL findings and skipped, but scanning continues so
+    trailing valid rows still appear in ``rows``.  This prevents a
     single malformed row from masking valid ones (and producing
     misleading orphan errors downstream).
+
+    Only the first router-shaped table is parsed (first-table-wins),
+    but the rest of the body is scanned for additional canonical
+    headers paired with valid separator rows.  Each additional table
+    emits a ``LEVEL_WARN`` finding pointing to its line number — the
+    audit was designed to catch drift, and a silently ignored second
+    table is exactly the failure mode that defeats it.  The parser
+    deliberately does not parse rows from the second table; the warning
+    is enough to direct the author to consolidate.
 
     Fenced code blocks are stripped before scanning so a documentation
     example in a ```` ```markdown ```` block cannot shadow the canonical
@@ -211,27 +222,59 @@ def parse_router_table(
                 i += 1
                 continue
             rows: list[tuple[str, str, str]] = []
-            parse_errors: list[str] = []
+            findings: list[tuple[str, str]] = []
             j = i + 2
             while j < len(lines):
                 row_cells = _split_row(lines[j])
                 if row_cells is None:
                     break
                 if len(row_cells) != len(ROUTER_HEADERS):
-                    parse_errors.append(
+                    findings.append((
+                        LEVEL_FAIL,
                         f"router table row at line {j + 1} has "
                         f"{len(row_cells)} columns (expected "
-                        f"{len(ROUTER_HEADERS)})"
-                    )
+                        f"{len(ROUTER_HEADERS)})",
+                    ))
                     j += 1
                     continue
                 rows.append(
                     (row_cells[0], row_cells[1], row_cells[2])
                 )
                 j += 1
-            return rows, parse_errors
+            findings.extend(_scan_extra_router_tables(lines, j))
+            return rows, findings
         i += 1
     return None
+
+
+def _scan_extra_router_tables(
+    lines: list[str], start: int,
+) -> list[tuple[str, str]]:
+    """Emit a WARN per additional canonical-headed table after *start*.
+
+    Detects a second (third, ...) router-shaped header followed by a
+    valid separator.  Does not parse rows — the warning's purpose is to
+    direct the author back to the canonical first table; row contents
+    are not authoritative once duplicated.
+    """
+    findings: list[tuple[str, str]] = []
+    k = start
+    while k < len(lines):
+        cells = _split_row(lines[k])
+        if cells is not None and _is_router_header(cells):
+            if k + 1 < len(lines):
+                sep_cells = _split_row(lines[k + 1])
+                if sep_cells is not None and _is_separator_row(sep_cells):
+                    findings.append((
+                        LEVEL_WARN,
+                        f"second router-shaped table found at line "
+                        f"{k + 1}; only the first is audited — "
+                        f"consolidate or remove the extra table",
+                    ))
+                    k += 2
+                    continue
+        k += 1
+    return findings
 
 
 def expected_path(capability_name: str) -> str:
@@ -267,29 +310,38 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     skill name when surfacing findings.  Do not embed the skill name
     into the messages here.
 
-    Failure modes (all FAIL), in emission order:
+    Failure modes, in emission order:
 
-    * ``capabilities/`` exists but ``SKILL.md`` is missing.
-    * ``capabilities/`` exists but ``SKILL.md`` has no router-shaped
-      table.
-    * ``SKILL.md`` has a router table but ``capabilities/`` is missing.
-    * A row inside the router table is structurally malformed (wrong
-      number of columns).  Subsequent valid rows are still parsed.
-    * A router row's Path cell is not the literal
+    * (FAIL) ``capabilities/`` exists but ``SKILL.md`` is missing.
+    * (FAIL) ``capabilities/`` exists but ``SKILL.md`` has no
+      router-shaped table.
+    * (FAIL) ``SKILL.md`` has a router table but ``capabilities/`` is
+      missing.
+    * (FAIL) A row inside the router table is structurally malformed
+      (wrong number of columns).  Subsequent valid rows are still
+      parsed.
+    * (WARN) A second canonical-headed router table appears in
+      ``SKILL.md``.  Only the first is audited; the warning directs
+      the author to consolidate.  Emitted before per-row checks so it
+      precedes findings that originate from the parsed (first) table.
+    * (FAIL) A router row's Trigger cell is empty.  Trigger content is
+      otherwise opaque, but emptiness is a structural failure (a
+      half-edited row).
+    * (FAIL) A router row's Path cell is not the literal
       ``capabilities/<name>/capability.md``.
-    * A router row's Capability cell does not equal the ``<name>``
-      segment of its Path cell.  The path segment is still recorded as
-      "declared" so the orphan check does not double-flag the on-disk
-      directory.
-    * Two rows declare the same capability segment (duplicate router
-      entry).  Detected only when both rows have parseable Path cells —
-      two rows whose Paths both fail ``_parse_path_cell`` already each
-      surface a "malformed Path" FAIL, so the duplicate is not silently
-      lost; it is reported as two independent malformed rows rather
-      than one duplicate.
-    * A router row's Path does not resolve to an existing
+    * (FAIL) A router row's Capability cell does not equal the
+      ``<name>`` segment of its Path cell.  The path segment is still
+      recorded as "declared" so the orphan check does not double-flag
+      the on-disk directory.
+    * (FAIL) Two rows declare the same capability segment (duplicate
+      router entry).  Detected only when both rows have parseable Path
+      cells — two rows whose Paths both fail ``_parse_path_cell``
+      already each surface a "malformed Path" FAIL, so the duplicate is
+      not silently lost; it is reported as two independent malformed
+      rows rather than one duplicate.
+    * (FAIL) A router row's Path does not resolve to an existing
       ``capability.md``.
-    * A capability subdirectory has a ``capability.md`` but no
+    * (FAIL) A capability subdirectory has a ``capability.md`` but no
       matching router row.
     """
     cap_dir = os.path.join(skill_path, DIR_CAPABILITIES)
@@ -332,13 +384,16 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             f"{DIR_CAPABILITIES}/ is missing",
         )]
 
-    rows, parse_errors = parsed
-    findings: list[tuple[str, str]] = []
-    for parse_error in parse_errors:
-        findings.append((LEVEL_FAIL, parse_error))
+    rows, parse_findings = parsed
+    findings: list[tuple[str, str]] = list(parse_findings)
 
     declared: set[str] = set()
-    for capability, _trigger, path in rows:
+    for capability, trigger, path in rows:
+        if not trigger:
+            findings.append((
+                LEVEL_FAIL,
+                f"router row '{capability}' has an empty Trigger cell",
+            ))
         segment = _parse_path_cell(path)
         if segment is None:
             findings.append((

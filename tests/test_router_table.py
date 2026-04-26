@@ -16,7 +16,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.constants import LEVEL_FAIL
+from lib.constants import LEVEL_FAIL, LEVEL_WARN
 from lib.router_table import (
     audit_router_table,
     expected_path,
@@ -51,16 +51,20 @@ CANONICAL_TABLE = (
 def _parse_rows(body: str) -> list[tuple[str, str, str]]:
     """Unwrap ``parse_router_table`` for tests that expect a clean parse.
 
-    Asserts that the parser found a router table and reported no parse
-    errors, then returns the row list.  Tests for the None case continue
-    to call ``parse_router_table`` directly.
+    Asserts that the parser found a router table and reported no FAIL
+    findings, then returns the row list.  WARN findings (e.g., the
+    "second router-shaped table" warning) are tolerated here; tests
+    that need to assert on warnings call ``parse_router_table``
+    directly.  Tests for the ``None`` case also call the parser
+    directly.
     """
     result = parse_router_table(body)
     if result is None:
         raise AssertionError("expected a router table in body, got None")
-    rows, errors = result
-    if errors:
-        raise AssertionError(f"unexpected parse errors: {errors}")
+    rows, findings = result
+    fails = [f for f in findings if f[0] == LEVEL_FAIL]
+    if fails:
+        raise AssertionError(f"unexpected parse failures: {fails}")
     return rows
 
 
@@ -102,9 +106,60 @@ class ParseRouterTableTests(unittest.TestCase):
             "|---|---|---|\n"
             "| ignored | x | capabilities/ignored/capability.md |\n"
         )
-        rows = _parse_rows(body)
+        result = parse_router_table(body)
+        assert result is not None
+        rows, findings = result
         names = [r[0] for r in rows]
         self.assertEqual(names, ["alpha", "beta"])
+        warns = [f for f in findings if f[0] == LEVEL_WARN]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("second router-shaped table", warns[0][1])
+
+    def test_third_router_table_emits_second_warning(self) -> None:
+        """Three canonical-headed tables → two WARN findings (one per extra)."""
+        extra = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| z | x | capabilities/z/capability.md |\n"
+        )
+        body = "# Skill\n\n" + CANONICAL_TABLE + "\n" + extra + "\n" + extra
+        result = parse_router_table(body)
+        assert result is not None
+        _, findings = result
+        warns = [f for f in findings if f[0] == LEVEL_WARN]
+        self.assertEqual(len(warns), 2)
+
+    def test_second_table_without_separator_does_not_warn(self) -> None:
+        """A pseudo-header without a real separator is not a second table."""
+        body = (
+            "# Skill\n\n"
+            + CANONICAL_TABLE
+            + "\nA pseudo header below:\n\n"
+            "| Capability | Trigger | Path |\n"
+            "Just text after the header, no separator.\n"
+        )
+        result = parse_router_table(body)
+        assert result is not None
+        _, findings = result
+        warns = [f for f in findings if f[0] == LEVEL_WARN]
+        self.assertEqual(warns, [])
+
+    def test_fenced_second_table_does_not_warn(self) -> None:
+        """A second table inside a code fence is stripped — no WARN."""
+        body = (
+            "# Skill\n\n"
+            + CANONICAL_TABLE
+            + "\n```markdown\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| example | x | capabilities/example/capability.md |\n"
+            "```\n"
+        )
+        result = parse_router_table(body)
+        assert result is not None
+        _, findings = result
+        warns = [f for f in findings if f[0] == LEVEL_WARN]
+        self.assertEqual(warns, [])
 
     def test_header_with_bold_and_backticks(self) -> None:
         body = (
@@ -440,6 +495,49 @@ class AuditRouterTableFailureTests(unittest.TestCase):
             any("duplicate row for 'alpha'" in m for m in msgs),
             f"expected duplicate-row FAIL, got: {msgs}",
         )
+
+    def test_empty_trigger_cell_fails(self) -> None:
+        """A row with an empty Trigger cell is a structural failure.
+
+        Trigger content is otherwise opaque, but emptiness is almost
+        certainly a half-edited row, so the audit flags it.  The
+        capability is still wired up correctly otherwise — only the
+        empty-trigger FAIL should surface.
+        """
+        table = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| alpha |  | capabilities/alpha/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, table, capability_dirs=["alpha"])
+            findings = audit_router_table(tmp)
+        self.assertEqual(len(findings), 1)
+        level, msg = findings[0]
+        self.assertEqual(level, LEVEL_FAIL)
+        self.assertIn("empty Trigger", msg)
+        self.assertIn("'alpha'", msg)
+
+    def test_second_router_table_emits_warn(self) -> None:
+        """A second canonical-headed table in SKILL.md surfaces a WARN.
+
+        The first table is still audited normally; the WARN directs
+        the author to consolidate.  The skill is otherwise clean, so
+        only the WARN should appear.
+        """
+        body = CANONICAL_TABLE + "\n## Stale\n\n" + (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| ignored | x | capabilities/ignored/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, body, capability_dirs=["alpha", "beta"])
+            findings = audit_router_table(tmp)
+        warns = [f for f in findings if f[0] == LEVEL_WARN]
+        fails = [f for f in findings if f[0] == LEVEL_FAIL]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("second router-shaped table", warns[0][1])
+        self.assertEqual(fails, [])
 
 
 # ===================================================================
