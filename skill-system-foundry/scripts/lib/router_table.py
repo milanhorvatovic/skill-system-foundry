@@ -141,7 +141,12 @@ def _is_separator_row(cells: list[str]) -> bool:
 
 
 def _normalize_header_cell(cell: str) -> str:
-    """Strip ``*``, backticks, and surrounding whitespace from a header cell."""
+    """Strip emphasis markers, backticks, and whitespace from a header cell.
+
+    The strip set covers both CommonMark italic forms (``*x*`` and
+    ``_x_``), bold (``**x**``), and inline code (``` `x` ```).  See
+    ``ROUTER_HEADER_STRIP_CHARS`` in ``constants.py``.
+    """
     return cell.strip().strip(ROUTER_HEADER_STRIP_CHARS).strip()
 
 

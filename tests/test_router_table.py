@@ -115,6 +115,21 @@ class ParseRouterTableTests(unittest.TestCase):
         rows = _parse_rows(body)
         self.assertEqual(rows, [("alpha", "t", "capabilities/alpha/capability.md")])
 
+    def test_header_with_underscore_italics(self) -> None:
+        """``_Capability_`` (CommonMark italic with underscores) is recognized.
+
+        CommonMark italic emphasis can be expressed with either ``*`` or
+        ``_``; the strip set must accept both so authors do not see an
+        opaque "no router table" failure for underscore decoration.
+        """
+        body = (
+            "| _Capability_ | _Trigger_ | _Path_ |\n"
+            "|---|---|---|\n"
+            "| alpha | t | capabilities/alpha/capability.md |\n"
+        )
+        rows = _parse_rows(body)
+        self.assertEqual(rows, [("alpha", "t", "capabilities/alpha/capability.md")])
+
     def test_table_inside_code_fence_is_ignored(self) -> None:
         """Fenced tables are stripped so doc examples cannot shadow the canonical router."""
         body = (
