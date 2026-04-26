@@ -507,6 +507,45 @@ class AuditRouterTableFailureTests(unittest.TestCase):
             f"unrecoverable path leaves the on-disk dir genuinely orphan, got: {msgs}",
         )
 
+    def test_traversal_segment_in_path_is_malformed(self) -> None:
+        """A Path segment of ``.`` or ``..`` must be flagged as malformed.
+
+        ``os.path.normpath`` would otherwise collapse such a path so it
+        could resolve to an unrelated ``capability.md`` and silently
+        escape the ``capabilities/<name>/`` shape the audit enforces.
+        """
+        for traversal in (".", ".."):
+            with self.subTest(segment=traversal):
+                table = (
+                    "| Capability | Trigger | Path |\n"
+                    "|---|---|---|\n"
+                    f"| alpha | t | capabilities/{traversal}/capability.md |\n"
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    _build_skill(tmp, table, capability_dirs=["alpha"])
+                    findings = audit_router_table(tmp)
+                msgs = [m for _, m in findings]
+                self.assertTrue(
+                    any("malformed Path" in m for m in msgs),
+                    f"expected malformed-Path FAIL for '{traversal}', got: {msgs}",
+                )
+
+    def test_backslash_segment_in_path_is_malformed(self) -> None:
+        """A Path segment containing a backslash is not a single capability name."""
+        table = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| alpha | t | capabilities/al\\pha/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, table, capability_dirs=["alpha"])
+            findings = audit_router_table(tmp)
+        msgs = [m for _, m in findings]
+        self.assertTrue(
+            any("malformed Path" in m for m in msgs),
+            f"expected malformed-Path FAIL for backslash segment, got: {msgs}",
+        )
+
     def test_capability_path_mismatch_fails(self) -> None:
         """Capability column != path segment is a FAIL."""
         table = (

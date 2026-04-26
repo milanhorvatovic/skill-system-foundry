@@ -303,7 +303,12 @@ def _parse_path_cell(path_cell: str) -> str | None:
     if not path_cell.startswith(prefix) or not path_cell.endswith(suffix):
         return None
     middle = path_cell[len(prefix):-len(suffix)]
-    if not middle or "/" in middle:
+    if (
+        not middle
+        or "/" in middle
+        or "\\" in middle
+        or middle in (".", "..")
+    ):
         return None
     return middle
 
