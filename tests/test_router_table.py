@@ -466,6 +466,36 @@ class StripFencedRegionsTests(unittest.TestCase):
         names = [r[0] for r in rows]
         self.assertEqual(names, ["alpha", "beta"])
 
+    def test_indented_4_space_backticks_are_not_a_fence(self) -> None:
+        """A line indented 4+ spaces is an indented code block, not a fence.
+
+        CommonMark §4.5 caps a fence opener at 0–3 leading spaces.
+        A 4-space-indented run of backticks is literal content and
+        must not strip the surrounding lines, so a real router table
+        following such a line stays visible.
+        """
+        body = (
+            "# Skill\n\n"
+            "    ```\n"  # 4-space indent — indented code block, NOT a fence
+            "    decoy line still inside the same indented block\n"
+            "\n"
+            "## Capabilities\n\n"
+            + CANONICAL_TABLE
+        )
+        rows = _parse_rows(body)
+        names = [r[0] for r in rows]
+        self.assertEqual(names, ["alpha", "beta"])
+
+    def test_3_space_indented_fence_is_recognized(self) -> None:
+        """0–3 leading spaces on a fence opener still counts as a fence."""
+        body = (
+            "# Skill\n\n"
+            "   ```markdown\n"  # 3-space indent — still a valid fence
+            + CANONICAL_TABLE
+            + "   ```\n"
+        )
+        self.assertIsNone(parse_router_table(body))
+
 
 if __name__ == "__main__":
     unittest.main()

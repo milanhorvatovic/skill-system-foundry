@@ -60,7 +60,10 @@ def _strip_fenced_regions(body: str) -> str:
     document treated as fenced.
 
     CommonMark indented (4-space) code blocks are **not** stripped —
-    only fenced blocks are.  Author router-table examples in fenced
+    only fenced blocks are.  Per CommonMark §4.5, a fence opener may
+    be indented 0–3 spaces; a line indented 4+ spaces is an indented
+    code block and the backticks (or tildes) are literal content, so
+    we leave it untouched.  Author router-table examples in fenced
     blocks so they cannot shadow the canonical router.
     """
     lines = body.splitlines()
@@ -69,7 +72,14 @@ def _strip_fenced_regions(body: str) -> str:
     out: list[str] = []
     for line in lines:
         stripped = line.lstrip()
+        indent = len(line) - len(stripped)
         if fence_char is None:
+            # CommonMark §4.5: fenced code blocks accept 0–3 leading
+            # spaces; 4+ spaces is an indented code block whose
+            # backticks/tildes are literal content.
+            if indent > 3:
+                out.append(line)
+                continue
             opener: str | None = None
             if stripped.startswith("```"):
                 opener = "`"
@@ -82,10 +92,13 @@ def _strip_fenced_regions(body: str) -> str:
             fence_len = _fence_run_length(stripped, fence_char)
             out.append("")
         else:
-            if stripped[:1] == fence_char:
+            # A closer is also constrained to 0–3 spaces of indent
+            # (CommonMark §4.5); a deeper-indented line cannot close
+            # the fence and is treated as content.
+            if indent <= 3 and stripped[:1] == fence_char:
                 run = _fence_run_length(stripped, fence_char)
                 # Closer must match opener length and have only
-                # whitespace after the run (CommonMark §4.5).
+                # whitespace after the run.
                 if run >= fence_len and stripped[run:].strip() == "":
                     fence_char = None
                     fence_len = 0
