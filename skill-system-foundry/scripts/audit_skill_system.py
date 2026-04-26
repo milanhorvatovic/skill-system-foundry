@@ -4,7 +4,8 @@ Validate the entire skill system structure for consistency.
 
 Checks: spec compliance, dependency direction, role composition,
 manifest consistency, nesting depth, shared resource usage,
-capability entry naming, and structural rules.
+capability entry naming, router-table consistency, and structural
+rules.
 
 Usage:
     python scripts/audit_skill_system.py <system-root> [--verbose]
@@ -19,22 +20,28 @@ Options:
                      roles.
     --json           Output results as machine-readable JSON.
 
-The <system-root> should contain a skills/ directory with skill
-subdirectories. This is the deployed system layout (e.g.,
-.agents/ or a standalone system directory), not the distribution
-repository root. See references/directory-structure.md for the
-expected layout.
+The audit runs in two modes:
 
-If skills/ is missing, the script runs a partial audit and emits a
-warning. Use a deployed system root for full audit coverage.
+* **System-root mode** — <system-root> contains a skills/ directory
+  with skill subdirectories.  This is the deployed system layout
+  (e.g., .agents/ or a standalone system directory).  All per-skill
+  rules iterate skills/<name>/.
+* **Skill-root mode** — <system-root> contains SKILL.md directly,
+  i.e., it is itself a skill (typically the foundry meta-skill or any
+  integrator-built meta-skill).  In this mode the top-level SKILL.md
+  is audited by the router-table consistency rule only; checks that
+  iterate discovered skills (spec compliance, dependency direction,
+  shared resources, capability entry naming, etc.) walk skills/<name>/
+  and do not treat the top-level skill as a discovered skill unless a
+  skills/ directory is also present.
 
-Note: point this at the deployed system root (the directory
-containing skills/), not at a specific skill directory or
-distribution repository root.
+If neither mode applies (no skills/ and no top-level SKILL.md), the
+script runs a partial audit and emits a warning.
 
 Examples:
     python scripts/audit_skill_system.py /path/to/project/.agents
     python scripts/audit_skill_system.py /path/to/system --verbose
+    python scripts/audit_skill_system.py /path/to/my-meta-skill
     python scripts/audit_skill_system.py /path/to/system --json
 """
 
@@ -59,6 +66,7 @@ from lib.reporting import (
 from lib.discovery import (
     find_skill_dirs,
     find_roles,
+    find_router_audit_targets,
     check_line_count,
     read_file,
 )
@@ -73,6 +81,7 @@ from lib.constants import (
     collect_foundry_config_findings,
 )
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
+from lib.router_table import audit_router_table
 
 
 def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
@@ -363,6 +372,9 @@ def audit_skill_system(
 
     skills_dir = os.path.join(system_root, DIR_SKILLS)
     has_skills_dir = os.path.isdir(skills_dir)
+    has_top_level_skill = os.path.isfile(
+        os.path.join(system_root, FILE_SKILL_MD)
+    )
 
     # Discover components
     skills = find_skill_dirs(system_root)
@@ -374,9 +386,19 @@ def audit_skill_system(
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
               f"{len(roles)} roles")
+        if has_top_level_skill:
+            # Skill-root mode: find_skill_dirs only walks <root>/skills/,
+            # so the count above does not include the synthetic
+            # skill-root entry that the router-table rule will audit.
+            # Surface it explicitly so the verbose header agrees with
+            # the findings about to be emitted.
+            print(f"Skill-root mode: also auditing skill at {system_root}")
         print()
 
-    if not has_skills_dir:
+    # Partial-audit WARN fires only when the audit cannot reach any
+    # skill at all.  In skill-root mode (top-level SKILL.md), the audit
+    # is a first-class single-skill audit — not a partial run.
+    if not has_skills_dir and not has_top_level_skill:
         errors.append(
             f"{LEVEL_WARN}: No {DIR_SKILLS}/ directory under system root — ran partial audit "
             "(distribution-repo mode). Point to deployed system root for full coverage."
@@ -574,15 +596,53 @@ def audit_skill_system(
                     f"  ✓ {skill['name']}/capabilities/{cap}/{FILE_CAPABILITY_MD}"
                 )
 
+    # --- Router Table ---
+    if verbose:
+        print("\n== Router Table ==")
+
+    # Router-table audit is the only per-skill rule that intentionally
+    # scans a top-level SKILL.md (skill-root mode) and also reaches
+    # capability-bearing directories that find_skill_dirs filters out.
+    # find_router_audit_targets returns every directory where the rule
+    # could possibly fire (one half or both present); audit_router_table
+    # itself returns [] for the no-router half-case.
+    router_skills = find_router_audit_targets(system_root)
+
+    for skill in router_skills:
+        rt_findings = audit_router_table(skill["path"])
+        for level, message in rt_findings:
+            errors.append(f"{level}: {skill['name']} {message}")
+        if not rt_findings and verbose:
+            # Confirm cleanliness only for actual router skills.  A
+            # registered standalone (SKILL.md, no router, no
+            # capabilities/) returns [] from audit_router_table — there
+            # is nothing to confirm, so stay quiet.
+            if os.path.isdir(
+                os.path.join(skill["path"], DIR_CAPABILITIES)
+            ):
+                print(
+                    f"  ✓ {skill['name']}: router table consistent"
+                )
+
     # --- Manifest ---
     if verbose:
         print("\n== Manifest ==")
 
     if not has_skills_dir:
-        # No skills/ directory — this is a distribution repo, not a deployed
-        # skill system.  Manifest check is not applicable.
+        # No skills/ directory — either a distribution repo or skill-root
+        # mode (top-level SKILL.md).  Manifest is a deployed-system
+        # concept and is not applicable in either case.
         if verbose:
-            print("  - skipped (no skills/ directory \u2014 not a deployed skill system)")
+            if has_top_level_skill:
+                print(
+                    "  - skipped (skill-root mode \u2014 manifest is a "
+                    "deployed-system concept)"
+                )
+            else:
+                print(
+                    "  - skipped (no skills/ directory \u2014 not a "
+                    "deployed skill system)"
+                )
     else:
         manifest_path = os.path.join(system_root, FILE_MANIFEST)
         if not os.path.exists(manifest_path):
@@ -657,9 +717,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "system_root",
         help=(
-            "Path to the skill system root (contains skills/, roles/). "
-            "This is the deployed system layout, not the distribution "
-            "repository root."
+            "Path to a skill system root (contains skills/, roles/) or "
+            "to a single skill root (contains SKILL.md directly).  "
+            "Skill-root mode triggers the router-table rule on the "
+            "target skill itself."
         ),
     )
     parser.add_argument(
