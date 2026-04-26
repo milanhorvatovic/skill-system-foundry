@@ -2221,11 +2221,35 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         # ``Bash(git add *)`` strips to ``Bash`` which is in the catalog,
         # so only ``MadeUp(arg)`` should be flagged as harness-shaped.
-        harness_shaped = [
-            e for e in info_errors if "harness-shaped" in e
-        ]
-        self.assertEqual(len(harness_shaped), 1)
-        self.assertIn("MadeUp", harness_shaped[0])
+        # No fully-unrecognized INFO should fire — ``add``, ``*)`` etc.
+        # never appear because the paren-strip happens before split().
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("harness-shaped", info_errors[0])
+        self.assertIn("MadeUp", info_errors[0])
+
+    def test_restricted_arg_form_recognised_as_single_tool(self) -> None:
+        """Bare ``Bash(git add *)`` survives whitespace tokenization.
+
+        Regression: previously ``value.split()`` ran before the
+        paren-strip, shredding the input into ``Bash(git``, ``add``,
+        ``*)`` and emitting a noisy "unrecognized tools" INFO.  After
+        the fix, the entire restricted form collapses to one ``Bash``
+        token and recognition is silent.
+        """
+        errors, passes = validate_allowed_tools("Bash(git add *)")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+        # Should also count as 1 tool, not 3.
+        count_passes = [p for p in passes if "1 tools" in p]
+        self.assertEqual(len(count_passes), 1)
+
+    def test_multiple_restricted_forms_silent(self) -> None:
+        """``Bash(git:*) Bash(jq:*) Read`` is silent — all paren-stripped."""
+        errors, passes = validate_allowed_tools(
+            "Bash(git:*) Bash(jq:*) Read"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
 
     def test_fully_unknown_garbage_emits_unrecognized_info(self) -> None:
         """Lowercase/dashed tokens not in any catalog emit the bare INFO."""

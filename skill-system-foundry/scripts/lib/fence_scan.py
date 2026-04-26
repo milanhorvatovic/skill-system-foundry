@@ -143,34 +143,15 @@ def has_fence_with_language(
     whose language token is in *languages*.
 
     Convenience predicate for callers that only need a yes/no answer
-    (e.g. the fence/script tool-coherence rule).  Uses
-    :func:`extract_fences` under the hood and short-circuits as soon as
-    one matching record is found.
+    (e.g. the fence/script tool-coherence rule).  Delegates to
+    :func:`extract_fences` so the two consumers cannot drift on
+    fence-edge semantics.  Skill markdown is small enough that walking
+    the full document once is cheaper than maintaining two scanners.
     """
-    if not markdown_text:
-        return False
-    text = markdown_text.replace("\r\n", "\n").replace("\r", "\n")
-    lines = text.split("\n")
-    n = len(lines)
-    i = 0
-    while i < n:
-        opener = _classify_opener(lines[i], fence_chars)
-        if opener is None:
-            i += 1
-            continue
-        marker, language = opener
-        if language in languages:
-            return True
-        # Skip past the matching closer (or to EOF if unterminated) to
-        # avoid mistaking body lines for new openers.
-        j = i + 1
-        terminated = False
-        while j < n:
-            if lines[j] == marker:
-                terminated = True
-                break
-            j += 1
-        if not terminated:
-            return False
-        i = j + 1
-    return False
+    return bool(
+        extract_fences(
+            markdown_text,
+            languages=languages,
+            fence_chars=fence_chars,
+        )
+    )

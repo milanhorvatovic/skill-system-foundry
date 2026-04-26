@@ -162,7 +162,14 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
         errors.append(f"{LEVEL_WARN}: [spec] 'allowed-tools' is empty")
         return errors, passes
 
-    tools = value.split()
+    # Strip ``(...)`` argument suffixes *before* splitting on whitespace
+    # so restricted-tool forms like ``Bash(git add *)`` survive the
+    # tokenizer as a single ``Bash`` token instead of three garbage
+    # pieces (``Bash(git``, ``add``, ``*)``).  The same helper is used
+    # by ``validate_tool_coherence`` via ``parse_allowed_tools_tokens``,
+    # which keeps the two recognition paths aligned.
+    cleaned = _RE_PAREN_ARGS.sub("", value)
+    tools = cleaned.split()
     if len(tools) > MAX_ALLOWED_TOOLS:
         errors.append(
             f"{LEVEL_WARN}: [foundry] 'allowed-tools' lists {len(tools)} tools "
@@ -182,12 +189,9 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
             continue
         if RE_MCP_TOOL_NAME.match(token):
             continue
-        # Strip ``(...)`` so the shape check accepts ``Bash(git add *)``
-        # and similar restricted-tool forms.
-        bare = _RE_PAREN_ARGS.sub("", token)
-        if RE_HARNESS_TOOL_SHAPE.match(token) and bare not in HARNESS_TOOLS_CLAUDE_CODE:
+        if RE_HARNESS_TOOL_SHAPE.match(token):
             harness_shaped.append(token)
-        elif bare not in KNOWN_TOOLS:
+        else:
             fully_unknown.append(token)
 
     if harness_shaped:
@@ -365,10 +369,12 @@ def validate_tool_coherence(
     - any of the in-scope Markdown files (SKILL.md and
       ``capabilities/**/capability.md``) contains a fenced code block
       whose language token is in the tool's mapping → FAIL, or
-    - the skill carries a top-level ``scripts/`` directory and the tool
-      is ``Bash`` (today the only tool with a script-presence rule —
-      keyed off mapping membership of ``"bash"`` so additional tools
-      can opt in by adding their own configuration entry) → WARN.
+    - the skill carries a top-level ``scripts/`` directory and the
+      tool's YAML entry sets ``scripts_dir_indicator: true`` (gated by
+      ``TOOLS_INDICATING_SCRIPTS``; today populated only for
+      ``Bash``) → WARN.  Adding a new tool to the script-presence rule
+      is a YAML edit only — set the flag on its ``fence_languages``
+      entry and the rule fires automatically.
 
     *frontmatter* is the parent skill's frontmatter dict (or ``None``
     for skills without frontmatter / when called in capability mode
@@ -434,10 +440,14 @@ def _gather_in_scope_files(skill_root: str) -> list[str]:
     """Return absolute paths of files the coherence rule scans for fences.
 
     Scope: ``SKILL.md`` at the skill root + every
-    ``capabilities/**/capability.md`` (any depth) — matches the
-    recursive glob used by ``prose_yaml.find_in_scope_files`` so the
-    two coherence rules agree on what is in scope.  Returns sorted,
-    deduplicated paths so finding ordering is stable across platforms.
+    ``capabilities/**/capability.md`` (any depth).  This is a
+    deliberate subset of ``PROSE_YAML_IN_SCOPE_GLOBS``, which also
+    covers ``references/**/*.md`` — reference files routinely embed
+    illustrative shell snippets (e.g. install-or-deployment commands)
+    that are not skill behaviour, so applying the coherence rule there
+    would force every reference doc to declare ``Bash`` even when the
+    skill itself never executes one.  Returns sorted, deduplicated
+    paths so finding ordering is stable across platforms.
     """
     seen: set[str] = set()
     matches: list[str] = []
