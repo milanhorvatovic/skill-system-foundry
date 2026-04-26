@@ -40,6 +40,14 @@ from .constants import (
 _PIPE_ESCAPE_PLACEHOLDER = "\x00PIPE\x00"
 
 
+def _fence_run_length(stripped: str, ch: str) -> int:
+    """Count the leading run of *ch* characters at the start of *stripped*."""
+    n = 0
+    while n < len(stripped) and stripped[n] == ch:
+        n += 1
+    return n
+
+
 def _strip_fenced_regions(body: str) -> str:
     """Replace fenced code blocks with blank lines.
 
@@ -48,25 +56,42 @@ def _strip_fenced_regions(body: str) -> str:
     shadow the canonical router table (first-table-wins).
 
     Recognizes both backtick (```` ``` ````) and tilde (``~~~``)
-    CommonMark fences.  A fence is closed by a marker of the same
-    family — opening with ```` ``` ```` and closing with ``~~~`` is
-    not balanced and would leave the rest of the document treated as
-    fenced.
+    CommonMark fences with arbitrary run length.  A fence is closed by
+    a marker of the **same family** whose run length is at least the
+    opener's; mixing families (opening with ```` ``` ```` and closing
+    with ``~~~``) is not balanced and would leave the rest of the
+    document treated as fenced.
+
+    CommonMark indented (4-space) code blocks are **not** stripped —
+    only fenced blocks are.  Author router-table examples in fenced
+    blocks so they cannot shadow the canonical router.
     """
     lines = body.splitlines()
-    fence_marker: str | None = None
+    fence_char: str | None = None
+    fence_len = 0
     out: list[str] = []
     for line in lines:
         stripped = line.lstrip()
-        if fence_marker is None:
-            if stripped.startswith("```") or stripped.startswith("~~~"):
-                fence_marker = stripped[:3]
-                out.append("")
+        if fence_char is None:
+            opener: str | None = None
+            if stripped.startswith("```"):
+                opener = "`"
+            elif stripped.startswith("~~~"):
+                opener = "~"
+            if opener is None:
+                out.append(line)
                 continue
-            out.append(line)
+            fence_char = opener
+            fence_len = _fence_run_length(stripped, fence_char)
+            out.append("")
         else:
-            if stripped.startswith(fence_marker):
-                fence_marker = None
+            if stripped[:1] == fence_char:
+                run = _fence_run_length(stripped, fence_char)
+                # Closer must match opener length and have only
+                # whitespace after the run (CommonMark §4.5).
+                if run >= fence_len and stripped[run:].strip() == "":
+                    fence_char = None
+                    fence_len = 0
             out.append("")
     return "\n".join(out)
 
@@ -111,17 +136,29 @@ def _is_router_header(cells: list[str]) -> bool:
     return tuple(_normalize_header_cell(c) for c in cells) == ROUTER_HEADERS
 
 
-def parse_router_table(body: str) -> list[tuple[str, str, str]] | None:
+def parse_router_table(
+    body: str,
+) -> tuple[list[tuple[str, str, str]], list[str]] | None:
     """Return rows of the first router-shaped table in *body*.
 
-    A row is ``(capability, trigger, path)`` with each cell stripped.
-    Returns ``None`` if no Markdown table whose header is exactly
-    ``Capability | Trigger | Path`` (after stripping ``*``, backticks,
-    and whitespace) appears in *body*.
+    Returns ``(rows, parse_errors)`` where ``rows`` is a list of
+    ``(capability, trigger, path)`` tuples with each cell stripped, and
+    ``parse_errors`` is a list of human-readable messages for rows that
+    were structurally malformed (e.g., wrong column count) but appeared
+    inside the table region.  Returns ``None`` if no Markdown table
+    whose header is exactly ``Capability | Trigger | Path`` (after
+    stripping ``*``, backticks, and whitespace) appears in *body*.
+
+    Mid-table rows whose column count differs from the header are
+    recorded in ``parse_errors`` and skipped, but scanning continues
+    so trailing valid rows still appear in ``rows``.  This prevents a
+    single malformed row from masking valid ones (and producing
+    misleading orphan errors downstream).
 
     Fenced code blocks are stripped before scanning so a documentation
     example in a ```` ```markdown ```` block cannot shadow the canonical
-    router (first-table-wins).
+    router (first-table-wins).  Indented (4-space) code blocks are not
+    stripped — see ``_strip_fenced_regions``.
 
     A header line that matches the tuple but is not followed by a
     Markdown separator row (``|---|---|---|``) does not terminate the
@@ -141,19 +178,25 @@ def parse_router_table(body: str) -> list[tuple[str, str, str]] | None:
                 i += 1
                 continue
             rows: list[tuple[str, str, str]] = []
+            parse_errors: list[str] = []
             j = i + 2
             while j < len(lines):
                 row_cells = _split_row(lines[j])
                 if row_cells is None:
                     break
                 if len(row_cells) != len(ROUTER_HEADERS):
-                    # Mid-table malformed row — stop the table here.
-                    break
+                    parse_errors.append(
+                        f"router table row at line {j + 1} has "
+                        f"{len(row_cells)} columns (expected "
+                        f"{len(ROUTER_HEADERS)})"
+                    )
+                    j += 1
+                    continue
                 rows.append(
                     (row_cells[0], row_cells[1], row_cells[2])
                 )
                 j += 1
-            return rows
+            return rows, parse_errors
         i += 1
     return None
 
@@ -192,6 +235,10 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     * ``SKILL.md`` has a router table but ``capabilities/`` is missing.
     * ``capabilities/`` exists but ``SKILL.md`` has no router-shaped
       table.
+    * A row inside the router table is structurally malformed (wrong
+      number of columns).  Subsequent valid rows are still parsed.
+    * Two rows declare the same capability segment (duplicate router
+      entry).
     * A router row's Path cell is not the literal
       ``capabilities/<name>/capability.md``.
     * A router row's Capability cell does not equal the ``<name>``
@@ -219,34 +266,36 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             f"{DIR_CAPABILITIES}/ exists but {FILE_SKILL_MD} is missing",
         )]
 
-    rows: list[tuple[str, str, str]] | None = None
+    parsed: tuple[list[tuple[str, str, str]], list[str]] | None = None
     if has_skill_md:
         with open(skill_md, "r", encoding="utf-8") as fh:
             content = fh.read()
-        rows = parse_router_table(content)
+        parsed = parse_router_table(content)
 
-    if not has_cap_dir and rows is None:
+    if not has_cap_dir and parsed is None:
         # Standalone skill — neither half of the rule is present.
         return []
 
-    if has_cap_dir and rows is None:
+    if has_cap_dir and parsed is None:
         return [(
             LEVEL_FAIL,
             f"{FILE_SKILL_MD} has {DIR_CAPABILITIES}/ but no router "
             f"table with header 'Capability | Trigger | Path'",
         )]
 
-    if not has_cap_dir and rows is not None:
+    if not has_cap_dir and parsed is not None:
         return [(
             LEVEL_FAIL,
             f"{FILE_SKILL_MD} declares a router table but "
             f"{DIR_CAPABILITIES}/ is missing",
         )]
 
+    rows, parse_errors = parsed
     findings: list[tuple[str, str]] = []
-    declared: set[str] = set()
+    for parse_error in parse_errors:
+        findings.append((LEVEL_FAIL, parse_error))
 
-    assert rows is not None  # narrowed above for the type checker
+    declared: set[str] = set()
     for capability, _trigger, path in rows:
         segment = _parse_path_cell(path)
         if segment is None:
@@ -264,6 +313,12 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             ))
             # Continue with the path-based name so existence/orphan
             # checks still cover the cell that is on disk.
+        if segment in declared:
+            findings.append((
+                LEVEL_FAIL,
+                f"router has duplicate row for '{segment}'",
+            ))
+            continue
         declared.add(segment)
         resolved = os.path.normpath(os.path.join(skill_path, path))
         if not os.path.isfile(resolved):
