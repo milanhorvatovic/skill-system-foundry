@@ -382,6 +382,13 @@ def audit_skill_system(
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
               f"{len(roles)} roles")
+        if has_top_level_skill:
+            # Skill-root mode: find_skill_dirs only walks <root>/skills/,
+            # so the count above does not include the synthetic
+            # skill-root entry that the router-table rule will audit.
+            # Surface it explicitly so the verbose header agrees with
+            # the findings about to be emitted.
+            print(f"Skill-root mode: also auditing skill at {system_root}")
         print()
 
     # Partial-audit WARN fires only when the audit cannot reach any
