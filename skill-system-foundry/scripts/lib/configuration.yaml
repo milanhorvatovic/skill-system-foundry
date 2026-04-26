@@ -53,31 +53,48 @@ skill:
 
   # allowed-tools validation (space-delimited tool names in frontmatter)
   allowed_tools:
-    known_tools:
-      - Bash
-      - Read
-      - Edit
-      - Write
-      - Glob
-      - Grep
-      - WebFetch
-      - Task
-      - bash
-      - python
-      - gh
-      - git
-      - docker
-      - npm
-      - pip
-      - curl
-      - wget
-      - node
-      - make
-      - cargo
-      - go
     # Upper bound on tool count — skills requesting too many tools
     # likely need to be split.  Increase if justified.
     max_tools: 20
+    # Per-harness catalogs of tool names recognized in the
+    # `allowed-tools` field.  Today only claude_code consumes this
+    # field; codex tool descriptors (MCP server type/transport/url)
+    # live under `codex_config:` and can migrate into this structure
+    # with their own bucket shape when convenient.
+    catalogs:
+      claude_code:
+        # Source: https://code.claude.com/docs/en/skills
+        # Last checked: 2026-04-26
+        harness_tools:
+          - Bash
+          - Read
+          - Edit
+          - Write
+          - Glob
+          - Grep
+          - WebFetch
+          - WebSearch
+          - NotebookEdit
+          - Task
+          - Skill
+        # Generic CLI names sometimes written into allowed-tools.
+        # NOT harness primitives — listing `bash` does not grant the
+        # harness Bash tool.  Retained so typo-detection on third-party
+        # skills does not regress.
+        cli_tools:
+          - bash
+          - python
+          - gh
+          - git
+          - docker
+          - npm
+          - pip
+          - curl
+          - wget
+          - node
+          - make
+          - cargo
+          - go
 
   # metadata sub-field validation (foundry conventions — spec allows arbitrary values)
   metadata:
@@ -125,6 +142,23 @@ skill:
     - shared
     - capabilities
     - agents
+
+# ============================================================
+# Tool Fence Languages (allowed-tools coherence rule)
+# ============================================================
+# Maps harness-tool names (PascalCase, matching the entries in
+# allowed_tools.catalogs.claude_code.harness_tools) to the set of
+# Markdown fence-language tokens that signal usage of that tool in
+# SKILL.md or capability bodies.  When a body contains a fence whose
+# language is in the list and `allowed-tools` does not declare the
+# harness tool, validate_tool_coherence emits a FAIL.  Adding a new
+# tool is a YAML edit only — no Python changes required.
+tool_fence_languages:
+  Bash:
+    - bash
+    - sh
+    - shell
+    - zsh
 
 # ============================================================
 # Plain Scalar Divergence Detection
