@@ -788,6 +788,42 @@ class ValidateToolCoherenceTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(len(fail_errors), 1)
 
+    def test_explicit_empty_string_suppresses_fence_fail(self) -> None:
+        # ``allowed-tools: ""`` is a deliberate "no tools" declaration —
+        # docs-only skills with example fences should not be forced to
+        # add a fake ``Bash`` entry.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, passes = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": ""},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(fail_errors, [])
+        self.assertEqual(warn_errors, [])
+        self.assertTrue(any("explicit empty" in p for p in passes))
+
+    def test_explicit_empty_list_suppresses_fence_fail(self) -> None:
+        # The YAML-list form (``allowed-tools: []``) is treated the
+        # same as the empty string — both parse to zero tokens.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": []},
+        )
+        self.assertEqual(errors, [])
+
+    def test_explicit_empty_suppresses_scripts_warn(self) -> None:
+        # The script-presence WARN is also gated on the explicit-empty
+        # opt-out — pure-docs skills that ship a non-shell ``scripts/``
+        # tree (Python helpers, asset generators) declare no tools and
+        # should not be nagged.
+        write_skill_md(self.skill_dir, body="# Skill\n")
+        os.makedirs(os.path.join(self.skill_dir, "scripts"))
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": ""},
+        )
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warn_errors, [])
+
     def test_yaml_list_form_of_allowed_tools(self) -> None:
         write_skill_md(self.skill_dir, body=_bash_fence_body())
         errors, _ = validate_tool_coherence(

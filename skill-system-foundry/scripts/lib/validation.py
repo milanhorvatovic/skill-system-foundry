@@ -159,7 +159,15 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
         return errors, passes
 
     if not value.strip():
-        errors.append(f"{LEVEL_WARN}: [spec] 'allowed-tools' is empty")
+        # Empty / whitespace-only is a deliberate "no harness tools"
+        # declaration — the author chose to write the field but list
+        # nothing.  The harness still blocks every tool at runtime; the
+        # validator does not need to nag.  The sibling rule
+        # ``validate_tool_coherence`` also respects an explicitly empty
+        # ``allowed-tools`` and skips its fence/script checks, so docs-
+        # only skills with example fences do not need a fake ``Bash``
+        # declaration.
+        passes.append("allowed-tools: explicitly declares no tools")
         return errors, passes
 
     # Strip ``(...)`` argument suffixes *before* splitting on whitespace
@@ -393,16 +401,35 @@ def validate_tool_coherence(
     frontmatter declares the harness tool, both checks for that tool
     are skipped.
 
+    **Explicit-empty opt-out.**  When ``allowed-tools`` is *present* in
+    frontmatter and parses to zero tokens — ``allowed-tools: ""``,
+    ``allowed-tools: []``, or a paren-only value already flagged by
+    ``validate_allowed_tools`` — the author has deliberately declared
+    zero harness tools and the rule suppresses both fence and
+    ``scripts/`` checks.  Docs-only skills can therefore include
+    illustrative ``bash`` fences without being forced into a noise
+    ``Bash`` declaration.  Distinct from key-absent: when the field is
+    missing entirely the rule still fires (the painful #100 case where
+    the author hasn't thought about tools at all).
+
     Returns ``(errors, passes)`` per the standard validator contract.
     """
     errors: list[str] = []
     passes: list[str] = []
 
+    has_field = isinstance(frontmatter, dict) and "allowed-tools" in frontmatter
     declared = (
-        parse_allowed_tools_tokens(frontmatter.get("allowed-tools"))
-        if isinstance(frontmatter, dict)
+        parse_allowed_tools_tokens(frontmatter["allowed-tools"])
+        if has_field
         else set()
     )
+    if has_field and not declared:
+        # Author-declared zero tools — respect the declaration.
+        passes.append(
+            "tool-coherence: explicit empty 'allowed-tools' — "
+            "fence and scripts/ checks suppressed"
+        )
+        return errors, passes
 
     in_scope_files = _gather_in_scope_files(skill_root)
     has_scripts_dir = os.path.isdir(

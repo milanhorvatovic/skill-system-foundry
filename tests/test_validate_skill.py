@@ -2118,18 +2118,23 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         tools_part = info_errors[0].split("unrecognized tools: ")[1].split(" —")[0]
         self.assertEqual(tools_part, "foo")
 
-    def test_empty_value_returns_warn(self) -> None:
-        """An empty allowed-tools value produces a WARN."""
+    def test_empty_string_silently_declares_no_tools(self) -> None:
+        """``allowed-tools: ""`` is a deliberate "no tools" declaration."""
         errors, passes = validate_allowed_tools("")
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        self.assertEqual(len(warn_errors), 1)
-        self.assertIn("empty", warn_errors[0])
+        self.assertEqual(errors, [])
+        self.assertIn(
+            "allowed-tools: explicitly declares no tools",
+            passes,
+        )
 
-    def test_whitespace_only_returns_warn(self) -> None:
-        """A whitespace-only allowed-tools value produces a WARN."""
+    def test_whitespace_only_silently_declares_no_tools(self) -> None:
+        """Whitespace-only is treated the same as the empty string."""
         errors, passes = validate_allowed_tools("   ")
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        self.assertEqual(len(warn_errors), 1)
+        self.assertEqual(errors, [])
+        self.assertIn(
+            "allowed-tools: explicitly declares no tools",
+            passes,
+        )
 
     def test_exceeding_max_tools_returns_warn(self) -> None:
         """Exceeding MAX_ALLOWED_TOOLS produces a WARN."""
