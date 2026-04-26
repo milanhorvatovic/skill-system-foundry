@@ -1,9 +1,10 @@
 """Tests for lib/discovery.py.
 
 Covers ``find_skill_dirs`` (system-root, deployed-system layout),
-``_top_level_skill_entry`` (skill-root mode for meta-skill audits — private helper, exercised here as the only non-trivial discovery branch),
-``find_router_audit_targets`` (union of the above plus capability-only
-directories), and ``find_roles``.
+``find_router_audit_targets`` (union of registered skills, capability-only
+directories, and the skill-root entry), and ``find_roles``.  The skill-root
+branch is exercised exclusively through ``find_router_audit_targets`` —
+the underlying helper is private and intentionally not imported here.
 """
 
 import os
@@ -20,7 +21,6 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from lib.discovery import (
-    _top_level_skill_entry,
     find_roles,
     find_router_audit_targets,
     find_skill_dirs,
@@ -66,68 +66,80 @@ class FindSkillDirsSystemRootTests(unittest.TestCase):
 
 
 # ===================================================================
-# _top_level_skill_entry — skill-root mode
+# find_router_audit_targets — skill-root mode (top-level SKILL.md)
 # ===================================================================
 
 
-class TopLevelSkillEntryTests(unittest.TestCase):
-    """``SKILL.md`` at system_root yields a synthetic registered entry."""
+class FindRouterAuditTargetsSkillRootTests(unittest.TestCase):
+    """The skill-root branch is exercised through the public API.
 
-    def test_top_level_skill_md_returns_entry(self) -> None:
+    Each test names the directory shape it builds (top-level SKILL.md,
+    relative call, ``"."`` call, no SKILL.md, nested-only) and asserts
+    the resulting target list.  The internal helper that produces the
+    synthetic registered entry is private; covering it through
+    ``find_router_audit_targets`` upholds the privacy boundary while
+    exercising every branch.
+    """
+
+    def test_top_level_skill_md_yields_registered_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
-            entry = _top_level_skill_entry(skill_dir)
-        self.assertIsNotNone(entry)
-        assert entry is not None  # for the type checker
-        self.assertEqual(entry["name"], "my-meta-skill")
-        self.assertEqual(entry["type"], "registered")
+            targets = find_router_audit_targets(skill_dir)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["name"], "my-meta-skill")
+        self.assertEqual(targets[0]["type"], "registered")
         # Path shape mirrors the caller's ``system_root`` (matches
-        # ``find_skill_dirs``); the basename is computed from the
-        # absolute path so callers passing "." still get a real name.
-        self.assertEqual(entry["path"], skill_dir)
+        # ``find_skill_dirs``).
+        self.assertEqual(targets[0]["path"], skill_dir)
 
     def test_relative_path_is_preserved(self) -> None:
-        """_top_level_skill_entry must not abspath-promote the caller's path."""
+        """A relative ``system_root`` is not abspath-promoted on the target's path."""
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
             saved_cwd = os.getcwd()
             try:
                 os.chdir(tmp)
-                entry = _top_level_skill_entry("my-meta-skill")
+                targets = find_router_audit_targets("my-meta-skill")
             finally:
                 os.chdir(saved_cwd)
-        assert entry is not None
-        self.assertEqual(entry["path"], "my-meta-skill")
-        # name still resolves correctly even with a relative path.
-        self.assertEqual(entry["name"], "my-meta-skill")
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["path"], "my-meta-skill")
+        # The name resolves from the absolute path, so callers passing
+        # a relative path still get a real directory name.
+        self.assertEqual(targets[0]["name"], "my-meta-skill")
 
     def test_dot_path_resolves_name_from_abspath(self) -> None:
-        """When called with ``"."`` the name comes from the resolved abspath."""
+        """``find_router_audit_targets(".")`` uses the resolved basename for *name*."""
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
             saved_cwd = os.getcwd()
             try:
                 os.chdir(skill_dir)
-                entry = _top_level_skill_entry(".")
+                targets = find_router_audit_targets(".")
             finally:
                 os.chdir(saved_cwd)
-        assert entry is not None
-        self.assertEqual(entry["name"], "my-meta-skill")
-        self.assertEqual(entry["path"], ".")
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["name"], "my-meta-skill")
+        self.assertEqual(targets[0]["path"], ".")
 
-    def test_no_skill_md_returns_none(self) -> None:
+    def test_no_skill_md_at_root_yields_no_skill_root_entry(self) -> None:
+        """Without a top-level SKILL.md the skill-root branch contributes nothing."""
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(_top_level_skill_entry(tmp))
+            self.assertEqual(find_router_audit_targets(tmp), [])
 
-    def test_only_returns_top_level_not_subdirectory_skill(self) -> None:
-        """_top_level_skill_entry checks only system_root itself, not nested skills."""
+    def test_nested_skill_md_alone_does_not_synthesize_skill_root_entry(self) -> None:
+        """A nested ``skills/<name>/SKILL.md`` must not be promoted to a skill-root entry."""
         with tempfile.TemporaryDirectory() as tmp:
             inner = os.path.join(tmp, "skills", "inner-skill")
             write_skill_md(inner, name="inner-skill")
-            self.assertIsNone(_top_level_skill_entry(tmp))
+            targets = find_router_audit_targets(tmp)
+        # Only the nested skill should appear; no synthetic skill-root entry
+        # for *tmp* itself, because *tmp* has no SKILL.md.
+        names = [t["name"] for t in targets]
+        self.assertEqual(names, ["inner-skill"])
 
 
 # ===================================================================
