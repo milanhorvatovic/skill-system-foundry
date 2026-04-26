@@ -468,6 +468,21 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             recovered = _recover_segment(path)
             if recovered is not None:
                 declared.add(recovered)
+                # A malformed Path can ALSO point at a missing target.
+                # Run the existence check against the canonical
+                # ``capabilities/<recovered>/capability.md`` so the
+                # author sees both problems in one audit pass instead
+                # of fixing the decoration only to learn next run that
+                # the target file is missing too.
+                recovered_path = os.path.normpath(
+                    os.path.join(skill_path, expected_path(recovered))
+                )
+                if not os.path.isfile(recovered_path):
+                    findings.append((
+                        LEVEL_FAIL,
+                        f"router row '{recovered}' Path does not resolve "
+                        f"to an existing {FILE_CAPABILITY_MD}",
+                    ))
             continue
         if capability != segment:
             findings.append((

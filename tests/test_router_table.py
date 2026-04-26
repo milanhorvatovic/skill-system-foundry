@@ -485,6 +485,58 @@ class AuditRouterTableFailureTests(unittest.TestCase):
                     f"expected exactly one FAIL for {decorated!r}, got: {msgs}",
                 )
 
+    def test_recoverable_malformed_path_also_flags_missing_target(self) -> None:
+        """Recovery suppresses the orphan check, but a missing target
+        still surfaces.
+
+        When ``_recover_segment`` succeeds we add the segment to
+        ``declared`` so the on-disk orphan finding does not double-flag
+        a directory the row clearly intended to reference.  Without an
+        explicit existence check on the recovered path that suppression
+        would also hide a genuinely missing ``capability.md`` — the
+        author would fix the decoration, push, and only then learn the
+        target is absent.  Reporting both in one pass keeps the audit
+        complete.
+        """
+        decorations = (
+            "`capabilities/alpha/capability.md`",
+            "[link](capabilities/alpha/capability.md)",
+            "./capabilities/alpha/capability.md",
+            "capabilities/alpha/capability.md#anchor",
+        )
+        for decorated in decorations:
+            with self.subTest(path=decorated):
+                table = (
+                    "| Capability | Trigger | Path |\n"
+                    "|---|---|---|\n"
+                    f"| alpha | t | {decorated} |\n"
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    # capabilities/ exists but the recovered ``alpha``
+                    # subdirectory does not — recovery can resolve the
+                    # name from the decorated cell, yet there is no
+                    # capability.md to point at.
+                    _build_skill(tmp, table, capability_dirs=["beta"])
+                    os.remove(
+                        os.path.join(
+                            tmp, "capabilities", "beta", "capability.md"
+                        )
+                    )
+                    os.rmdir(os.path.join(tmp, "capabilities", "beta"))
+                    findings = audit_router_table(tmp)
+                msgs = [m for _, m in findings]
+                self.assertTrue(
+                    any("malformed Path" in m for m in msgs),
+                    f"expected malformed-Path FAIL for {decorated!r}, got: {msgs}",
+                )
+                self.assertTrue(
+                    any(
+                        "alpha" in m and "does not resolve" in m
+                        for m in msgs
+                    ),
+                    f"expected missing-target FAIL for recovered 'alpha', got: {msgs}",
+                )
+
     def test_unrecoverable_malformed_path_still_flags_orphan(self) -> None:
         """A malformed Path with no recoverable segment still surfaces the
         on-disk directory as orphan — there is no alternative signal that
