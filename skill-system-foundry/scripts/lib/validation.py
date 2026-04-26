@@ -141,9 +141,9 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     2. Token matches the MCP-tool name pattern
        (``mcp__server__tool``) — recognised silently; MCP servers are
        per-installation and unbounded by definition.
-    3. Token matches PascalCase harness shape (with optional
-       ``(...)`` argument suffix) but is not in the catalog — INFO
-       "harness-shaped but not in catalog".
+    3. Token matches PascalCase harness shape but is not in the
+       catalog (after the optional ``(...)`` argument suffix has been
+       stripped on entry) — INFO "harness-shaped but not in catalog".
     4. Anything else — INFO "unrecognized tool".
 
     Returns (errors, passes) tuple.
@@ -170,6 +170,17 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     # which keeps the two recognition paths aligned.
     cleaned = _RE_PAREN_ARGS.sub("", value)
     tools = cleaned.split()
+    if not tools:
+        # Non-empty input that collapses to zero tokens means the entire
+        # value was a parenthesised suffix (e.g. ``(Bash)`` — author
+        # likely wrapped a tool name in parens by mistake).  Without
+        # this guard the function would silently report "0 tools
+        # recognized", which is misleading.
+        errors.append(
+            f"{LEVEL_WARN}: [spec] 'allowed-tools' contains no tool names "
+            "after stripping argument suffixes — verify the value"
+        )
+        return errors, passes
     if len(tools) > MAX_ALLOWED_TOOLS:
         errors.append(
             f"{LEVEL_WARN}: [foundry] 'allowed-tools' lists {len(tools)} tools "

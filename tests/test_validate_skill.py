@@ -2251,6 +2251,22 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(info_errors, [])
 
+    def test_paren_only_value_warns(self) -> None:
+        """Paren-only inputs (``(Bash)``, ``(garbage)``) emit a WARN.
+
+        Regression: the pre-split paren-strip can collapse a non-empty
+        value to zero tokens — without this guard the function would
+        silently report "0 tools recognized" for an obviously broken
+        input.
+        """
+        for value in ("(Bash)", "(garbage)", "()"):
+            with self.subTest(value=value):
+                errors, passes = validate_allowed_tools(value)
+                warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+                self.assertEqual(len(warn_errors), 1)
+                self.assertIn("no tool names", warn_errors[0])
+                self.assertEqual(passes, [])
+
     def test_fully_unknown_garbage_emits_unrecognized_info(self) -> None:
         """Lowercase/dashed tokens not in any catalog emit the bare INFO."""
         errors, passes = validate_allowed_tools("Bash some-garbage")
