@@ -254,22 +254,22 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     skill name when surfacing findings.  Do not embed the skill name
     into the messages here.
 
-    Failure modes (all FAIL):
+    Failure modes (all FAIL), in emission order:
 
     * ``capabilities/`` exists but ``SKILL.md`` is missing.
-    * ``SKILL.md`` has a router table but ``capabilities/`` is missing.
     * ``capabilities/`` exists but ``SKILL.md`` has no router-shaped
       table.
+    * ``SKILL.md`` has a router table but ``capabilities/`` is missing.
     * A row inside the router table is structurally malformed (wrong
       number of columns).  Subsequent valid rows are still parsed.
-    * Two rows declare the same capability segment (duplicate router
-      entry).
     * A router row's Path cell is not the literal
       ``capabilities/<name>/capability.md``.
     * A router row's Capability cell does not equal the ``<name>``
       segment of its Path cell.  The path segment is still recorded as
       "declared" so the orphan check does not double-flag the on-disk
       directory.
+    * Two rows declare the same capability segment (duplicate router
+      entry).
     * A router row's Path does not resolve to an existing
       ``capability.md``.
     * A capability subdirectory has a ``capability.md`` but no
