@@ -96,10 +96,13 @@ def find_skill_root(system_root: str) -> dict[str, str] | None:
     """
     if not os.path.isfile(os.path.join(system_root, FILE_SKILL_MD)):
         return None
-    skill_root_abs = os.path.abspath(system_root)
+    # Compute name from the absolute path so callers passing "." still
+    # get a real directory name, but keep ``path`` as the input shape so
+    # it matches ``find_skill_dirs`` (which returns paths derived from
+    # the caller's ``system_root``).
     return {
-        "name": os.path.basename(skill_root_abs),
-        "path": skill_root_abs,
+        "name": os.path.basename(os.path.abspath(system_root)),
+        "path": system_root,
         "type": "registered",
     }
 

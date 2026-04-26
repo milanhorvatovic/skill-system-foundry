@@ -82,7 +82,41 @@ class FindSkillRootTests(unittest.TestCase):
         assert entry is not None  # for the type checker
         self.assertEqual(entry["name"], "my-meta-skill")
         self.assertEqual(entry["type"], "registered")
-        self.assertEqual(entry["path"], os.path.abspath(skill_dir))
+        # Path shape mirrors the caller's ``system_root`` (matches
+        # ``find_skill_dirs``); the basename is computed from the
+        # absolute path so callers passing "." still get a real name.
+        self.assertEqual(entry["path"], skill_dir)
+
+    def test_relative_path_is_preserved(self) -> None:
+        """find_skill_root must not abspath-promote the caller's path."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-meta-skill")
+            write_skill_md(skill_dir, name="my-meta-skill")
+            saved_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                entry = find_skill_root("my-meta-skill")
+            finally:
+                os.chdir(saved_cwd)
+        assert entry is not None
+        self.assertEqual(entry["path"], "my-meta-skill")
+        # name still resolves correctly even with a relative path.
+        self.assertEqual(entry["name"], "my-meta-skill")
+
+    def test_dot_path_resolves_name_from_abspath(self) -> None:
+        """When called with ``"."`` the name comes from the resolved abspath."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-meta-skill")
+            write_skill_md(skill_dir, name="my-meta-skill")
+            saved_cwd = os.getcwd()
+            try:
+                os.chdir(skill_dir)
+                entry = find_skill_root(".")
+            finally:
+                os.chdir(saved_cwd)
+        assert entry is not None
+        self.assertEqual(entry["name"], "my-meta-skill")
+        self.assertEqual(entry["path"], ".")
 
     def test_no_skill_md_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
