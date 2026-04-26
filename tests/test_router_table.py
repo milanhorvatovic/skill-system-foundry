@@ -432,6 +432,67 @@ class AuditRouterTableFailureTests(unittest.TestCase):
         msgs = [m for _, m in findings]
         self.assertTrue(any("malformed Path" in m for m in msgs))
 
+    def test_malformed_path_with_existing_dir_does_not_double_flag(self) -> None:
+        """A recoverable malformed Path (backticks, link wrapper, ./, #fragment)
+        whose target directory exists must surface exactly one FAIL —
+        the malformed Path — and not also the orphan finding.
+
+        Otherwise a single author error produces two findings and sends
+        the reader on a wrong-cause hunt.
+        """
+        decorations = (
+            "`capabilities/alpha/capability.md`",
+            "[link](capabilities/alpha/capability.md)",
+            "./capabilities/alpha/capability.md",
+            "capabilities/alpha/capability.md#anchor",
+        )
+        for decorated in decorations:
+            with self.subTest(path=decorated):
+                table = (
+                    "| Capability | Trigger | Path |\n"
+                    "|---|---|---|\n"
+                    f"| alpha | t | {decorated} |\n"
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    _build_skill(tmp, table, capability_dirs=["alpha"])
+                    findings = audit_router_table(tmp)
+                msgs = [m for _, m in findings]
+                self.assertTrue(
+                    any("malformed Path" in m for m in msgs),
+                    f"expected malformed-Path FAIL for {decorated!r}, got: {msgs}",
+                )
+                self.assertFalse(
+                    any("no matching router row" in m for m in msgs),
+                    f"orphan finding must be suppressed when the malformed "
+                    f"Path is recoverable, got: {msgs}",
+                )
+                self.assertEqual(
+                    len(findings), 1,
+                    f"expected exactly one FAIL for {decorated!r}, got: {msgs}",
+                )
+
+    def test_unrecoverable_malformed_path_still_flags_orphan(self) -> None:
+        """A malformed Path with no recoverable segment still surfaces the
+        on-disk directory as orphan — there is no alternative signal that
+        the row was meant to reference it."""
+        table = (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| alpha | t | totally-wrong-shape |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, table, capability_dirs=["alpha"])
+            findings = audit_router_table(tmp)
+        msgs = [m for _, m in findings]
+        self.assertTrue(
+            any("malformed Path" in m for m in msgs),
+            f"expected malformed-Path FAIL, got: {msgs}",
+        )
+        self.assertTrue(
+            any("capabilities/alpha/" in m and "no matching router row" in m for m in msgs),
+            f"unrecoverable path leaves the on-disk dir genuinely orphan, got: {msgs}",
+        )
+
     def test_capability_path_mismatch_fails(self) -> None:
         """Capability column != path segment is a FAIL."""
         table = (

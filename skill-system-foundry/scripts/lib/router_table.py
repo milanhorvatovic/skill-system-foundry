@@ -303,6 +303,39 @@ def _parse_path_cell(path_cell: str) -> str | None:
     return middle
 
 
+def _recover_segment(path_cell: str) -> str | None:
+    """Return a best-effort ``<name>`` segment when the strict parser fails.
+
+    Strips common author decorations — backticks, the ``[text](url)``
+    markdown link wrapper, leading ``./``, and a trailing ``#fragment``
+    — then re-runs the strict parser.  Returns ``None`` if nothing
+    recoverable is left.
+
+    The audit uses the recovered segment to suppress the orphan check
+    so a single author error (e.g., wrapping the path in backticks)
+    surfaces as exactly one FAIL ("malformed Path") instead of also
+    triggering "no matching router row" for a directory the row was
+    clearly trying to reference.
+    """
+    candidate = path_cell.strip()
+    # Backticks: ``` `path` ```
+    if candidate.startswith("`") and candidate.endswith("`"):
+        candidate = candidate[1:-1].strip()
+    # Markdown link: ``[text](path)``
+    if candidate.startswith("[") and candidate.endswith(")"):
+        bracket_end = candidate.find("](")
+        if bracket_end != -1:
+            candidate = candidate[bracket_end + 2:-1].strip()
+    # Leading ``./``
+    if candidate.startswith("./"):
+        candidate = candidate[2:]
+    # Fragment: ``path#anchor``
+    hash_pos = candidate.find("#")
+    if hash_pos != -1:
+        candidate = candidate[:hash_pos]
+    return _parse_path_cell(candidate)
+
+
 def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     """Audit the router table of the skill at *skill_path*.
 
@@ -406,6 +439,12 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
                 f"router row '{capability}' has malformed Path '{path}' "
                 f"(expected literal '{expected_path('<name>')}')",
             ))
+            # Recover a best-effort segment so the orphan check does not
+            # double-flag a directory the malformed row clearly
+            # references (e.g., "./capabilities/alpha/capability.md").
+            recovered = _recover_segment(path)
+            if recovered is not None:
+                declared.add(recovered)
             continue
         if capability != segment:
             findings.append((
@@ -420,6 +459,9 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
                 LEVEL_FAIL,
                 f"router has duplicate row for '{segment}'",
             ))
+            # The first occurrence already ran the existence check
+            # below; both rows resolve to the same path so a second
+            # ``os.path.isfile`` would just repeat the same answer.
             continue
         declared.add(segment)
         resolved = os.path.normpath(os.path.join(skill_path, path))
