@@ -37,9 +37,6 @@ from .constants import (
 )
 
 
-_PIPE_ESCAPE_PLACEHOLDER = "\x00PIPE\x00"
-
-
 def _fence_run_length(stripped: str, ch: str) -> int:
     """Count the leading run of *ch* characters at the start of *stripped*."""
     n = 0
@@ -102,16 +99,34 @@ def _split_row(line: str) -> list[str] | None:
     Honors the CommonMark ``\\|`` escape so a Trigger cell containing
     a literal pipe does not truncate the table.  Returns ``None`` if
     *line* is not a pipe-delimited row.
+
+    Uses a single-pass scan rather than a sentinel substitution so no
+    placeholder string is ever embedded in the cell content — this
+    avoids any collision with characters that happen to appear in the
+    input (e.g., NUL bytes from binary-tainted clipboards).
     """
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return None
     inner = stripped[1:-1]
-    inner = inner.replace("\\|", _PIPE_ESCAPE_PLACEHOLDER)
-    return [
-        cell.strip().replace(_PIPE_ESCAPE_PLACEHOLDER, "|")
-        for cell in inner.split("|")
-    ]
+    cells: list[str] = []
+    buf: list[str] = []
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch == "\\" and i + 1 < len(inner) and inner[i + 1] == "|":
+            buf.append("|")
+            i += 2
+            continue
+        if ch == "|":
+            cells.append("".join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    cells.append("".join(buf).strip())
+    return cells
 
 
 def _is_separator_row(cells: list[str]) -> bool:
@@ -229,6 +244,11 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     standalone skills (no ``SKILL.md`` router table and no
     ``capabilities/`` directory) and when all checks pass.
 
+    Messages are skill-relative — the caller (e.g.,
+    ``audit_skill_system.py``) is responsible for prefixing the
+    skill name when surfacing findings.  Do not embed the skill name
+    into the messages here.
+
     Failure modes (all FAIL):
 
     * ``capabilities/`` exists but ``SKILL.md`` is missing.
@@ -302,7 +322,7 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
             findings.append((
                 LEVEL_FAIL,
                 f"router row '{capability}' has malformed Path '{path}' "
-                f"(expected literal '{DIR_CAPABILITIES}/<name>/{FILE_CAPABILITY_MD}')",
+                f"(expected literal '{expected_path('<name>')}')",
             ))
             continue
         if capability != segment:
