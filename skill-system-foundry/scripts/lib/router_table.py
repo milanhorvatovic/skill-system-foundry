@@ -160,6 +160,11 @@ def _normalize_header_cell(cell: str) -> str:
     The strip set covers both CommonMark italic forms (``*x*`` and
     ``_x_``), bold (``**x**``), and inline code (``` `x` ```).  See
     ``ROUTER_HEADER_STRIP_CHARS`` in ``constants.py``.
+
+    The trailing ``.strip()`` is not redundant — the strip set includes
+    a literal space, so ``"** Capability **"`` round-trips correctly,
+    but ``"* Capability *"`` exposes inner spaces only after the
+    asterisks are removed; the second strip cleans those up.
     """
     return cell.strip().strip(ROUTER_HEADER_STRIP_CHARS).strip()
 

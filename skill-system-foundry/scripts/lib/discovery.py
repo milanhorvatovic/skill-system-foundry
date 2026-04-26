@@ -93,6 +93,13 @@ def _top_level_skill_entry(system_root: str) -> dict[str, str] | None:
     integrator-built meta-skill) without first deploying it under a
     ``skills/`` tree.  Only consumed by ``find_router_audit_targets``;
     promote to public when a second caller appears.
+
+    The returned ``name`` is the basename of the absolute path, not the
+    skill's declared frontmatter name.  Running the audit from a
+    worktree directory (e.g., ``worktrees/feature-foo/``) therefore
+    produces findings prefixed with the worktree name.  Reading
+    frontmatter would require pulling the parser into discovery; the
+    directory-derived name is good enough for log prefixes.
     """
     if not os.path.isfile(os.path.join(system_root, FILE_SKILL_MD)):
         return None
