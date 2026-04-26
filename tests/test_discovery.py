@@ -213,6 +213,22 @@ class FindRouterAuditTargetsTests(unittest.TestCase):
             names = [t["name"] for t in find_router_audit_targets(tmp)]
         self.assertEqual(names, ["ghost"])
 
+    def test_includes_top_level_capabilities_without_skill_md(self) -> None:
+        """A skill-root with capabilities/ but no SKILL.md must still be audited.
+
+        Without this branch ``find_router_audit_targets`` would skip the
+        broken root entirely, downgrading the
+        ``capabilities/ exists but SKILL.md is missing`` FAIL to the
+        generic partial-audit WARN.  The synthetic entry uses the
+        directory basename because no frontmatter is available.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "broken-meta-skill")
+            _write_capability(os.path.join(skill_dir, "capabilities", "alpha"))
+            targets = find_router_audit_targets(skill_dir)
+        names = [t["name"] for t in targets]
+        self.assertEqual(names, ["broken-meta-skill"])
+
     def test_does_not_double_count_registered_with_capabilities(self) -> None:
         """A skill that has both SKILL.md and capabilities/ appears once."""
         with tempfile.TemporaryDirectory() as tmp:

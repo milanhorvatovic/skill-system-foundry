@@ -166,6 +166,20 @@ def find_router_audit_targets(system_root: str) -> list[dict[str, str]]:
     skill_root_entry = _top_level_skill_entry(system_root)
     if skill_root_entry is not None:
         targets.append(skill_root_entry)
+    elif os.path.isdir(os.path.join(system_root, DIR_CAPABILITIES)):
+        # SKILL.md is missing but capabilities/ sits at the top —
+        # the canonical "broken meta-skill" shape (entry point
+        # deleted, on-disk tree left behind).  Without this branch
+        # the audit only emits the generic partial-audit WARN; with
+        # it, audit_router_table fires the specific
+        # ``capabilities/ exists but SKILL.md is missing`` FAIL.
+        # Fall back to the basename for the finding prefix because
+        # there is no SKILL.md frontmatter to canonicalize.
+        targets.append({
+            "name": os.path.basename(os.path.abspath(system_root)),
+            "path": system_root,
+            "type": "registered",
+        })
 
     return targets
 
