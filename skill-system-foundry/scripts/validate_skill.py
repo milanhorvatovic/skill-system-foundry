@@ -35,6 +35,7 @@ from lib.validation import (
     validate_metadata,
     validate_license,
     validate_known_keys,
+    validate_tool_coherence,
 )
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
@@ -437,6 +438,21 @@ def validate_skill(
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
+        # Tool coherence — capability mode consults parent SKILL.md
+        # frontmatter so the rule mirrors the harness's runtime view.
+        # When the parent root cannot be located (capability run in
+        # isolation), fall back to scanning with no declared tools.
+        parent_frontmatter: dict | None = None
+        if skill_root != skill_path:
+            parent_skill_md = os.path.join(skill_root, FILE_SKILL_MD)
+            if os.path.isfile(parent_skill_md):
+                parent_fm, _, _ = load_frontmatter(parent_skill_md)
+                parent_frontmatter = parent_fm
+        coh_errors, coh_passes = validate_tool_coherence(
+            skill_root, parent_frontmatter,
+        )
+        errors.extend(coh_errors)
+        passes.extend(coh_passes)
         return errors, passes
 
     # Validate required fields
@@ -512,6 +528,14 @@ def validate_skill(
     codex_errors, codex_passes = validate_codex_config(skill_path)
     errors.extend(codex_errors)
     passes.extend(codex_passes)
+
+    # Tool coherence — fence and `scripts/` signals must match
+    # ``allowed-tools``.  Top-level peer call (not nested under the
+    # `allowed-tools` conditional) so the rule fires even when the
+    # frontmatter omits the field entirely.
+    coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
+    errors.extend(coh_errors)
+    passes.extend(coh_passes)
 
     return errors, passes
 

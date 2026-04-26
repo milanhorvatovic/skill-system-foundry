@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from helpers import write_text, write_skill_md
+from helpers import write_capability_md, write_text, write_skill_md
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -3075,6 +3075,129 @@ class CheckProseYamlIntegrationTests(unittest.TestCase):
             files,
             {"capabilities/foo/capability.md", "references/bar.md"},
         )
+
+
+# ===================================================================
+# Integration: validate_skill + tool coherence rule wiring
+# ===================================================================
+
+
+class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
+    """End-to-end tests for the coherence rule wired through validate_skill."""
+
+    def test_skill_with_bash_fence_and_no_bash_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Demo\n\n```bash\necho hi\n```\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+            bash_fails = [e for e in fail_errors if "Bash" in e]
+            self.assertEqual(len(bash_fails), 1)
+
+    def test_skill_with_scripts_dir_and_no_bash_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            write_text(
+                os.path.join(skill_dir, "scripts", "noop.sh"),
+                "#!/usr/bin/env bash\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+            bash_warns = [
+                e for e in warn_errors
+                if "scripts/" in e and "Bash" in e
+            ]
+            self.assertEqual(len(bash_warns), 1)
+
+    def test_skill_declaring_bash_passes_coherence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                allowed_tools="Bash",
+                body="# Demo\n\n```bash\necho hi\n```\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "scripts", "noop.sh"),
+                "#!/usr/bin/env bash\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            bash_findings = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+            ]
+            self.assertEqual(bash_findings, [])
+            warn_bash = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN)
+                and "scripts/" in e and "Bash" in e
+            ]
+            self.assertEqual(warn_bash, [])
+
+    def test_capability_mode_consults_parent_frontmatter(self) -> None:
+        # Parent declares Bash; capability has bash fence — silent.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir, allowed_tools="Bash", body="# Skill\n",
+            )
+            write_capability_md(
+                skill_dir, "demo",
+                body="# Capability\n\n```bash\necho hi\n```\n",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            bash_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+            ]
+            self.assertEqual(bash_fails, [])
+
+    def test_capability_mode_parent_missing_bash_fails(self) -> None:
+        # Parent does not declare Bash; capability has bash fence — FAIL.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n")
+            write_capability_md(
+                skill_dir, "demo",
+                body="# Capability\n\n```bash\necho hi\n```\n",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            bash_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+            ]
+            self.assertEqual(len(bash_fails), 1)
+
+    def test_yaml_list_form_in_frontmatter_works_through_pipeline(self) -> None:
+        # The wider validator currently expects a string and will WARN
+        # via validate_allowed_tools, but the coherence rule must still
+        # honour the list form for satisfaction lookup.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            content = (
+                "---\n"
+                "name: demo-skill\n"
+                "description: A skill that lists tools as a YAML list.\n"
+                "allowed-tools:\n"
+                "  - Bash\n"
+                "  - Read\n"
+                "---\n\n"
+                "# Demo\n\n```bash\necho hi\n```\n"
+            )
+            write_text(os.path.join(skill_dir, "SKILL.md"), content)
+            errors, _ = validate_skill(skill_dir)
+            bash_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+                and "fence" in e
+            ]
+            self.assertEqual(bash_fails, [])
 
 
 if __name__ == "__main__":
