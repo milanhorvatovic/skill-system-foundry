@@ -7,6 +7,7 @@ from .constants import (
     DIR_SKILLS, DIR_CAPABILITIES, DIR_ROLES,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_README, EXT_MARKDOWN,
 )
+from .frontmatter import load_frontmatter
 
 
 class _SkillCandidate(NamedTuple):
@@ -94,21 +95,28 @@ def _top_level_skill_entry(system_root: str) -> dict[str, str] | None:
     ``skills/`` tree.  Only consumed by ``find_router_audit_targets``;
     promote to public when a second caller appears.
 
-    The returned ``name`` is the basename of the absolute path, not the
-    skill's declared frontmatter name.  Running the audit from a
-    worktree directory (e.g., ``worktrees/feature-foo/``) therefore
-    produces findings prefixed with the worktree name.  Reading
-    frontmatter would require pulling the parser into discovery; the
-    directory-derived name is good enough for log prefixes.
+    The returned ``name`` prefers the SKILL.md frontmatter ``name`` so
+    findings are prefixed with the canonical skill name even when the
+    audit runs from a worktree or renamed directory (e.g.,
+    ``worktrees/feature-foo/``).  Falls back to the absolute-path
+    basename when the frontmatter is unreadable, missing, or has no
+    ``name`` field, so the prefix degrades gracefully rather than
+    blocking the audit.
     """
-    if not os.path.isfile(os.path.join(system_root, FILE_SKILL_MD)):
+    skill_md = os.path.join(system_root, FILE_SKILL_MD)
+    if not os.path.isfile(skill_md):
         return None
-    # Compute name from the absolute path so callers passing "." still
-    # get a real directory name, but keep ``path`` as the input shape so
-    # it matches ``find_skill_dirs`` (which returns paths derived from
-    # the caller's ``system_root``).
+    name = os.path.basename(os.path.abspath(system_root))
+    try:
+        fm, _, _ = load_frontmatter(skill_md)
+    except OSError:
+        fm = None
+    if fm is not None and "_parse_error" not in fm:
+        fm_name = fm.get("name")
+        if isinstance(fm_name, str) and fm_name.strip():
+            name = fm_name.strip()
     return {
-        "name": os.path.basename(os.path.abspath(system_root)),
+        "name": name,
         "path": system_root,
         "type": "registered",
     }

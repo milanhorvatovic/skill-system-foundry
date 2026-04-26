@@ -110,8 +110,8 @@ class FindRouterAuditTargetsSkillRootTests(unittest.TestCase):
         # a relative path still get a real directory name.
         self.assertEqual(targets[0]["name"], "my-meta-skill")
 
-    def test_dot_path_resolves_name_from_abspath(self) -> None:
-        """``find_router_audit_targets(".")`` uses the resolved basename for *name*."""
+    def test_dot_path_resolves_name_from_frontmatter(self) -> None:
+        """``find_router_audit_targets(".")`` uses the SKILL.md frontmatter name."""
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "my-meta-skill")
             write_skill_md(skill_dir, name="my-meta-skill")
@@ -124,6 +124,44 @@ class FindRouterAuditTargetsSkillRootTests(unittest.TestCase):
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["name"], "my-meta-skill")
         self.assertEqual(targets[0]["path"], ".")
+
+    def test_skill_root_name_prefers_frontmatter_over_directory(self) -> None:
+        """A renamed worktree directory must not change the finding prefix.
+
+        Mirrors the worktree case (e.g., ``worktrees/feature-foo/`` holding
+        the foundry meta-skill) where the on-disk basename diverges from
+        the canonical SKILL.md ``name``.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "renamed-worktree-dir")
+            write_skill_md(skill_dir, name="canonical-skill-name")
+            targets = find_router_audit_targets(skill_dir)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["name"], "canonical-skill-name")
+
+    def test_skill_root_falls_back_to_basename_when_frontmatter_missing(self) -> None:
+        """A SKILL.md without frontmatter degrades to the directory basename."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "no-frontmatter-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "# A SKILL.md with no frontmatter at all\n",
+            )
+            targets = find_router_audit_targets(skill_dir)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["name"], "no-frontmatter-skill")
+
+    def test_skill_root_falls_back_to_basename_when_frontmatter_unparseable(self) -> None:
+        """A SKILL.md with malformed YAML degrades to the directory basename."""
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "broken-frontmatter-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: missing closing delimiter\n",
+            )
+            targets = find_router_audit_targets(skill_dir)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["name"], "broken-frontmatter-skill")
 
     def test_no_skill_md_at_root_yields_no_skill_root_entry(self) -> None:
         """Without a top-level SKILL.md the skill-root branch contributes nothing."""
@@ -208,9 +246,10 @@ class FindRouterAuditTargetsTests(unittest.TestCase):
             write_skill_md(os.path.join(tmp, "skills", "beta"), name="beta")
             targets = find_router_audit_targets(tmp)
         names = sorted(t["name"] for t in targets)
-        self.assertEqual(
-            names, ["alpha", "beta", os.path.basename(os.path.abspath(tmp))]
-        )
+        # The skill-root entry uses the SKILL.md frontmatter name
+        # ("integrator-meta-skill"), not the temp-directory basename,
+        # so findings stay stable across worktrees and renames.
+        self.assertEqual(names, ["alpha", "beta", "integrator-meta-skill"])
 
 
 # ===================================================================
