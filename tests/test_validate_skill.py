@@ -2185,6 +2185,82 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         self.assertIn("NoneType", warn_errors[0])
         self.assertEqual(passes, [])
 
+    def test_mcp_pattern_token_recognised_silently(self) -> None:
+        """MCP-pattern tokens produce no INFO message."""
+        errors, passes = validate_allowed_tools(
+            "Bash mcp__server__tool"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
+    def test_mcp_mixed_case_recognised_silently(self) -> None:
+        """MCP names with mixed case (real Atlassian-style) recognised."""
+        errors, passes = validate_allowed_tools(
+            "Bash mcp__claude_ai_Atlassian__addCommentToJiraIssue"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
+    def test_pascalcase_unknown_emits_harness_shaped_info(self) -> None:
+        """PascalCase tokens not in the catalog emit the harness-shaped INFO."""
+        errors, passes = validate_allowed_tools("Bash MadeUpTool")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("harness-shaped", info_errors[0])
+        self.assertIn("MadeUpTool", info_errors[0])
+        self.assertIn(
+            "allowed_tools.catalogs.claude_code.harness_tools",
+            info_errors[0],
+        )
+
+    def test_pascalcase_with_args_treated_as_harness_shape(self) -> None:
+        """PascalCase tokens with ``(...)`` args follow the same tier."""
+        errors, passes = validate_allowed_tools(
+            "Bash(git add *) MadeUp(arg)"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        # ``Bash(git add *)`` strips to ``Bash`` which is in the catalog,
+        # so only ``MadeUp(arg)`` should be flagged as harness-shaped.
+        harness_shaped = [
+            e for e in info_errors if "harness-shaped" in e
+        ]
+        self.assertEqual(len(harness_shaped), 1)
+        self.assertIn("MadeUp", harness_shaped[0])
+
+    def test_fully_unknown_garbage_emits_unrecognized_info(self) -> None:
+        """Lowercase/dashed tokens not in any catalog emit the bare INFO."""
+        errors, passes = validate_allowed_tools("Bash some-garbage")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        unrecognized = [
+            e for e in info_errors if "unrecognized" in e
+        ]
+        self.assertEqual(len(unrecognized), 1)
+        self.assertIn("some-garbage", unrecognized[0])
+
+    def test_harness_and_unknown_buckets_emit_separate_info(self) -> None:
+        """Mixed unknowns split into the two tiers, one INFO each."""
+        errors, passes = validate_allowed_tools(
+            "Bash MadeUpTool some-garbage"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 2)
+        harness_shaped = [
+            e for e in info_errors if "harness-shaped" in e
+        ]
+        unrecognized = [
+            e for e in info_errors if "unrecognized" in e
+        ]
+        self.assertEqual(len(harness_shaped), 1)
+        self.assertEqual(len(unrecognized), 1)
+        self.assertIn("MadeUpTool", harness_shaped[0])
+        self.assertIn("some-garbage", unrecognized[0])
+
+    def test_known_pascalcase_does_not_trigger_harness_shaped(self) -> None:
+        """Tokens already in harness_tools stay silent."""
+        errors, passes = validate_allowed_tools("Bash Read Write")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
 
 # ===================================================================
 # validate_metadata

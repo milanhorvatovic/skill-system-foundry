@@ -127,6 +127,18 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     each tool is checked against the known tools list, and the total
     count does not exceed the configured maximum.
 
+    Recognition tier (in order):
+
+    1. Token in ``HARNESS_TOOLS_CLAUDE_CODE`` or ``CLI_TOOLS_CLAUDE_CODE``
+       — recognised silently.
+    2. Token matches the MCP-tool name pattern
+       (``mcp__server__tool``) — recognised silently; MCP servers are
+       per-installation and unbounded by definition.
+    3. Token matches PascalCase harness shape (with optional
+       ``(...)`` argument suffix) but is not in the catalog — INFO
+       "harness-shaped but not in catalog".
+    4. Anything else — INFO "unrecognized tool".
+
     Returns (errors, passes) tuple.
     """
     errors: list[str] = []
@@ -152,13 +164,37 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     else:
         passes.append(f"allowed-tools: {len(tools)} tools (max {MAX_ALLOWED_TOOLS})")
 
-    unknown = sorted(set(t for t in tools if t not in KNOWN_TOOLS))
-    if unknown:
+    harness_shaped: list[str] = []
+    fully_unknown: list[str] = []
+    seen: set[str] = set()
+    for token in tools:
+        if token in seen:
+            continue
+        seen.add(token)
+        if token in KNOWN_TOOLS:
+            continue
+        if RE_MCP_TOOL_NAME.match(token):
+            continue
+        # Strip ``(...)`` so the shape check accepts ``Bash(git add *)``
+        # and similar restricted-tool forms.
+        bare = _RE_PAREN_ARGS.sub("", token)
+        if RE_HARNESS_TOOL_SHAPE.match(token) and bare not in HARNESS_TOOLS_CLAUDE_CODE:
+            harness_shaped.append(token)
+        elif bare not in KNOWN_TOOLS:
+            fully_unknown.append(token)
+
+    if harness_shaped:
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] 'allowed-tools' contains harness-shaped tokens "
+            f"not in the catalog: {', '.join(sorted(harness_shaped))} — verify "
+            "spelling or add to allowed_tools.catalogs.claude_code.harness_tools"
+        )
+    if fully_unknown:
         errors.append(
             f"{LEVEL_INFO}: [foundry] 'allowed-tools' contains unrecognized tools: "
-            f"{', '.join(unknown)} — verify spelling"
+            f"{', '.join(sorted(fully_unknown))} — verify spelling"
         )
-    else:
+    if not harness_shaped and not fully_unknown:
         passes.append("allowed-tools: all tools recognized")
 
     return errors, passes
