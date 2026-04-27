@@ -166,6 +166,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns the exit code."""
+    # On Windows the default console encoding (cp1252) cannot represent
+    # the ✓/✗ Unicode marks the verdict lines use. Reconfigure
+    # stdout/stderr to replace unencodable characters rather than
+    # raising UnicodeEncodeError on local runs outside CI.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="replace")
+
     parser = _build_parser()
     args = parser.parse_args(argv)
     skills_root = os.path.abspath(args.skills_root)
