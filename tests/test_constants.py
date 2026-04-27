@@ -298,6 +298,64 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("catalogs", str(ctx.exception))
 
+    def test_missing_mcp_tool_pattern_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_scalar_under(
+                    "allowed_tools", "mcp_tool_pattern",
+                )
+            )
+        self.assertIn("mcp_tool_pattern", str(ctx.exception))
+
+    def test_missing_harness_tool_shape_pattern_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_scalar_under(
+                    "allowed_tools", "harness_tool_shape_pattern",
+                )
+            )
+        self.assertIn("harness_tool_shape_pattern", str(ctx.exception))
+
+    def _full_config_minus_scalar_under(
+        self, parent: str, child: str,
+    ) -> str:
+        """Return configuration text with the scalar ``parent.child:``
+        line removed.
+
+        Sibling helper to :meth:`_full_config_minus_nested` for keys
+        whose value is a scalar (e.g. ``foo: pattern``) rather than a
+        nested mapping — the original helper only matches lines whose
+        ``bare`` form is exactly ``child:`` and so cannot reach scalar
+        leaves.
+        """
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        out_lines: list[str] = []
+        in_parent = False
+        parent_indent = 0
+        for line in text.splitlines(keepends=True):
+            stripped = line.lstrip(" \t")
+            indent = len(line) - len(stripped)
+            bare = line.strip()
+            if not in_parent and bare == f"{parent}:":
+                in_parent = True
+                parent_indent = indent
+                out_lines.append(line)
+                continue
+            if (
+                in_parent
+                and indent <= parent_indent
+                and bare
+                and not bare.startswith("#")
+            ):
+                in_parent = False
+            if in_parent and (
+                bare == f"{child}:" or bare.startswith(f"{child}:")
+            ):
+                continue
+            out_lines.append(line)
+        return "".join(out_lines)
+
     def _full_config_minus_nested(self, parent: str, child: str) -> str:
         """Return configuration text with *parent.child* stripped out.
 

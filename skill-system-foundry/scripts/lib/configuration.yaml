@@ -56,6 +56,17 @@ skill:
     # Upper bound on tool count — skills requesting too many tools
     # likely need to be split.  Increase if justified.
     max_tools: 20
+    # Token-shape patterns used by the pattern-fallback recognition
+    # tier in ``validate_allowed_tools``.  Patterns live here (single
+    # source of truth) and are compiled in ``constants.py``.
+    # - mcp_tool_pattern: ``mcp__server__tool`` convention; case-mixed
+    #   tokens are valid (e.g. ``mcp__claude_ai_Atlassian__addCommentToJiraIssue``).
+    # - harness_tool_shape_pattern: matches bare PascalCase tokens.
+    #   Callers strip the optional ``(...)`` argument suffix before
+    #   applying this pattern, so the pattern itself does not model
+    #   parens.
+    mcp_tool_pattern: ^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$
+    harness_tool_shape_pattern: ^[A-Z][A-Za-z0-9]*$
     # Per-harness catalogs of tool names recognized in the
     # `allowed-tools` field.  Today only claude_code consumes this
     # field; codex tool descriptors (MCP server type/transport/url)

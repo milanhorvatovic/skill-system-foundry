@@ -132,6 +132,15 @@ def _classify_opener(
     ``"~~~"``).  *language* is the token that follows the marker on the
     same line, or the empty string when the opener carries no language
     tag.
+
+    Strict subset rule: the language token must follow the marker
+    immediately, with no leading whitespace.  Lines like ``"``` bash"``
+    (whitespace between marker and token) are rejected as openers — if
+    accepted with ``language=""`` they would silently consume the
+    block body and hide later well-formed fences.  Treating them as
+    plain text matches the documented strict behaviour and is safe in
+    practice because no consumer cares about empty-language fences for
+    coherence purposes.
     """
     match = _OPEN_FENCE_RE.match(line)
     if not match:
@@ -139,7 +148,11 @@ def _classify_opener(
     marker = match.group(1)
     if marker[0] not in fence_chars:
         return None
-    return marker, match.group(2)
+    language = match.group(2)
+    suffix = match.group(3)
+    if not language and suffix and suffix.strip():
+        return None
+    return marker, language
 
 
 def has_fence_with_language(

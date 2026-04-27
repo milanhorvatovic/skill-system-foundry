@@ -77,6 +77,28 @@ class ExtractFencesShapeTests(unittest.TestCase):
             [r for r in records if r["language"] == "bash"], [],
         )
 
+    def test_whitespace_then_token_not_treated_as_empty_language_fence(
+        self,
+    ) -> None:
+        # The strict subset rejects ``"``` bash"`` outright instead of
+        # accepting it as a fence with ``language=""``.  Returning an
+        # empty-language record here would consume the body and hide
+        # any later well-formed fences (e.g. a real ```yaml block
+        # below).  Confirm a subsequent proper fence is still detected.
+        text = (
+            "``` bash\n"
+            "echo hi\n"
+            "```yaml\n"
+            "key: value\n"
+            "```\n"
+        )
+        records = extract_fences(text)
+        languages = [r["language"] for r in records]
+        self.assertIn("yaml", languages)
+        # Specifically: no record should claim ``language=""`` from the
+        # malformed opener — the malformed line must be invisible.
+        self.assertNotIn("", languages)
+
     def test_unterminated_fence_short_circuits(self) -> None:
         # Opens with bash, never closes — closer must be exactly "```"
         # (no language suffix). Per CommonMark, the rest of the document

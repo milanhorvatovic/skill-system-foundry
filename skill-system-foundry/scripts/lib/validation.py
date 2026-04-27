@@ -76,6 +76,28 @@ def parse_allowed_tools_tokens(value: object) -> set[str]:
     return tokens
 
 
+def _is_explicit_empty_allowed_tools(value: object) -> bool:
+    """Return ``True`` only for declarations that explicitly mean "no tools".
+
+    Matches:
+
+    - ``""`` or any whitespace-only string;
+    - the empty list ``[]``.
+
+    Everything else — non-string / non-list scalars (``int``, ``float``,
+    ``dict``), non-empty lists, and non-empty strings (including
+    paren-only values like ``(Bash)``) — is **not** an explicit
+    opt-out.  Those values either fail spec conformance elsewhere or
+    declare real (or attempted) tools and must therefore continue
+    through the coherence rule against the parsed token set.
+    """
+    if isinstance(value, list):
+        return not value
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
 def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
     """Validate the name field.
 
@@ -429,15 +451,23 @@ def validate_tool_coherence(
     are skipped.
 
     **Explicit-empty opt-out.**  When ``allowed-tools`` is *present* in
-    frontmatter and parses to zero tokens — ``allowed-tools: ""``,
-    ``allowed-tools: []``, or a paren-only value already flagged by
-    ``validate_allowed_tools`` — the author has deliberately declared
-    zero harness tools and the rule suppresses both fence and
-    ``scripts/`` checks.  Docs-only skills can therefore include
-    illustrative ``bash`` fences without being forced into a noise
-    ``Bash`` declaration.  Distinct from key-absent: when the field is
-    missing entirely the rule still fires (the painful #100 case where
-    the author hasn't thought about tools at all).
+    frontmatter as an explicitly empty value — ``allowed-tools: ""``
+    (or whitespace-only) or ``allowed-tools: []`` — the author has
+    deliberately declared zero harness tools and the rule suppresses
+    both fence and ``scripts/`` checks.  Docs-only skills can therefore
+    include illustrative ``bash`` fences without being forced into a
+    noise ``Bash`` declaration.  Distinct from key-absent: when the
+    field is missing entirely the rule still fires (the painful #100
+    case where the author hasn't thought about tools at all).
+
+    Malformed values (non-string, non-list scalars; mappings; or lists
+    with no string elements) do **not** count as a deliberate opt-out
+    — they parse to zero tokens but were not written as an explicit
+    "no tools" declaration and they will not grant any tool at runtime
+    either, so the coherence rule still runs against an empty declared
+    set.  Paren-only string values (e.g. ``(Bash)``) likewise fall
+    through; ``validate_allowed_tools`` already emits a separate WARN
+    for those.
 
     Returns ``(errors, passes)`` per the standard validator contract.
     """
@@ -445,12 +475,9 @@ def validate_tool_coherence(
     passes: list[str] = []
 
     has_field = isinstance(frontmatter, dict) and "allowed-tools" in frontmatter
-    declared = (
-        parse_allowed_tools_tokens(frontmatter["allowed-tools"])
-        if has_field
-        else set()
-    )
-    if has_field and not declared:
+    raw_value = frontmatter["allowed-tools"] if has_field else None
+    declared = parse_allowed_tools_tokens(raw_value) if has_field else set()
+    if has_field and _is_explicit_empty_allowed_tools(raw_value):
         # Author-declared zero tools — respect the declaration.
         passes.append(
             "tool-coherence: explicit empty 'allowed-tools' — "

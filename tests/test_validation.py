@@ -811,6 +811,52 @@ class ValidateToolCoherenceTests(unittest.TestCase):
         )
         self.assertEqual(errors, [])
 
+    def test_malformed_scalar_value_does_not_suppress_fence_fail(self) -> None:
+        # A non-string / non-list scalar (e.g. integer) is malformed
+        # frontmatter — it parses to zero tokens but is *not* a
+        # deliberate "no tools" declaration and will not grant Bash at
+        # runtime.  The coherence rule must still fire so the failure
+        # mode #100 catches is not hidden behind invalid YAML.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": 123},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertIn("Bash", fail_errors[0])
+
+    def test_malformed_mapping_value_does_not_suppress_fence_fail(self) -> None:
+        # A mapping value is malformed for the same reason — it does
+        # not declare any tools, so coherence must still run.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": {"Bash": True}},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+
+    def test_paren_only_string_does_not_suppress_fence_fail(self) -> None:
+        # ``(Bash)`` parses to zero tokens but ``validate_allowed_tools``
+        # already flags it as broken input.  The coherence rule should
+        # not silently treat it as an opt-out — the painful failure
+        # mode (Bash fence + no real declaration) must still surface.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": "(Bash)"},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+
+    def test_non_string_list_items_do_not_suppress_fence_fail(self) -> None:
+        # A non-empty list whose items are not strings parses to zero
+        # tokens but is malformed — coherence must still run.
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": [1, 2, 3]},
+        )
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fail_errors), 1)
+
     def test_explicit_empty_suppresses_scripts_warn(self) -> None:
         # The script-presence WARN is also gated on the explicit-empty
         # opt-out — pure-docs skills that ship a non-shell ``scripts/``
