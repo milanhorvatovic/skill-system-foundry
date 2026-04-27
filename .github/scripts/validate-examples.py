@@ -1,0 +1,186 @@
+"""Validate every reference skill under ``examples/skills/``.
+
+Walks the immediate children of ``examples/skills/`` and runs
+``skill-system-foundry/scripts/validate_skill.py --json`` against each.
+Aggregates per-skill verdicts and exits non-zero when any example reports
+``failures > 0`` (FAIL findings).
+
+Roles under ``examples/roles/`` are intentionally skipped — the foundry
+validator does not currently target role files. A dedicated role
+validator is tracked as a follow-up issue.
+
+Designed for CI: stdlib-only, runs identically on Linux and Windows, no
+third-party dependencies.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+
+REPO_RELATIVE_EXAMPLES_ROOT = os.path.join("examples", "skills")
+REPO_RELATIVE_VALIDATOR = os.path.join(
+    "skill-system-foundry", "scripts", "validate_skill.py",
+)
+SEPARATOR_WIDTH = 60
+
+
+def discover_skill_dirs(skills_root: str) -> list[str]:
+    """Return absolute paths of immediate subdirectories that look like skills.
+
+    A directory qualifies when it contains a ``SKILL.md`` file at its top
+    level. Other entries (loose files, hidden directories, directories
+    without ``SKILL.md``) are silently skipped — they may exist for
+    documentation or future expansion.
+    """
+    if not os.path.isdir(skills_root):
+        return []
+    found: list[str] = []
+    for name in sorted(os.listdir(skills_root)):
+        if name.startswith("."):
+            continue
+        candidate = os.path.join(skills_root, name)
+        if not os.path.isdir(candidate):
+            continue
+        if os.path.isfile(os.path.join(candidate, "SKILL.md")):
+            found.append(os.path.abspath(candidate))
+    return found
+
+
+def validate_one(
+    skill_path: str, validator_path: str,
+) -> tuple[bool, dict | None, str]:
+    """Run ``validate_skill.py --json`` against *skill_path*.
+
+    Returns a tuple of ``(success, parsed_json, raw_stdout)``. *success*
+    is True only when the subprocess returned exit 0 and the parsed
+    payload reports ``success: true``. *parsed_json* is None when stdout
+    could not be parsed as JSON.
+    """
+    completed = subprocess.run(
+        [sys.executable, validator_path, skill_path, "--json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    raw = completed.stdout
+    parsed: dict | None
+    try:
+        parsed = json.loads(raw) if raw.strip() else None
+    except json.JSONDecodeError:
+        parsed = None
+    if parsed is None:
+        return False, None, raw
+    success = bool(parsed.get("success")) and completed.returncode == 0
+    return success, parsed, raw
+
+
+def format_verdict(skill_path: str, parsed: dict | None) -> str:
+    """Render a single one-line verdict for *skill_path*."""
+    label = os.path.basename(skill_path.rstrip(os.sep))
+    if parsed is None:
+        return f"  ✗ {label}: validator emitted no JSON output"
+    summary = parsed.get("summary") or {}
+    failures = summary.get("failures", 0)
+    warnings = summary.get("warnings", 0)
+    info = summary.get("info", 0)
+    mark = "✓" if parsed.get("success") and failures == 0 else "✗"
+    return (
+        f"  {mark} {label}: "
+        f"{failures} fail / {warnings} warn / {info} info"
+    )
+
+
+def run_validation(
+    skills_root: str, validator_path: str,
+) -> tuple[list[tuple[str, bool, dict | None, str]], bool]:
+    """Validate every skill under *skills_root*.
+
+    Returns ``(results, all_success)`` where *results* is a list of
+    ``(skill_path, success, parsed, raw_stdout)`` tuples in walk order.
+    """
+    results: list[tuple[str, bool, dict | None, str]] = []
+    all_success = True
+    for skill_path in discover_skill_dirs(skills_root):
+        success, parsed, raw = validate_one(skill_path, validator_path)
+        results.append((skill_path, success, parsed, raw))
+        if not success:
+            all_success = False
+    return results, all_success
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Validate every reference skill under examples/skills/."
+        ),
+    )
+    parser.add_argument(
+        "--skills-root",
+        default=REPO_RELATIVE_EXAMPLES_ROOT,
+        help=(
+            "Path to the directory holding example skills. "
+            "Defaults to %(default)s relative to the working directory."
+        ),
+    )
+    parser.add_argument(
+        "--validator",
+        default=REPO_RELATIVE_VALIDATOR,
+        help=(
+            "Path to the validate_skill.py entry point. "
+            "Defaults to %(default)s relative to the working directory."
+        ),
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point. Returns the exit code."""
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    skills_root = os.path.abspath(args.skills_root)
+    validator_path = os.path.abspath(args.validator)
+
+    if not os.path.isfile(validator_path):
+        print(
+            f"Error: validator not found at {validator_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    skill_dirs = discover_skill_dirs(skills_root)
+    if not skill_dirs:
+        print(
+            f"Error: no example skills found under {skills_root}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Validating {len(skill_dirs)} example skill(s) under {skills_root}")
+    print("-" * SEPARATOR_WIDTH)
+
+    results, all_success = run_validation(skills_root, validator_path)
+    for skill_path, success, parsed, raw in results:
+        print(format_verdict(skill_path, parsed))
+        if not success:
+            for error in (parsed or {}).get("errors", {}).get("failures", []):
+                print(f"      FAIL: {error}")
+            if parsed is None and raw.strip():
+                print(f"      raw stdout: {raw.strip()}")
+
+    print("-" * SEPARATOR_WIDTH)
+    if all_success:
+        print(f"✓ All {len(results)} example(s) validated cleanly")
+        return 0
+    failed = sum(1 for _, success, _, _ in results if not success)
+    print(f"✗ {failed} of {len(results)} example(s) failed validation")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
