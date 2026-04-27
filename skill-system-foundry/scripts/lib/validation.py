@@ -43,6 +43,18 @@ def parse_allowed_tools_tokens(value: object) -> set[str]:
 
     Returns an empty set for ``None``, non-string / non-list scalars,
     or empty / whitespace-only input.
+
+    Note on the deliberate asymmetry with :func:`validate_allowed_tools`:
+    this helper is a value extractor — it tells callers "what tokens
+    are in here?" — and is intentionally more permissive than the
+    spec-conformance validator.  ``validate_allowed_tools`` still
+    emits a WARN for non-empty list inputs because the foundry's
+    YAML subset parser does not produce them and full list-form
+    spec acceptance is deferred work; this helper accepts lists so
+    direct API callers and ``validate_tool_coherence`` (which only
+    needs the token set) work today.  See
+    ``test_non_empty_list_still_warns`` and the
+    ``test_yaml_list_form`` family for the pinned contract.
     """
     if value is None:
         return set()
@@ -468,9 +480,10 @@ def validate_tool_coherence(
             errors.append(
                 f"{LEVEL_FAIL}: [foundry] '{tool_name}' fence(s) found in "
                 f"{', '.join(sorted(offending))} but '{tool_name}' is not "
-                "declared in 'allowed-tools' — the harness will block the "
-                f"tool at runtime.  Add '{tool_name}' (or scoped form like "
-                f"'{tool_name}(...)') to 'allowed-tools' frontmatter."
+                "declared in 'allowed-tools' — the harness may block the "
+                f"tool at runtime under default permissions.  Add '{tool_name}' "
+                f"(or scoped form like '{tool_name}(...)') to 'allowed-tools' "
+                "frontmatter."
             )
 
         # Script-presence check (WARN) — fires only for tools whose

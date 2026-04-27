@@ -15,6 +15,15 @@ callers that want frontmatter excluded must strip it before invoking
 import re
 
 
+# Deliberate subset of CommonMark's info-string parsing: the language
+# token is captured greedily up to the first whitespace (or a fence
+# character).  CommonMark allows arbitrary non-backtick characters in
+# the info string and does not require whitespace before the suffix,
+# so a fence like ``` ```yaml{linenos} ``` would carry the language
+# token ``yaml{linenos}`` and fail to match a ``"yaml"`` filter.
+# Real-world skill markdown only uses bare language tokens (``yaml``,
+# ``bash``, etc.); the subset is acceptable today and the cost of a
+# full info-string parser would not be repaid.
 _OPEN_FENCE_RE = re.compile(r"^(`{3}|~{3})([^\s`~]*)(\s.*)?$")
 
 

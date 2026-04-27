@@ -168,8 +168,13 @@ class ToolShapeRegexTests(unittest.TestCase):
         self.assertTrue(constants.RE_HARNESS_TOOL_SHAPE.match("Bash"))
         self.assertTrue(constants.RE_HARNESS_TOOL_SHAPE.match("WebFetch"))
 
-    def test_harness_shape_matches_with_argument(self) -> None:
-        self.assertTrue(
+    def test_harness_shape_rejects_paren_suffix(self) -> None:
+        # The regex matches bare PascalCase only.  Paren suffixes
+        # (e.g. ``Bash(git add *)``) are stripped upstream by
+        # ``_RE_PAREN_ARGS`` in ``validation`` before any token
+        # reaches this regex, so the regex itself does not need
+        # to model parens.
+        self.assertIsNone(
             constants.RE_HARNESS_TOOL_SHAPE.match("Bash(git add *)"),
         )
 

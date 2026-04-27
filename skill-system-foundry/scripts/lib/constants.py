@@ -240,10 +240,13 @@ KNOWN_TOOLS = HARNESS_TOOLS_CLAUDE_CODE | CLI_TOOLS_CLAUDE_CODE
 # Token-shape regexes used by the pattern-fallback recognition tier.
 # - MCP tools follow the ``mcp__server__tool`` convention; case-mixed
 #   tokens are valid (e.g. ``mcp__claude_ai_Atlassian__addCommentToJiraIssue``).
-# - Harness-shape regex matches PascalCase tokens with an optional
-#   parenthesised argument suffix (e.g. ``Bash(git add *)``).
+# - Harness-shape regex matches bare PascalCase tokens.  Callers
+#   strip the optional ``(...)`` argument suffix (e.g. ``Bash(git
+#   add *)``) via ``_RE_PAREN_ARGS`` in ``validation`` *before*
+#   applying this regex, so the regex itself does not need to model
+#   parens.
 RE_MCP_TOOL_NAME = re.compile(r"^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$")
-RE_HARNESS_TOOL_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]*(\(.*\))?$")
+RE_HARNESS_TOOL_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 # Tool fence-language signals (allowed-tools coherence rule).  Maps
 # a harness-tool name to the set of Markdown fence-language tokens

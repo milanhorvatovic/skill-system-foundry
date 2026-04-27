@@ -444,7 +444,13 @@ def validate_skill(
         # Validating the parent SKILL.md exercises the same files plus
         # ``scripts/`` presence — running it here would either scope
         # incorrectly (only one capability) or duplicate findings
-        # already produced for the parent.
+        # already produced for the parent.  Emit an explicit pass so
+        # JSON consumers see the rule was considered rather than
+        # silently absent from the report.
+        passes.append(
+            "tool-coherence: skipped (capability mode — "
+            "run on parent SKILL.md)"
+        )
         return errors, passes
 
     # Validate required fields
