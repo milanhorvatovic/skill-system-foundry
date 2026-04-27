@@ -13,6 +13,10 @@ Import discipline: this module imports ``parse_yaml_subset`` from
 ``lib.yaml_parser`` and ``parse_finding_string`` / ``to_posix`` from
 ``lib.reporting``.  ``reporting`` is a pure string helper and does not
 import this module — no cycle.
+
+Fence extraction itself lives in ``lib.fence_scan`` — this module is a
+YAML-specific layer (wrong-case classification + opt-out marker
+handling) on top of the language-agnostic extractor.
 """
 
 import glob
@@ -22,55 +26,14 @@ from .constants import (
     LEVEL_FAIL, LEVEL_INFO, LEVEL_WARN,
     PROSE_YAML_IN_SCOPE_GLOBS, PROSE_YAML_OPT_OUT_MARKER,
 )
-from .frontmatter import split_frontmatter
+from .fence_scan import extract_fences
+from .frontmatter import strip_frontmatter_for_scan
 from .reporting import parse_finding_string, to_posix
 from .yaml_parser import parse_yaml_subset
 
 
-_FENCE_CLOSE_LITERAL = "```"
-
-
-def _strip_frontmatter(markdown_text: str) -> str:
-    """Drop a leading ``---``-delimited frontmatter block if present.
-
-    The prose-YAML check promises that frontmatter is not scanned —
-    without this, a ``yaml`` fence embedded in a folded description
-    would be validated as if it were body content.
-
-    Delegates to :func:`lib.frontmatter.split_frontmatter` so delimiter
-    rules stay in sync with ``load_frontmatter``.  To avoid misreading
-    a Markdown thematic break (``---`` at column 0) as frontmatter,
-    the candidate block is validated by ``parse_yaml_subset`` — only
-    content that parses as a YAML mapping is treated as frontmatter
-    and stripped.
-    """
-    frontmatter_raw, body_raw = split_frontmatter(markdown_text)
-    if frontmatter_raw is None:
-        return markdown_text
-    if body_raw is None:
-        # Opener present but no closing delimiter.  The block is
-        # ambiguous — malformed frontmatter vs a thematic break at
-        # line 1 of a file that happens not to have another ``---``.
-        # Stay conservative and scan the original text so body fences
-        # still reach the validator; ``load_frontmatter`` surfaces the
-        # parse error separately when frontmatter was in fact intended.
-        return markdown_text
-    frontmatter_str = frontmatter_raw.strip()
-    if frontmatter_str == "":
-        # Explicitly-empty frontmatter (``---\\n---\\n``) is still
-        # frontmatter for scope purposes — strip it.
-        return body_raw
-    try:
-        parsed = parse_yaml_subset(frontmatter_str, [])
-    except (ValueError, KeyError):
-        return markdown_text
-    # ``parse_yaml_subset`` returns ``{}`` for prose-like content too
-    # (lines with no ``key:`` pairs), so an empty dict is not enough
-    # evidence that the block is frontmatter.  Require at least one
-    # parsed key before stripping.
-    if not isinstance(parsed, dict) or not parsed:
-        return markdown_text
-    return body_raw
+_BACKTICK_ONLY = frozenset({"`"})
+_YAML_CASE_VARIANTS = frozenset({"yaml", "yml"})
 
 
 def extract_yaml_fences(markdown_text: str) -> list[dict]:
@@ -87,15 +50,15 @@ def extract_yaml_fences(markdown_text: str) -> list[dict]:
                                # wrote (e.g. "YAML", "yml")
         }
 
-    Fence shape rules:
+    Fence shape rules (delegated to :func:`lib.fence_scan.extract_fences`):
 
     - Backtick fences only.  Tilde fences are invisible.
     - Exactly three opening backticks at byte offset 0.
     - Case-sensitive literal ``yaml`` immediately after the backticks
       (no whitespace between).  ``yml`` / ``YAML`` / ``Yaml`` open
       lines surface as ``state="wrong-case"`` records.
-    - Anything after ``yaml`` on the open line (an info-string suffix)
-      is discarded.
+    - Anything after the language token on the open line is discarded
+      by the extractor.
     - The block closes on the next line that is exactly ``` `` ` ``` ``
       at byte offset 0; if no close marker is found before EOF the
       fence is reported as ``state="unterminated"``.
@@ -111,100 +74,56 @@ def extract_yaml_fences(markdown_text: str) -> list[dict]:
         return []
     text = markdown_text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
-
-    records: list[dict] = []
-    i = 0
+    raw_records = extract_fences(text, fence_chars=_BACKTICK_ONLY)
+    out: list[dict] = []
     ordinal = 0
-    n = len(lines)
-    while i < n:
-        line = lines[i]
-        opener = _classify_open_line(line)
-        if opener is None:
-            i += 1
+    for raw in raw_records:
+        token = raw["language"]
+        if token == "yaml":
+            kind = "parsed"
+        elif token.lower() in _YAML_CASE_VARIANTS:
+            kind = "wrong-case"
+        else:
             continue
         ordinal += 1
-        is_ignored = _has_opt_out_marker(lines, i)
-        # Collect body lines until a column-0 closing fence or EOF.
-        body: list[str] = []
-        j = i + 1
-        terminated = False
-        while j < n:
-            if lines[j] == _FENCE_CLOSE_LITERAL:
-                terminated = True
-                break
-            body.append(lines[j])
-            j += 1
-        body_text = "\n".join(body)
-        if not terminated:
-            records.append(
+        if raw["state"] == "unterminated":
+            out.append(
                 {
                     "ordinal": ordinal,
-                    "text": body_text,
+                    "text": raw["text"],
                     "state": "unterminated",
                 }
             )
-            return records
-        if is_ignored:
-            records.append(
+            # Mirror the upstream short-circuit: anything after an
+            # unterminated fence is, per CommonMark, inside it.
+            return out
+        if _has_opt_out_marker(lines, raw["open_line_index"]):
+            out.append(
                 {
                     "ordinal": ordinal,
-                    "text": body_text,
+                    "text": raw["text"],
                     "state": "ignored",
                 }
             )
-        elif opener == "wrong-case":
-            records.append(
+            continue
+        if kind == "wrong-case":
+            out.append(
                 {
                     "ordinal": ordinal,
-                    "text": body_text,
+                    "text": raw["text"],
                     "state": "wrong-case",
-                    "language": _open_language(line),
+                    "language": token,
                 }
             )
         else:
-            records.append(
+            out.append(
                 {
                     "ordinal": ordinal,
-                    "text": body_text,
+                    "text": raw["text"],
                     "state": "parsed",
                 }
             )
-        i = j + 1
-    return records
-
-
-def _classify_open_line(line: str) -> str | None:
-    """Return ``"parsed"`` / ``"wrong-case"`` / ``None`` for *line*.
-
-    ``"parsed"`` — column-0 ``` ```yaml ``` open with the literal
-    lowercase token.  ``"wrong-case"`` — column-0 backtick fence open
-    with any case variant of ``yaml`` or ``yml`` that is not the
-    canonical lowercase ``yaml`` (e.g. ``YAML``, ``Yaml``, ``yAmL``,
-    ``YML``, ``Yml``).  ``None`` — not an opener this extractor
-    recognises.
-    """
-    if not line.startswith("```"):
-        return None
-    # Must be exactly three backticks (exclude ``` ```` ``` etc.).
-    if line.startswith("````"):
-        return None
-    rest = line[3:]
-    # No leading whitespace before the language token.
-    if not rest:
-        return None
-    # Strip info-string suffix at the first whitespace.
-    token = rest.split(" ", 1)[0].split("\t", 1)[0]
-    if token == "yaml":
-        return "parsed"
-    if token.lower() in ("yaml", "yml"):
-        return "wrong-case"
-    return None
-
-
-def _open_language(line: str) -> str:
-    """Return the language token of a column-0 backtick fence opener."""
-    rest = line[3:]
-    return rest.split(" ", 1)[0].split("\t", 1)[0]
+    return out
 
 
 def _has_opt_out_marker(lines: list[str], fence_index: int) -> bool:
@@ -239,7 +158,7 @@ def validate_prose_yaml(file_path: str, markdown_text: str) -> list[dict]:
     Frontmatter blocks are **not** scanned; this function only
     inspects fenced code in the body.
     """
-    body = _strip_frontmatter(markdown_text)
+    body = strip_frontmatter_for_scan(markdown_text)
     return _validate_records(file_path, extract_yaml_fences(body))
 
 
@@ -408,7 +327,7 @@ def collect_prose_findings(
             )
             per_file_counts.append((display_path, 0))
             continue
-        records = extract_yaml_fences(_strip_frontmatter(text))
+        records = extract_yaml_fences(strip_frontmatter_for_scan(text))
         parsed_count = sum(1 for r in records if r["state"] == "parsed")
         checked += parsed_count
         per_file_counts.append((display_path, len(records)))

@@ -105,6 +105,122 @@ class YamlConformanceConfigTests(unittest.TestCase):
         )
 
 
+class AllowedToolsCatalogTests(unittest.TestCase):
+    """Per-harness catalog constants exposed by ``allowed_tools.catalogs``."""
+
+    def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
+        # Names listed in the Claude Code skills documentation.
+        for tool in ("Bash", "Read", "Edit", "Write", "Grep", "Glob",
+                     "WebFetch", "WebSearch", "NotebookEdit", "Task", "Skill"):
+            self.assertIn(tool, constants.HARNESS_TOOLS_CLAUDE_CODE)
+
+    def test_cli_tools_excludes_pascalcase_harness_names(self) -> None:
+        for tool in ("Bash", "Read", "Edit"):
+            self.assertNotIn(tool, constants.CLI_TOOLS_CLAUDE_CODE)
+
+    def test_cli_tools_includes_lowercase_generic_set(self) -> None:
+        for tool in ("bash", "python", "git", "gh", "docker"):
+            self.assertIn(tool, constants.CLI_TOOLS_CLAUDE_CODE)
+
+    def test_known_tools_is_union(self) -> None:
+        self.assertEqual(
+            constants.KNOWN_TOOLS,
+            constants.HARNESS_TOOLS_CLAUDE_CODE
+            | constants.CLI_TOOLS_CLAUDE_CODE,
+        )
+
+    def test_known_tools_recognises_lowercase_bash(self) -> None:
+        # Backwards-compat: existing skills may list lowercase ``bash``.
+        # Recognition INFO must continue to treat it as known.
+        self.assertIn("bash", constants.KNOWN_TOOLS)
+
+    def test_known_tools_recognises_pascalcase_bash(self) -> None:
+        self.assertIn("Bash", constants.KNOWN_TOOLS)
+
+
+class ToolShapeRegexTests(unittest.TestCase):
+    """Token-shape regexes used by pattern-fallback recognition."""
+
+    def test_mcp_regex_matches_canonical_form(self) -> None:
+        self.assertTrue(
+            constants.RE_MCP_TOOL_NAME.match("mcp__server__tool"),
+        )
+
+    def test_mcp_regex_matches_mixed_case(self) -> None:
+        # Real MCP tool names mix case (e.g. Atlassian, addCommentToJiraIssue).
+        self.assertTrue(
+            constants.RE_MCP_TOOL_NAME.match(
+                "mcp__claude_ai_Atlassian__addCommentToJiraIssue"
+            ),
+        )
+
+    def test_mcp_regex_rejects_single_underscore(self) -> None:
+        self.assertIsNone(
+            constants.RE_MCP_TOOL_NAME.match("mcp_server__tool"),
+        )
+
+    def test_mcp_regex_rejects_missing_separator(self) -> None:
+        self.assertIsNone(
+            constants.RE_MCP_TOOL_NAME.match("mcp__servertool"),
+        )
+
+    def test_harness_shape_matches_pascalcase(self) -> None:
+        self.assertTrue(constants.RE_HARNESS_TOOL_SHAPE.match("Bash"))
+        self.assertTrue(constants.RE_HARNESS_TOOL_SHAPE.match("WebFetch"))
+
+    def test_harness_shape_rejects_paren_suffix(self) -> None:
+        # The regex matches bare PascalCase only.  Paren suffixes
+        # (e.g. ``Bash(git add *)``) are stripped upstream by
+        # ``_RE_PAREN_ARGS`` in ``validation`` before any token
+        # reaches this regex, so the regex itself does not need
+        # to model parens.
+        self.assertIsNone(
+            constants.RE_HARNESS_TOOL_SHAPE.match("Bash(git add *)"),
+        )
+
+    def test_harness_shape_rejects_lowercase(self) -> None:
+        self.assertIsNone(constants.RE_HARNESS_TOOL_SHAPE.match("bash"))
+
+    def test_harness_shape_rejects_dashed(self) -> None:
+        self.assertIsNone(
+            constants.RE_HARNESS_TOOL_SHAPE.match("Some-Tool"),
+        )
+
+
+class ToolFenceLanguagesTests(unittest.TestCase):
+    """``TOOL_FENCE_LANGUAGES`` mapping shape and contents."""
+
+    def test_keyed_by_harness_tool_name(self) -> None:
+        self.assertIn("Bash", constants.TOOL_FENCE_LANGUAGES)
+
+    def test_bash_languages_starter_set(self) -> None:
+        self.assertEqual(
+            constants.TOOL_FENCE_LANGUAGES["Bash"],
+            frozenset({"bash", "sh", "shell", "zsh"}),
+        )
+
+    def test_values_are_frozensets(self) -> None:
+        for languages in constants.TOOL_FENCE_LANGUAGES.values():
+            self.assertIsInstance(languages, frozenset)
+
+    def test_keys_are_harness_tools(self) -> None:
+        # Every fence-language mapping must point at a recognised harness tool.
+        for tool_name in constants.TOOL_FENCE_LANGUAGES.keys():
+            self.assertIn(tool_name, constants.HARNESS_TOOLS_CLAUDE_CODE)
+
+    def test_tools_indicating_scripts_includes_bash(self) -> None:
+        # ``Bash`` is the only tool today with ``scripts_dir_indicator: true``;
+        # the set must include it so the WARN check fires.
+        self.assertIn("Bash", constants.TOOLS_INDICATING_SCRIPTS)
+
+    def test_tools_indicating_scripts_subset_of_harness_tools(self) -> None:
+        for tool_name in constants.TOOLS_INDICATING_SCRIPTS:
+            self.assertIn(tool_name, constants.HARNESS_TOOLS_CLAUDE_CODE)
+
+    def test_tools_indicating_scripts_is_frozenset(self) -> None:
+        self.assertIsInstance(constants.TOOLS_INDICATING_SCRIPTS, frozenset)
+
+
 class MissingSectionFailFastTests(unittest.TestCase):
     """Re-importing ``lib.constants`` against a config missing a
     required section raises ``RuntimeError`` at import time."""
@@ -165,6 +281,80 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 self._full_config_minus("yaml_conformance")
             )
         self.assertIn("yaml_conformance", str(ctx.exception))
+
+    def test_missing_allowed_tools_fence_languages_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested(
+                    "allowed_tools", "fence_languages",
+                )
+            )
+        self.assertIn("fence_languages", str(ctx.exception))
+
+    def test_missing_allowed_tools_catalogs_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("allowed_tools", "catalogs")
+            )
+        self.assertIn("catalogs", str(ctx.exception))
+
+    def test_missing_mcp_tool_pattern_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_scalar_under(
+                    "allowed_tools", "mcp_tool_pattern",
+                )
+            )
+        self.assertIn("mcp_tool_pattern", str(ctx.exception))
+
+    def test_missing_harness_tool_shape_pattern_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_scalar_under(
+                    "allowed_tools", "harness_tool_shape_pattern",
+                )
+            )
+        self.assertIn("harness_tool_shape_pattern", str(ctx.exception))
+
+    def _full_config_minus_scalar_under(
+        self, parent: str, child: str,
+    ) -> str:
+        """Return configuration text with the scalar ``parent.child:``
+        line removed.
+
+        Sibling helper to :meth:`_full_config_minus_nested` for keys
+        whose value is a scalar (e.g. ``foo: pattern``) rather than a
+        nested mapping — the original helper only matches lines whose
+        ``bare`` form is exactly ``child:`` and so cannot reach scalar
+        leaves.
+        """
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        out_lines: list[str] = []
+        in_parent = False
+        parent_indent = 0
+        for line in text.splitlines(keepends=True):
+            stripped = line.lstrip(" \t")
+            indent = len(line) - len(stripped)
+            bare = line.strip()
+            if not in_parent and bare == f"{parent}:":
+                in_parent = True
+                parent_indent = indent
+                out_lines.append(line)
+                continue
+            if (
+                in_parent
+                and indent <= parent_indent
+                and bare
+                and not bare.startswith("#")
+            ):
+                in_parent = False
+            if in_parent and (
+                bare == f"{child}:" or bare.startswith(f"{child}:")
+            ):
+                continue
+            out_lines.append(line)
+        return "".join(out_lines)
 
     def _full_config_minus_nested(self, parent: str, child: str) -> str:
         """Return configuration text with *parent.child* stripped out.

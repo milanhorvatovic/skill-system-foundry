@@ -53,31 +53,77 @@ skill:
 
   # allowed-tools validation (space-delimited tool names in frontmatter)
   allowed_tools:
-    known_tools:
-      - Bash
-      - Read
-      - Edit
-      - Write
-      - Glob
-      - Grep
-      - WebFetch
-      - Task
-      - bash
-      - python
-      - gh
-      - git
-      - docker
-      - npm
-      - pip
-      - curl
-      - wget
-      - node
-      - make
-      - cargo
-      - go
     # Upper bound on tool count — skills requesting too many tools
     # likely need to be split.  Increase if justified.
     max_tools: 20
+    # Token-shape patterns used by the pattern-fallback recognition
+    # tier in ``validate_allowed_tools``.  Patterns live here (single
+    # source of truth) and are compiled in ``constants.py``.
+    # - mcp_tool_pattern: ``mcp__server__tool`` convention; case-mixed
+    #   tokens are valid (e.g. ``mcp__claude_ai_Atlassian__addCommentToJiraIssue``).
+    # - harness_tool_shape_pattern: matches bare PascalCase tokens.
+    #   Callers strip the optional ``(...)`` argument suffix before
+    #   applying this pattern, so the pattern itself does not model
+    #   parens.
+    mcp_tool_pattern: ^mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+$
+    harness_tool_shape_pattern: ^[A-Z][A-Za-z0-9]*$
+    # Per-harness catalogs of tool names recognized in the
+    # `allowed-tools` field.  Today only claude_code consumes this
+    # field; codex tool descriptors (MCP server type/transport/url)
+    # live under `codex_config:` and can migrate into this structure
+    # with their own bucket shape when convenient.
+    catalogs:
+      claude_code:
+        # Source: https://code.claude.com/docs/en/skills
+        # Last checked: 2026-04-26
+        harness_tools:
+          - Bash
+          - Read
+          - Edit
+          - Write
+          - Glob
+          - Grep
+          - WebFetch
+          - WebSearch
+          - NotebookEdit
+          - Task
+          - Skill
+        # Generic CLI names sometimes written into allowed-tools.
+        # NOT harness primitives — listing `bash` does not grant the
+        # harness Bash tool.  Retained so typo-detection on third-party
+        # skills does not regress.
+        cli_tools:
+          - bash
+          - python
+          - gh
+          - git
+          - docker
+          - npm
+          - pip
+          - curl
+          - wget
+          - node
+          - make
+          - cargo
+          - go
+    # Fence/script-presence signals for the coherence rule.  Maps a
+    # harness-tool name (PascalCase, must appear in
+    # ``catalogs.claude_code.harness_tools``) to its body-fence
+    # languages and an explicit flag indicating that a top-level
+    # ``scripts/`` directory is a presence signal for the same tool.
+    # Adding a tool is a YAML edit only — no Python changes required.
+    fence_languages:
+      Bash:
+        languages:
+          - bash
+          - sh
+          - shell
+          - zsh
+        # ``scripts/`` typically holds shell helpers invoked through
+        # the harness Bash tool.  Other tools (e.g. NotebookEdit) do
+        # not have an analogous filesystem signal — leave the flag
+        # off or omit it.
+        scripts_dir_indicator: true
 
   # metadata sub-field validation (foundry conventions — spec allows arbitrary values)
   metadata:

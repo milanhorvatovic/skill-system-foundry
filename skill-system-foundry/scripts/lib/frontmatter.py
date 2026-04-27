@@ -83,6 +83,45 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
     return frontmatter, body, findings
 
 
+def strip_frontmatter_for_scan(content: str) -> str:
+    """Drop a leading frontmatter block before scanning the body.
+
+    Validates the candidate block via :func:`parse_yaml_subset` so a
+    leading Markdown thematic break (``---`` at column 0) is not
+    mistaken for a frontmatter opener.  Returns the original content
+    unchanged when:
+
+    - no opener is present, or
+    - the opener has no closing delimiter (ambiguous — leave to the
+      authoritative ``load_frontmatter`` to surface the parse error),
+      or
+    - the candidate block does not parse as a non-empty YAML mapping.
+
+    Otherwise returns the body text below the closing ``---``.
+
+    Shared by ``prose_yaml`` (YAML doc-snippet check) and
+    ``validation`` (tool-coherence rule) so the two scan rules cannot
+    drift on what counts as frontmatter.
+    """
+    frontmatter_raw, body_raw = split_frontmatter(content)
+    if frontmatter_raw is None:
+        return content
+    if body_raw is None:
+        return content
+    frontmatter_str = frontmatter_raw.strip()
+    if frontmatter_str == "":
+        # Explicitly-empty frontmatter (``---\n---\n``) is still
+        # frontmatter for scope purposes — strip it.
+        return body_raw
+    try:
+        parsed = parse_yaml_subset(frontmatter_str, [])
+    except (ValueError, KeyError):
+        return content
+    if not isinstance(parsed, dict) or not parsed:
+        return content
+    return body_raw
+
+
 def count_body_lines(body: str) -> int:
     """Count lines in the SKILL.md body (after frontmatter).
 

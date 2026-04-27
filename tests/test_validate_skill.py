@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from helpers import write_text, write_skill_md
+from helpers import write_capability_md, write_text, write_skill_md
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -1531,6 +1531,27 @@ class ValidateCapabilityTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
 
+    def test_capability_mode_emits_tool_coherence_skip_pass(self) -> None:
+        """Capability-mode validation emits an explicit tool-coherence skip pass.
+
+        The whole-skill coherence rule deliberately does not run in
+        capability mode (its scope is the entire skill tree, not a
+        single capability), so ``validate_skill`` appends a
+        ``tool-coherence: skipped`` pass to surface the deliberate
+        skip in JSON output.  Pinning the message text keeps a future
+        refactor from silently dropping or renaming the line.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap_dir = os.path.join(tmpdir, "my-cap")
+            _write_capability_md(cap_dir, body="# My Capability\n")
+            _, passes = validate_skill(cap_dir, is_capability=True)
+        skip_passes = [p for p in passes if "tool-coherence: skipped" in p]
+        self.assertEqual(
+            len(skip_passes), 1,
+            f"expected exactly one tool-coherence skip pass, got {passes!r}",
+        )
+        self.assertIn("capability mode", skip_passes[0])
+
     def test_capability_without_frontmatter_passes(self) -> None:
         """A capability without frontmatter passes (not required)."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2118,18 +2139,48 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         tools_part = info_errors[0].split("unrecognized tools: ")[1].split(" —")[0]
         self.assertEqual(tools_part, "foo")
 
-    def test_empty_value_returns_warn(self) -> None:
-        """An empty allowed-tools value produces a WARN."""
+    def test_empty_string_silently_declares_no_tools(self) -> None:
+        """``allowed-tools: ""`` is a deliberate "no tools" declaration."""
         errors, passes = validate_allowed_tools("")
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        self.assertEqual(len(warn_errors), 1)
-        self.assertIn("empty", warn_errors[0])
+        self.assertEqual(errors, [])
+        self.assertIn(
+            "allowed-tools: explicitly declares no tools",
+            passes,
+        )
 
-    def test_whitespace_only_returns_warn(self) -> None:
-        """A whitespace-only allowed-tools value produces a WARN."""
+    def test_whitespace_only_silently_declares_no_tools(self) -> None:
+        """Whitespace-only is treated the same as the empty string."""
         errors, passes = validate_allowed_tools("   ")
+        self.assertEqual(errors, [])
+        self.assertIn(
+            "allowed-tools: explicitly declares no tools",
+            passes,
+        )
+
+    def test_empty_list_silently_declares_no_tools(self) -> None:
+        """An empty Python list passes silently at the API level.
+
+        The foundry's YAML subset parser does not recognise inline
+        flow sequences, so ``allowed-tools: []`` written in YAML
+        frontmatter does **not** reach this branch — that spelling
+        parses as the literal string ``"[]"``.  This test pins the
+        defensive API-level behaviour for non-foundry callers passing
+        a Python list directly.  Non-empty lists still produce the
+        spec-conformance WARN — see ``test_non_empty_list_still_warns``.
+        """
+        errors, passes = validate_allowed_tools([])
+        self.assertEqual(errors, [])
+        self.assertIn(
+            "allowed-tools: explicitly declares no tools",
+            passes,
+        )
+
+    def test_non_empty_list_still_warns(self) -> None:
+        """Non-empty list-form declarations keep the existing spec WARN."""
+        errors, _ = validate_allowed_tools(["Bash", "Read"])
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(len(warn_errors), 1)
+        self.assertIn("got list", warn_errors[0])
 
     def test_exceeding_max_tools_returns_warn(self) -> None:
         """Exceeding MAX_ALLOWED_TOOLS produces a WARN."""
@@ -2184,6 +2235,122 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         self.assertIn("space-separated string", warn_errors[0])
         self.assertIn("NoneType", warn_errors[0])
         self.assertEqual(passes, [])
+
+    def test_mcp_pattern_token_recognised_silently(self) -> None:
+        """MCP-pattern tokens produce no INFO message."""
+        errors, passes = validate_allowed_tools(
+            "Bash mcp__server__tool"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
+    def test_mcp_mixed_case_recognised_silently(self) -> None:
+        """MCP names with mixed case (real Atlassian-style) recognised."""
+        errors, passes = validate_allowed_tools(
+            "Bash mcp__claude_ai_Atlassian__addCommentToJiraIssue"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
+    def test_pascalcase_unknown_emits_harness_shaped_info(self) -> None:
+        """PascalCase tokens not in the catalog emit the harness-shaped INFO."""
+        errors, passes = validate_allowed_tools("Bash MadeUpTool")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("harness-shaped", info_errors[0])
+        self.assertIn("MadeUpTool", info_errors[0])
+        self.assertIn(
+            "allowed_tools.catalogs.claude_code.harness_tools",
+            info_errors[0],
+        )
+
+    def test_pascalcase_with_args_treated_as_harness_shape(self) -> None:
+        """PascalCase tokens with ``(...)`` args follow the same tier."""
+        errors, passes = validate_allowed_tools(
+            "Bash(git add *) MadeUp(arg)"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        # ``Bash(git add *)`` strips to ``Bash`` which is in the catalog,
+        # so only ``MadeUp(arg)`` should be flagged as harness-shaped.
+        # No fully-unrecognized INFO should fire — ``add``, ``*)`` etc.
+        # never appear because the paren-strip happens before split().
+        self.assertEqual(len(info_errors), 1)
+        self.assertIn("harness-shaped", info_errors[0])
+        self.assertIn("MadeUp", info_errors[0])
+
+    def test_restricted_arg_form_recognised_as_single_tool(self) -> None:
+        """Bare ``Bash(git add *)`` survives whitespace tokenization.
+
+        Regression: previously ``value.split()`` ran before the
+        paren-strip, shredding the input into ``Bash(git``, ``add``,
+        ``*)`` and emitting a noisy "unrecognized tools" INFO.  After
+        the fix, the entire restricted form collapses to one ``Bash``
+        token and recognition is silent.
+        """
+        errors, passes = validate_allowed_tools("Bash(git add *)")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+        # Should also count as 1 tool, not 3.
+        count_passes = [p for p in passes if "1 tools" in p]
+        self.assertEqual(len(count_passes), 1)
+
+    def test_multiple_restricted_forms_silent(self) -> None:
+        """``Bash(git:*) Bash(jq:*) Read`` is silent — all paren-stripped."""
+        errors, passes = validate_allowed_tools(
+            "Bash(git:*) Bash(jq:*) Read"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
+
+    def test_paren_only_value_warns(self) -> None:
+        """Paren-only inputs (``(Bash)``, ``(garbage)``) emit a WARN.
+
+        Regression: the pre-split paren-strip can collapse a non-empty
+        value to zero tokens — without this guard the function would
+        silently report "0 tools recognized" for an obviously broken
+        input.
+        """
+        for value in ("(Bash)", "(garbage)", "()"):
+            with self.subTest(value=value):
+                errors, passes = validate_allowed_tools(value)
+                warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+                self.assertEqual(len(warn_errors), 1)
+                self.assertIn("no tool names", warn_errors[0])
+                self.assertEqual(passes, [])
+
+    def test_fully_unknown_garbage_emits_unrecognized_info(self) -> None:
+        """Lowercase/dashed tokens not in any catalog emit the bare INFO."""
+        errors, passes = validate_allowed_tools("Bash some-garbage")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        unrecognized = [
+            e for e in info_errors if "unrecognized" in e
+        ]
+        self.assertEqual(len(unrecognized), 1)
+        self.assertIn("some-garbage", unrecognized[0])
+
+    def test_harness_and_unknown_buckets_emit_separate_info(self) -> None:
+        """Mixed unknowns split into the two tiers, one INFO each."""
+        errors, passes = validate_allowed_tools(
+            "Bash MadeUpTool some-garbage"
+        )
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(info_errors), 2)
+        harness_shaped = [
+            e for e in info_errors if "harness-shaped" in e
+        ]
+        unrecognized = [
+            e for e in info_errors if "unrecognized" in e
+        ]
+        self.assertEqual(len(harness_shaped), 1)
+        self.assertEqual(len(unrecognized), 1)
+        self.assertIn("MadeUpTool", harness_shaped[0])
+        self.assertIn("some-garbage", unrecognized[0])
+
+    def test_known_pascalcase_does_not_trigger_harness_shaped(self) -> None:
+        """Tokens already in harness_tools stay silent."""
+        errors, passes = validate_allowed_tools("Bash Read Write")
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(info_errors, [])
 
 
 # ===================================================================
@@ -2999,6 +3166,160 @@ class CheckProseYamlIntegrationTests(unittest.TestCase):
             files,
             {"capabilities/foo/capability.md", "references/bar.md"},
         )
+
+
+# ===================================================================
+# Integration: validate_skill + tool coherence rule wiring
+# ===================================================================
+
+
+class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
+    """End-to-end tests for the coherence rule wired through validate_skill."""
+
+    def test_skill_with_bash_fence_and_no_bash_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Demo\n\n```bash\necho hi\n```\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+            bash_fails = [e for e in fail_errors if "Bash" in e]
+            self.assertEqual(len(bash_fails), 1)
+
+    def test_skill_with_scripts_dir_and_no_bash_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            write_text(
+                os.path.join(skill_dir, "scripts", "noop.sh"),
+                "#!/usr/bin/env bash\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+            bash_warns = [
+                e for e in warn_errors
+                if "scripts/" in e and "Bash" in e
+            ]
+            self.assertEqual(len(bash_warns), 1)
+
+    def test_skill_declaring_bash_passes_coherence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                allowed_tools="Bash",
+                body="# Demo\n\n```bash\necho hi\n```\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "scripts", "noop.sh"),
+                "#!/usr/bin/env bash\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            bash_findings = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+            ]
+            self.assertEqual(bash_findings, [])
+            warn_bash = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN)
+                and "scripts/" in e and "Bash" in e
+            ]
+            self.assertEqual(warn_bash, [])
+
+    def test_capability_mode_skips_coherence_rule(self) -> None:
+        # Coherence is owned by the skill-level invocation — running
+        # ``validate_skill`` against a single capability must not emit
+        # tool-coherence findings even when the capability body has
+        # a bash fence and the parent skill does not declare Bash.
+        # Otherwise auditing one capability would surface findings
+        # scoped to the whole sibling tree.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n")
+            write_capability_md(
+                skill_dir, "demo",
+                body="# Capability\n\n```bash\necho hi\n```\n",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            coherence_findings = [
+                e for e in errors
+                if "Bash" in e and (
+                    "fence" in e or "scripts/" in e
+                )
+            ]
+            self.assertEqual(coherence_findings, [])
+
+    def test_skill_level_invocation_catches_capability_fence(self) -> None:
+        # The complement to the test above: the skill-level run is
+        # the one that owns coherence, so it must surface a FAIL when
+        # a capability body has a bash fence and Bash is undeclared.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n")
+            write_capability_md(
+                skill_dir, "demo",
+                body="# Capability\n\n```bash\necho hi\n```\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            bash_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+                and "fence" in e
+            ]
+            self.assertEqual(len(bash_fails), 1)
+            self.assertIn(
+                os.path.join("capabilities", "demo", "capability.md"),
+                bash_fails[0],
+            )
+
+    def test_yaml_list_form_in_frontmatter_works_through_pipeline(self) -> None:
+        # The wider validator currently expects a string and will WARN
+        # via validate_allowed_tools, but the coherence rule must still
+        # honour the list form for satisfaction lookup.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            content = (
+                "---\n"
+                "name: demo-skill\n"
+                "description: A skill that lists tools as a YAML list.\n"
+                "allowed-tools:\n"
+                "  - Bash\n"
+                "  - Read\n"
+                "---\n\n"
+                "# Demo\n\n```bash\necho hi\n```\n"
+            )
+            write_text(os.path.join(skill_dir, "SKILL.md"), content)
+            errors, _ = validate_skill(skill_dir)
+            bash_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL) and "Bash" in e
+                and "fence" in e
+            ]
+            self.assertEqual(bash_fails, [])
+
+    def test_explicit_empty_allowed_tools_skips_coherence_end_to_end(self) -> None:
+        # Docs-only skill: ``allowed-tools: ""`` plus a bash fence in
+        # the body must produce no FAIL/WARN from either
+        # ``validate_allowed_tools`` or ``validate_tool_coherence``
+        # when the full ``validate_skill`` pipeline runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                allowed_tools='""',
+                body="# Demo\n\n```bash\necho example\n```\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            offenders = [
+                e for e in errors
+                if (e.startswith(LEVEL_FAIL) or e.startswith(LEVEL_WARN))
+                and ("Bash" in e or "allowed-tools" in e)
+            ]
+            self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

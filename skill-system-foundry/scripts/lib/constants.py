@@ -210,8 +210,86 @@ if not 0.0 <= FRONTMATTER_SUGGEST_CUTOFF <= 1.0:
 
 # Allowed-tools validation
 _allowed_tools = _skill["allowed_tools"]
-KNOWN_TOOLS = frozenset(_allowed_tools["known_tools"])
 MAX_ALLOWED_TOOLS = int(_allowed_tools["max_tools"])
+
+# Per-harness tool catalogs.  Today only ``claude_code`` consumes the
+# ``allowed-tools`` field; new harnesses go alongside as additional
+# buckets.  Fail-fast so a stale checkout missing the catalog produces
+# a clear error at import rather than a silent ``KeyError`` later.
+if "catalogs" not in _allowed_tools:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.allowed_tools.catalogs'; update your checkout or "
+        "restore the full configuration file."
+    )
+_catalogs = _allowed_tools["catalogs"]
+if "claude_code" not in _catalogs:
+    raise RuntimeError(
+        "configuration.yaml is missing required catalog "
+        "'skill.allowed_tools.catalogs.claude_code'."
+    )
+_claude_code_catalog = _catalogs["claude_code"]
+HARNESS_TOOLS_CLAUDE_CODE = frozenset(_claude_code_catalog["harness_tools"])
+CLI_TOOLS_CLAUDE_CODE = frozenset(_claude_code_catalog["cli_tools"])
+
+# ``KNOWN_TOOLS`` is the union of harness primitives + generic CLI
+# names — preserves the existing recognition behaviour of
+# ``validate_allowed_tools`` for tokens already in either bucket.
+KNOWN_TOOLS = HARNESS_TOOLS_CLAUDE_CODE | CLI_TOOLS_CLAUDE_CODE
+
+# Token-shape regexes used by the pattern-fallback recognition tier.
+# Patterns are loaded from ``configuration.yaml`` (single source of
+# truth for validation rules) and compiled here.
+# - MCP tools follow the ``mcp__server__tool`` convention; case-mixed
+#   tokens are valid (e.g. ``mcp__claude_ai_Atlassian__addCommentToJiraIssue``).
+# - Harness-shape regex matches bare PascalCase tokens.  Callers
+#   strip the optional ``(...)`` argument suffix (e.g. ``Bash(git
+#   add *)``) via ``_RE_PAREN_ARGS`` in ``validation`` *before*
+#   applying this regex, so the regex itself does not need to model
+#   parens.
+if "mcp_tool_pattern" not in _allowed_tools:
+    raise RuntimeError(
+        "configuration.yaml is missing required pattern "
+        "'skill.allowed_tools.mcp_tool_pattern'; this foundry build "
+        "is incomplete."
+    )
+if "harness_tool_shape_pattern" not in _allowed_tools:
+    raise RuntimeError(
+        "configuration.yaml is missing required pattern "
+        "'skill.allowed_tools.harness_tool_shape_pattern'; this "
+        "foundry build is incomplete."
+    )
+RE_MCP_TOOL_NAME = re.compile(_allowed_tools["mcp_tool_pattern"])
+RE_HARNESS_TOOL_SHAPE = re.compile(_allowed_tools["harness_tool_shape_pattern"])
+
+# Tool fence-language signals (allowed-tools coherence rule).  Maps
+# a harness-tool name to the set of Markdown fence-language tokens
+# that count as "this tool is used in the body."  Sibling
+# ``TOOLS_INDICATING_SCRIPTS`` is the set of tools whose YAML entry
+# carries ``scripts_dir_indicator: true`` — those tools are also
+# expected to be declared whenever the skill carries a top-level
+# ``scripts/`` directory (WARN, not FAIL — non-shell ``scripts/``
+# trees are legitimate).  Adding a tool is a YAML edit only.
+if "fence_languages" not in _allowed_tools:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.allowed_tools.fence_languages'; this foundry build "
+        "is incomplete."
+    )
+_fence_languages = _allowed_tools["fence_languages"]
+TOOL_FENCE_LANGUAGES: dict[str, frozenset[str]] = {
+    tool_name: frozenset(entry["languages"])
+    for tool_name, entry in _fence_languages.items()
+}
+# The stdlib-only YAML subset parser returns every scalar as a
+# string (see ``yaml_parser.parse_yaml_subset``), so the boolean
+# ``scripts_dir_indicator`` arrives as the literal ``"true"``.
+# Compare against the string explicitly rather than ``is True``.
+TOOLS_INDICATING_SCRIPTS: frozenset[str] = frozenset(
+    tool_name
+    for tool_name, entry in _fence_languages.items()
+    if entry.get("scripts_dir_indicator") == "true"
+)
 
 # Metadata sub-field validation (foundry conventions — spec allows arbitrary values)
 _metadata = _skill["metadata"]
@@ -303,7 +381,8 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
-del _allowed_tools, _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
+del _allowed_tools, _catalogs, _claude_code_catalog, _fence_languages
+del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf

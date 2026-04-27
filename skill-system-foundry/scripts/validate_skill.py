@@ -35,6 +35,7 @@ from lib.validation import (
     validate_metadata,
     validate_license,
     validate_known_keys,
+    validate_tool_coherence,
 )
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
@@ -437,6 +438,19 @@ def validate_skill(
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
+        # Tool coherence is owned by the skill-level invocation (the
+        # rule's scope is the whole skill tree, not a single
+        # capability), so this branch deliberately does not run it.
+        # Validating the parent SKILL.md exercises the same files plus
+        # ``scripts/`` presence — running it here would either scope
+        # incorrectly (only one capability) or duplicate findings
+        # already produced for the parent.  Emit an explicit pass so
+        # JSON consumers see the rule was considered rather than
+        # silently absent from the report.
+        passes.append(
+            "tool-coherence: skipped (capability mode — "
+            "run on parent SKILL.md)"
+        )
         return errors, passes
 
     # Validate required fields
@@ -512,6 +526,14 @@ def validate_skill(
     codex_errors, codex_passes = validate_codex_config(skill_path)
     errors.extend(codex_errors)
     passes.extend(codex_passes)
+
+    # Tool coherence — fence and `scripts/` signals must match
+    # ``allowed-tools``.  Top-level peer call (not nested under the
+    # `allowed-tools` conditional) so the rule fires even when the
+    # frontmatter omits the field entirely.
+    coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
+    errors.extend(coh_errors)
+    passes.extend(coh_passes)
 
     return errors, passes
 
