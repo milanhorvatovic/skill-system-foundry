@@ -1531,6 +1531,27 @@ class ValidateCapabilityTests(unittest.TestCase):
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
 
+    def test_capability_mode_emits_tool_coherence_skip_pass(self) -> None:
+        """Capability-mode validation emits an explicit tool-coherence skip pass.
+
+        The whole-skill coherence rule deliberately does not run in
+        capability mode (its scope is the entire skill tree, not a
+        single capability), so ``validate_skill`` appends a
+        ``tool-coherence: skipped`` pass to surface the deliberate
+        skip in JSON output.  Pinning the message text keeps a future
+        refactor from silently dropping or renaming the line.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap_dir = os.path.join(tmpdir, "my-cap")
+            _write_capability_md(cap_dir, body="# My Capability\n")
+            _, passes = validate_skill(cap_dir, is_capability=True)
+        skip_passes = [p for p in passes if "tool-coherence: skipped" in p]
+        self.assertEqual(
+            len(skip_passes), 1,
+            f"expected exactly one tool-coherence skip pass, got {passes!r}",
+        )
+        self.assertIn("capability mode", skip_passes[0])
+
     def test_capability_without_frontmatter_passes(self) -> None:
         """A capability without frontmatter passes (not required)."""
         with tempfile.TemporaryDirectory() as tmpdir:
