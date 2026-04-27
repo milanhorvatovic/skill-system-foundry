@@ -170,7 +170,7 @@ class ValidateOneTests(unittest.TestCase):
             "tool": "validate_skill",
             "success": False,
             "summary": {"failures": 2, "warnings": 0, "info": 0, "passes": 3},
-            "errors": {"failures": ["FAIL: bad thing"], "warnings": [], "info": []},
+            "errors": {"failures": ["bad thing"], "warnings": [], "info": []},
         }
         fake = _FakeCompleted(json.dumps(payload), returncode=1)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
@@ -179,11 +179,14 @@ class ValidateOneTests(unittest.TestCase):
         self.assertEqual(parsed["summary"]["failures"], 2)
 
     def test_warnings_count_as_failure(self) -> None:
+        # ``errors.warnings`` entries are stored prefix-free in the real
+        # validator's --json output; the helper's main() loop is what
+        # prepends the ``WARN: `` label.
         payload = {
             "tool": "validate_skill",
             "success": True,
             "summary": {"failures": 0, "warnings": 1, "info": 0, "passes": 4},
-            "errors": {"failures": [], "warnings": ["WARN: drift"], "info": []},
+            "errors": {"failures": [], "warnings": ["drift"], "info": []},
         }
         fake = _FakeCompleted(json.dumps(payload), returncode=0)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
@@ -195,7 +198,7 @@ class ValidateOneTests(unittest.TestCase):
             "tool": "validate_skill",
             "success": True,
             "summary": {"failures": 0, "warnings": 0, "info": 1, "passes": 4},
-            "errors": {"failures": [], "warnings": [], "info": ["INFO: nit"]},
+            "errors": {"failures": [], "warnings": [], "info": ["nit"]},
         }
         fake = _FakeCompleted(json.dumps(payload), returncode=0)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
@@ -276,6 +279,22 @@ class FormatVerdictTests(unittest.TestCase):
         line = format_verdict("/tmp/skills/alpha", None, success=False)
         self.assertIn("alpha", line)
         self.assertIn("no valid JSON output", line)
+
+    def test_top_level_error_field_surfaces_in_verdict(self) -> None:
+        # Early-exit JSON payloads from validate_skill.py omit the
+        # ``summary`` object and emit a top-level ``error`` instead. The
+        # verdict must surface that message rather than print misleading
+        # zero counts.
+        payload = {
+            "tool": "validate_skill",
+            "success": False,
+            "error": "'/no/such' is not a directory",
+        }
+        line = format_verdict("/tmp/skills/alpha", payload, success=False)
+        self.assertIn("✗", line)
+        self.assertIn("validator error:", line)
+        self.assertIn("not a directory", line)
+        self.assertNotIn("0 fail", line)
 
 
 # ===================================================================
@@ -387,23 +406,35 @@ class MainTests(unittest.TestCase):
         self.assertEqual(rc, 1)
 
     def test_main_prints_warn_info_and_stderr_lines(self) -> None:
-        # Two skills under skills_root: one with WARN/INFO findings (the
-        # stricter predicate now treats this as failure), one whose
-        # validator emits invalid JSON to stdout and a traceback to
-        # stderr. The single fake replaces ``subprocess.run`` for both
-        # invocations and returns payloads in walk order.
+        # Three skills under skills_root, exercising every diagnostic
+        # branch in main():
+        #   * alpha — clean payload but non-zero return code, plus
+        #     non-empty stderr; helper must print the stderr even though
+        #     stdout was valid JSON.
+        #   * bravo — top-level ``error`` field on an early-exit payload.
+        #   * charlie — invalid JSON on stdout and a traceback on stderr.
+        # Fixture strings for ``errors.*`` are prefix-free, matching the
+        # real validator's --json schema.
         warn_payload = {
             "tool": "validate_skill",
             "success": True,
             "summary": {"failures": 0, "warnings": 1, "info": 1, "passes": 1},
             "errors": {
                 "failures": [],
-                "warnings": ["WARN: drift"],
-                "info": ["INFO: nit"],
+                "warnings": ["drift"],
+                "info": ["nit"],
             },
         }
+        early_exit_payload = {
+            "tool": "validate_skill",
+            "success": False,
+            "error": "'/no/such' is not a directory",
+        }
         side_effect = [
-            _FakeCompleted(json.dumps(warn_payload), returncode=0),
+            _FakeCompleted(
+                json.dumps(warn_payload), returncode=2, stderr="env-warn",
+            ),
+            _FakeCompleted(json.dumps(early_exit_payload), returncode=1),
             _FakeCompleted("not-json", returncode=2, stderr="trace"),
         ]
         captured: list[str] = []
@@ -414,10 +445,9 @@ class MainTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as root:
             skills_root = os.path.join(root, "skills")
-            os.makedirs(os.path.join(skills_root, "alpha"))
-            _write(os.path.join(skills_root, "alpha", "SKILL.md"), "stub")
-            os.makedirs(os.path.join(skills_root, "bravo"))
-            _write(os.path.join(skills_root, "bravo", "SKILL.md"), "stub")
+            for label in ("alpha", "bravo", "charlie"):
+                os.makedirs(os.path.join(skills_root, label))
+                _write(os.path.join(skills_root, label, "SKILL.md"), "stub")
             with mock.patch.object(
                 _mod.subprocess, "run", side_effect=side_effect,
             ), mock.patch.object(sys.stdout, "write", side_effect=_capture):
@@ -430,6 +460,9 @@ class MainTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("WARN: drift", out)
         self.assertIn("INFO: nit", out)
+        self.assertIn("raw stderr: env-warn", out)
+        self.assertIn("validator error:", out)
+        self.assertIn("not a directory", out)
         self.assertIn("raw stdout: not-json", out)
         self.assertIn("raw stderr: trace", out)
 

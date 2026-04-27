@@ -96,11 +96,16 @@ def format_verdict(
 
     *success* is the authoritative pass/fail flag computed by
     :func:`validate_one`. The mark is derived from it so the line never
-    contradicts the aggregate exit code.
+    contradicts the aggregate exit code. When the validator early-exits
+    with a top-level ``error`` field (no ``summary``), the verdict
+    surfaces the message instead of misleading zero counts.
     """
     label = os.path.basename(skill_path.rstrip(os.sep))
     if parsed is None:
         return f"  ✗ {label}: validator emitted no valid JSON output"
+    top_level_error = parsed.get("error")
+    if top_level_error:
+        return f"  ✗ {label}: validator error: {top_level_error}"
     summary = parsed.get("summary") or {}
     failures = summary.get("failures", 0)
     warnings = summary.get("warnings", 0)
@@ -195,11 +200,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"      WARN: {warning}")
             for info in errors.get("info", []):
                 print(f"      INFO: {info}")
-            if parsed is None:
-                if raw.strip():
-                    print(f"      raw stdout: {raw.strip()}")
-                if stderr.strip():
-                    print(f"      raw stderr: {stderr.strip()}")
+            top_level_error = (parsed or {}).get("error")
+            if top_level_error:
+                print(f"      FAIL: {top_level_error}")
+            if parsed is None and raw.strip():
+                print(f"      raw stdout: {raw.strip()}")
+            if stderr.strip():
+                print(f"      raw stderr: {stderr.strip()}")
 
     print("-" * SEPARATOR_WIDTH)
     if all_success:
