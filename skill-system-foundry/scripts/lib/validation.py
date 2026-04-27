@@ -12,7 +12,6 @@ from .constants import (
     RE_METADATA_VERSION,
     MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
-    HARNESS_TOOLS_CLAUDE_CODE,
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
     DIR_CAPABILITIES, DIR_SCRIPTS,
@@ -47,13 +46,17 @@ def parse_allowed_tools_tokens(value: object) -> set[str]:
     Note on the deliberate asymmetry with :func:`validate_allowed_tools`:
     this helper is a value extractor — it tells callers "what tokens
     are in here?" — and is intentionally more permissive than the
-    spec-conformance validator.  ``validate_allowed_tools`` still
-    emits a WARN for non-empty list inputs because the foundry's
-    YAML subset parser does not produce them and full list-form
-    spec acceptance is deferred work; this helper accepts lists so
-    direct API callers and ``validate_tool_coherence`` (which only
-    needs the token set) work today.  See
-    ``test_non_empty_list_still_warns`` and the
+    spec-conformance validator.  ``load_frontmatter`` / the YAML
+    subset parser does return a Python list for block-sequence YAML
+    (``allowed-tools:\\n  - Bash\\n  - Read``), and this helper accepts
+    that list form so direct API callers and ``validate_tool_coherence``
+    (which only needs the token set) work today.
+    ``validate_allowed_tools`` still emits a WARN for non-empty list
+    inputs because the foundry treats them as non-conformant to the
+    current spec expectation of a space-delimited string, even though
+    they are parsed.  Only flow-sequence ``[]`` syntax remains outside
+    the supported YAML subset (it parses as the literal string
+    ``"[]"``).  See ``test_non_empty_list_still_warns`` and the
     ``test_yaml_list_form`` family for the pinned contract.
     """
     if value is None:
