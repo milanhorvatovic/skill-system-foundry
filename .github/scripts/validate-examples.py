@@ -33,9 +33,9 @@ def discover_skill_dirs(skills_root: str) -> list[str]:
     """Return absolute paths of immediate subdirectories that look like skills.
 
     A directory qualifies when it contains a ``SKILL.md`` file at its top
-    level. Other entries (loose files, hidden directories, directories
-    without ``SKILL.md``) are silently skipped — they may exist for
-    documentation or future expansion.
+    level. Hidden entries and loose files are silently skipped. Non-hidden
+    directories without ``SKILL.md`` are *not* treated as skills here —
+    use :func:`find_malformed_skill_dirs` to surface them as failures.
     """
     if not os.path.isdir(skills_root):
         return []
@@ -49,6 +49,30 @@ def discover_skill_dirs(skills_root: str) -> list[str]:
         if os.path.isfile(os.path.join(candidate, "SKILL.md")):
             found.append(os.path.abspath(candidate))
     return found
+
+
+def find_malformed_skill_dirs(skills_root: str) -> list[str]:
+    """Return absolute paths of non-hidden child directories without ``SKILL.md``.
+
+    Each immediate non-hidden child directory under *skills_root* is
+    expected to be a skill root (matching a deployed-style ``skills/``
+    tree). Missing ``SKILL.md`` indicates an accidental rename, deletion,
+    or scaffolding mistake — silently skipping such directories would let
+    a broken example slip past CI as long as another example remains, so
+    callers should fail with a clear diagnostic instead.
+    """
+    if not os.path.isdir(skills_root):
+        return []
+    malformed: list[str] = []
+    for name in sorted(os.listdir(skills_root)):
+        if name.startswith("."):
+            continue
+        candidate = os.path.join(skills_root, name)
+        if not os.path.isdir(candidate):
+            continue
+        if not os.path.isfile(os.path.join(candidate, "SKILL.md")):
+            malformed.append(os.path.abspath(candidate))
+    return malformed
 
 
 def validate_one(
@@ -185,6 +209,16 @@ def main(argv: list[str] | None = None) -> int:
             f"Error: validator not found at {validator_path}",
             file=sys.stderr,
         )
+        return 1
+
+    malformed = find_malformed_skill_dirs(skills_root)
+    if malformed:
+        print(
+            f"Error: malformed example skill directories under {skills_root}",
+            file=sys.stderr,
+        )
+        for path in malformed:
+            print(f"  - {path} is missing SKILL.md", file=sys.stderr)
         return 1
 
     results, all_success = run_validation(skills_root, validator_path)

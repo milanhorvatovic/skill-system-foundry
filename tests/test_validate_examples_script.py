@@ -35,6 +35,7 @@ if _spec is None or _spec.loader is None:
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 discover_skill_dirs = _mod.discover_skill_dirs
+find_malformed_skill_dirs = _mod.find_malformed_skill_dirs
 validate_one = _mod.validate_one
 format_verdict = _mod.format_verdict
 run_validation = _mod.run_validation
@@ -132,6 +133,41 @@ class DiscoverSkillDirsTests(unittest.TestCase):
                 [os.path.basename(p) for p in found],
                 ["alpha", "mike", "zebra"],
             )
+
+
+# ===================================================================
+# find_malformed_skill_dirs
+# ===================================================================
+
+
+class FindMalformedSkillDirsTests(unittest.TestCase):
+
+    def test_returns_directories_missing_skill_md(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "with-skill"))
+            _write(os.path.join(root, "with-skill", "SKILL.md"), "stub")
+            os.makedirs(os.path.join(root, "broken"))
+            malformed = find_malformed_skill_dirs(root)
+            self.assertEqual(len(malformed), 1)
+            self.assertTrue(malformed[0].endswith("broken"))
+
+    def test_skips_hidden_and_loose_files(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, ".hidden"))
+            _write(os.path.join(root, "loose.txt"), "stub")
+            self.assertEqual(find_malformed_skill_dirs(root), [])
+
+    def test_missing_root_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            missing = os.path.join(root, "does-not-exist")
+            self.assertEqual(find_malformed_skill_dirs(missing), [])
+
+    def test_returns_empty_when_every_child_has_skill_md(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            for name in ("alpha", "bravo"):
+                os.makedirs(os.path.join(root, name))
+                _write(os.path.join(root, name, "SKILL.md"), "stub")
+            self.assertEqual(find_malformed_skill_dirs(root), [])
 
 
 # ===================================================================
@@ -413,6 +449,31 @@ class MainTests(unittest.TestCase):
                     "--validator", _REAL_VALIDATOR,
                 ])
         self.assertEqual(rc, 1)
+
+    def test_main_fails_fast_on_malformed_skill_dir(self) -> None:
+        # A non-hidden child directory missing SKILL.md must fail the run
+        # rather than silently disappear from CI's view. A real example
+        # alongside it must not rescue the build.
+        with tempfile.TemporaryDirectory() as root:
+            skills_root = os.path.join(root, "skills")
+            os.makedirs(skills_root)
+            _write_minimal_skill(
+                os.path.join(skills_root, "alpha"), name="alpha",
+            )
+            os.makedirs(os.path.join(skills_root, "broken-no-skill-md"))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), \
+                 contextlib.redirect_stderr(stderr):
+                rc = main([
+                    "--skills-root", skills_root,
+                    "--validator", _REAL_VALIDATOR,
+                ])
+        self.assertEqual(rc, 1)
+        err = stderr.getvalue()
+        self.assertIn("malformed example skill directories", err)
+        self.assertIn("broken-no-skill-md", err)
+        self.assertIn("missing SKILL.md", err)
 
     def test_main_prints_warn_info_and_stderr_lines(self) -> None:
         # Three skills under skills_root, exercising every diagnostic
