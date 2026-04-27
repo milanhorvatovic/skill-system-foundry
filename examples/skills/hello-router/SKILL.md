@@ -24,11 +24,8 @@ Route to the matching capability based on the requested tone:
 | greet-formal | When the request asks for a formal, business-appropriate, or honorific greeting | capabilities/greet-formal/capability.md |
 | greet-casual | When the request asks for a casual, friendly, or first-name greeting | capabilities/greet-casual/capability.md |
 
-Load only the capability that matches the request. Do not load both unless
-the conversation explicitly compares the two tones side by side.
+Load only the capability that matches the request. Do not load both unless the conversation explicitly compares the two tones side by side.
 
 ## Shared Behaviour
 
-Both capabilities emit a single greeting line and stop. Neither capability
-loops, prompts, or escalates back to this entry point. The router itself
-holds no business logic — it only dispatches.
+Both capabilities emit a single greeting line and stop. Neither capability loops, prompts, or escalates back to this entry point. The router itself holds no business logic — it only dispatches.

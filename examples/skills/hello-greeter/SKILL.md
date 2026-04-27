@@ -15,22 +15,14 @@ metadata:
 
 ## Purpose
 
-Produces a one-line welcome message addressed to a named recipient. The skill
-exists as a reference example only — it shows the smallest valid shape a
-standalone skill can take while still satisfying the Agent Skills
-specification and foundry conventions.
+Produces a one-line welcome message addressed to a named recipient. The skill exists as a reference example only — it shows the smallest valid shape a standalone skill can take while still satisfying the Agent Skills specification and foundry conventions.
 
 ## Instructions
 
-1. Identify the recipient name from the request. Fall back to the literal
-   word "friend" when no name is supplied.
-2. Choose a tone token from the request: "formal" or "casual". Default to
-   "casual" when nothing is specified.
-3. Emit exactly one greeting line. For "casual" tone, the format is
-   `Hello, <name>!`. For "formal" tone, the format is
-   `Good day, <name>.`.
-4. Stop after the single line. The skill performs no follow-up question and
-   no continuation prompt.
+1. Identify the recipient name from the request. Fall back to the literal word "friend" when no name is supplied.
+2. Choose a tone token from the request: "formal" or "casual". Default to "casual" when nothing is specified.
+3. Emit exactly one greeting line. For "casual" tone, the format is `Hello, <name>!`. For "formal" tone, the format is `Good day, <name>.`.
+4. Stop after the single line. The skill performs no follow-up question and no continuation prompt.
 
 ## Examples
 
@@ -40,5 +32,4 @@ Input: `formal greeting for Dr. Lee`. Output: `Good day, Dr. Lee.`
 
 ## Output Format
 
-A single plain-text line containing the greeting. No markdown, no fences,
-no trailing whitespace.
+A single plain-text line containing the greeting. No markdown, no fences, no trailing whitespace.
