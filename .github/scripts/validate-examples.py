@@ -3,7 +3,7 @@
 Walks the immediate children of ``examples/skills/`` and runs
 ``skill-system-foundry/scripts/validate_skill.py --json`` against each.
 Aggregates per-skill verdicts and exits non-zero when any example reports
-``failures > 0`` (FAIL findings).
+any FAIL, WARN, or INFO finding — examples must validate fully clean.
 
 Roles under ``examples/roles/`` are intentionally skipped — the foundry
 validator does not currently target role files. A dedicated role
@@ -53,13 +53,15 @@ def discover_skill_dirs(skills_root: str) -> list[str]:
 
 def validate_one(
     skill_path: str, validator_path: str,
-) -> tuple[bool, dict | None, str]:
+) -> tuple[bool, dict | None, str, str]:
     """Run ``validate_skill.py --json`` against *skill_path*.
 
-    Returns a tuple of ``(success, parsed_json, raw_stdout)``. *success*
-    is True only when the subprocess returned exit 0 and the parsed
-    payload reports ``success: true``. *parsed_json* is None when stdout
-    could not be parsed as JSON.
+    Returns a tuple of ``(success, parsed_json, raw_stdout, raw_stderr)``.
+    *success* is True only when the subprocess returned exit 0, the
+    parsed payload reports ``success: true``, and the summary reports
+    zero failures, warnings, and info findings — examples must validate
+    fully clean. *parsed_json* is None when stdout could not be parsed
+    as JSON.
     """
     completed = subprocess.run(
         [sys.executable, validator_path, skill_path, "--json"],
@@ -68,27 +70,42 @@ def validate_one(
         encoding="utf-8",
     )
     raw = completed.stdout
+    stderr = completed.stderr
     parsed: dict | None
     try:
         parsed = json.loads(raw) if raw.strip() else None
     except json.JSONDecodeError:
         parsed = None
     if parsed is None:
-        return False, None, raw
-    success = bool(parsed.get("success")) and completed.returncode == 0
-    return success, parsed, raw
+        return False, None, raw, stderr
+    summary = parsed.get("summary") or {}
+    success = (
+        bool(parsed.get("success"))
+        and completed.returncode == 0
+        and summary.get("failures", 0) == 0
+        and summary.get("warnings", 0) == 0
+        and summary.get("info", 0) == 0
+    )
+    return success, parsed, raw, stderr
 
 
-def format_verdict(skill_path: str, parsed: dict | None) -> str:
-    """Render a single one-line verdict for *skill_path*."""
+def format_verdict(
+    skill_path: str, parsed: dict | None, success: bool,
+) -> str:
+    """Render a single one-line verdict for *skill_path*.
+
+    *success* is the authoritative pass/fail flag computed by
+    :func:`validate_one`. The mark is derived from it so the line never
+    contradicts the aggregate exit code.
+    """
     label = os.path.basename(skill_path.rstrip(os.sep))
     if parsed is None:
-        return f"  ✗ {label}: validator emitted no JSON output"
+        return f"  ✗ {label}: validator emitted no valid JSON output"
     summary = parsed.get("summary") or {}
     failures = summary.get("failures", 0)
     warnings = summary.get("warnings", 0)
     info = summary.get("info", 0)
-    mark = "✓" if parsed.get("success") and failures == 0 else "✗"
+    mark = "✓" if success else "✗"
     return (
         f"  {mark} {label}: "
         f"{failures} fail / {warnings} warn / {info} info"
@@ -97,17 +114,20 @@ def format_verdict(skill_path: str, parsed: dict | None) -> str:
 
 def run_validation(
     skills_root: str, validator_path: str,
-) -> tuple[list[tuple[str, bool, dict | None, str]], bool]:
+) -> tuple[list[tuple[str, bool, dict | None, str, str]], bool]:
     """Validate every skill under *skills_root*.
 
     Returns ``(results, all_success)`` where *results* is a list of
-    ``(skill_path, success, parsed, raw_stdout)`` tuples in walk order.
+    ``(skill_path, success, parsed, raw_stdout, raw_stderr)`` tuples in
+    walk order.
     """
-    results: list[tuple[str, bool, dict | None, str]] = []
+    results: list[tuple[str, bool, dict | None, str, str]] = []
     all_success = True
     for skill_path in discover_skill_dirs(skills_root):
-        success, parsed, raw = validate_one(skill_path, validator_path)
-        results.append((skill_path, success, parsed, raw))
+        success, parsed, raw, stderr = validate_one(
+            skill_path, validator_path,
+        )
+        results.append((skill_path, success, parsed, raw, stderr))
         if not success:
             all_success = False
     return results, all_success
@@ -165,19 +185,27 @@ def main(argv: list[str] | None = None) -> int:
     print("-" * SEPARATOR_WIDTH)
 
     results, all_success = run_validation(skills_root, validator_path)
-    for skill_path, success, parsed, raw in results:
-        print(format_verdict(skill_path, parsed))
+    for skill_path, success, parsed, raw, stderr in results:
+        print(format_verdict(skill_path, parsed, success))
         if not success:
-            for error in (parsed or {}).get("errors", {}).get("failures", []):
+            errors = (parsed or {}).get("errors", {}) or {}
+            for error in errors.get("failures", []):
                 print(f"      FAIL: {error}")
-            if parsed is None and raw.strip():
-                print(f"      raw stdout: {raw.strip()}")
+            for warning in errors.get("warnings", []):
+                print(f"      WARN: {warning}")
+            for info in errors.get("info", []):
+                print(f"      INFO: {info}")
+            if parsed is None:
+                if raw.strip():
+                    print(f"      raw stdout: {raw.strip()}")
+                if stderr.strip():
+                    print(f"      raw stderr: {stderr.strip()}")
 
     print("-" * SEPARATOR_WIDTH)
     if all_success:
         print(f"✓ All {len(results)} example(s) validated cleanly")
         return 0
-    failed = sum(1 for _, success, _, _ in results if not success)
+    failed = sum(1 for _, success, _, _, _ in results if not success)
     print(f"✗ {failed} of {len(results)} example(s) failed validation")
     return 1
 

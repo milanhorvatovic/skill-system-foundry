@@ -139,8 +139,11 @@ class DiscoverSkillDirsTests(unittest.TestCase):
 
 class _FakeCompleted:
 
-    def __init__(self, stdout: str, returncode: int = 0) -> None:
+    def __init__(
+        self, stdout: str, returncode: int = 0, stderr: str = "",
+    ) -> None:
         self.stdout = stdout
+        self.stderr = stderr
         self.returncode = returncode
 
 
@@ -154,10 +157,13 @@ class ValidateOneTests(unittest.TestCase):
         }
         fake = _FakeCompleted(json.dumps(payload), returncode=0)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
-            success, parsed, raw = validate_one("/tmp/skill", "/tmp/v.py")
+            success, parsed, raw, stderr = validate_one(
+                "/tmp/skill", "/tmp/v.py",
+            )
         self.assertTrue(success)
         self.assertEqual(parsed["summary"]["failures"], 0)
         self.assertIn("validate_skill", raw)
+        self.assertEqual(stderr, "")
 
     def test_failure_payload_marks_unsuccessful(self) -> None:
         payload = {
@@ -168,24 +174,56 @@ class ValidateOneTests(unittest.TestCase):
         }
         fake = _FakeCompleted(json.dumps(payload), returncode=1)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
-            success, parsed, _ = validate_one("/tmp/skill", "/tmp/v.py")
+            success, parsed, _, _ = validate_one("/tmp/skill", "/tmp/v.py")
         self.assertFalse(success)
         self.assertEqual(parsed["summary"]["failures"], 2)
 
-    def test_invalid_json_returns_none(self) -> None:
-        fake = _FakeCompleted("not-json-at-all", returncode=0)
+    def test_warnings_count_as_failure(self) -> None:
+        payload = {
+            "tool": "validate_skill",
+            "success": True,
+            "summary": {"failures": 0, "warnings": 1, "info": 0, "passes": 4},
+            "errors": {"failures": [], "warnings": ["WARN: drift"], "info": []},
+        }
+        fake = _FakeCompleted(json.dumps(payload), returncode=0)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
-            success, parsed, raw = validate_one("/tmp/skill", "/tmp/v.py")
+            success, _, _, _ = validate_one("/tmp/skill", "/tmp/v.py")
+        self.assertFalse(success)
+
+    def test_info_findings_count_as_failure(self) -> None:
+        payload = {
+            "tool": "validate_skill",
+            "success": True,
+            "summary": {"failures": 0, "warnings": 0, "info": 1, "passes": 4},
+            "errors": {"failures": [], "warnings": [], "info": ["INFO: nit"]},
+        }
+        fake = _FakeCompleted(json.dumps(payload), returncode=0)
+        with mock.patch.object(_mod.subprocess, "run", return_value=fake):
+            success, _, _, _ = validate_one("/tmp/skill", "/tmp/v.py")
+        self.assertFalse(success)
+
+    def test_invalid_json_returns_none_and_captures_stderr(self) -> None:
+        fake = _FakeCompleted(
+            "not-json-at-all", returncode=0, stderr="boom",
+        )
+        with mock.patch.object(_mod.subprocess, "run", return_value=fake):
+            success, parsed, raw, stderr = validate_one(
+                "/tmp/skill", "/tmp/v.py",
+            )
         self.assertFalse(success)
         self.assertIsNone(parsed)
         self.assertEqual(raw, "not-json-at-all")
+        self.assertEqual(stderr, "boom")
 
     def test_empty_stdout_returns_none(self) -> None:
-        fake = _FakeCompleted("", returncode=1)
+        fake = _FakeCompleted("", returncode=1, stderr="trace")
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
-            success, parsed, _ = validate_one("/tmp/skill", "/tmp/v.py")
+            success, parsed, _, stderr = validate_one(
+                "/tmp/skill", "/tmp/v.py",
+            )
         self.assertFalse(success)
         self.assertIsNone(parsed)
+        self.assertEqual(stderr, "trace")
 
     def test_returncode_nonzero_overrides_success_flag(self) -> None:
         payload = {
@@ -195,7 +233,7 @@ class ValidateOneTests(unittest.TestCase):
         }
         fake = _FakeCompleted(json.dumps(payload), returncode=2)
         with mock.patch.object(_mod.subprocess, "run", return_value=fake):
-            success, _, _ = validate_one("/tmp/skill", "/tmp/v.py")
+            success, _, _, _ = validate_one("/tmp/skill", "/tmp/v.py")
         self.assertFalse(success)
 
 
@@ -209,11 +247,11 @@ class FormatVerdictTests(unittest.TestCase):
     def test_success_renders_check_mark(self) -> None:
         payload = {
             "success": True,
-            "summary": {"failures": 0, "warnings": 1, "info": 2},
+            "summary": {"failures": 0, "warnings": 0, "info": 0},
         }
-        line = format_verdict("/tmp/skills/alpha", payload)
+        line = format_verdict("/tmp/skills/alpha", payload, success=True)
         self.assertIn("alpha", line)
-        self.assertIn("0 fail / 1 warn / 2 info", line)
+        self.assertIn("0 fail / 0 warn / 0 info", line)
         self.assertIn("✓", line)
 
     def test_failure_renders_cross_mark(self) -> None:
@@ -221,14 +259,23 @@ class FormatVerdictTests(unittest.TestCase):
             "success": False,
             "summary": {"failures": 1, "warnings": 0, "info": 0},
         }
-        line = format_verdict("/tmp/skills/alpha", payload)
+        line = format_verdict("/tmp/skills/alpha", payload, success=False)
         self.assertIn("✗", line)
         self.assertIn("1 fail", line)
 
+    def test_warning_only_renders_cross_mark_when_success_false(self) -> None:
+        payload = {
+            "success": True,
+            "summary": {"failures": 0, "warnings": 1, "info": 0},
+        }
+        line = format_verdict("/tmp/skills/alpha", payload, success=False)
+        self.assertIn("✗", line)
+        self.assertIn("1 warn", line)
+
     def test_missing_payload_renders_explanation(self) -> None:
-        line = format_verdict("/tmp/skills/alpha", None)
+        line = format_verdict("/tmp/skills/alpha", None, success=False)
         self.assertIn("alpha", line)
-        self.assertIn("no JSON output", line)
+        self.assertIn("no valid JSON output", line)
 
 
 # ===================================================================
@@ -245,7 +292,7 @@ class RunValidationTests(unittest.TestCase):
             results, all_ok = run_validation(root, _REAL_VALIDATOR)
         self.assertTrue(all_ok)
         self.assertEqual(len(results), 2)
-        for _, success, _, _ in results:
+        for _, success, _, _, _ in results:
             self.assertTrue(success)
 
     def test_all_success_false_when_one_skill_fails(self) -> None:
@@ -338,6 +385,53 @@ class MainTests(unittest.TestCase):
                     "--validator", _REAL_VALIDATOR,
                 ])
         self.assertEqual(rc, 1)
+
+    def test_main_prints_warn_info_and_stderr_lines(self) -> None:
+        # Two skills under skills_root: one with WARN/INFO findings (the
+        # stricter predicate now treats this as failure), one whose
+        # validator emits invalid JSON to stdout and a traceback to
+        # stderr. The single fake replaces ``subprocess.run`` for both
+        # invocations and returns payloads in walk order.
+        warn_payload = {
+            "tool": "validate_skill",
+            "success": True,
+            "summary": {"failures": 0, "warnings": 1, "info": 1, "passes": 1},
+            "errors": {
+                "failures": [],
+                "warnings": ["WARN: drift"],
+                "info": ["INFO: nit"],
+            },
+        }
+        side_effect = [
+            _FakeCompleted(json.dumps(warn_payload), returncode=0),
+            _FakeCompleted("not-json", returncode=2, stderr="trace"),
+        ]
+        captured: list[str] = []
+
+        def _capture(text: str) -> int:
+            captured.append(text)
+            return len(text)
+
+        with tempfile.TemporaryDirectory() as root:
+            skills_root = os.path.join(root, "skills")
+            os.makedirs(os.path.join(skills_root, "alpha"))
+            _write(os.path.join(skills_root, "alpha", "SKILL.md"), "stub")
+            os.makedirs(os.path.join(skills_root, "bravo"))
+            _write(os.path.join(skills_root, "bravo", "SKILL.md"), "stub")
+            with mock.patch.object(
+                _mod.subprocess, "run", side_effect=side_effect,
+            ), mock.patch.object(sys.stdout, "write", side_effect=_capture):
+                rc = main([
+                    "--skills-root", skills_root,
+                    "--validator", _REAL_VALIDATOR,
+                ])
+
+        out = "".join(captured)
+        self.assertEqual(rc, 1)
+        self.assertIn("WARN: drift", out)
+        self.assertIn("INFO: nit", out)
+        self.assertIn("raw stdout: not-json", out)
+        self.assertIn("raw stderr: trace", out)
 
 
 if __name__ == "__main__":
