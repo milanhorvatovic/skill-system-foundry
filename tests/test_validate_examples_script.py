@@ -9,7 +9,9 @@ missing JSON), ``run_validation`` (aggregates, ``all_success`` flag), and
 missing validator, missing examples, sibling roles directory ignored).
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -343,7 +345,8 @@ class MainTests(unittest.TestCase):
             _write_minimal_skill(
                 os.path.join(skills_root, "alpha"), name="alpha",
             )
-            with mock.patch.object(sys.stdout, "write"):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
                 rc = main([
                     "--skills-root", skills_root,
                     "--validator", _REAL_VALIDATOR,
@@ -354,23 +357,27 @@ class MainTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             skills_root = os.path.join(root, "skills")
             os.makedirs(skills_root)
-            with mock.patch.object(sys.stderr, "write"):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
                 rc = main([
                     "--skills-root", skills_root,
                     "--validator", os.path.join(root, "no-such-validator.py"),
                 ])
         self.assertEqual(rc, 1)
+        self.assertIn("validator not found", stderr.getvalue())
 
     def test_no_skills_returns_one(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             empty_root = os.path.join(root, "skills")
             os.makedirs(empty_root)
-            with mock.patch.object(sys.stderr, "write"):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
                 rc = main([
                     "--skills-root", empty_root,
                     "--validator", _REAL_VALIDATOR,
                 ])
         self.assertEqual(rc, 1)
+        self.assertIn("no example skills found", stderr.getvalue())
 
     def test_sibling_roles_directory_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -383,7 +390,8 @@ class MainTests(unittest.TestCase):
             )
             # A loose markdown file that would FAIL if validated as a skill.
             _write(os.path.join(roles_root, "some-role.md"), "# Role\n")
-            with mock.patch.object(sys.stdout, "write"):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
                 rc = main([
                     "--skills-root", skills_root,
                     "--validator", _REAL_VALIDATOR,
@@ -398,7 +406,8 @@ class MainTests(unittest.TestCase):
             broken_dir = os.path.join(skills_root, "broken")
             os.makedirs(broken_dir)
             _write(os.path.join(broken_dir, "SKILL.md"), "# Broken\n")
-            with mock.patch.object(sys.stdout, "write"):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
                 rc = main([
                     "--skills-root", skills_root,
                     "--validator", _REAL_VALIDATOR,
@@ -437,12 +446,7 @@ class MainTests(unittest.TestCase):
             _FakeCompleted(json.dumps(early_exit_payload), returncode=1),
             _FakeCompleted("not-json", returncode=2, stderr="trace"),
         ]
-        captured: list[str] = []
-
-        def _capture(text: str) -> int:
-            captured.append(text)
-            return len(text)
-
+        stdout = io.StringIO()
         with tempfile.TemporaryDirectory() as root:
             skills_root = os.path.join(root, "skills")
             for label in ("alpha", "bravo", "charlie"):
@@ -450,13 +454,13 @@ class MainTests(unittest.TestCase):
                 _write(os.path.join(skills_root, label, "SKILL.md"), "stub")
             with mock.patch.object(
                 _mod.subprocess, "run", side_effect=side_effect,
-            ), mock.patch.object(sys.stdout, "write", side_effect=_capture):
+            ), contextlib.redirect_stdout(stdout):
                 rc = main([
                     "--skills-root", skills_root,
                     "--validator", _REAL_VALIDATOR,
                 ])
 
-        out = "".join(captured)
+        out = stdout.getvalue()
         self.assertEqual(rc, 1)
         self.assertIn("WARN: drift", out)
         self.assertIn("INFO: nit", out)
