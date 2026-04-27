@@ -40,8 +40,10 @@ domain logic of its own.
 
 ## Handoff
 
-- Tone is missing or unrecognized → fall back to `hello-greeter` with the
-  default casual tone, and note the fallback in the response prefix.
+- Tone is missing or unrecognized → fall back silently to `hello-greeter`
+  with the default casual tone. The fallback is not announced in the
+  output — the role still emits exactly one greeting line and nothing
+  else.
 - Request asks for multi-recipient or templated bulk greetings → return a
   short refusal pointing the caller at a future bulk-greeting skill.
 - Request asks for anything other than a greeting → return control to the
@@ -64,6 +66,7 @@ Task Progress:
 | skills/hello-greeter/SKILL.md | Default casual greeting when no tone is specified |
 | skills/hello-router/SKILL.md | Tone-aware dispatch entry point |
 | skills/hello-router/capabilities/greet-formal/capability.md | Formal tone rendering loaded by the router |
+| skills/hello-router/capabilities/greet-casual/capability.md | Casual tone rendering loaded by the router |
 
 <!-- Paths in this table are relative to the example mini system root
      (the examples/ directory containing skills/ and roles/), not relative
@@ -73,6 +76,6 @@ Task Progress:
 
 The role decides autonomously between the standalone and router paths
 based on the tone signal. It asks no clarifying questions for missing
-tone — it falls back to the default greeting and notes the fallback in
-the prefix. It escalates to the caller only when the request is outside
+tone — it falls back silently to the default greeting and emits exactly
+one line. It escalates to the caller only when the request is outside
 the greeting domain.
