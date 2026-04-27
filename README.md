@@ -170,7 +170,7 @@ On Linux and macOS the expected output is `skill-system-foundry-vX.Y.Z.zip: OK`.
 
 ## Reference examples
 
-The [`examples/`](examples/) directory ships three reference skills laid out as a self-contained mini system root. They demonstrate the patterns the foundry supports — standalone, router, and role — using the same paths real deployments use:
+The [`examples/`](examples/) directory ships three reference examples — two skills and one role — laid out as a self-contained mini system root. They demonstrate the patterns the foundry supports — standalone, router, and role — using the same paths real deployments use:
 
 - **[`examples/skills/hello-greeter/`](examples/skills/hello-greeter/SKILL.md)** — the smallest valid standalone skill: a single `SKILL.md`, minimal frontmatter, no `allowed-tools`.
 - **[`examples/skills/hello-router/`](examples/skills/hello-router/SKILL.md)** — a router skill dispatching to two capabilities, with `allowed-tools: Bash` declared so a fenced bash example in one capability stays coherent.
