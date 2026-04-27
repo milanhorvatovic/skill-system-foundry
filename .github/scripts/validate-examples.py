@@ -178,18 +178,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    skill_dirs = discover_skill_dirs(skills_root)
-    if not skill_dirs:
+    results, all_success = run_validation(skills_root, validator_path)
+    if not results:
         print(
             f"Error: no example skills found under {skills_root}",
             file=sys.stderr,
         )
         return 1
 
-    print(f"Validating {len(skill_dirs)} example skill(s) under {skills_root}")
+    print(f"Validating {len(results)} example skill(s) under {skills_root}")
     print("-" * SEPARATOR_WIDTH)
 
-    results, all_success = run_validation(skills_root, validator_path)
     for skill_path, success, parsed, raw, stderr in results:
         print(format_verdict(skill_path, parsed, success))
         if not success:
