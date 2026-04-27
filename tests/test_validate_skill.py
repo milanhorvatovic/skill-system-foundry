@@ -2136,6 +2136,27 @@ class ValidateAllowedToolsTests(unittest.TestCase):
             passes,
         )
 
+    def test_empty_list_silently_declares_no_tools(self) -> None:
+        """``allowed-tools: []`` is the YAML-list form of explicit empty.
+
+        Distinct from non-empty lists which still produce the spec-
+        conformance WARN — full list-form acceptance is a separate
+        follow-up issue.
+        """
+        errors, passes = validate_allowed_tools([])
+        self.assertEqual(errors, [])
+        self.assertIn(
+            "allowed-tools: explicitly declares no tools",
+            passes,
+        )
+
+    def test_non_empty_list_still_warns(self) -> None:
+        """Non-empty list-form declarations keep the existing spec WARN."""
+        errors, _ = validate_allowed_tools(["Bash", "Read"])
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("got list", warn_errors[0])
+
     def test_exceeding_max_tools_returns_warn(self) -> None:
         """Exceeding MAX_ALLOWED_TOOLS produces a WARN."""
         tools = " ".join(f"tool{i}" for i in range(MAX_ALLOWED_TOOLS + 1))
@@ -3254,6 +3275,26 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
                 and "fence" in e
             ]
             self.assertEqual(bash_fails, [])
+
+    def test_explicit_empty_allowed_tools_skips_coherence_end_to_end(self) -> None:
+        # Docs-only skill: ``allowed-tools: ""`` plus a bash fence in
+        # the body must produce no FAIL/WARN from either
+        # ``validate_allowed_tools`` or ``validate_tool_coherence``
+        # when the full ``validate_skill`` pipeline runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                allowed_tools='""',
+                body="# Demo\n\n```bash\necho example\n```\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            offenders = [
+                e for e in errors
+                if (e.startswith(LEVEL_FAIL) or e.startswith(LEVEL_WARN))
+                and ("Bash" in e or "allowed-tools" in e)
+            ]
+            self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

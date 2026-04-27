@@ -130,9 +130,12 @@ def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
 def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     """Validate the allowed-tools frontmatter field.
 
-    Checks that the value is a space-separated list of tool names,
-    each tool is checked against the known tools list, and the total
-    count does not exceed the configured maximum.
+    The spec defines ``allowed-tools`` as a space-separated string of
+    tool names.  Empty / whitespace-only values, and the empty YAML
+    list (``allowed-tools: []`` — also empty after parsing), are
+    accepted as deliberate "no harness tools" declarations and pass
+    silently.  Non-empty lists still produce the spec-conformance
+    WARN; full list-form acceptance is a separate follow-up.
 
     Recognition tier (in order):
 
@@ -150,6 +153,13 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     """
     errors: list[str] = []
     passes: list[str] = []
+
+    # Empty list ``allowed-tools: []`` is treated like an empty string:
+    # an explicit "no harness tools" declaration.  Non-empty lists fall
+    # through to the existing list-form WARN (deferred follow-up).
+    if isinstance(value, list) and not value:
+        passes.append("allowed-tools: explicitly declares no tools")
+        return errors, passes
 
     if not isinstance(value, str):
         errors.append(
