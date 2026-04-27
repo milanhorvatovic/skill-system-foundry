@@ -1,12 +1,12 @@
 ---
 name: hello-greeter
 description: >
-  Greets a single recipient with a friendly, language-aware welcome message.
-  Activates whenever the conversation asks to say hello, welcome someone, or
-  produce an opening greeting. Single-purpose, no branching, no shell access.
-  Demonstrates the smallest valid standalone skill in the Skill System
-  Foundry — minimal frontmatter, third-person description, body well under
-  the recommended line cap.
+  Greets a single recipient with a friendly welcome message rendered in a
+  formal or casual tone. Activates whenever the conversation asks to say
+  hello, welcome someone, or produce an opening greeting. Single-purpose,
+  no branching, no shell access. Demonstrates the smallest valid standalone
+  skill in the Skill System Foundry — minimal frontmatter, third-person
+  description, body well under the recommended line cap.
 metadata:
   version: "1.0.0"
 ---

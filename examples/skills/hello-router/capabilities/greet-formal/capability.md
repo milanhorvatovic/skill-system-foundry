@@ -17,11 +17,13 @@ honorific tone.
 
 1. Read the recipient name from the request. Preserve any honorific
    provided ("Dr.", "Prof.", "Ms.") verbatim.
-2. Render the greeting using the format `Good day, <name>.` followed by no
-   trailing characters.
+2. Render the greeting using the format `Good day, <name>.`. Nothing
+   follows the period on the same line.
 3. Optionally print the rendered line through the harness Bash tool when
    the request asks for an interactive demonstration. The fence below
-   illustrates the canonical invocation:
+   illustrates the canonical invocation — `printf` terminates the line
+   with a single newline, which is the line terminator the shell needs
+   and is not part of the greeting itself:
 
    ```bash
    printf 'Good day, %s.\n' "$RECIPIENT"
@@ -32,4 +34,4 @@ honorific tone.
 ## Output Format
 
 One plain-text line. No markdown, no fences in the final answer, no
-trailing whitespace.
+trailing whitespace beyond the single line terminator.
