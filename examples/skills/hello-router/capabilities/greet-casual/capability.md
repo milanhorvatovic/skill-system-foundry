@@ -1,7 +1,8 @@
 ---
 description: >
   Produces a casual, friendly greeting line for a named recipient.
-  Activates when the parent router selects the casual tone.
+  Activates when the request asks for a casual, friendly, or first-name
+  greeting.
 metadata:
   version: "1.0.0"
 ---
