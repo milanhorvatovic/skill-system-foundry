@@ -2137,11 +2137,15 @@ class ValidateAllowedToolsTests(unittest.TestCase):
         )
 
     def test_empty_list_silently_declares_no_tools(self) -> None:
-        """``allowed-tools: []`` is the YAML-list form of explicit empty.
+        """An empty Python list passes silently at the API level.
 
-        Distinct from non-empty lists which still produce the spec-
-        conformance WARN — full list-form acceptance is a separate
-        follow-up issue.
+        The foundry's YAML subset parser does not recognise inline
+        flow sequences, so ``allowed-tools: []`` written in YAML
+        frontmatter does **not** reach this branch — that spelling
+        parses as the literal string ``"[]"``.  This test pins the
+        defensive API-level behaviour for non-foundry callers passing
+        a Python list directly.  Non-empty lists still produce the
+        spec-conformance WARN — see ``test_non_empty_list_still_warns``.
         """
         errors, passes = validate_allowed_tools([])
         self.assertEqual(errors, [])

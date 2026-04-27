@@ -131,11 +131,16 @@ def validate_allowed_tools(value: object) -> tuple[list[str], list[str]]:
     """Validate the allowed-tools frontmatter field.
 
     The spec defines ``allowed-tools`` as a space-separated string of
-    tool names.  Empty / whitespace-only values, and the empty YAML
-    list (``allowed-tools: []`` — also empty after parsing), are
-    accepted as deliberate "no harness tools" declarations and pass
-    silently.  Non-empty lists still produce the spec-conformance
-    WARN; full list-form acceptance is a separate follow-up.
+    tool names.  Empty / whitespace-only values are accepted as a
+    deliberate "no harness tools" declaration and pass silently.  An
+    empty Python list (``[]`` — passed directly by API callers) is
+    also accepted, but note the foundry's stdlib-only YAML subset
+    parser does not support inline flow sequences, so
+    ``allowed-tools: []`` written in frontmatter parses as the literal
+    string ``"[]"`` rather than an empty list — to declare "no tools"
+    in YAML, use ``allowed-tools: ""`` (or just leave the value
+    blank).  Non-empty lists still produce the spec-conformance WARN;
+    full list-form acceptance is a separate follow-up.
 
     Recognition tier (in order):
 
