@@ -168,6 +168,16 @@ On Linux and macOS the expected output is `skill-system-foundry-vX.Y.Z.zip: OK`.
      --system-root /path/to/project/.agents --output my-skill.zip
    ```
 
+## Reference examples
+
+The [`examples/`](examples/) directory ships three reference skills laid out as a self-contained mini system root. They demonstrate the patterns the foundry supports — standalone, router, and role — using the same paths real deployments use:
+
+- **[`examples/skills/hello-greeter/`](examples/skills/hello-greeter/SKILL.md)** — the smallest valid standalone skill: a single `SKILL.md`, minimal frontmatter, no `allowed-tools`.
+- **[`examples/skills/hello-router/`](examples/skills/hello-router/SKILL.md)** — a router skill dispatching to two capabilities, with `allowed-tools: Bash` declared so a fenced bash example in one capability stays coherent.
+- **[`examples/roles/hello-orchestrator.md`](examples/roles/hello-orchestrator.md)** — a role contract composing the standalone and router skills above, with the canonical responsibility / allowed / forbidden / handoff / "Skills Used" structure.
+
+CI validates each skill example on every push and pull request. The examples ship in the repository for onboarding only — `release.yml` zips just `skill-system-foundry/`, so the directory adds no weight to the distributed bundle.
+
 ## Releases
 
 Shipped versions and what changed between them are tracked in [CHANGELOG.md](CHANGELOG.md). Each release is also published as a versioned zip on the [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) page (with a SHA256 checksum file alongside it; see the [GitHub Releases](#github-releases) installation section for verification commands).
