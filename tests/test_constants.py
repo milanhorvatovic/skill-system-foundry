@@ -105,6 +105,31 @@ class YamlConformanceConfigTests(unittest.TestCase):
         )
 
 
+class DescriptionTriggerPhrasesTests(unittest.TestCase):
+    """``DESCRIPTION_TRIGGER_PHRASES`` exposes the configured phrase list."""
+
+    def test_is_frozenset(self) -> None:
+        self.assertIsInstance(constants.DESCRIPTION_TRIGGER_PHRASES, frozenset)
+
+    def test_is_non_empty(self) -> None:
+        self.assertGreater(len(constants.DESCRIPTION_TRIGGER_PHRASES), 0)
+
+    def test_phrases_are_lowercased(self) -> None:
+        for phrase in constants.DESCRIPTION_TRIGGER_PHRASES:
+            self.assertEqual(phrase, phrase.lower())
+
+    def test_starter_phrases_present(self) -> None:
+        # Pin the spec-derived starter set so accidental config edits
+        # surface as a test failure rather than a silent rule weakening.
+        for phrase in (
+            "triggers on", "triggers when",
+            "activates on", "activates when",
+            "use when", "use for", "when to use",
+            "invoked on", "invoked when",
+        ):
+            self.assertIn(phrase, constants.DESCRIPTION_TRIGGER_PHRASES)
+
+
 class AllowedToolsCatalogTests(unittest.TestCase):
     """Per-harness catalog constants exposed by ``allowed_tools.catalogs``."""
 
@@ -425,6 +450,15 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 )
             )
         self.assertIn("cutoff", str(ctx.exception))
+
+    def test_missing_description_trigger_phrases_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested(
+                    "description", "trigger_phrases",
+                )
+            )
+        self.assertIn("trigger_phrases", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -170,6 +170,30 @@ RE_FIRST_PERSON_PLURAL = re.compile(_voice["first_person_plural"])
 RE_SECOND_PERSON = re.compile(_voice["second_person"])
 RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 
+# Trigger-phrase heuristic: the agentskills.io spec requires
+# descriptions to state both *what* the skill does and *when* it
+# activates.  validate_description_triggers enforces the "when"
+# half by checking that the folded, lowercased description contains
+# at least one phrase from this list.  Stored as a frozenset of
+# lowercased strings to mirror RESERVED_NAMES / KNOWN_FRONTMATTER_KEYS
+# — the structure is a configured policy, not mutable state.
+if "trigger_phrases" not in _skill_desc:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.description.trigger_phrases'; update your checkout "
+        "or restore the full configuration file."
+    )
+_raw_trigger_phrases = _skill_desc["trigger_phrases"]
+if not isinstance(_raw_trigger_phrases, list) or not _raw_trigger_phrases:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.trigger_phrases': expected a non-empty "
+        f"list, got {_raw_trigger_phrases!r}."
+    )
+DESCRIPTION_TRIGGER_PHRASES = frozenset(
+    str(phrase).lower() for phrase in _raw_trigger_phrases
+)
+
 # Skill body constraints
 _skill_body = _skill["body"]
 MAX_BODY_LINES = int(_skill_body["max_lines"])
