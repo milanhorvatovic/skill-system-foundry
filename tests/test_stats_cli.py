@@ -3,14 +3,21 @@
 Covers argument parsing, exit codes, JSON schema, error paths
 (missing directory, missing SKILL.md), human-readable output shape,
 and the --verbose parent-list expansion.
+
+The in-process ``_run_main`` helper exercises the same code paths
+under coverage; subprocess-based tests cannot contribute to coverage
+because the coverage session does not span child Python processes.
 """
 
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from helpers import write_text, write_skill_md
 
@@ -21,6 +28,9 @@ SCRIPTS_DIR = os.path.abspath(
 )
 STATS_SCRIPT = os.path.join(SCRIPTS_DIR, "stats.py")
 
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -28,6 +38,30 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def _run_main(argv: list[str]) -> tuple[int, str, str]:
+    """Invoke stats.main() in-process and capture streams."""
+    import stats as st
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    code = 0
+    with (
+        mock.patch.object(sys, "argv", argv),
+        contextlib.redirect_stdout(stdout),
+        contextlib.redirect_stderr(stderr),
+    ):
+        try:
+            st.main()
+        except SystemExit as exc:
+            if exc.code is None:
+                code = 0
+            elif isinstance(exc.code, int):
+                code = exc.code
+            else:
+                code = 1
+    return code, stdout.getvalue(), stderr.getvalue()
 
 
 class StatsCLIBasicTests(unittest.TestCase):
@@ -178,6 +212,98 @@ class StatsCLIHappyPathTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertTrue(payload["success"])
         self.assertEqual(payload["summary"]["warnings"], 1)
+
+
+class StatsCLIInProcessTests(unittest.TestCase):
+    """In-process coverage for ``main()``.  Same scenarios as the
+    subprocess tests above, run through ``_run_main`` so coverage
+    can observe the entry point."""
+
+    def test_no_args_prints_docstring_and_exits_one(self) -> None:
+        code, out, _err = _run_main(["stats.py"])
+        self.assertEqual(code, 1)
+        self.assertIn("Usage", out)
+
+    def test_nonexistent_path_text_mode(self) -> None:
+        code, out, _err = _run_main(["stats.py", "/tmp/__nope_in_proc__"])
+        self.assertEqual(code, 1)
+        self.assertIn("not a directory", out)
+
+    def test_nonexistent_path_json_mode(self) -> None:
+        code, out, _err = _run_main(
+            ["stats.py", "/tmp/__nope_in_proc__", "--json"]
+        )
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertFalse(payload["success"])
+        self.assertIn("not a directory", payload["error"])
+
+    def test_missing_skill_md_text_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out, _err = _run_main(["stats.py", tmpdir])
+        self.assertEqual(code, 1)
+        self.assertIn("No SKILL.md", out)
+
+    def test_missing_skill_md_json_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out, _err = _run_main(["stats.py", tmpdir, "--json"])
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["summary"]["failures"], 1)
+
+    def test_clean_skill_text_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            code, out, _err = _run_main(["stats.py", tmpdir])
+        self.assertEqual(code, 0)
+        self.assertIn("Skill:", out)
+        self.assertIn("Discovery:", out)
+
+    def test_clean_skill_json_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            code, out, _err = _run_main(["stats.py", tmpdir, "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["tool"], "stats")
+        self.assertTrue(payload["success"])
+
+    def test_verbose_text_mode_with_multi_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[a](capabilities/a/capability.md) "
+                    "[b](capabilities/b/capability.md)\n"
+                ),
+            )
+            shared = "[s](references/shared.md)\n"
+            write_text(
+                os.path.join(tmpdir, "capabilities", "a", "capability.md"),
+                shared,
+            )
+            write_text(
+                os.path.join(tmpdir, "capabilities", "b", "capability.md"),
+                shared,
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "shared.md"), "x\n",
+            )
+            code, out, _err = _run_main(["stats.py", tmpdir, "--verbose"])
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "capabilities/a/capability.md, capabilities/b/capability.md", out
+        )
+
+    def test_unknown_flag_text_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            code, out, err = _run_main(["stats.py", tmpdir, "--bogus"])
+        self.assertEqual(code, 1)
+        # argparse error goes to stderr in text mode
+        self.assertIn("unrecognized", err.lower())
 
 
 if __name__ == "__main__":
