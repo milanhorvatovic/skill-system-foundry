@@ -443,16 +443,27 @@ def audit_skill_system(
             )
         else:
             description = str(fm["description"])
-            if len(description) > MAX_DESCRIPTION_CHARS:
+            if not description.strip():
+                # Empty / whitespace-only descriptions are spec
+                # violations (the spec mandates non-empty).  Without
+                # this branch the per-skill audit treats blank values
+                # as silently valid because the trigger heuristic
+                # short-circuits on whitespace and the length check
+                # passes a zero-length string.
                 errors.append(
-                    f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} description exceeds {MAX_DESCRIPTION_CHARS} chars"
+                    f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} 'description' field is empty"
                 )
-            trigger_errors, _ = validate_description_triggers(description)
-            for trigger_error in trigger_errors:
-                level, _, detail = trigger_error.partition(": ")
-                errors.append(
-                    f"{level}: {skill['name']}/{FILE_SKILL_MD} {detail}"
-                )
+            else:
+                if len(description) > MAX_DESCRIPTION_CHARS:
+                    errors.append(
+                        f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} description exceeds {MAX_DESCRIPTION_CHARS} chars"
+                    )
+                trigger_errors, _ = validate_description_triggers(description)
+                for trigger_error in trigger_errors:
+                    level, _, detail = trigger_error.partition(": ")
+                    errors.append(
+                        f"{level}: {skill['name']}/{FILE_SKILL_MD} {detail}"
+                    )
 
         body_lines = count_body_lines(body)
         if body_lines > MAX_BODY_LINES:

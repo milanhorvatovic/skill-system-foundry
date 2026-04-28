@@ -345,6 +345,33 @@ class AuditSpecComplianceTests(unittest.TestCase):
         desc_fails = [e for e in fail_errors if "description" in e.lower()]
         self.assertGreaterEqual(len(desc_fails), 1)
 
+    def test_skill_whitespace_only_description_returns_fail(self) -> None:
+        """A whitespace-only description value is a spec violation:
+        the audit must FAIL on it (the trigger heuristic
+        short-circuits on whitespace, and the length check passes a
+        zero-length string, so without an explicit empty-after-strip
+        guard the audit would emit no diagnostic at all)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\ndescription: \"   \"\n---\n\n# Skill\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        empty_fails = [
+            e for e in fail_errors
+            if "empty" in e and "demo-skill/SKILL.md" in e
+        ]
+        self.assertEqual(len(empty_fails), 1)
+        # No trigger WARN — the FAIL for emptiness suppresses the
+        # downstream heuristic, avoiding diagnostic noise.
+        trigger_warns = [
+            e for e in errors
+            if "when the skill activates" in e
+        ]
+        self.assertEqual(trigger_warns, [])
+
     def test_skill_description_exceeding_max_chars_returns_fail(self) -> None:
         """A skill with a description exceeding MAX_DESCRIPTION_CHARS returns a FAIL."""
         with tempfile.TemporaryDirectory() as tmpdir:

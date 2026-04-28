@@ -114,12 +114,14 @@ def validate_description_triggers(
     ``skill.description.trigger_phrases`` in ``configuration.yaml``).
 
     Detection is heuristic — phrase matching cannot enumerate every
-    valid wording — so the rule emits WARN, not FAIL.  Empty / blank
-    inputs short-circuit silently because the existing length /
-    presence checks already produce a FAIL for those cases; the
-    helper is invoked only after the description is known to be
-    non-empty in every call site, but the guard is kept so the helper
-    is safe to call directly.
+    valid wording — so the rule emits WARN, not FAIL.  Empty /
+    whitespace-only inputs short-circuit silently: the spec-required
+    non-empty FAIL is owned by the caller (``validate_description``
+    in ``validate_skill.py`` and the per-skill block in
+    ``audit_skill_system.py``), and stacking a trigger WARN on top
+    of that FAIL would be redundant.  The guard is kept so direct
+    API callers (e.g. ad-hoc scripts) can invoke the helper without
+    a separate non-empty check of their own.
 
     Returns ``(errors, passes)`` per the standard validator contract.
     """

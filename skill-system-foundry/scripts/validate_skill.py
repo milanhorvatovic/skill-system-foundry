@@ -81,7 +81,7 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     passes: list[str] = []
 
-    if not description:
+    if not description or not description.strip():
         errors.append(f"{LEVEL_FAIL}: [spec] 'description' field is empty")
         return errors, passes
 

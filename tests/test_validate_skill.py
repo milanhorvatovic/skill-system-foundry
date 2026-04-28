@@ -102,6 +102,19 @@ class ValidateDescriptionTests(unittest.TestCase):
         self.assertIn("empty", errors[0])
         self.assertEqual(passes, [])
 
+    def test_whitespace_only_description_returns_fail(self) -> None:
+        """A whitespace-only description is a spec violation and must
+        FAIL exactly like the empty case — the trigger heuristic
+        short-circuits on whitespace, so a falsy-only test would let
+        ``"   "`` slip through with no diagnostic."""
+        for value in ("   ", "\n\n\t  ", " "):
+            with self.subTest(value=repr(value)):
+                errors, passes = validate_description(value)
+                fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+                empty_fails = [e for e in fail_errors if "empty" in e]
+                self.assertEqual(len(empty_fails), 1)
+                self.assertEqual(passes, [])
+
     def test_valid_third_person_description(self) -> None:
         """A valid third-person description within limits produces passes."""
         desc = "Processes data files and generates summary reports."
