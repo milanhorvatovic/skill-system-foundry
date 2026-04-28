@@ -32,8 +32,8 @@ import sys
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
-REPO_RELATIVE_EXAMPLES_ROOT = os.path.join(_REPO_ROOT, "examples", "skills")
-REPO_RELATIVE_VALIDATOR = os.path.join(
+DEFAULT_EXAMPLES_ROOT = os.path.join(_REPO_ROOT, "examples", "skills")
+DEFAULT_VALIDATOR = os.path.join(
     _REPO_ROOT, "skill-system-foundry", "scripts", "validate_skill.py",
 )
 SEPARATOR_WIDTH = 60
@@ -260,18 +260,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--skills-root",
-        default=REPO_RELATIVE_EXAMPLES_ROOT,
+        default=DEFAULT_EXAMPLES_ROOT,
         help=(
             "Path to the directory holding example skills. "
-            "Defaults to %(default)s relative to the working directory."
+            "Defaults to the repository's examples/skills/ directory "
+            "(%(default)s), resolved from this script's location so the "
+            "default works regardless of the current working directory."
         ),
     )
     parser.add_argument(
         "--validator",
-        default=REPO_RELATIVE_VALIDATOR,
+        default=DEFAULT_VALIDATOR,
         help=(
             "Path to the validate_skill.py entry point. "
-            "Defaults to %(default)s relative to the working directory."
+            "Defaults to skill-system-foundry/scripts/validate_skill.py "
+            "(%(default)s), resolved from this script's location so the "
+            "default works regardless of the current working directory."
         ),
     )
     return parser
