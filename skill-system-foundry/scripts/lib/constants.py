@@ -207,14 +207,34 @@ for _phrase in _raw_trigger_phrases:
         )
     if _candidate in _seen_trigger_phrases:
         raise RuntimeError(
-            "configuration.yaml has a duplicate entry "
-            f"'{_candidate}' in 'skill.description.trigger_phrases'; "
-            "remove the redundant entry — duplicates indicate a config "
-            "edit accident."
+            f"configuration.yaml has a duplicate entry '{_phrase}' "
+            f"(normalized: '{_candidate}') in "
+            "'skill.description.trigger_phrases'; remove the redundant "
+            "entry — duplicates indicate a config edit accident."
         )
     _seen_trigger_phrases.add(_candidate)
     _normalized_trigger_phrases.append(_candidate)
 DESCRIPTION_TRIGGER_PHRASES = tuple(sorted(_normalized_trigger_phrases))
+
+# Curated subset used as illustrative examples in the WARN message.
+# Selected by first-word-distinct dedup over the sorted phrase tuple
+# so the user-facing examples cover different root verbs (e.g.
+# "activates on", "invoked on", "triggers on") rather than two
+# variants of the same root ("activates on", "activates when").  Up
+# to three entries — the helper that renders the WARN does not need
+# more, and capping here keeps the message concise.  Deterministic
+# across processes because the input is already a sorted tuple.
+_example_seen_first_words: set[str] = set()
+_example_phrases_buffer: list[str] = []
+for _phrase in DESCRIPTION_TRIGGER_PHRASES:
+    _first_word = _phrase.split(" ", 1)[0]
+    if _first_word in _example_seen_first_words:
+        continue
+    _example_seen_first_words.add(_first_word)
+    _example_phrases_buffer.append(_phrase)
+    if len(_example_phrases_buffer) >= 3:
+        break
+DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
 
 # Skill body constraints
 _skill_body = _skill["body"]

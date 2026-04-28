@@ -14,7 +14,7 @@ from .constants import (
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
-    DESCRIPTION_TRIGGER_PHRASES,
+    DESCRIPTION_TRIGGER_PHRASES, DESCRIPTION_TRIGGER_EXAMPLE_PHRASES,
     DIR_CAPABILITIES, DIR_SCRIPTS,
     FILE_CAPABILITY_MD, FILE_SKILL_MD,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
@@ -137,13 +137,13 @@ def validate_description_triggers(
             )
             return errors, passes
 
-    # Build the example list from the configured phrases so the message
-    # never drifts from the YAML — first three phrases (sorted at load
-    # time) are illustrative; the YAML pointer remains the canonical
-    # source.
+    # Build the example list from the curated example subset so the
+    # message never drifts from the YAML.  Examples are first-word
+    # distinct (different root verbs) for educational variety; the
+    # YAML pointer remains the canonical source for the full list.
     example_phrases = ", ".join(
         f"'{phrase.capitalize()} ...'"
-        for phrase in DESCRIPTION_TRIGGER_PHRASES[:3]
+        for phrase in DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
     )
     errors.append(
         f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "

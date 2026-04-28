@@ -151,6 +151,51 @@ class DescriptionTriggerPhrasesTests(unittest.TestCase):
         self.assertNotIn("use for", constants.DESCRIPTION_TRIGGER_PHRASES)
 
 
+class DescriptionTriggerExamplePhrasesTests(unittest.TestCase):
+    """``DESCRIPTION_TRIGGER_EXAMPLE_PHRASES`` is the curated subset
+    rendered in the WARN message.  First-word distinct so examples
+    cover different root verbs, capped at three entries."""
+
+    def test_is_tuple(self) -> None:
+        self.assertIsInstance(
+            constants.DESCRIPTION_TRIGGER_EXAMPLE_PHRASES, tuple,
+        )
+
+    def test_is_non_empty(self) -> None:
+        self.assertGreater(
+            len(constants.DESCRIPTION_TRIGGER_EXAMPLE_PHRASES), 0,
+        )
+
+    def test_capped_at_three(self) -> None:
+        self.assertLessEqual(
+            len(constants.DESCRIPTION_TRIGGER_EXAMPLE_PHRASES), 3,
+        )
+
+    def test_first_words_are_distinct(self) -> None:
+        # Core invariant: each example uses a different root verb so
+        # the user sees varied guidance, not two flavors of one verb.
+        first_words = [
+            phrase.split(" ", 1)[0]
+            for phrase in constants.DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
+        ]
+        self.assertEqual(len(first_words), len(set(first_words)))
+
+    def test_examples_are_subset_of_full_list(self) -> None:
+        for phrase in constants.DESCRIPTION_TRIGGER_EXAMPLE_PHRASES:
+            self.assertIn(phrase, constants.DESCRIPTION_TRIGGER_PHRASES)
+
+    def test_examples_include_triggers_root(self) -> None:
+        # Pin: "triggers" is the most natural English activation root
+        # and must appear in the rendered examples.  If the curation
+        # ever drops it, fail loudly so the WARN's user value is
+        # not silently degraded.
+        first_words = {
+            phrase.split(" ", 1)[0]
+            for phrase in constants.DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
+        }
+        self.assertIn("triggers", first_words)
+
+
 class AllowedToolsCatalogTests(unittest.TestCase):
     """Per-harness catalog constants exposed by ``allowed_tools.catalogs``."""
 
@@ -508,6 +553,24 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("trigger_phrases", str(ctx.exception))
         self.assertIn("duplicate", str(ctx.exception).lower())
+
+    def test_duplicate_error_surfaces_raw_and_normalized_forms(self) -> None:
+        # Author writes 'Triggers When' (mixed case) and again as
+        # 'triggers when' — both normalize to the same value.  The
+        # error must surface the raw value the author actually wrote
+        # so they can find the offending line in the YAML, plus the
+        # normalized form so they understand why it collided.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "      - triggers on\n",
+                    "      - triggers on\n      - Triggers On\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("Triggers On", message)
+        self.assertIn("triggers on", message)
+        self.assertIn("normalized", message)
 
 
 if __name__ == "__main__":
