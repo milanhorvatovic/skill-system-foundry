@@ -69,7 +69,8 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── validate_skill.py        ← validate a single skill
 │       ├── audit_skill_system.py    ← audit entire skill system
 │       ├── scaffold.py              ← scaffold new components from templates
-│       └── bundle.py                ← bundle for distribution (zip)
+│       ├── bundle.py                ← bundle for distribution (zip)
+│       └── stats.py                 ← report skill token-budget proxies
 ├── scripts/                         ← repository infrastructure (not part of the meta-skill)
 │   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
 │   └── lib/
@@ -170,6 +171,17 @@ The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocat
 | `--verbose` | Prints per-file progress messages for the prose check (`Checking prose YAML: <path> (<N> fences)`) and shows passing checks otherwise. Silent under `--json`. | Local debugging / triage. |
 
 In addition, `python scripts/yaml_conformance_report.py` runs the YAML 1.2.2 conformance corpus and emits the same `yaml_conformance.corpus` JSON slot for tooling consumers; exit 0 on all-pass, non-zero on any failure.
+
+### Measuring the Meta-Skill's Token Budget
+
+```bash
+cd skill-system-foundry
+python scripts/stats.py . --json
+```
+
+`stats.py` reports two byte-based proxies for a skill's context cost: `discovery_bytes` (the SKILL.md frontmatter block) and `load_bytes` (SKILL.md plus every capability and reference file reachable through markdown links, backticks, and bare router-table path cells). Files under `scripts/` and `assets/` are excluded — they are not loaded into the model's context during skill use. Bytes are not tokens and are not comparable across models or tokenizers; treat the number as a deterministic on-disk signal for tracking the relative cost of authoring decisions over time. Counts are taken from raw on-disk UTF-8 bytes, so CRLF terminators on Windows checkouts produce higher numbers than the same content on POSIX checkouts.
+
+Only a missing `SKILL.md` is a FAIL; broken references, parent-traversal attempts, and external references are surfaced as WARN/INFO findings while the run still emits a usable metric.
 
 ### Linting Shell Scripts
 
