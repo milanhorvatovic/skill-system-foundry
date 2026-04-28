@@ -495,6 +495,20 @@ class MissingSectionFailFastTests(unittest.TestCase):
         self.assertIn("trigger_phrases", str(ctx.exception))
         self.assertIn("empty", str(ctx.exception).lower())
 
+    def test_duplicate_entry_in_trigger_phrases_raises(self) -> None:
+        # Duplicate entries indicate a config edit accident.  The
+        # loader fails fast (symmetric with the empty-entry guard)
+        # rather than silently deduplicating.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "      - triggers on\n",
+                    "      - triggers on\n      - triggers on\n",
+                )
+            )
+        self.assertIn("trigger_phrases", str(ctx.exception))
+        self.assertIn("duplicate", str(ctx.exception).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

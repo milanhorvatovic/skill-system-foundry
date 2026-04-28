@@ -137,11 +137,19 @@ def validate_description_triggers(
             )
             return errors, passes
 
+    # Build the example list from the configured phrases so the message
+    # never drifts from the YAML — first three phrases (sorted at load
+    # time) are illustrative; the YAML pointer remains the canonical
+    # source.
+    example_phrases = ", ".join(
+        f"'{phrase.capitalize()} ...'"
+        for phrase in DESCRIPTION_TRIGGER_PHRASES[:3]
+    )
     errors.append(
         f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
-        "activates — add a trigger clause (e.g. 'Triggers when ...', "
-        "'Activates on ...', 'Use when ...').  Phrase list configured "
-        "under skill.description.trigger_phrases in configuration.yaml."
+        f"activates — add a trigger clause (e.g. {example_phrases}).  "
+        "Phrase list configured under skill.description.trigger_phrases "
+        "in configuration.yaml."
     )
     return errors, passes
 

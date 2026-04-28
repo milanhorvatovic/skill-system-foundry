@@ -195,6 +195,7 @@ if not isinstance(_raw_trigger_phrases, list) or not _raw_trigger_phrases:
         f"list, got {_raw_trigger_phrases!r}."
     )
 _normalized_trigger_phrases: list[str] = []
+_seen_trigger_phrases: set[str] = set()
 for _phrase in _raw_trigger_phrases:
     _candidate = str(_phrase).strip().lower()
     if not _candidate:
@@ -204,8 +205,16 @@ for _phrase in _raw_trigger_phrases:
             "or replace it with a real phrase — empty entries silently "
             "disable the rule."
         )
+    if _candidate in _seen_trigger_phrases:
+        raise RuntimeError(
+            "configuration.yaml has a duplicate entry "
+            f"'{_candidate}' in 'skill.description.trigger_phrases'; "
+            "remove the redundant entry — duplicates indicate a config "
+            "edit accident."
+        )
+    _seen_trigger_phrases.add(_candidate)
     _normalized_trigger_phrases.append(_candidate)
-DESCRIPTION_TRIGGER_PHRASES = tuple(sorted(set(_normalized_trigger_phrases)))
+DESCRIPTION_TRIGGER_PHRASES = tuple(sorted(_normalized_trigger_phrases))
 
 # Skill body constraints
 _skill_body = _skill["body"]
