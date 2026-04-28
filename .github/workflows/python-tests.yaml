@@ -130,7 +130,9 @@ jobs:
           PYTHONUTF8: "1"
 
   update-badge:
-    needs: test
+    needs:
+      - test
+      - validate-examples
     # Restrict to genuine pushes to main; this skips reusable
     # workflow_call invocations (e.g. release-prep.yml) where
     # github.event_name is the caller's event (workflow_dispatch) and
