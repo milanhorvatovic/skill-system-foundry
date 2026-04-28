@@ -22,7 +22,7 @@ This role is a reference example. It shows the orchestration contract a real rol
 ## Forbidden
 
 - Loading more than one greeting skill in a single turn.
-- Loading capability files (`capabilities/**/capability.md`) directly. Roles compose skills, not capabilities — capability dispatch stays inside the parent skill.
+- Loading capability files (`capabilities/**/capability.md`) directly. This role composes the parent skills only; in this example, capability dispatch stays inside `hello-router`. (The foundry's self-contained-skill pattern lets roles reference a skill's capabilities by system-root-relative path; this role just opts out.)
 - Inventing tone variants beyond `formal` and `casual`. Unknown tones trigger the handoff rule below.
 - Holding state between turns. Each request is treated independently.
 - Loading other roles. Roles never compose roles in this skill system.
