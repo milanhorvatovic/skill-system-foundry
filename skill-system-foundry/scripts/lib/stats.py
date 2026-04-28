@@ -26,9 +26,7 @@ import re
 
 from .constants import (
     DIR_ASSETS,
-    DIR_CAPABILITIES,
     DIR_SCRIPTS,
-    FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -36,12 +34,9 @@ from .constants import (
     RE_BACKTICK_REF,
     RE_MARKDOWN_LINK_REF,
 )
-from .references import strip_fragment
-from .router_table import (
-    _parse_path_cell,
-    _recover_segment,
-    parse_router_table,
-)
+from .frontmatter import load_frontmatter
+from .references import is_within_directory, strip_fragment
+from .router_table import extract_capability_paths
 
 
 # Directory categories whose bytes are excluded from ``load_bytes``.
@@ -115,14 +110,19 @@ def discovery_bytes_for_skill_md(skill_md_path: str) -> int:
 # ===================================================================
 
 
-def extract_body_references(content: str) -> list[str]:
+def extract_body_references(
+    content: str, *, include_router_table: bool = False,
+) -> list[str]:
     """Return cleaned reference paths from a markdown body.
 
     Applies the body ``reference_patterns`` from ``configuration.yaml``
     (markdown-link and backtick forms) after stripping fenced code
-    blocks, then augments the result with capability paths recovered
-    from a SKILL.md router table — those paths are bare cells, not
-    markdown links, so the body regexes alone would miss them.
+    blocks.  When *include_router_table* is True, the result is also
+    augmented with capability paths recovered from a router table in
+    *content* — those paths are bare cells, not markdown links, so the
+    body regexes alone would miss them.  Only the SKILL.md entry point
+    legitimately carries a router table, so callers pass
+    ``include_router_table=True`` only for that file.
 
     Anchor fragments, queries, and title suffixes are stripped via
     :func:`strip_fragment`.  Template placeholders (containing ``<``
@@ -134,7 +134,8 @@ def extract_body_references(content: str) -> list[str]:
     raw_refs: list[str] = []
     raw_refs.extend(RE_MARKDOWN_LINK_REF.findall(stripped))
     raw_refs.extend(RE_BACKTICK_REF.findall(stripped))
-    raw_refs.extend(_router_table_capability_paths(content))
+    if include_router_table:
+        raw_refs.extend(extract_capability_paths(content))
 
     seen: set[str] = set()
     cleaned: list[str] = []
@@ -149,35 +150,6 @@ def extract_body_references(content: str) -> list[str]:
         seen.add(clean)
         cleaned.append(clean)
     return cleaned
-
-
-def _router_table_capability_paths(content: str) -> list[str]:
-    """Return ``capabilities/<name>/capability.md`` paths from a router table.
-
-    Returns an empty list when *content* contains no router table or
-    when none of its rows have a recoverable canonical path cell.
-    Decoration recovery (backticks, ``[text](url)`` wrappers, leading
-    ``./``, trailing ``#fragment``) is applied so authors can decorate
-    table cells without their capabilities disappearing from the load
-    graph.
-    """
-    parsed = parse_router_table(content)
-    if parsed is None:
-        return []
-    rows, _findings = parsed
-    paths: list[str] = []
-    for _capability, _trigger, path_cell in rows:
-        # Try strict parse first, then the decoration-stripping
-        # recovery used by the router-table audit.
-        name = _parse_path_cell(path_cell.strip())
-        if name is None:
-            name = _recover_segment(path_cell)
-        if name is None:
-            continue
-        paths.append(
-            f"{DIR_CAPABILITIES}/{name}/{FILE_CAPABILITY_MD}"
-        )
-    return paths
 
 
 def category_of(rel_path: str) -> str:
@@ -268,9 +240,6 @@ def compute_stats(skill_path: str) -> dict:
 
     # Best-effort skill-name resolution from frontmatter; falls back to
     # the directory basename when frontmatter is absent or malformed.
-    # Importing lazily avoids a circular dependency through constants.
-    from .frontmatter import load_frontmatter
-
     frontmatter, _body, _scalar_findings = load_frontmatter(skill_md)
     if frontmatter and "_parse_error" not in frontmatter and frontmatter.get("name"):
         result["skill"] = str(frontmatter["name"])
@@ -328,7 +297,10 @@ def compute_stats(skill_path: str) -> dict:
             )
             return
 
-        for ref in extract_body_references(content):
+        is_entry = filepath == os.path.abspath(skill_md)
+        for ref in extract_body_references(
+            content, include_router_table=is_entry,
+        ):
             if os.path.isabs(ref):
                 result["errors"].append(
                     f"{LEVEL_WARN}: [foundry] absolute reference '{ref}' "
@@ -344,12 +316,13 @@ def compute_stats(skill_path: str) -> dict:
                 continue
 
             ref_abs = os.path.normpath(os.path.join(skill_path, ref_norm))
-            ref_rel = _to_skill_root_relative(ref_abs, skill_path)
 
             # External / cross-skill references resolve outside the
             # skill root; report once and skip — they are not part of
-            # this skill's load budget.
-            if ref_rel.startswith(".."):
+            # this skill's load budget.  Use is_within_directory rather
+            # than a lexical relpath check so symlinks pointing outside
+            # the skill are correctly classified.
+            if not is_within_directory(ref_abs, skill_path):
                 result["errors"].append(
                     f"{LEVEL_INFO}: [foundry] reference '{ref}' in '{rel}' "
                     f"resolves outside the skill directory — excluded "

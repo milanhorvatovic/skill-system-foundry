@@ -178,8 +178,9 @@ class ExtractBodyReferencesTests(unittest.TestCase):
         self.assertNotIn("README.md", refs)
         self.assertIn("references/guide.md", refs)
 
-    def test_router_table_capability_paths_extracted(self) -> None:
-        """Bare capability paths in a router-table cell are picked up."""
+    def test_router_table_capability_paths_extracted_when_entry(self) -> None:
+        """Bare capability paths in a router-table cell are picked up
+        when ``include_router_table`` is True (entry SKILL.md only)."""
         body = (
             "# Skill\n\n"
             "| Capability | Trigger | Path |\n"
@@ -189,9 +190,21 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             "| validation | when validating | "
             "capabilities/validation/capability.md |\n"
         )
-        refs = extract_body_references(body)
+        refs = extract_body_references(body, include_router_table=True)
         self.assertIn("capabilities/design/capability.md", refs)
         self.assertIn("capabilities/validation/capability.md", refs)
+
+    def test_router_table_skipped_when_not_entry(self) -> None:
+        """Default (non-entry) calls do NOT pick up router-table paths."""
+        body = (
+            "# Skill\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| design | when designing | "
+            "capabilities/design/capability.md |\n"
+        )
+        refs = extract_body_references(body)
+        self.assertNotIn("capabilities/design/capability.md", refs)
 
     def test_router_table_decorated_path_cell_recovered(self) -> None:
         """Backtick-wrapped router-table path cells are still recovered."""
@@ -201,7 +214,7 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             "|---|---|---|\n"
             "| design | when | `capabilities/design/capability.md` |\n"
         )
-        refs = extract_body_references(body)
+        refs = extract_body_references(body, include_router_table=True)
         self.assertIn("capabilities/design/capability.md", refs)
 
 
@@ -463,6 +476,74 @@ class ComputeStatsGraphTests(unittest.TestCase):
         paths = [entry["path"] for entry in result["files"]]
         self.assertIn("references/present.md", paths)
         self.assertNotIn("references/missing.md", paths)
+
+    def test_router_table_capabilities_walked_and_counted(self) -> None:
+        """End-to-end: a capability declared only in the SKILL.md router
+        table (no markdown link) is walked and contributes to load_bytes
+        with reachable_from == ['SKILL.md']."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "SKILL.md"),
+                "---\nname: x\ndescription: triggers when invoked\n---\n"
+                "# Skill\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| design | when designing | "
+                "capabilities/design/capability.md |\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "capabilities", "design", "capability.md"),
+                "# Design\n\nBody.\n",
+            )
+            result = compute_stats(tmpdir)
+            cap_bytes = read_bytes_count(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md",
+                )
+            )
+            skill_bytes = read_bytes_count(os.path.join(tmpdir, "SKILL.md"))
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertIn("capabilities/design/capability.md", paths)
+        cap = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/design/capability.md"
+        )
+        self.assertEqual(cap["reachable_from"], ["SKILL.md"])
+        self.assertEqual(cap["bytes"], cap_bytes)
+        # load_bytes is the sum of SKILL.md + the router-table-discovered cap
+        self.assertEqual(result["load_bytes"], skill_bytes + cap_bytes)
+
+    def test_router_table_only_runs_on_entry_not_capability(self) -> None:
+        """A router-shaped table inside a capability.md is NOT followed —
+        only the entry SKILL.md scans for router-table capability paths."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[design](capabilities/design/capability.md)\n"
+                ),
+            )
+            # The capability body contains a doc-example router table
+            # that mentions a non-existent ghost capability.  Without
+            # the entry-only guard, stats would chase it.
+            write_text(
+                os.path.join(tmpdir, "capabilities", "design", "capability.md"),
+                "# Design\n\n"
+                "Documentation example below:\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| ghost | example only | "
+                "capabilities/ghost/capability.md |\n",
+            )
+            result = compute_stats(tmpdir)
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertIn("capabilities/design/capability.md", paths)
+        # The ghost capability is doc-example only — must not be chased.
+        self.assertNotIn("capabilities/ghost/capability.md", paths)
+        # And no broken-link WARN should be raised for the ghost path.
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertFalse(any("ghost" in w for w in warns))
 
     def test_parent_traversal_skipped_with_warn(self) -> None:
         """A `../` in a body reference is rejected as a WARN."""
