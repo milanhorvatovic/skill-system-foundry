@@ -79,6 +79,31 @@ def discover_capability_dirs(skill_dir: str) -> list[str]:
     return found
 
 
+def find_malformed_capability_dirs(skill_dir: str) -> list[str]:
+    """Return non-hidden ``capabilities/<name>/`` dirs missing ``capability.md``.
+
+    Mirrors :func:`find_malformed_skill_dirs` one level deeper. Each
+    non-hidden child of a skill's ``capabilities/`` subtree is expected
+    to be a capability root containing ``capability.md``. Silently
+    skipping such directories would let a broken or newly added
+    capability slip past CI as long as the parent skill still validates,
+    so callers should fail fast with a clear diagnostic instead.
+    """
+    capabilities_root = os.path.join(skill_dir, "capabilities")
+    if not os.path.isdir(capabilities_root):
+        return []
+    malformed: list[str] = []
+    for name in sorted(os.listdir(capabilities_root)):
+        if name.startswith("."):
+            continue
+        candidate = os.path.join(capabilities_root, name)
+        if not os.path.isdir(candidate):
+            continue
+        if not os.path.isfile(os.path.join(candidate, "capability.md")):
+            malformed.append(os.path.abspath(candidate))
+    return malformed
+
+
 def find_malformed_skill_dirs(skills_root: str) -> list[str]:
     """Return absolute paths of non-hidden child directories without ``SKILL.md``.
 
@@ -277,6 +302,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         for path in malformed:
             print(f"  - {path} is missing SKILL.md", file=sys.stderr)
+        return 1
+
+    malformed_caps: list[str] = []
+    for skill_path in discover_skill_dirs(skills_root):
+        malformed_caps.extend(find_malformed_capability_dirs(skill_path))
+    if malformed_caps:
+        print(
+            f"Error: malformed example capability directories under {skills_root}",
+            file=sys.stderr,
+        )
+        for path in malformed_caps:
+            print(f"  - {path} is missing capability.md", file=sys.stderr)
         return 1
 
     results, all_success = run_validation(skills_root, validator_path)

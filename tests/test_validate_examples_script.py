@@ -37,6 +37,7 @@ _spec.loader.exec_module(_mod)
 discover_skill_dirs = _mod.discover_skill_dirs
 discover_capability_dirs = _mod.discover_capability_dirs
 find_malformed_skill_dirs = _mod.find_malformed_skill_dirs
+find_malformed_capability_dirs = _mod.find_malformed_capability_dirs
 validate_one = _mod.validate_one
 format_verdict = _mod.format_verdict
 run_validation = _mod.run_validation
@@ -214,6 +215,35 @@ class FindMalformedSkillDirsTests(unittest.TestCase):
                 os.makedirs(os.path.join(root, name))
                 _write(os.path.join(root, name, "SKILL.md"), "stub")
             self.assertEqual(find_malformed_skill_dirs(root), [])
+
+
+# ===================================================================
+# find_malformed_capability_dirs
+# ===================================================================
+
+
+class FindMalformedCapabilityDirsTests(unittest.TestCase):
+
+    def test_returns_capability_dirs_missing_capability_md(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            valid = os.path.join(root, "capabilities", "ok")
+            os.makedirs(valid)
+            _write(os.path.join(valid, "capability.md"), "stub")
+            broken = os.path.join(root, "capabilities", "broken")
+            os.makedirs(broken)
+            malformed = find_malformed_capability_dirs(root)
+            self.assertEqual(len(malformed), 1)
+            self.assertTrue(malformed[0].endswith("broken"))
+
+    def test_returns_empty_without_capabilities_subtree(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(find_malformed_capability_dirs(root), [])
+
+    def test_skips_hidden_and_loose_files(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "capabilities", ".hidden"))
+            _write(os.path.join(root, "capabilities", "loose.md"), "stub")
+            self.assertEqual(find_malformed_capability_dirs(root), [])
 
 
 # ===================================================================
@@ -614,6 +644,30 @@ class MainTests(unittest.TestCase):
                     "--validator", _REAL_VALIDATOR,
                 ])
         self.assertEqual(rc, 1)
+
+    def test_main_fails_fast_on_malformed_capability_dir(self) -> None:
+        # A non-hidden capabilities/<name>/ directory missing
+        # capability.md must fail the run before validation begins,
+        # mirroring the SKILL.md-level guard.
+        with tempfile.TemporaryDirectory() as root:
+            skills_root = os.path.join(root, "skills")
+            os.makedirs(skills_root)
+            router_dir = os.path.join(skills_root, "router")
+            _write_minimal_skill(router_dir, name="router")
+            os.makedirs(os.path.join(router_dir, "capabilities", "broken-cap"))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), \
+                 contextlib.redirect_stderr(stderr):
+                rc = main([
+                    "--skills-root", skills_root,
+                    "--validator", _REAL_VALIDATOR,
+                ])
+        self.assertEqual(rc, 1)
+        err = stderr.getvalue()
+        self.assertIn("malformed example capability directories", err)
+        self.assertIn("broken-cap", err)
+        self.assertIn("missing capability.md", err)
 
     def test_main_fails_fast_on_malformed_skill_dir(self) -> None:
         # A non-hidden child directory missing SKILL.md must fail the run
