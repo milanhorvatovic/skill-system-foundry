@@ -20,10 +20,12 @@ if SCRIPTS_DIR not in sys.path:
 from helpers import write_capability_md, write_skill_md, write_text
 from lib.validation import (
     parse_allowed_tools_tokens,
+    validate_description_triggers,
     validate_name,
     validate_tool_coherence,
 )
 from lib.constants import (
+    DESCRIPTION_TRIGGER_PHRASES,
     LEVEL_FAIL,
     LEVEL_INFO,
     LEVEL_WARN,
@@ -963,6 +965,83 @@ class ValidateToolCoherenceTests(unittest.TestCase):
         errors, _ = validate_tool_coherence(self.skill_dir, {})
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(len(warn_errors), 1)
+
+
+# ===================================================================
+# Description Trigger-Phrase Heuristic
+# ===================================================================
+
+
+class ValidateDescriptionTriggersTests(unittest.TestCase):
+    """Tests for validate_description_triggers.
+
+    The helper enforces the agentskills.io spec requirement that a
+    description state when the skill activates.  Detection is a
+    case-insensitive substring match against
+    DESCRIPTION_TRIGGER_PHRASES; missing every phrase produces a
+    single WARN.
+    """
+
+    def test_phrase_present_emits_no_warn(self) -> None:
+        desc = "Validates skills against the spec. Triggers when a skill is created."
+        errors, passes = validate_description_triggers(desc)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+        self.assertIn("triggers when", passes[0])
+
+    def test_phrase_absent_emits_single_warn(self) -> None:
+        desc = "Validates skills against the spec. Reports findings to stdout."
+        errors, passes = validate_description_triggers(desc)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warn_errors), 1)
+        self.assertIn("[spec]", warn_errors[0])
+        self.assertIn("when the skill activates", warn_errors[0])
+        self.assertEqual(passes, [])
+
+    def test_match_is_case_insensitive(self) -> None:
+        desc = "Validates skills against the spec. ACTIVATES WHEN a skill is touched."
+        errors, _ = validate_description_triggers(desc)
+        self.assertEqual(errors, [])
+
+    def test_match_after_folded_multiline_input(self) -> None:
+        # YAML folded block scalars collapse newlines to spaces before
+        # the value reaches this helper.  Simulate the post-folding
+        # shape: original text was split across lines, folding joins
+        # the segments with a space, and the phrase lands on one line.
+        desc = (
+            "Validates skills against the spec. Activates "
+            "when a skill is created or edited."
+        )
+        errors, _ = validate_description_triggers(desc)
+        self.assertEqual(errors, [])
+
+    def test_phrase_matches_within_longer_word(self) -> None:
+        # "activates whenever" contains "activates when" as a
+        # substring; the issue's acceptance examples rely on this.
+        desc = (
+            "Greets a single recipient with a friendly welcome message. "
+            "Activates whenever the conversation asks to say hello."
+        )
+        errors, _ = validate_description_triggers(desc)
+        self.assertEqual(errors, [])
+
+    def test_empty_input_short_circuits(self) -> None:
+        for value in ("", "   ", "\n\n  \t"):
+            errors, passes = validate_description_triggers(value)
+            self.assertEqual(errors, [])
+            self.assertEqual(passes, [])
+
+    def test_pass_message_names_matched_phrase(self) -> None:
+        # Pass entry should reference one of the configured phrases so
+        # --verbose output explains why the rule was satisfied.
+        desc = "Audits skill systems. Use when the structure may have drifted."
+        _, passes = validate_description_triggers(desc)
+        self.assertEqual(len(passes), 1)
+        matched = next(
+            (p for p in DESCRIPTION_TRIGGER_PHRASES if p in passes[0]),
+            None,
+        )
+        self.assertIsNotNone(matched)
 
 
 if __name__ == "__main__":

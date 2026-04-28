@@ -14,6 +14,7 @@ from .constants import (
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
+    DESCRIPTION_TRIGGER_PHRASES,
     DIR_CAPABILITIES, DIR_SCRIPTS,
     FILE_CAPABILITY_MD, FILE_SKILL_MD,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
@@ -99,6 +100,50 @@ def _is_explicit_empty_allowed_tools(value: object) -> bool:
     if isinstance(value, str):
         return not value.strip()
     return False
+
+
+def validate_description_triggers(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """Check that the description contains at least one trigger phrase.
+
+    The agentskills.io specification requires descriptions to state
+    both *what* the skill does and *when* it activates.  This rule
+    enforces the "when" half by case-insensitive substring matching
+    against ``DESCRIPTION_TRIGGER_PHRASES`` (configured under
+    ``skill.description.trigger_phrases`` in ``configuration.yaml``).
+
+    Detection is heuristic — phrase matching cannot enumerate every
+    valid wording — so the rule emits WARN, not FAIL.  Empty / blank
+    inputs short-circuit silently because the existing length /
+    presence checks already produce a FAIL for those cases; the
+    helper is invoked only after the description is known to be
+    non-empty in every call site, but the guard is kept so the helper
+    is safe to call directly.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+
+    if not description or not description.strip():
+        return errors, passes
+
+    lowered = description.lower()
+    for phrase in DESCRIPTION_TRIGGER_PHRASES:
+        if phrase in lowered:
+            passes.append(
+                f"description: contains trigger phrase '{phrase}'"
+            )
+            return errors, passes
+
+    errors.append(
+        f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
+        "activates — add a trigger clause (e.g. 'Triggers when ...', "
+        "'Activates on ...', 'Use when ...').  Phrase list configured "
+        "under skill.description.trigger_phrases in configuration.yaml."
+    )
+    return errors, passes
 
 
 def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
