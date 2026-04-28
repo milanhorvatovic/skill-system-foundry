@@ -10,7 +10,7 @@ metadata:
 
 ## Purpose
 
-Renders one formal greeting line for a single recipient. Loaded on demand from `hello-router` when the request asks for a formal, business, or honorific tone.
+Renders one formal greeting line for a single recipient. Use when the request asks for a formal, business-appropriate, or honorific greeting.
 
 ## Instructions
 

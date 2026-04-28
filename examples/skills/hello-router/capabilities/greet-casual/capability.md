@@ -10,7 +10,7 @@ metadata:
 
 ## Purpose
 
-Renders one casual greeting line for a single recipient. Loaded on demand from `hello-router` when the request asks for a casual, friendly, or first-name tone.
+Renders one casual greeting line for a single recipient. Use when the request asks for a casual, friendly, or first-name greeting.
 
 ## Instructions
 
