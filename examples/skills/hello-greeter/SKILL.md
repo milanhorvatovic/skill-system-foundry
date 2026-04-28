@@ -20,7 +20,7 @@ Produces a one-line welcome message addressed to a named recipient. The skill ex
 ## Instructions
 
 1. Identify the recipient name from the request. Fall back to the literal word "friend" when no name is supplied.
-2. Choose a tone token from the request: "formal" or "casual". Default to "casual" when nothing is specified.
+2. Choose a tone token from the request: use "formal" only when the request explicitly specifies "formal". Use "casual" for every other case — when no tone is specified, when the request says "casual", or when the request uses any unrecognized tone term (e.g., "informal", "friendly").
 3. Emit exactly one greeting line. For "casual" tone, the format is `Hello, <name>!`. For "formal" tone, the format is `Good day, <name>.`.
 4. Stop after the single line. The skill performs no follow-up question and no continuation prompt.
 
