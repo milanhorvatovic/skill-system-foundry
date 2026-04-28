@@ -68,9 +68,11 @@ Cross-cutting reference material shared across capabilities. Capabilities refere
 
 Skill, capability, role, and manifest templates copied and filled in when creating new components.
 
-### scripts/ — Validation, scaffolding, and bundling tools
+### scripts/ — Validation, scaffolding, bundling, and measurement tools
 
-Four entry points (`validate_skill.py`, `audit_skill_system.py`, `scaffold.py`, `bundle.py`) and shared library modules. All entry points support `--json` for machine-readable output.
+Five entry points (`validate_skill.py`, `audit_skill_system.py`, `scaffold.py`, `bundle.py`, `stats.py`) and shared library modules. All entry points support `--json` for machine-readable output.
+
+`stats.py` reports two byte-based proxies for a skill's context cost: `discovery_bytes` (the SKILL.md frontmatter block) and `load_bytes` (SKILL.md plus every transitively reachable capability and reference file, with `scripts/` and `assets/` excluded). Bytes are a deterministic on-disk signal, not tokenizer-accurate — use the trend across edits, not the absolute number across models.
 
 ## Core Principles
 
