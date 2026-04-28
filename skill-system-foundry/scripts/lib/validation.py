@@ -14,6 +14,7 @@ from .constants import (
     FRONTMATTER_SUGGEST_MAX_MATCHES, FRONTMATTER_SUGGEST_CUTOFF,
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
+    DESCRIPTION_TRIGGER_PHRASES, DESCRIPTION_TRIGGER_EXAMPLE_PHRASES,
     DIR_CAPABILITIES, DIR_SCRIPTS,
     FILE_CAPABILITY_MD, FILE_SKILL_MD,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
@@ -99,6 +100,60 @@ def _is_explicit_empty_allowed_tools(value: object) -> bool:
     if isinstance(value, str):
         return not value.strip()
     return False
+
+
+def validate_description_triggers(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """Check that the description contains at least one trigger phrase.
+
+    The agentskills.io specification requires descriptions to state
+    both *what* the skill does and *when* it activates.  This rule
+    enforces the "when" half by case-insensitive substring matching
+    against ``DESCRIPTION_TRIGGER_PHRASES`` (configured under
+    ``skill.description.trigger_phrases`` in ``configuration.yaml``).
+
+    Detection is heuristic — phrase matching cannot enumerate every
+    valid wording — so the rule emits WARN, not FAIL.  Empty /
+    whitespace-only inputs short-circuit silently: the spec-required
+    non-empty FAIL is owned by the caller (``validate_description``
+    in ``validate_skill.py`` and the per-skill block in
+    ``audit_skill_system.py``), and stacking a trigger WARN on top
+    of that FAIL would be redundant.  The guard is kept so direct
+    API callers (e.g. ad-hoc scripts) can invoke the helper without
+    a separate non-empty check of their own.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+
+    if not description or not description.strip():
+        return errors, passes
+
+    lowered = description.lower()
+    for phrase in DESCRIPTION_TRIGGER_PHRASES:
+        if phrase in lowered:
+            passes.append(
+                f"description: contains trigger phrase '{phrase}'"
+            )
+            return errors, passes
+
+    # Build the example list from the curated example subset so the
+    # message never drifts from the YAML.  Examples are first-word
+    # distinct (different root verbs) for educational variety; the
+    # YAML pointer remains the canonical source for the full list.
+    example_phrases = ", ".join(
+        f"'{phrase.capitalize()} ...'"
+        for phrase in DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
+    )
+    errors.append(
+        f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
+        f"activates — add a trigger clause (e.g. {example_phrases}).  "
+        "Phrase list configured under skill.description.trigger_phrases "
+        "in configuration.yaml."
+    )
+    return errors, passes
 
 
 def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:

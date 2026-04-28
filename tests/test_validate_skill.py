@@ -102,6 +102,19 @@ class ValidateDescriptionTests(unittest.TestCase):
         self.assertIn("empty", errors[0])
         self.assertEqual(passes, [])
 
+    def test_whitespace_only_description_returns_fail(self) -> None:
+        """A whitespace-only description is a spec violation and must
+        FAIL exactly like the empty case — the trigger heuristic
+        short-circuits on whitespace, so a falsy-only test would let
+        ``"   "`` slip through with no diagnostic."""
+        for value in ("   ", "\n\n\t  ", " "):
+            with self.subTest(value=repr(value)):
+                errors, passes = validate_description(value)
+                fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+                empty_fails = [e for e in fail_errors if "empty" in e]
+                self.assertEqual(len(empty_fails), 1)
+                self.assertEqual(passes, [])
+
     def test_valid_third_person_description(self) -> None:
         """A valid third-person description within limits produces passes."""
         desc = "Processes data files and generates summary reports."
@@ -268,6 +281,34 @@ class ValidateDescriptionTests(unittest.TestCase):
         self.assertEqual(voice_msgs, [])
         voice_pass = [p for p in passes if "third-person" in p]
         self.assertEqual(len(voice_pass), 1)
+
+    def test_description_with_trigger_phrase_emits_no_trigger_warn(self) -> None:
+        """A description containing a configured trigger phrase emits no
+        trigger-clause WARN through the end-to-end validate_description."""
+        desc = (
+            "Manages project timelines and tracks milestones. Triggers when "
+            "a milestone changes."
+        )
+        errors, passes = validate_description(desc)
+        trigger_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "when the skill activates" in e
+        ]
+        self.assertEqual(trigger_warns, [])
+        trigger_passes = [p for p in passes if "trigger phrase" in p]
+        self.assertEqual(len(trigger_passes), 1)
+
+    def test_description_without_trigger_phrase_emits_warn(self) -> None:
+        """A description missing every configured trigger phrase emits a
+        single [spec] WARN through validate_description."""
+        desc = "Manages project timelines and tracks milestones."
+        errors, _ = validate_description(desc)
+        trigger_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "when the skill activates" in e
+        ]
+        self.assertEqual(len(trigger_warns), 1)
+        self.assertIn("[spec]", trigger_warns[0])
 
 
 # ===================================================================
@@ -2894,7 +2935,8 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
             write_text(
                 os.path.join(skill_dir, "SKILL.md"),
                 "---\nname: demo-skill\n"
-                "description: Validates data files and generates reports.\n"
+                "description: Validates data files and generates reports. "
+                "Triggers when a data file is touched.\n"
                 "compatibility: Requires Python 3.12 or later.\n"
                 "allowed-tools: bash git python\n"
                 "license: MIT\n"

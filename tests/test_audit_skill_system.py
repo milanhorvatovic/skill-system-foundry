@@ -133,7 +133,11 @@ def _create_full_valid_system(system_root: str) -> None:
 
     # Second skill for role composition
     skill2_dir = os.path.join(system_root, "skills", "other-skill")
-    write_skill_md(skill2_dir, name="other-skill", description="Another skill.")
+    write_skill_md(
+        skill2_dir,
+        name="other-skill",
+        description="Another skill. Use when running role composition smoke tests.",
+    )
 
     # Role composing 2 skills
     role_path = os.path.join(system_root, "roles", "test", "reviewer.md")
@@ -341,6 +345,33 @@ class AuditSpecComplianceTests(unittest.TestCase):
         desc_fails = [e for e in fail_errors if "description" in e.lower()]
         self.assertGreaterEqual(len(desc_fails), 1)
 
+    def test_skill_whitespace_only_description_returns_fail(self) -> None:
+        """A whitespace-only description value is a spec violation:
+        the audit must FAIL on it (the trigger heuristic
+        short-circuits on whitespace, and the length check passes a
+        zero-length string, so without an explicit empty-after-strip
+        guard the audit would emit no diagnostic at all)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo-skill\ndescription: \"   \"\n---\n\n# Skill\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        empty_fails = [
+            e for e in fail_errors
+            if "empty" in e and "demo-skill/SKILL.md" in e
+        ]
+        self.assertEqual(len(empty_fails), 1)
+        # No trigger WARN — the FAIL for emptiness suppresses the
+        # downstream heuristic, avoiding diagnostic noise.
+        trigger_warns = [
+            e for e in errors
+            if "when the skill activates" in e
+        ]
+        self.assertEqual(trigger_warns, [])
+
     def test_skill_description_exceeding_max_chars_returns_fail(self) -> None:
         """A skill with a description exceeding MAX_DESCRIPTION_CHARS returns a FAIL."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -352,6 +383,72 @@ class AuditSpecComplianceTests(unittest.TestCase):
         desc_fails = [e for e in fail_errors if "description" in e.lower()]
         self.assertGreaterEqual(len(desc_fails), 1)
         self.assertIn(str(MAX_DESCRIPTION_CHARS), desc_fails[0])
+
+    def test_skill_description_without_trigger_phrase_returns_warn(self) -> None:
+        """A SKILL.md description missing every configured trigger phrase
+        emits a [spec] WARN through the audit, prefixed with the skill
+        name and SKILL.md filename per audit conventions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(
+                skill_dir,
+                description=(
+                    "Validates data files and generates summary reports."
+                ),
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        trigger_warns = [
+            e for e in warn_errors
+            if "when the skill activates" in e
+            and "demo-skill/SKILL.md" in e
+        ]
+        self.assertEqual(len(trigger_warns), 1)
+        self.assertIn("[spec]", trigger_warns[0])
+
+    def test_skill_overlong_description_without_trigger_emits_both_findings(
+        self,
+    ) -> None:
+        """An over-long description that also lacks every configured
+        trigger phrase emits BOTH the length FAIL and the trigger WARN.
+        Pins the contract: the trigger check is independent of the
+        length check; one finding does not suppress the other."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            long_desc = "x" * (MAX_DESCRIPTION_CHARS + 1)
+            write_skill_md(skill_dir, description=long_desc)
+            errors = audit_skill_system(tmpdir, verbose=False)
+        length_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "exceeds" in e
+        ]
+        trigger_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "when the skill activates" in e
+        ]
+        self.assertEqual(len(length_fails), 1)
+        self.assertEqual(len(trigger_warns), 1)
+
+    def test_skill_description_with_trigger_phrase_emits_no_trigger_warn(
+        self,
+    ) -> None:
+        """A SKILL.md description containing a configured trigger phrase
+        produces no trigger-clause WARN through the audit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(
+                skill_dir,
+                description=(
+                    "Validates data files and generates summary reports. "
+                    "Triggers when a data file changes."
+                ),
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        trigger_warns = [
+            e for e in errors
+            if "when the skill activates" in e
+        ]
+        self.assertEqual(trigger_warns, [])
 
     def test_skill_body_exceeding_max_lines_returns_warn(self) -> None:
         """A skill with a body exceeding MAX_BODY_LINES returns a WARN."""

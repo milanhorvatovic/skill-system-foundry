@@ -170,6 +170,72 @@ RE_FIRST_PERSON_PLURAL = re.compile(_voice["first_person_plural"])
 RE_SECOND_PERSON = re.compile(_voice["second_person"])
 RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 
+# Trigger-phrase heuristic: the agentskills.io spec requires
+# descriptions to state both *what* the skill does and *when* it
+# activates.  validate_description_triggers enforces the "when"
+# half by checking that the folded, lowercased description contains
+# at least one phrase from this list.  Stored as a sorted tuple of
+# lowercased strings — order is deterministic across processes so
+# --verbose output naming the matched phrase is reproducible, and
+# the structure signals "configured policy, do not mutate" the same
+# way RESERVED_NAMES does.  Empty / whitespace-only entries are
+# rejected at load time: a substring match against an empty string
+# always succeeds, which would silently neuter the rule.
+if "trigger_phrases" not in _skill_desc:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.description.trigger_phrases'; update your checkout "
+        "or restore the full configuration file."
+    )
+_raw_trigger_phrases = _skill_desc["trigger_phrases"]
+if not isinstance(_raw_trigger_phrases, list) or not _raw_trigger_phrases:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.trigger_phrases': expected a non-empty "
+        f"list, got {_raw_trigger_phrases!r}."
+    )
+_normalized_trigger_phrases: list[str] = []
+_seen_trigger_phrases: set[str] = set()
+for _phrase in _raw_trigger_phrases:
+    _candidate = str(_phrase).strip().lower()
+    if not _candidate:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry "
+            "in 'skill.description.trigger_phrases'; remove the entry "
+            "or replace it with a real phrase — empty entries silently "
+            "disable the rule."
+        )
+    if _candidate in _seen_trigger_phrases:
+        raise RuntimeError(
+            f"configuration.yaml has a duplicate entry '{_phrase}' "
+            f"(normalized: '{_candidate}') in "
+            "'skill.description.trigger_phrases'; remove the redundant "
+            "entry — duplicates indicate a config edit accident."
+        )
+    _seen_trigger_phrases.add(_candidate)
+    _normalized_trigger_phrases.append(_candidate)
+DESCRIPTION_TRIGGER_PHRASES = tuple(sorted(_normalized_trigger_phrases))
+
+# Curated subset used as illustrative examples in the WARN message.
+# Selected by first-word-distinct dedup over the sorted phrase tuple
+# so the user-facing examples cover different root verbs (e.g.
+# "activates on", "invoked on", "triggers on") rather than two
+# variants of the same root ("activates on", "activates when").  Up
+# to three entries — the helper that renders the WARN does not need
+# more, and capping here keeps the message concise.  Deterministic
+# across processes because the input is already a sorted tuple.
+_example_seen_first_words: set[str] = set()
+_example_phrases_buffer: list[str] = []
+for _phrase in DESCRIPTION_TRIGGER_PHRASES:
+    _first_word = _phrase.split(" ", 1)[0]
+    if _first_word in _example_seen_first_words:
+        continue
+    _example_seen_first_words.add(_first_word)
+    _example_phrases_buffer.append(_phrase)
+    if len(_example_phrases_buffer) >= 3:
+        break
+DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
+
 # Skill body constraints
 _skill_body = _skill["body"]
 MAX_BODY_LINES = int(_skill_body["max_lines"])
