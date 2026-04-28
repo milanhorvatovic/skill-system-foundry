@@ -82,6 +82,7 @@ from lib.constants import (
 )
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.router_table import audit_router_table
+from lib.validation import validate_description_triggers
 
 
 def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
@@ -440,10 +441,18 @@ def audit_skill_system(
             errors.append(
                 f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} missing 'description' field"
             )
-        elif len(str(fm["description"])) > MAX_DESCRIPTION_CHARS:
-            errors.append(
-                f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} description exceeds {MAX_DESCRIPTION_CHARS} chars"
-            )
+        else:
+            description = str(fm["description"])
+            if len(description) > MAX_DESCRIPTION_CHARS:
+                errors.append(
+                    f"{LEVEL_FAIL}: {skill['name']}/{FILE_SKILL_MD} description exceeds {MAX_DESCRIPTION_CHARS} chars"
+                )
+            trigger_errors, _ = validate_description_triggers(description)
+            for trigger_error in trigger_errors:
+                level, _, detail = trigger_error.partition(": ")
+                errors.append(
+                    f"{level}: {skill['name']}/{FILE_SKILL_MD} {detail}"
+                )
 
         body_lines = count_body_lines(body)
         if body_lines > MAX_BODY_LINES:

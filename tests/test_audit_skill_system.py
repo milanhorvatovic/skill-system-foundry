@@ -133,7 +133,11 @@ def _create_full_valid_system(system_root: str) -> None:
 
     # Second skill for role composition
     skill2_dir = os.path.join(system_root, "skills", "other-skill")
-    write_skill_md(skill2_dir, name="other-skill", description="Another skill.")
+    write_skill_md(
+        skill2_dir,
+        name="other-skill",
+        description="Another skill. Use when running role composition smoke tests.",
+    )
 
     # Role composing 2 skills
     role_path = os.path.join(system_root, "roles", "test", "reviewer.md")
@@ -352,6 +356,49 @@ class AuditSpecComplianceTests(unittest.TestCase):
         desc_fails = [e for e in fail_errors if "description" in e.lower()]
         self.assertGreaterEqual(len(desc_fails), 1)
         self.assertIn(str(MAX_DESCRIPTION_CHARS), desc_fails[0])
+
+    def test_skill_description_without_trigger_phrase_returns_warn(self) -> None:
+        """A SKILL.md description missing every configured trigger phrase
+        emits a [spec] WARN through the audit, prefixed with the skill
+        name and SKILL.md filename per audit conventions."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(
+                skill_dir,
+                description=(
+                    "Validates data files and generates summary reports."
+                ),
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
+        trigger_warns = [
+            e for e in warn_errors
+            if "when the skill activates" in e
+            and "demo-skill/SKILL.md" in e
+        ]
+        self.assertEqual(len(trigger_warns), 1)
+        self.assertIn("[spec]", trigger_warns[0])
+
+    def test_skill_description_with_trigger_phrase_emits_no_trigger_warn(
+        self,
+    ) -> None:
+        """A SKILL.md description containing a configured trigger phrase
+        produces no trigger-clause WARN through the audit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(
+                skill_dir,
+                description=(
+                    "Validates data files and generates summary reports. "
+                    "Triggers when a data file changes."
+                ),
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        trigger_warns = [
+            e for e in errors
+            if "when the skill activates" in e
+        ]
+        self.assertEqual(trigger_warns, [])
 
     def test_skill_body_exceeding_max_lines_returns_warn(self) -> None:
         """A skill with a body exceeding MAX_BODY_LINES returns a WARN."""
