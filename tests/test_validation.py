@@ -978,8 +978,10 @@ class ValidateDescriptionTriggersTests(unittest.TestCase):
     The helper enforces the agentskills.io spec requirement that a
     description state when the skill activates.  Detection is a
     case-insensitive substring match against
-    DESCRIPTION_TRIGGER_PHRASES; missing every phrase produces a
-    single WARN.
+    DESCRIPTION_TRIGGER_PHRASES; for non-empty descriptions, missing
+    every phrase produces a single WARN.  Empty / whitespace-only
+    inputs short-circuit silently — the spec-required non-empty FAIL
+    is owned by the caller, not this helper.
     """
 
     def test_phrase_present_emits_no_warn(self) -> None:
