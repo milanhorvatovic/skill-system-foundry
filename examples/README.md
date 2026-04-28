@@ -24,7 +24,7 @@ examples/
 
 ### Standalone skill — [`skills/hello-greeter/`](skills/hello-greeter/SKILL.md)
 
-The smallest valid skill: a single `SKILL.md` with the minimum required frontmatter (`name`, `description`), no `allowed-tools`, no shell fences, no subdirectories. Read this first to see the floor of what counts as a skill in the Skill System Foundry.
+The smallest valid skill: a single `SKILL.md` with the required `name` and `description` frontmatter plus an optional `metadata` block, no `allowed-tools`, no shell fences, and no subdirectories. Read this first to see the floor of what counts as a skill in the Skill System Foundry.
 
 ### Router skill — [`skills/hello-router/`](skills/hello-router/SKILL.md)
 

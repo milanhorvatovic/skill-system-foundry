@@ -5,8 +5,9 @@ description: >
   formal or casual tone. Activates whenever the conversation asks to say
   hello, welcome someone, or produce an opening greeting. Single-purpose,
   no branching, no shell access. Demonstrates the smallest valid standalone
-  skill in the Skill System Foundry — minimal frontmatter, third-person
-  description, body well under the recommended line cap.
+  skill in the Skill System Foundry — required `name` and `description`
+  fields plus an optional `metadata` block, third-person description, body
+  well under the recommended line cap.
 metadata:
   version: "1.0.0"
 ---
