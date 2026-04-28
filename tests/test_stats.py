@@ -26,7 +26,7 @@ if SCRIPTS_DIR not in sys.path:
 from lib.stats import (
     category_of,
     compute_stats,
-    discovery_bytes_for_skill_md,
+    discovery_bytes_of,
     extract_body_references,
     is_excluded_from_load,
     read_bytes_count,
@@ -72,7 +72,7 @@ class ReadBytesCountTests(unittest.TestCase):
 
 
 class DiscoveryBytesTests(unittest.TestCase):
-    """Tests for ``discovery_bytes_for_skill_md``."""
+    """Tests for ``discovery_bytes_of``."""
 
     def test_inclusive_of_both_fences(self) -> None:
         """Block runs from opening --- to closing --- inclusive."""
@@ -83,21 +83,21 @@ class DiscoveryBytesTests(unittest.TestCase):
                 f.write(content.encode("utf-8"))
             # "---\n" (4) + "name: x\n" (8) + "description: y\n" (15)
             # + "---\n" (4) = 31
-            self.assertEqual(discovery_bytes_for_skill_md(path), 31)
+            self.assertEqual(discovery_bytes_of(path), 31)
 
     def test_no_frontmatter_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "SKILL.md")
             with open(path, "wb") as f:
                 f.write(b"# Just a body\n")
-            self.assertEqual(discovery_bytes_for_skill_md(path), 0)
+            self.assertEqual(discovery_bytes_of(path), 0)
 
     def test_unclosed_frontmatter_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "SKILL.md")
             with open(path, "wb") as f:
                 f.write(b"---\nname: x\nno closer here\n")
-            self.assertEqual(discovery_bytes_for_skill_md(path), 0)
+            self.assertEqual(discovery_bytes_of(path), 0)
 
     def test_crlf_frontmatter_counted_with_carriage_returns(self) -> None:
         """CRLF terminators contribute to the byte count."""
@@ -111,7 +111,80 @@ class DiscoveryBytesTests(unittest.TestCase):
             # LF-only count for the same content would be 18:
             # "---\n" (4) + "name: x\n" (8) + "---\n" (4) + "...".
             # Actually the LF-only block is 4+8+4 = 16; +3 CRs = 19.
-            self.assertEqual(discovery_bytes_for_skill_md(path), 19)
+            self.assertEqual(discovery_bytes_of(path), 19)
+
+
+# ============================================================
+# Boundary agreement with frontmatter.split_frontmatter
+# ============================================================
+
+
+class DiscoveryBoundaryAgreementTests(unittest.TestCase):
+    """Pin ``discovery_bytes_of`` to ``frontmatter.split_frontmatter``.
+
+    The two implementations exist for legitimate reasons (raw on-disk
+    bytes vs LF-normalized parser view), but on LF-only content they
+    must agree on where the frontmatter block ends.  Without this
+    test, a future refactor of either side could silently disagree
+    and the only symptom would be wrong byte counts.
+    """
+
+    def _expected_bytes(self, lf_content: str) -> int:
+        """Return the boundary the parser sees, expressed in bytes.
+
+        On LF-only input, ``split_frontmatter`` returns the body
+        starting after the closing ``---`` line; the bytes before
+        that point are the discovery block.
+        """
+        from lib.frontmatter import split_frontmatter
+
+        frontmatter_text, body_text = split_frontmatter(lf_content)
+        if frontmatter_text is None or body_text is None:
+            return 0
+        # The block is everything in lf_content except body_text (the
+        # parser strips the trailing closing ``---\n``).
+        return len(lf_content.encode("utf-8")) - len(
+            body_text.encode("utf-8")
+        )
+
+    def test_agrees_on_minimal_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "SKILL.md")
+            content = "---\nname: x\n---\n# Body\n"
+            with open(path, "wb") as f:
+                f.write(content.encode("utf-8"))
+            self.assertEqual(
+                discovery_bytes_of(path), self._expected_bytes(content)
+            )
+
+    def test_agrees_on_multi_field_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "SKILL.md")
+            content = (
+                "---\n"
+                "name: x\n"
+                "description: triggers when invoked\n"
+                "license: MIT\n"
+                "---\n"
+                "# Body line one.\n"
+                "Body line two.\n"
+            )
+            with open(path, "wb") as f:
+                f.write(content.encode("utf-8"))
+            self.assertEqual(
+                discovery_bytes_of(path), self._expected_bytes(content)
+            )
+
+    def test_agrees_when_body_immediately_follows_closer(self) -> None:
+        """No blank line between closing fence and body content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "SKILL.md")
+            content = "---\nname: x\n---\nBody.\n"
+            with open(path, "wb") as f:
+                f.write(content.encode("utf-8"))
+            self.assertEqual(
+                discovery_bytes_of(path), self._expected_bytes(content)
+            )
 
 
 # ============================================================
@@ -544,6 +617,48 @@ class ComputeStatsGraphTests(unittest.TestCase):
         # And no broken-link WARN should be raised for the ghost path.
         warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
         self.assertFalse(any("ghost" in w for w in warns))
+
+    def test_external_symlink_classified_as_info(self) -> None:
+        """A symlink whose target lies outside the skill root is
+        classified as external (INFO) and excluded from load_bytes.
+
+        This pins the ``is_within_directory`` defense — a future
+        regression to a lexical relpath check would silently pass the
+        rest of the suite while over-counting load_bytes for any
+        skill that uses symlinks for shared resources.
+        """
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink unavailable on this platform")
+        with tempfile.TemporaryDirectory() as outer:
+            skill_dir = os.path.join(outer, "skill")
+            external = os.path.join(outer, "elsewhere", "external.md")
+            write_text(external, "# External body\n")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\n[ext](references/external.md)\n",
+            )
+            os.makedirs(os.path.join(skill_dir, "references"))
+            link_path = os.path.join(
+                skill_dir, "references", "external.md",
+            )
+            try:
+                os.symlink(external, link_path)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation not permitted")
+            result = compute_stats(skill_dir)
+        paths = [entry["path"] for entry in result["files"]]
+        # The symlink target lives outside the skill — must not be
+        # counted toward load_bytes or appear in files[].
+        self.assertNotIn("references/external.md", paths)
+        infos = [e for e in result["errors"] if e.startswith(LEVEL_INFO)]
+        self.assertTrue(
+            any(
+                "outside the skill directory" in i
+                and "references/external.md" in i
+                for i in infos
+            ),
+            f"expected external-ref INFO finding, got: {infos}",
+        )
 
     def test_parent_traversal_skipped_with_warn(self) -> None:
         """A `../` in a body reference is rejected as a WARN."""

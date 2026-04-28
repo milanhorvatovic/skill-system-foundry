@@ -66,8 +66,8 @@ def read_bytes_count(filepath: str) -> int:
         return len(f.read())
 
 
-def discovery_bytes_for_skill_md(skill_md_path: str) -> int:
-    """Return the byte count of the YAML frontmatter block.
+def discovery_bytes_of(markdown_path: str) -> int:
+    """Return the byte count of a markdown file's YAML frontmatter block.
 
     The block runs from the opening ``---`` line through the closing
     ``---`` line, inclusive of both fences and the newlines that
@@ -75,9 +75,15 @@ def discovery_bytes_for_skill_md(skill_md_path: str) -> int:
     ``---`` opener or has no closing ``---`` — those cases are
     surfaced as findings by ``compute_stats``.
 
-    Counted from raw on-disk bytes (CRLF preserved).
+    Counted from raw on-disk bytes (CRLF preserved).  This helper
+    deliberately walks the bytes itself rather than reusing
+    ``frontmatter.split_frontmatter`` — the parser normalizes CRLF to
+    LF before splitting, which would lose the carriage returns that
+    Windows checkouts genuinely pay for at discovery time.  The
+    resulting two implementations are kept in sync by the
+    ``DiscoveryBoundaryAgreementTests`` assertion in test_stats.py.
     """
-    with open(skill_md_path, "rb") as f:
+    with open(markdown_path, "rb") as f:
         data = f.read()
     if not data.startswith(b"---"):
         return 0
@@ -244,7 +250,7 @@ def compute_stats(skill_path: str) -> dict:
     if frontmatter and "_parse_error" not in frontmatter and frontmatter.get("name"):
         result["skill"] = str(frontmatter["name"])
 
-    discovery_count = discovery_bytes_for_skill_md(skill_md)
+    discovery_count = discovery_bytes_of(skill_md)
     if discovery_count == 0:
         result["errors"].append(
             f"{LEVEL_WARN}: [foundry] {FILE_SKILL_MD} has no parseable "
@@ -260,6 +266,11 @@ def compute_stats(skill_path: str) -> dict:
     def _visit(filepath: str, parent_rel: str | None) -> None:
         filepath = os.path.abspath(filepath)
         rel = _to_skill_root_relative(filepath, skill_path)
+        # Decline at the boundary for excluded categories — scripts and
+        # assets are not loaded into the model context, so reading
+        # their bytes only to drop the row later wastes I/O.
+        if is_excluded_from_load(rel):
+            return
         if filepath in visited:
             if parent_rel is not None:
                 visited[filepath]["parents"].add(parent_rel)
@@ -347,13 +358,12 @@ def compute_stats(skill_path: str) -> dict:
 
     _visit(skill_md, None)
 
-    # Build the sorted file list and total load_bytes, filtering out
-    # categories that don't contribute to the model's context.
+    # Build the sorted file list and total load_bytes.  ``visited``
+    # already excludes scripts/assets thanks to the early-return in
+    # ``_visit``, so this loop is an unconditional aggregator.
     entries: list[dict] = []
     load_total = 0
     for state in visited.values():
-        if is_excluded_from_load(state["path"]):
-            continue
         entries.append({
             "path": state["path"],
             "bytes": state["bytes"],
