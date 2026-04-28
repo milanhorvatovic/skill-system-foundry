@@ -26,6 +26,6 @@ Route to the matching capability based on the requested tone:
 
 Load only the capability that matches the request. Do not load both unless the conversation explicitly compares the two tones side by side.
 
-## Shared Behaviour
+## Shared Behavior
 
 Both capabilities emit a single greeting line and stop. Neither capability loops, prompts, or escalates back to this entry point. The router itself holds no business logic — it only dispatches.
