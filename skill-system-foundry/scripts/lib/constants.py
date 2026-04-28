@@ -174,9 +174,13 @@ RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 # descriptions to state both *what* the skill does and *when* it
 # activates.  validate_description_triggers enforces the "when"
 # half by checking that the folded, lowercased description contains
-# at least one phrase from this list.  Stored as a frozenset of
-# lowercased strings to mirror RESERVED_NAMES / KNOWN_FRONTMATTER_KEYS
-# — the structure is a configured policy, not mutable state.
+# at least one phrase from this list.  Stored as a sorted tuple of
+# lowercased strings — order is deterministic across processes so
+# --verbose output naming the matched phrase is reproducible, and
+# the structure signals "configured policy, do not mutate" the same
+# way RESERVED_NAMES does.  Empty / whitespace-only entries are
+# rejected at load time: a substring match against an empty string
+# always succeeds, which would silently neuter the rule.
 if "trigger_phrases" not in _skill_desc:
     raise RuntimeError(
         "configuration.yaml is missing required section "
@@ -190,9 +194,18 @@ if not isinstance(_raw_trigger_phrases, list) or not _raw_trigger_phrases:
         "'skill.description.trigger_phrases': expected a non-empty "
         f"list, got {_raw_trigger_phrases!r}."
     )
-DESCRIPTION_TRIGGER_PHRASES = frozenset(
-    str(phrase).lower() for phrase in _raw_trigger_phrases
-)
+_normalized_trigger_phrases: list[str] = []
+for _phrase in _raw_trigger_phrases:
+    _candidate = str(_phrase).strip().lower()
+    if not _candidate:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry "
+            "in 'skill.description.trigger_phrases'; remove the entry "
+            "or replace it with a real phrase — empty entries silently "
+            "disable the rule."
+        )
+    _normalized_trigger_phrases.append(_candidate)
+DESCRIPTION_TRIGGER_PHRASES = tuple(sorted(set(_normalized_trigger_phrases)))
 
 # Skill body constraints
 _skill_body = _skill["body"]

@@ -27,13 +27,19 @@ skill:
     # cannot enumerate every valid wording — so the rule emits WARN,
     # not FAIL.  Extend the list via PR when a legitimate pattern is
     # missed.
+    #
+    # Match semantics: case-insensitive substring on the lowered,
+    # folded description.  Phrases match anywhere — including inside
+    # longer words ("activates when" matches "activates whenever").
+    # Avoid phrases short or generic enough to collide with incidental
+    # prose ("use for" matched "use forensic" / "use for example",
+    # which is why it is not in the starter set).
     trigger_phrases:
       - triggers on
       - triggers when
       - activates on
       - activates when
       - use when
-      - use for
       - when to use
       - invoked on
       - invoked when

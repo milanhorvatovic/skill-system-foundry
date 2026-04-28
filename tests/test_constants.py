@@ -108,8 +108,11 @@ class YamlConformanceConfigTests(unittest.TestCase):
 class DescriptionTriggerPhrasesTests(unittest.TestCase):
     """``DESCRIPTION_TRIGGER_PHRASES`` exposes the configured phrase list."""
 
-    def test_is_frozenset(self) -> None:
-        self.assertIsInstance(constants.DESCRIPTION_TRIGGER_PHRASES, frozenset)
+    def test_is_tuple(self) -> None:
+        # Stored as a tuple (not frozenset) so iteration order is
+        # deterministic — --verbose pass-message phrase reporting must
+        # not vary across processes / platforms.
+        self.assertIsInstance(constants.DESCRIPTION_TRIGGER_PHRASES, tuple)
 
     def test_is_non_empty(self) -> None:
         self.assertGreater(len(constants.DESCRIPTION_TRIGGER_PHRASES), 0)
@@ -118,16 +121,34 @@ class DescriptionTriggerPhrasesTests(unittest.TestCase):
         for phrase in constants.DESCRIPTION_TRIGGER_PHRASES:
             self.assertEqual(phrase, phrase.lower())
 
+    def test_phrases_are_sorted(self) -> None:
+        # Sorted-tuple invariant — see ``test_is_tuple`` rationale.
+        self.assertEqual(
+            list(constants.DESCRIPTION_TRIGGER_PHRASES),
+            sorted(constants.DESCRIPTION_TRIGGER_PHRASES),
+        )
+
+    def test_phrases_are_unique(self) -> None:
+        phrases = list(constants.DESCRIPTION_TRIGGER_PHRASES)
+        self.assertEqual(len(phrases), len(set(phrases)))
+
     def test_starter_phrases_present(self) -> None:
         # Pin the spec-derived starter set so accidental config edits
         # surface as a test failure rather than a silent rule weakening.
+        # ``use for`` is intentionally excluded — too generic, collides
+        # with incidental prose like ``use forensic`` / ``use for example``.
         for phrase in (
             "triggers on", "triggers when",
             "activates on", "activates when",
-            "use when", "use for", "when to use",
+            "use when", "when to use",
             "invoked on", "invoked when",
         ):
             self.assertIn(phrase, constants.DESCRIPTION_TRIGGER_PHRASES)
+
+    def test_starter_set_excludes_use_for(self) -> None:
+        # Negative pin: ``use for`` was deliberately removed because
+        # substring matching turned it into a false-negative source.
+        self.assertNotIn("use for", constants.DESCRIPTION_TRIGGER_PHRASES)
 
 
 class AllowedToolsCatalogTests(unittest.TestCase):
@@ -459,6 +480,20 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 )
             )
         self.assertIn("trigger_phrases", str(ctx.exception))
+
+    def test_empty_string_entry_in_trigger_phrases_raises(self) -> None:
+        # An empty / whitespace-only entry would silently disable the
+        # rule — substring-match against "" is always True.  Loader
+        # must refuse it loudly.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "      - triggers on\n",
+                    "      - triggers on\n      - \"\"\n",
+                )
+            )
+        self.assertIn("trigger_phrases", str(ctx.exception))
+        self.assertIn("empty", str(ctx.exception).lower())
 
 
 if __name__ == "__main__":

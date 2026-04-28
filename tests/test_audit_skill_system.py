@@ -379,6 +379,29 @@ class AuditSpecComplianceTests(unittest.TestCase):
         self.assertEqual(len(trigger_warns), 1)
         self.assertIn("[spec]", trigger_warns[0])
 
+    def test_skill_overlong_description_without_trigger_emits_both_findings(
+        self,
+    ) -> None:
+        """An over-long description that also lacks every configured
+        trigger phrase emits BOTH the length FAIL and the trigger WARN.
+        Pins the contract: the trigger check is independent of the
+        length check; one finding does not suppress the other."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            long_desc = "x" * (MAX_DESCRIPTION_CHARS + 1)
+            write_skill_md(skill_dir, description=long_desc)
+            errors = audit_skill_system(tmpdir, verbose=False)
+        length_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "exceeds" in e
+        ]
+        trigger_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "when the skill activates" in e
+        ]
+        self.assertEqual(len(length_fails), 1)
+        self.assertEqual(len(trigger_warns), 1)
+
     def test_skill_description_with_trigger_phrase_emits_no_trigger_warn(
         self,
     ) -> None:
