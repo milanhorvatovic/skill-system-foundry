@@ -269,6 +269,34 @@ class ValidateDescriptionTests(unittest.TestCase):
         voice_pass = [p for p in passes if "third-person" in p]
         self.assertEqual(len(voice_pass), 1)
 
+    def test_description_with_trigger_phrase_emits_no_trigger_warn(self) -> None:
+        """A description containing a configured trigger phrase emits no
+        trigger-clause WARN through the end-to-end validate_description."""
+        desc = (
+            "Manages project timelines and tracks milestones. Triggers when "
+            "a milestone changes."
+        )
+        errors, passes = validate_description(desc)
+        trigger_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "when the skill activates" in e
+        ]
+        self.assertEqual(trigger_warns, [])
+        trigger_passes = [p for p in passes if "trigger phrase" in p]
+        self.assertEqual(len(trigger_passes), 1)
+
+    def test_description_without_trigger_phrase_emits_warn(self) -> None:
+        """A description missing every configured trigger phrase emits a
+        single [spec] WARN through validate_description."""
+        desc = "Manages project timelines and tracks milestones."
+        errors, _ = validate_description(desc)
+        trigger_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "when the skill activates" in e
+        ]
+        self.assertEqual(len(trigger_warns), 1)
+        self.assertIn("[spec]", trigger_warns[0])
+
 
 # ===================================================================
 # validate_body
@@ -2894,7 +2922,8 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
             write_text(
                 os.path.join(skill_dir, "SKILL.md"),
                 "---\nname: demo-skill\n"
-                "description: Validates data files and generates reports.\n"
+                "description: Validates data files and generates reports. "
+                "Triggers when a data file is touched.\n"
                 "compatibility: Requires Python 3.12 or later.\n"
                 "allowed-tools: bash git python\n"
                 "license: MIT\n"

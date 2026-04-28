@@ -32,6 +32,7 @@ from lib.reporting import (
 from lib.validation import (
     validate_name,
     validate_allowed_tools,
+    validate_description_triggers,
     validate_metadata,
     validate_license,
     validate_known_keys,
@@ -128,6 +129,10 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
         )
     else:
         passes.append("description: third-person voice")
+
+    trigger_errors, trigger_passes = validate_description_triggers(description)
+    errors.extend(trigger_errors)
+    passes.extend(trigger_passes)
 
     return errors, passes
 

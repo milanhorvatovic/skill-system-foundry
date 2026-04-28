@@ -1,7 +1,9 @@
 import os
 
 
-DEFAULT_DESCRIPTION = "Packages a minimal demo skill for bundling smoke tests."
+DEFAULT_DESCRIPTION = (
+    "Packages a minimal demo skill. Use when running bundling smoke tests."
+)
 
 
 def write_text(path: str, content: str) -> None:
