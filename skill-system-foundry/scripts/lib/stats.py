@@ -57,13 +57,14 @@ _RE_FENCED_BLOCK = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
 def read_bytes_count(filepath: str) -> int:
     """Return the raw on-disk byte count of *filepath*.
 
-    Reads in binary mode so CRLF is preserved (a Windows checkout of
-    the same file therefore reports a higher count than a POSIX
-    checkout).  Raises ``OSError`` on read failure; callers convert
-    that into a finding rather than letting it abort the run.
+    Uses ``os.path.getsize`` so the count is taken from the inode size
+    without reading the file contents.  CRLF terminators are preserved
+    in that count (a Windows checkout of the same file therefore
+    reports a higher size than a POSIX checkout).  Raises ``OSError``
+    on stat failure; callers convert that into a finding rather than
+    letting it abort the run.
     """
-    with open(filepath, "rb") as f:
-        return len(f.read())
+    return os.path.getsize(filepath)
 
 
 def discovery_bytes_of(markdown_path: str) -> int:
@@ -75,16 +76,21 @@ def discovery_bytes_of(markdown_path: str) -> int:
     ``---`` opener or has no closing ``---`` — those cases are
     surfaced as findings by ``compute_stats``.
 
-    Counted from raw on-disk bytes (CRLF preserved).  This helper
-    deliberately walks the bytes itself rather than reusing
+    Counted from raw on-disk bytes (CRLF preserved).  Reads in UTF-8
+    text mode with ``newline=""`` so carriage returns are not
+    swallowed by universal-newline translation, then re-encodes to
+    bytes for the byte-oriented scanner.  The text mode keeps the
+    ``encoding="utf-8"`` convention without losing the CRLF byte cost
+    that Windows checkouts genuinely pay at discovery time.
+
+    Deliberately walks the bytes rather than reusing
     ``frontmatter.split_frontmatter`` — the parser normalizes CRLF to
-    LF before splitting, which would lose the carriage returns that
-    Windows checkouts genuinely pay for at discovery time.  The
-    resulting two implementations are kept in sync by the
+    LF before splitting, which would also lose those carriage returns.
+    The two implementations are kept in sync by the
     ``DiscoveryBoundaryAgreementTests`` assertion in test_stats.py.
     """
-    with open(markdown_path, "rb") as f:
-        data = f.read()
+    with open(markdown_path, "r", encoding="utf-8", newline="") as f:
+        data = f.read().encode("utf-8")
     if not data.startswith(b"---"):
         return 0
     # Walk line by line to find the closing fence.  Track the byte

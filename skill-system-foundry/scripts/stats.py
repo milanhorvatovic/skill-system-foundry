@@ -68,9 +68,14 @@ def _print_human(result: dict, verbose: bool) -> None:
     print("-" * SEPARATOR_WIDTH)
 
     if result["files"]:
-        # Right-align byte counts; left-align paths.  The path column
-        # widens to fit the longest entry, capped at 60 chars to keep
-        # the line readable on narrow terminals.
+        # Right-align byte counts; left-align paths.  ``path_width`` is
+        # the *minimum* column width: short paths get padded out to it,
+        # but a path longer than 60 chars prints at its natural length
+        # and pushes the byte-count column to the right on that line
+        # only.  The 60-char ceiling on the padding bound keeps the
+        # table readable on narrow terminals when a single very long
+        # path would otherwise force every short row to be padded out
+        # to match.
         max_path_width = max(len(entry["path"]) for entry in result["files"])
         path_width = min(max_path_width, 60)
         for entry in result["files"]:
