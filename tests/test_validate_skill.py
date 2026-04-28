@@ -406,6 +406,36 @@ class ValidateBodyTests(unittest.TestCase):
         nested_warns = [e for e in errors if "nested" in e.lower()]
         self.assertEqual(nested_warns, [])
 
+    def test_capability_ref_in_body_detected(self) -> None:
+        """References to capabilities/<name>/capability.md are detected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            cap_file = os.path.join(
+                tmpdir, "capabilities", "design", "capability.md"
+            )
+            write_text(cap_file, "# Design\n\nCapability body.\n")
+            body = (
+                "# Skill\n\nSee [design](capabilities/design/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
+        # Capability ref must resolve — no broken-link WARN
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+
+    def test_broken_capability_ref_detected(self) -> None:
+        """A broken capabilities/ link produces a WARN like other categories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [missing](capabilities/missing/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("capabilities/missing/capability.md", broken_warns[0])
+
     def test_body_with_nested_refs_returns_warn(self) -> None:
         """A body with nested references (ref file contains refs) produces a WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:

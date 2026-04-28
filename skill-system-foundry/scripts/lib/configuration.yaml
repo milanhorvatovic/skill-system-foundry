@@ -51,8 +51,8 @@ skill:
   body:
     max_lines: 500
     reference_patterns:
-      markdown_link: \[.*?\]\(((?:references|scripts|assets)/[^)]+)\)
-      backtick: "`((?:references|scripts|assets)/[^`]+)`"
+      markdown_link: \[.*?\]\(((?:capabilities|references|scripts|assets)/[^)]+)\)
+      backtick: "`((?:capabilities|references|scripts|assets)/[^`]+)`"
   compatibility:
     max_length: 500
 
