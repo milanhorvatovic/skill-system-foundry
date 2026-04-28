@@ -1,9 +1,13 @@
 """Validate every reference skill under ``examples/skills/``.
 
 Walks the immediate children of ``examples/skills/`` and runs
-``skill-system-foundry/scripts/validate_skill.py --json`` against each.
-Aggregates per-skill verdicts and exits non-zero when any example reports
-any FAIL, WARN, or INFO finding — examples must validate fully clean.
+``skill-system-foundry/scripts/validate_skill.py --json`` against each
+skill root. For router examples, every ``capabilities/<name>/`` subdir
+is also validated with ``--capability --json`` so a broken capability
+(frontmatter parse error, body line cap, etc.) cannot slip past CI when
+the parent skill still passes. Aggregates verdicts and exits non-zero
+when any example reports any FAIL, WARN, or INFO finding — examples
+must validate fully clean.
 
 Roles under ``examples/roles/`` are intentionally skipped — the foundry
 validator does not currently target role files. A dedicated role
@@ -51,6 +55,30 @@ def discover_skill_dirs(skills_root: str) -> list[str]:
     return found
 
 
+def discover_capability_dirs(skill_dir: str) -> list[str]:
+    """Return absolute paths of capability dirs nested under *skill_dir*.
+
+    A capability qualifies when ``<skill_dir>/capabilities/<name>/`` is a
+    directory containing a ``capability.md`` file. Skills without a
+    ``capabilities/`` subtree (standalone pattern) yield an empty list.
+    Other entries (loose files, hidden directories, non-conforming
+    subdirectories) are silently skipped.
+    """
+    capabilities_root = os.path.join(skill_dir, "capabilities")
+    if not os.path.isdir(capabilities_root):
+        return []
+    found: list[str] = []
+    for name in sorted(os.listdir(capabilities_root)):
+        if name.startswith("."):
+            continue
+        candidate = os.path.join(capabilities_root, name)
+        if not os.path.isdir(candidate):
+            continue
+        if os.path.isfile(os.path.join(candidate, "capability.md")):
+            found.append(os.path.abspath(candidate))
+    return found
+
+
 def find_malformed_skill_dirs(skills_root: str) -> list[str]:
     """Return absolute paths of non-hidden child directories without ``SKILL.md``.
 
@@ -76,9 +104,15 @@ def find_malformed_skill_dirs(skills_root: str) -> list[str]:
 
 
 def validate_one(
-    skill_path: str, validator_path: str,
+    skill_path: str,
+    validator_path: str,
+    *,
+    capability: bool = False,
 ) -> tuple[bool, dict | None, str, str]:
     """Run ``validate_skill.py --json`` against *skill_path*.
+
+    When *capability* is True, the ``--capability`` flag is added so the
+    validator looks for ``capability.md`` instead of ``SKILL.md``.
 
     Returns a tuple of ``(success, parsed_json, raw_stdout, raw_stderr)``.
     *success* is True only when the subprocess returned exit 0, the
@@ -87,8 +121,11 @@ def validate_one(
     fully clean. *parsed_json* is None when stdout could not be parsed
     as JSON.
     """
+    cmd = [sys.executable, validator_path, skill_path, "--json"]
+    if capability:
+        cmd.append("--capability")
     completed = subprocess.run(
-        [sys.executable, validator_path, skill_path, "--json"],
+        cmd,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -114,9 +151,17 @@ def validate_one(
 
 
 def format_verdict(
-    skill_path: str, parsed: dict | None, success: bool,
+    target_path: str,
+    parsed: dict | None,
+    success: bool,
+    *,
+    kind: str = "skill",
 ) -> str:
-    """Render a single one-line verdict for *skill_path*.
+    """Render a single one-line verdict for *target_path*.
+
+    *kind* is ``"skill"`` for skill-root verdicts and ``"capability"`` for
+    capability verdicts; capability lines are indented one level deeper
+    than the parent skill so the relationship reads at a glance.
 
     *success* is the authoritative pass/fail flag computed by
     :func:`validate_one`. The mark is derived from it so the line never
@@ -124,41 +169,54 @@ def format_verdict(
     with a top-level ``error`` field (no ``summary``), the verdict
     surfaces the message instead of misleading zero counts.
     """
-    label = os.path.basename(skill_path.rstrip(os.sep))
+    indent = "    └─ " if kind == "capability" else "  "
+    label = os.path.basename(target_path.rstrip(os.sep))
+    if kind == "capability":
+        label = f"capabilities/{label}"
     if parsed is None:
-        return f"  ✗ {label}: validator emitted no valid JSON output"
+        return f"{indent}✗ {label}: validator emitted no valid JSON output"
     top_level_error = parsed.get("error")
     if top_level_error:
-        return f"  ✗ {label}: validator error: {top_level_error}"
+        return f"{indent}✗ {label}: validator error: {top_level_error}"
     summary = parsed.get("summary") or {}
     failures = summary.get("failures", 0)
     warnings = summary.get("warnings", 0)
     info = summary.get("info", 0)
     mark = "✓" if success else "✗"
     return (
-        f"  {mark} {label}: "
+        f"{indent}{mark} {label}: "
         f"{failures} fail / {warnings} warn / {info} info"
     )
 
 
 def run_validation(
     skills_root: str, validator_path: str,
-) -> tuple[list[tuple[str, bool, dict | None, str, str]], bool]:
-    """Validate every skill under *skills_root*.
+) -> tuple[list[tuple[str, str, bool, dict | None, str, str]], bool]:
+    """Validate every skill (and its capabilities) under *skills_root*.
 
     Returns ``(results, all_success)`` where *results* is a list of
-    ``(skill_path, success, parsed, raw_stdout, raw_stderr)`` tuples in
-    walk order.
+    ``(target_path, kind, success, parsed, raw_stdout, raw_stderr)``
+    tuples in walk order. *kind* is ``"skill"`` or ``"capability"``;
+    capability rows always immediately follow their parent skill row.
     """
-    results: list[tuple[str, bool, dict | None, str, str]] = []
+    results: list[tuple[str, str, bool, dict | None, str, str]] = []
     all_success = True
     for skill_path in discover_skill_dirs(skills_root):
         success, parsed, raw, stderr = validate_one(
             skill_path, validator_path,
         )
-        results.append((skill_path, success, parsed, raw, stderr))
+        results.append((skill_path, "skill", success, parsed, raw, stderr))
         if not success:
             all_success = False
+        for cap_path in discover_capability_dirs(skill_path):
+            cap_success, cap_parsed, cap_raw, cap_stderr = validate_one(
+                cap_path, validator_path, capability=True,
+            )
+            results.append(
+                (cap_path, "capability", cap_success, cap_parsed, cap_raw, cap_stderr),
+            )
+            if not cap_success:
+                all_success = False
     return results, all_success
 
 
@@ -229,11 +287,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(f"Validating {len(results)} example skill(s) under {skills_root}")
+    skill_count = sum(1 for _, kind, _, _, _, _ in results if kind == "skill")
+    cap_count = sum(
+        1 for _, kind, _, _, _, _ in results if kind == "capability"
+    )
+    summary_root = (
+        f"Validating {skill_count} example skill(s) "
+        f"and {cap_count} capabilit{'y' if cap_count == 1 else 'ies'} "
+        f"under {skills_root}"
+    )
+    print(summary_root)
     print("-" * SEPARATOR_WIDTH)
 
-    for skill_path, success, parsed, raw, stderr in results:
-        print(format_verdict(skill_path, parsed, success))
+    for target_path, kind, success, parsed, raw, stderr in results:
+        print(format_verdict(target_path, parsed, success, kind=kind))
         if not success:
             errors = (parsed or {}).get("errors", {}) or {}
             for error in errors.get("failures", []):
@@ -252,10 +319,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print("-" * SEPARATOR_WIDTH)
     if all_success:
-        print(f"✓ All {len(results)} example(s) validated cleanly")
+        print(
+            f"✓ All {len(results)} example target(s) validated cleanly "
+            f"({skill_count} skill / {cap_count} capability)"
+        )
         return 0
-    failed = sum(1 for _, success, _, _, _ in results if not success)
-    print(f"✗ {failed} of {len(results)} example(s) failed validation")
+    failed = sum(1 for _, _, success, _, _, _ in results if not success)
+    print(
+        f"✗ {failed} of {len(results)} example target(s) failed validation"
+    )
     return 1
 
 

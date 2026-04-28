@@ -35,6 +35,7 @@ if _spec is None or _spec.loader is None:
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 discover_skill_dirs = _mod.discover_skill_dirs
+discover_capability_dirs = _mod.discover_capability_dirs
 find_malformed_skill_dirs = _mod.find_malformed_skill_dirs
 validate_one = _mod.validate_one
 format_verdict = _mod.format_verdict
@@ -132,6 +133,51 @@ class DiscoverSkillDirsTests(unittest.TestCase):
             self.assertEqual(
                 [os.path.basename(p) for p in found],
                 ["alpha", "mike", "zebra"],
+            )
+
+
+# ===================================================================
+# discover_capability_dirs
+# ===================================================================
+
+
+class DiscoverCapabilityDirsTests(unittest.TestCase):
+
+    def test_returns_capability_dirs_with_capability_md(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            cap = os.path.join(root, "capabilities", "alpha")
+            os.makedirs(cap)
+            _write(os.path.join(cap, "capability.md"), "stub")
+            other = os.path.join(root, "capabilities", "no-cap")
+            os.makedirs(other)
+            found = discover_capability_dirs(root)
+            self.assertEqual(len(found), 1)
+            self.assertTrue(found[0].endswith("alpha"))
+
+    def test_no_capabilities_subtree_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(discover_capability_dirs(root), [])
+
+    def test_skips_hidden_and_loose_files(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "capabilities", ".hidden"))
+            _write(
+                os.path.join(root, "capabilities", ".hidden", "capability.md"),
+                "stub",
+            )
+            _write(os.path.join(root, "capabilities", "loose.md"), "stub")
+            self.assertEqual(discover_capability_dirs(root), [])
+
+    def test_results_are_sorted(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            for name in ("zulu", "alpha", "mike"):
+                cap = os.path.join(root, "capabilities", name)
+                os.makedirs(cap)
+                _write(os.path.join(cap, "capability.md"), "stub")
+            found = discover_capability_dirs(root)
+            self.assertEqual(
+                [os.path.basename(p) for p in found],
+                ["alpha", "mike", "zulu"],
             )
 
 
@@ -277,6 +323,31 @@ class ValidateOneTests(unittest.TestCase):
             success, _, _, _ = validate_one("/tmp/skill", "/tmp/v.py")
         self.assertFalse(success)
 
+    def test_capability_flag_is_passed_to_subprocess(self) -> None:
+        # When capability=True the helper must add ``--capability`` so the
+        # validator looks for capability.md instead of SKILL.md.
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run(cmd: list[str], **kwargs: object) -> _FakeCompleted:
+            captured["cmd"] = list(cmd)
+            payload = {
+                "tool": "validate_skill",
+                "success": True,
+                "summary": {"failures": 0, "warnings": 0, "info": 0, "passes": 1},
+            }
+            return _FakeCompleted(json.dumps(payload), returncode=0)
+
+        with mock.patch.object(_mod.subprocess, "run", side_effect=_fake_run):
+            success, _, _, _ = validate_one(
+                "/tmp/cap", "/tmp/v.py", capability=True,
+            )
+        self.assertTrue(success)
+        self.assertIn("--capability", captured["cmd"])
+        # Skill mode (default) must not include the flag.
+        with mock.patch.object(_mod.subprocess, "run", side_effect=_fake_run):
+            validate_one("/tmp/skill", "/tmp/v.py")
+        self.assertNotIn("--capability", captured["cmd"])
+
 
 # ===================================================================
 # format_verdict
@@ -318,6 +389,21 @@ class FormatVerdictTests(unittest.TestCase):
         self.assertIn("alpha", line)
         self.assertIn("no valid JSON output", line)
 
+    def test_capability_kind_renders_with_indent_and_prefix(self) -> None:
+        payload = {
+            "success": True,
+            "summary": {"failures": 0, "warnings": 0, "info": 0},
+        }
+        line = format_verdict(
+            "/tmp/skills/router/capabilities/do-thing",
+            payload,
+            success=True,
+            kind="capability",
+        )
+        self.assertIn("└─", line)
+        self.assertIn("capabilities/do-thing", line)
+        self.assertTrue(line.startswith("    "))
+
     def test_top_level_error_field_surfaces_in_verdict(self) -> None:
         # Early-exit JSON payloads from validate_skill.py omit the
         # ``summary`` object and emit a top-level ``error`` instead. The
@@ -349,7 +435,8 @@ class RunValidationTests(unittest.TestCase):
             results, all_ok = run_validation(root, _REAL_VALIDATOR)
         self.assertTrue(all_ok)
         self.assertEqual(len(results), 2)
-        for _, success, _, _, _ in results:
+        for _, kind, success, _, _, _ in results:
+            self.assertEqual(kind, "skill")
             self.assertTrue(success)
 
     def test_all_success_false_when_one_skill_fails(self) -> None:
@@ -362,9 +449,87 @@ class RunValidationTests(unittest.TestCase):
             results, all_ok = run_validation(root, _REAL_VALIDATOR)
         self.assertFalse(all_ok)
         self.assertEqual(len(results), 2)
-        labels = {os.path.basename(r[0]): r[1] for r in results}
+        labels = {os.path.basename(r[0]): r[2] for r in results}
         self.assertTrue(labels["alpha"])
         self.assertFalse(labels["broken"])
+
+    def test_router_capabilities_are_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            router_dir = os.path.join(root, "router")
+            _write_minimal_skill(router_dir, name="router")
+            cap_dir = os.path.join(router_dir, "capabilities", "do-thing")
+            os.makedirs(cap_dir)
+            _write(
+                os.path.join(cap_dir, "capability.md"),
+                textwrap.dedent(
+                    """\
+                    ---
+                    description: >
+                      Renders one greeting line. Use when a friendly
+                      greeting is requested with a recipient name.
+                    ---
+                    # Do Thing
+
+                    ## Purpose
+
+                    Test capability fixture.
+
+                    ## Instructions
+
+                    1. Emit a greeting.
+                    """,
+                ),
+            )
+            results, all_ok = run_validation(root, _REAL_VALIDATOR)
+        self.assertTrue(all_ok)
+        self.assertEqual(len(results), 2)
+        kinds = [r[1] for r in results]
+        self.assertEqual(kinds, ["skill", "capability"])
+        # Capability row immediately follows its parent skill.
+        self.assertTrue(results[0][0].endswith("router"))
+        self.assertTrue(results[1][0].endswith("do-thing"))
+
+    def test_broken_capability_fails_aggregate(self) -> None:
+        # Use a mocked validator: capability validation is lenient about
+        # missing frontmatter (it's optional), so the deterministic way
+        # to exercise the aggregate-fail-on-capability path is to inject
+        # a failing JSON payload for the capability call only.
+        skill_payload = {
+            "tool": "validate_skill",
+            "success": True,
+            "summary": {"failures": 0, "warnings": 0, "info": 0, "passes": 5},
+        }
+        cap_payload = {
+            "tool": "validate_skill",
+            "success": False,
+            "summary": {"failures": 1, "warnings": 0, "info": 0, "passes": 0},
+            "errors": {
+                "failures": ["body exceeds line cap"],
+                "warnings": [],
+                "info": [],
+            },
+        }
+        side_effect = [
+            _FakeCompleted(json.dumps(skill_payload), returncode=0),
+            _FakeCompleted(json.dumps(cap_payload), returncode=1),
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            router_dir = os.path.join(root, "router")
+            os.makedirs(router_dir)
+            _write(os.path.join(router_dir, "SKILL.md"), "stub")
+            cap_dir = os.path.join(router_dir, "capabilities", "broken")
+            os.makedirs(cap_dir)
+            _write(os.path.join(cap_dir, "capability.md"), "stub")
+            with mock.patch.object(
+                _mod.subprocess, "run", side_effect=side_effect,
+            ):
+                results, all_ok = run_validation(root, _REAL_VALIDATOR)
+        self.assertFalse(all_ok)
+        self.assertEqual(len(results), 2)
+        skill_row = next(r for r in results if r[1] == "skill")
+        cap_row = next(r for r in results if r[1] == "capability")
+        self.assertTrue(skill_row[2])
+        self.assertFalse(cap_row[2])
 
 
 # ===================================================================
