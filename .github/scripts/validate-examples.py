@@ -26,9 +26,15 @@ import subprocess
 import sys
 
 
-REPO_RELATIVE_EXAMPLES_ROOT = os.path.join("examples", "skills")
+# Anchor default paths to the repository root derived from this file's
+# location (mirroring .github/scripts/verify-action-pins.py) so local
+# runs are robust regardless of the current working directory.
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+REPO_RELATIVE_EXAMPLES_ROOT = os.path.join(_REPO_ROOT, "examples", "skills")
 REPO_RELATIVE_VALIDATOR = os.path.join(
-    "skill-system-foundry", "scripts", "validate_skill.py",
+    _REPO_ROOT, "skill-system-foundry", "scripts", "validate_skill.py",
 )
 SEPARATOR_WIDTH = 60
 
