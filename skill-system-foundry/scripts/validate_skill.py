@@ -362,26 +362,29 @@ def validate_skill_references(
             if os.path.abspath(filepath) == entry_abs:
                 continue
 
+            # Build the cross-platform display label up front so every
+            # finding (read error, nested-ref WARN) uses the POSIX form
+            # — Windows runners would otherwise emit backslash paths in
+            # WARN messages, which is inconsistent with the rest of the
+            # codebase and breaks substring assertions in tests.
+            rel_label = os.path.relpath(filepath, skill_root).replace(
+                os.sep, "/",
+            )
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
             except (OSError, UnicodeError) as exc:
-                rel_label = os.path.relpath(filepath, skill_root)
                 errors.append(
                     f"{LEVEL_WARN}: [spec] '{rel_label}' cannot be read "
                     f"({exc.__class__.__name__}: {exc})"
                 )
                 continue
 
-            rel_label = os.path.relpath(filepath, skill_root)
             # Capability entry points get the same one-hop boundary
             # treatment as the parent SKILL.md — mirror the user's
             # ``--allow-nested-references`` flag.  Non-capability,
             # non-entry files are not subject to the depth rule.
-            rel_to_root = os.path.relpath(filepath, skill_root).replace(
-                os.sep, "/",
-            )
-            rel_parts = rel_to_root.split("/")
+            rel_parts = rel_label.split("/")
             is_capability_entry = (
                 len(rel_parts) == 3
                 and rel_parts[0] == DIR_CAPABILITIES
