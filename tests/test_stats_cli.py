@@ -73,12 +73,16 @@ class StatsCLIBasicTests(unittest.TestCase):
         self.assertIn("Usage", result.stdout)
 
     def test_nonexistent_path_exits_one(self) -> None:
-        result = _run(["/tmp/__definitely_does_not_exist__/skill"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "__nope__", "skill")
+            result = _run([missing])
         self.assertEqual(result.returncode, 1)
         self.assertIn("not a directory", result.stdout)
 
     def test_nonexistent_path_json_emits_error_field(self) -> None:
-        result = _run(["/tmp/__nope__", "--json"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "__nope__")
+            result = _run([missing, "--json"])
         self.assertEqual(result.returncode, 1)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["tool"], "stats")
@@ -225,14 +229,16 @@ class StatsCLIInProcessTests(unittest.TestCase):
         self.assertIn("Usage", out)
 
     def test_nonexistent_path_text_mode(self) -> None:
-        code, out, _err = _run_main(["stats.py", "/tmp/__nope_in_proc__"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "__nope_in_proc__")
+            code, out, _err = _run_main(["stats.py", missing])
         self.assertEqual(code, 1)
         self.assertIn("not a directory", out)
 
     def test_nonexistent_path_json_mode(self) -> None:
-        code, out, _err = _run_main(
-            ["stats.py", "/tmp/__nope_in_proc__", "--json"]
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "__nope_in_proc__")
+            code, out, _err = _run_main(["stats.py", missing, "--json"])
         self.assertEqual(code, 1)
         payload = json.loads(out)
         self.assertFalse(payload["success"])

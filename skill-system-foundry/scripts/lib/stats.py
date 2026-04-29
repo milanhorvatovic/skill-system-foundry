@@ -161,8 +161,15 @@ def extract_body_references(
         # — those are skill-root-relative links from within a
         # capability into its own local references and must stay in
         # the load graph.
+        #
+        # Apply ``strip_fragment`` before the shape check so anchored
+        # links (``capabilities/foo/capability.md#section``) and
+        # query-suffixed links are recognized as entry-point paths
+        # too — they would otherwise survive this filter and be
+        # followed during traversal as a live edge.
         raw_refs = [
-            r for r in raw_refs if not _is_capability_entry_path(r)
+            r for r in raw_refs
+            if not _is_capability_entry_path(strip_fragment(r))
         ]
 
     seen: set[str] = set()

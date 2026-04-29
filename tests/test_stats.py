@@ -214,6 +214,29 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             extract_body_references(body),
         )
 
+    def test_capability_link_filtered_with_anchor_fragment(self) -> None:
+        """Anchored capability links (``capabilities/foo/capability.md#section``)
+        in non-entry bodies are still recognized as entry-point edges
+        and filtered out — strip_fragment is applied before the
+        canonical-shape check."""
+        body = (
+            "# Capability A\n\n"
+            "See [foo](capabilities/foo/capability.md#triggers) "
+            "and [bar](capabilities/bar/capability.md?v=1).\n"
+        )
+        refs = extract_body_references(body)
+        self.assertNotIn("capabilities/foo/capability.md", refs)
+        self.assertNotIn("capabilities/bar/capability.md", refs)
+        # Also ensure no anchored or queried form survived
+        self.assertFalse(
+            any(r.startswith("capabilities/foo/") for r in refs),
+            f"anchored capability link survived filter: {refs}",
+        )
+        self.assertFalse(
+            any(r.startswith("capabilities/bar/") for r in refs),
+            f"queried capability link survived filter: {refs}",
+        )
+
     def test_nested_capability_resource_kept_in_non_entry_body(self) -> None:
         """A capability that links into its OWN nested resources via
         the skill-root-relative path (``capabilities/<name>/references/foo.md``)
