@@ -423,6 +423,40 @@ class ValidateBodyTests(unittest.TestCase):
         broken_warns = [e for e in errors if "does not exist" in e]
         self.assertEqual(broken_warns, [])
 
+    def test_unrelated_file_named_capability_md_still_nested_checked(self) -> None:
+        """An unrelated reference file that happens to be named
+        capability.md (e.g., references/capability.md) is NOT a spec
+        entry point — its own links must still be checked for nesting.
+        Pins the canonical-shape narrowing of the entry-point
+        exemption."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                os.path.join(tmpdir, "references", "capability.md"),
+                "# Misnamed reference\n\n"
+                "See [deeper](references/deeper.md) for more.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "deeper.md"),
+                "# Deeper\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "See [misnamed](references/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(
+            len(nested_warns), 1,
+            "references/capability.md is not a spec entry point; its "
+            "nested references must still be flagged when "
+            "--allow-nested-references is off",
+        )
+        self.assertIn("references/capability.md", nested_warns[0])
+
     def test_capability_link_not_treated_as_nested_ref(self) -> None:
         """capability.md is its own entry point per the spec — links
         from a capability into references/ are first-level under that

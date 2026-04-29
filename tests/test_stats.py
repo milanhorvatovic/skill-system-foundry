@@ -644,6 +644,38 @@ class ComputeStatsGraphTests(unittest.TestCase):
         warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
         self.assertFalse(any("ghost" in w for w in warns))
 
+    def test_undecodable_referenced_md_excluded_from_load_bytes(self) -> None:
+        """A referenced .md file that exists but is not valid UTF-8
+        is excluded from files[] and load_bytes — only the WARN
+        finding remains.  Pins the documented recovery boundary that
+        unreadable referenced files do not contribute to load_bytes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body="# Skill\n\n[broken](references/broken.md)\n",
+            )
+            ref_path = os.path.join(tmpdir, "references", "broken.md")
+            os.makedirs(os.path.dirname(ref_path), exist_ok=True)
+            # Bytes that aren't valid UTF-8.
+            with open(ref_path, "wb") as f:
+                f.write(b"# Heading\n\xff\xfe broken bytes\n")
+            result = compute_stats(tmpdir)
+            skill_md_size = os.path.getsize(
+                os.path.join(tmpdir, "SKILL.md")
+            )
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertNotIn("references/broken.md", paths)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any(
+                "references/broken.md" in w and "cannot decode" in w
+                for w in warns
+            ),
+            f"expected decode-error WARN for references/broken.md, got: {warns}",
+        )
+        # load_bytes is just SKILL.md
+        self.assertEqual(result["load_bytes"], skill_md_size)
+
     def test_unreadable_skill_md_emits_fail_not_traceback(self) -> None:
         """A SKILL.md that exists but cannot be decoded as UTF-8
         produces a structured FAIL finding, not a traceback."""

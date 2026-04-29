@@ -47,6 +47,7 @@ from lib.constants import (
     RE_SECOND_PERSON, RE_IMPERATIVE_START,
     RE_MARKDOWN_LINK_REF, RE_BACKTICK_REF,
     RECOGNIZED_DIRS,
+    DIR_CAPABILITIES,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
@@ -245,8 +246,21 @@ def _check_references(
         # a capability body that reach into references/ are first-
         # level under that entry point, not nested under the parent
         # SKILL.md.  Skip the recursion in that case.
+        #
+        # Match the canonical three-segment shape exactly —
+        # capabilities/<name>/capability.md relative to the skill
+        # root.  An unrelated reference file or asset that happens
+        # to be named capability.md (e.g., references/capability.md)
+        # is NOT a spec entry point and must still have its own
+        # links checked for nesting.
+        rel_to_root = os.path.relpath(ref_path, skill_root).replace(
+            os.sep, "/",
+        )
+        rel_parts = rel_to_root.split("/")
         is_capability_entry = (
-            os.path.basename(ref_path) == FILE_CAPABILITY_MD
+            len(rel_parts) == 3
+            and rel_parts[0] == DIR_CAPABILITIES
+            and rel_parts[2] == FILE_CAPABILITY_MD
         )
         if not allow_nested_refs and not is_capability_entry:
             # Strip fenced code blocks from referenced content so example

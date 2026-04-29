@@ -339,9 +339,30 @@ def compute_stats(skill_path: str) -> dict:
         except OSError as exc:
             result["errors"].append(
                 f"{LEVEL_WARN}: [foundry] cannot read '{rel}' "
-                f"({exc.__class__.__name__}: {exc})"
+                f"({exc.__class__.__name__}: {exc}) — excluded from "
+                f"load_bytes"
             )
             return
+
+        # For markdown files, attempt the UTF-8 decode BEFORE
+        # recording in ``visited`` so that an undecodable file is
+        # excluded from ``files[]`` and ``load_bytes`` rather than
+        # being counted with a trailing WARN.  Non-markdown files
+        # (within the load-budget categories) record only their
+        # byte count — there is no body to walk.
+        is_markdown = filepath.lower().endswith(".md")
+        content: str | None = None
+        if is_markdown:
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except (OSError, UnicodeError) as exc:
+                result["errors"].append(
+                    f"{LEVEL_WARN}: [foundry] cannot decode '{rel}' as "
+                    f"UTF-8 ({exc.__class__.__name__}: {exc}) — "
+                    f"excluded from load_bytes"
+                )
+                return
 
         parents: set[str] = set()
         if parent_rel is not None:
@@ -352,18 +373,8 @@ def compute_stats(skill_path: str) -> dict:
             "parents": parents,
         }
 
-        # Only markdown bodies carry references in the patterns we use.
-        if not filepath.lower().endswith(".md"):
-            return
-
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                content = f.read()
-        except (OSError, UnicodeError) as exc:
-            result["errors"].append(
-                f"{LEVEL_WARN}: [foundry] cannot decode '{rel}' as UTF-8 "
-                f"for reference scanning ({exc.__class__.__name__}: {exc})"
-            )
+        # Non-markdown: byte count recorded, nothing to walk further.
+        if content is None:
             return
 
         is_entry = filepath == os.path.abspath(skill_md)
