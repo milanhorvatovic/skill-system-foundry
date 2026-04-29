@@ -679,7 +679,12 @@ def audit_skill_system(
             )
             if fm and isinstance(fm.get("name"), str) and fm["name"].strip():
                 top_label = fm["name"].strip()
-        except OSError:
+        except (OSError, UnicodeError):
+            # load_frontmatter opens with encoding="utf-8"; non-UTF-8
+            # SKILL.md files raise UnicodeDecodeError.  Fall back to
+            # the directory basename so the audit completes — the
+            # spec-compliance check elsewhere will surface the
+            # underlying file problem.
             pass
         orphan_targets.append((system_root, top_label, None))
 

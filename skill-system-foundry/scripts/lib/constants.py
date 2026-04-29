@@ -407,8 +407,9 @@ _orphan_refs = _config["orphan_references"]
 if "allowed_orphans" not in _orphan_refs:
     raise RuntimeError(
         "configuration.yaml is missing required key "
-        "'orphan_references.allowed_orphans'; set it to an empty "
-        "list ('[]') to keep the rule fully active."
+        "'orphan_references.allowed_orphans'; leave the value blank "
+        "(or list block-style entries beneath it) to keep the rule "
+        "fully active."
     )
 _raw_allowed_orphans = _orphan_refs["allowed_orphans"]
 # A key with no value (``allowed_orphans:`` followed by no items) is

@@ -205,10 +205,8 @@ def find_orphan_references(
     # nothing in skill-validation runs but add real diagnostic value
     # when audit_skill_system runs the rule on its own.
     for warning in walk_warnings:
-        findings.append(
-            f"{warning[: warning.find(':')]}: {skill_audit_prefix} "
-            f"{warning[warning.find(':') + 2 :]}"
-        )
+        level, _, rest = warning.partition(": ")
+        findings.append(f"{level}: {skill_audit_prefix} {rest}")
 
     if not candidates:
         return findings

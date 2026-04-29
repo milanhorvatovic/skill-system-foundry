@@ -2171,6 +2171,30 @@ class AuditOrphanReferencesTests(unittest.TestCase):
         self.assertEqual(len(orphan), 1)
         self.assertIn("my-meta/references/orphan.md", orphan[0])
 
+    def test_skill_root_mode_top_label_survives_unicode_error(self) -> None:
+        # Defensive: the orphan block reads the top-level SKILL.md to
+        # derive a display label.  If load_frontmatter raises
+        # UnicodeError on a non-UTF-8 file, the audit must not crash
+        # — the label falls back to the directory basename and the
+        # rest of the orphan check continues.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "broken-skill")
+            write_skill_md(skill_dir, name="broken-skill")
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            with mock.patch(
+                "audit_skill_system.load_frontmatter",
+                side_effect=UnicodeDecodeError(
+                    "utf-8", b"", 0, 1, "fake bad byte",
+                ),
+            ):
+                errors = audit_skill_system(skill_dir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        self.assertIn("broken-skill/references/orphan.md", orphan[0])
+
     def test_clean_skill_emits_no_orphan_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
