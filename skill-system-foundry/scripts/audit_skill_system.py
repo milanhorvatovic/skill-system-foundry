@@ -716,6 +716,15 @@ def audit_skill_system(
     # for the top-level skill).  Picking the first non-None value
     # mirrors the old ``system_root if has_skills_dir else None``
     # gate without re-deriving it from has_skills_dir.
+    #
+    # Invariant: every non-None audit_root in orphan_targets equals
+    # system_root.  The orphan_targets construction above is the only
+    # place that populates the third element, and it always passes
+    # system_root for registered skills and None for the top-level
+    # skill — so ``next()`` returns either system_root or None.  If a
+    # future contributor adds a new orphan_target variant with a
+    # different audit_root, this derivation must be revisited (use a
+    # set comprehension and check cardinality).
     unresolved_skill_roots = [t[0] for t in orphan_targets]
     unresolved_audit_root = next(
         (t[2] for t in orphan_targets if t[2] is not None),

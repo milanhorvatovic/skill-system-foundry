@@ -2247,6 +2247,33 @@ class AuditOrphanReferencesTests(unittest.TestCase):
         stale = [e for e in errors if "allowed_orphans entry" in e]
         self.assertEqual(stale, [])
 
+    def test_stale_detection_inert_when_skills_dir_is_empty(self) -> None:
+        # Empty-``skills/`` directory: the directory exists but
+        # contains no registered skills, and there is no top-level
+        # SKILL.md either.  The audit cannot reach any skill so
+        # allow-list entries have nothing to resolve against.  Both
+        # ``references/...`` and ``skills/...``-prefixed entries must
+        # be silently skipped — they are out of scope for a partial
+        # audit, not stale.  This locks in the behavioral improvement
+        # introduced when ``unresolved_audit_root`` moved from
+        # ``system_root if has_skills_dir else None`` to
+        # ``next((t[2] for t in orphan_targets ...), None)``: under
+        # the old gate, allowed_orphans entries would surface as INFO
+        # in this configuration even though the audit could not
+        # legitimately validate them.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "skills"))
+            with mock.patch(
+                "audit_skill_system.ALLOWED_ORPHANS",
+                (
+                    "references/anything.md",
+                    "skills/foo/references/x.md",
+                ),
+            ):
+                errors = audit_skill_system(tmpdir, verbose=False)
+        stale = [e for e in errors if "allowed_orphans entry" in e]
+        self.assertEqual(stale, [])
+
     def test_skill_root_label_falls_back_via_abspath_for_dot(self) -> None:
         # Skill-root mode invoked as ``.``: when the SKILL.md
         # frontmatter's ``name`` is missing or unreadable, the
