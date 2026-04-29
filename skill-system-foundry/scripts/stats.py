@@ -13,10 +13,13 @@ Two byte-based proxies are reported:
   and including the ``---`` fences).  This is what the harness reads
   at startup to decide whether to surface the skill.
 
-* ``load_bytes`` — SKILL.md plus every transitively reachable
-  ``capabilities/**/capability.md`` and ``references/**/*`` file.
-  ``scripts/`` and ``assets/`` are excluded — they are not loaded into
-  the model's context during skill use.
+* ``load_bytes`` — SKILL.md plus every transitively reachable file
+  under ``capabilities/`` or ``references/``, excluding ``scripts/``
+  and ``assets/``.  That covers capability entry points
+  (``capabilities/<name>/capability.md``), capability-local resources
+  (``capabilities/<name>/references/<doc>.md``), and shared
+  references (``references/<doc>.md``).  Excluded categories are
+  not loaded into the model's context during skill use.
 
 Bytes are not tokens.  Counts are not comparable across models or
 tokenizers — they are a deterministic on-disk signal for tracking the

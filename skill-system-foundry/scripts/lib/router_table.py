@@ -372,9 +372,14 @@ def extract_capability_paths(body: str) -> list[str]:
     — the caller is expected to dedupe alongside other reference
     sources.
 
-    The router-table semantics live in this module by design — stats,
-    bundling, and the audit all consume capability paths through this
-    one helper instead of reimplementing the strict + recovery cascade.
+    The router-table semantics live in this module by design.  Stats
+    consumes this helper so its load-graph traversal does not have
+    to reimplement the strict + recovery cascade.  ``audit_router_table``
+    keeps its own per-row walk because the audit needs row-level
+    finding tuples (FAIL/WARN with line numbers); a future
+    consolidation could share the recovery cascade by extracting it
+    into a separate sub-helper consumed by both, but that refactor
+    is out of scope here.
     """
     parsed = parse_router_table(body)
     if parsed is None:

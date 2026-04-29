@@ -240,18 +240,20 @@ def _check_references(
             continue
 
         # Nested reference check — only when flag is not set.
-        # capability.md is its own entry point per the spec ("cross-
-        # references stay one level deep from each entry point —
-        # entry points are SKILL.md and capability.md"), so links in
-        # a capability body that reach into references/ are first-
-        # level under that entry point, not nested under the parent
-        # SKILL.md.  Skip the recursion in that case.
+        # The agentskills.io spec only requires references to stay
+        # one level deep from SKILL.md.  The foundry extends this
+        # convention so that ``capability.md`` is also treated as
+        # an entry point with its own one-hop scope (see
+        # ``.github/instructions/markdown.instructions.md``):
+        # links from a capability body that reach into ``references/``
+        # are first-level under that entry point, not nested under
+        # the parent SKILL.md.  Skip the recursion in that case.
         #
         # Match the canonical three-segment shape exactly —
         # capabilities/<name>/capability.md relative to the skill
         # root.  An unrelated reference file or asset that happens
         # to be named capability.md (e.g., references/capability.md)
-        # is NOT a spec entry point and must still have its own
+        # is NOT a foundry entry point and must still have its own
         # links checked for nesting.
         rel_to_root = os.path.relpath(ref_path, skill_root).replace(
             os.sep, "/",

@@ -667,6 +667,35 @@ class ComputeStatsGraphTests(unittest.TestCase):
         warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
         self.assertFalse(any("ghost" in w for w in warns))
 
+    def test_frontmatter_strings_not_treated_as_load_edges(self) -> None:
+        """A path-shaped string inside SKILL.md frontmatter (e.g. a
+        description that mentions ``references/foo.md``) must NOT be
+        followed as a live load edge — the body regex is applied to
+        the body only, not the frontmatter block."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write SKILL.md with a frontmatter description that
+            # contains a path-shaped string.  No real link in the body.
+            write_text(
+                os.path.join(tmpdir, "SKILL.md"),
+                "---\n"
+                "name: x\n"
+                "description: triggers when the references/ghost.md "
+                "thing happens\n"
+                "---\n"
+                "# Skill\n\nNo body links here.\n",
+            )
+            # Place the ghost file on disk to confirm we don't follow it.
+            write_text(
+                os.path.join(tmpdir, "references", "ghost.md"),
+                "# Ghost reference — should NOT appear in load_bytes\n",
+            )
+            result = compute_stats(tmpdir)
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertEqual(paths, ["SKILL.md"])
+        self.assertNotIn("references/ghost.md", paths)
+        # No findings either — the ghost is invisible to stats
+        self.assertEqual(result["errors"], [])
+
     def test_undecodable_referenced_md_excluded_from_load_bytes(self) -> None:
         """A referenced .md file that exists but is not valid UTF-8
         is excluded from files[] and load_bytes — only the WARN

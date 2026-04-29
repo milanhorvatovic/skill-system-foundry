@@ -8,11 +8,14 @@ Computes two byte-based proxies for a skill's context cost:
 
 * ``load_bytes`` — the raw bytes of ``SKILL.md`` plus every in-scope
   referenced file reachable transitively from the entry point through
-  the body reference patterns defined in ``configuration.yaml``.  Files
-  under ``scripts/`` and ``assets/`` are excluded because they are not
-  loaded into the model's context during skill use; only ``SKILL.md``,
-  ``capabilities/.../capability.md``, and ``references/.../*`` count
-  toward the load budget.
+  the body reference patterns defined in ``configuration.yaml``.
+  Files under ``scripts/`` and ``assets/`` are excluded because they
+  are not loaded into the model's context during skill use; everything
+  else reachable under ``capabilities/`` or ``references/`` counts
+  toward the load budget — that includes capability entry points
+  (``capabilities/<name>/capability.md``), capability-local resources
+  (``capabilities/<name>/references/<doc>.md``), and shared
+  ``references/<doc>.md`` files.
 
 Bytes are not tokens.  Byte counts are not comparable across models or
 tokenizers — they are a deterministic, on-disk signal for tracking the
@@ -36,7 +39,7 @@ from .constants import (
     RE_BACKTICK_REF,
     RE_MARKDOWN_LINK_REF,
 )
-from .frontmatter import load_frontmatter
+from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .references import is_within_directory, strip_fragment
 from .router_table import extract_capability_paths
 
@@ -384,9 +387,16 @@ def compute_stats(skill_path: str) -> dict:
         if content is None:
             return
 
+        # Strip the YAML frontmatter block before reference extraction
+        # so metadata strings (e.g. ``description: see references/foo.md``)
+        # are not mistaken for live load edges.  The body regex is
+        # otherwise applied to the entire file, including the
+        # frontmatter, which would inflate ``load_bytes`` whenever a
+        # frontmatter scalar happens to contain a path-shaped string.
+        body_only = strip_frontmatter_for_scan(content)
         is_entry = filepath == os.path.abspath(skill_md)
         for ref in extract_body_references(
-            content, include_router_table=is_entry,
+            body_only, include_router_table=is_entry,
         ):
             if os.path.isabs(ref):
                 result["errors"].append(
