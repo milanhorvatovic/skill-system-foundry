@@ -238,7 +238,7 @@ class AllowedOrphansConfigTests(unittest.TestCase):
         real_open = builtins.open
         target = constants.CONFIG_PATH
 
-        def fake_open(file, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def fake_open(file: object, *args: object, **kwargs: object) -> object:
             if file == target:
                 return io.StringIO(config_text)
             return real_open(file, *args, **kwargs)
@@ -503,7 +503,7 @@ class MissingSectionFailFastTests(unittest.TestCase):
         real_open = builtins.open
         target = constants.CONFIG_PATH
 
-        def fake_open(file, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def fake_open(file: object, *args: object, **kwargs: object) -> object:
             if file == target:
                 return io.StringIO(config_text)
             return real_open(file, *args, **kwargs)
