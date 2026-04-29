@@ -602,10 +602,15 @@ def validate_skill(
     # independent of --allow-nested-references: that flag suppresses
     # depth warnings; this rule only asks whether a file is reachable
     # at all.
+    # validate_skill targets a single skill — there is no enclosing
+    # skills/ directory, so allowed_orphans entries keyed
+    # ``skills/<name>/...`` have nothing to disambiguate.  Pass
+    # audit_root=None so those entries are skipped, matching the
+    # documented hybrid-keying semantics.
     orphan_findings = find_orphan_references(
         skill_path,
         ALLOWED_ORPHANS,
-        audit_root=skill_path,
+        audit_root=None,
         skill_audit_prefix=os.path.basename(skill_path.rstrip(os.sep)),
     )
     if orphan_findings:

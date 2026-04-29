@@ -657,11 +657,17 @@ def audit_skill_system(
     if verbose:
         print("\n== Orphan References ==")
 
-    orphan_targets: list[tuple[str, str]] = []
+    # Pair each (skill_root, prefix) target with the audit_root that
+    # makes ``skills/<name>/...``-keyed allowed_orphans entries
+    # meaningful.  In system-root mode that is the system root (which
+    # contains skills/).  In skill-root mode there is no enclosing
+    # skills/ directory, so audit_root is None — skills/-prefixed
+    # entries simply don't match anything in that mode.
+    orphan_targets: list[tuple[str, str, str | None]] = []
     for skill in registered_skills:
         skill_name = os.path.basename(skill["path"])
         orphan_targets.append(
-            (skill["path"], f"{DIR_SKILLS}/{skill_name}")
+            (skill["path"], f"{DIR_SKILLS}/{skill_name}", system_root)
         )
     if has_top_level_skill:
         # Skill-root mode: derive the prefix from the SKILL.md name
@@ -675,13 +681,13 @@ def audit_skill_system(
                 top_label = fm["name"].strip()
         except OSError:
             pass
-        orphan_targets.append((system_root, top_label))
+        orphan_targets.append((system_root, top_label, None))
 
-    for skill_root, prefix in orphan_targets:
+    for skill_root, prefix, audit_root in orphan_targets:
         orphan_findings = find_orphan_references(
             skill_root,
             ALLOWED_ORPHANS,
-            audit_root=system_root,
+            audit_root=audit_root,
             skill_audit_prefix=prefix,
         )
         errors.extend(orphan_findings)

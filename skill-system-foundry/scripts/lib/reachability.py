@@ -189,7 +189,7 @@ def walk_reachable(
     def _to_rel(filepath: str) -> str:
         return os.path.relpath(filepath, skill_root).replace(os.sep, "/")
 
-    def _visit(filepath: str, parent_rel: str | None) -> None:
+    def _visit(filepath: str) -> None:
         filepath = os.path.abspath(filepath)
         if filepath in visited:
             return
@@ -250,11 +250,11 @@ def walk_reachable(
                 )
                 continue
 
-            _visit(ref_abs, rel)
+            _visit(ref_abs)
 
     if os.path.isfile(skill_md):
-        _visit(skill_md, None)
+        _visit(skill_md)
     for cap_md in _list_capability_entries(skill_root):
-        _visit(cap_md, None)
+        _visit(cap_md)
 
     return visited, warnings

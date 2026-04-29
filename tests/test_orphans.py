@@ -175,6 +175,27 @@ class MultiSkillAuditKeyingTests(unittest.TestCase):
             self.assertEqual(len(bar_findings), 1)
             self.assertIn("skills/bar/references/staged.md", bar_findings[0])
 
+    def test_skills_prefixed_entry_is_inert_when_audit_root_is_none(self) -> None:
+        # In skill-root / single-skill mode the caller passes
+        # audit_root=None.  ``skills/<name>/...`` entries have no
+        # enclosing skills/ directory to disambiguate against, so
+        # they must be silently skipped — never accidentally matched
+        # against ``<skill_root>/skills/<name>/...``.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            write_text(
+                os.path.join(skill, "references", "staged.md"),
+                "# Staged\n",
+            )
+            findings = find_orphan_references(
+                skill,
+                ["skills/skill/references/staged.md"],
+                audit_root=None,
+            )
+            self.assertEqual(len(findings), 1)
+            self.assertIn("references/staged.md", findings[0])
+
     def test_skill_root_relative_entry_applies_to_every_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             audit_root = tmp
@@ -278,6 +299,27 @@ class NonMarkdownOrphanTests(unittest.TestCase):
 # ===================================================================
 # Path normalization
 # ===================================================================
+
+
+class WalkWarningSurfacingTests(unittest.TestCase):
+    """Reachability-walk diagnostics surface as findings so audit
+    consumers can see why a file appears orphan."""
+
+    def test_broken_link_emits_warn_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(
+                skill,
+                body="See [missing](references/missing.md).\n",
+            )
+            findings = find_orphan_references(
+                skill, [], skill_audit_prefix="skill",
+            )
+            broken = [f for f in findings if "does not exist" in f]
+            self.assertEqual(len(broken), 1)
+            self.assertTrue(broken[0].startswith(LEVEL_WARN + ":"))
+            self.assertIn("skill", broken[0])
+            self.assertIn("references/missing.md", broken[0])
 
 
 class PathNormalizationTests(unittest.TestCase):

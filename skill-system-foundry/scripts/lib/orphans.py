@@ -186,10 +186,7 @@ def find_orphan_references(
         skill_audit_prefix = os.path.basename(skill_root.rstrip(os.sep))
 
     candidates = _list_reference_files(skill_root)
-    if not candidates:
-        return []
-
-    visited, _ = walk_reachable(skill_root)
+    visited, walk_warnings = walk_reachable(skill_root)
     visited_norm = {os.path.normcase(p) for p in visited}
 
     resolved_audit_root = (
@@ -200,6 +197,22 @@ def find_orphan_references(
     )
 
     findings: list[str] = []
+    # Surface reachability-walk diagnostics with the skill prefix so
+    # audit consumers see *why* a target file might appear orphan
+    # (e.g., a malformed link in some upstream file caused the walk
+    # to stop short).  validate_skill emits its own broken-reference
+    # findings via validate_skill_references, so these duplicate
+    # nothing in skill-validation runs but add real diagnostic value
+    # when audit_skill_system runs the rule on its own.
+    for warning in walk_warnings:
+        findings.append(
+            f"{warning[: warning.find(':')]}: {skill_audit_prefix} "
+            f"{warning[warning.find(':') + 2 :]}"
+        )
+
+    if not candidates:
+        return findings
+
     orphans: list[tuple[str, str]] = []
     for candidate in candidates:
         candidate_norm = os.path.normcase(candidate)
