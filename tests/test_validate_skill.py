@@ -3607,6 +3607,35 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
                 f"falsely flags legitimate capability-local references; got: {orphan!r}",
             )
 
+    def test_orphan_prefix_uses_absolute_basename(self) -> None:
+        # When validate_skill is invoked with ``.`` (or a path that
+        # ends in a separator), ``os.path.basename`` would otherwise
+        # return ``"."`` / ``""`` and the orphan WARN would render
+        # ``./references/stale.md`` instead of ``demo-skill/references/stale.md``.
+        # Pin the abspath-normalization fix that makes the CLI label
+        # stable, mirroring the same fix in audit_skill_system.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            write_text(
+                os.path.join(skill_dir, "references", "stale.md"),
+                "# Stale\n",
+            )
+            cwd = os.getcwd()
+            try:
+                os.chdir(skill_dir)
+                errors, _ = validate_skill(".")
+            finally:
+                os.chdir(cwd)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(len(orphan), 1)
+            self.assertIn("demo-skill/references/stale.md", orphan[0])
+            self.assertNotIn(
+                "./references/stale.md", orphan[0],
+                "prefix must use the abspath basename, not the literal "
+                f"'.' from the input path; got: {orphan[0]!r}",
+            )
+
     def test_clean_skill_passes_orphan_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "demo-skill")

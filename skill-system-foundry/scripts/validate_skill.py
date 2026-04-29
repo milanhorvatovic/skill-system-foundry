@@ -619,7 +619,7 @@ def validate_skill(
             skill_path,
             ALLOWED_ORPHANS,
             audit_root=None,
-            skill_audit_prefix=os.path.basename(skill_path.rstrip(os.sep)),
+            skill_audit_prefix=os.path.basename(os.path.abspath(skill_path)),
             surface_walk_warnings=False,
         )
         if orphan_findings:
