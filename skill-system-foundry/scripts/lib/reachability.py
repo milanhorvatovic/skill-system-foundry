@@ -190,8 +190,14 @@ def walk_reachable(
     skipped — they are by definition out of scope for an intra-skill
     orphan check.  Refs that do not resolve to a regular file are
     recorded as ``WARN``.  Absolute paths and parent-traversal refs
-    are skipped silently (the upstream rules already enforce this in
-    ``validate_skill``; re-emitting here would duplicate findings).
+    are recorded as ``WARN`` (tagged ``[foundry reachability]``) and
+    skipped — ``audit_skill_system`` does not otherwise validate
+    intra-skill reference syntax, so silent skip would let those
+    invalid forms go entirely unreported when the audit runs without
+    ``validate_skill``.  Callers that already run ``validate_skill``
+    on the same tree (e.g. ``validate_skill`` itself, which invokes
+    ``find_orphan_references`` after its own reference check) suppress
+    these via ``surface_walk_warnings=False`` to avoid double counting.
     """
     skill_root = os.path.abspath(skill_root)
     visited: set[str] = set()
@@ -233,10 +239,19 @@ def walk_reachable(
             body_only, include_router_table=is_entry,
         ):
             if os.path.isabs(ref):
-                # Upstream validation already rejects absolute refs.
+                warnings.append(
+                    f"{LEVEL_WARN}: [foundry reachability] reference "
+                    f"'{ref}' in '{rel}' is absolute — reachability "
+                    f"walk skipped it"
+                )
                 continue
             ref_norm = ref.replace("\\", "/")
             if ".." in ref_norm.split("/"):
+                warnings.append(
+                    f"{LEVEL_WARN}: [foundry reachability] reference "
+                    f"'{ref}' in '{rel}' uses parent traversal "
+                    f"('..') — reachability walk skipped it"
+                )
                 continue
 
             ref_abs = os.path.normpath(os.path.join(skill_root, ref_norm))

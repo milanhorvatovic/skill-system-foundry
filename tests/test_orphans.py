@@ -321,6 +321,40 @@ class WalkWarningSurfacingTests(unittest.TestCase):
             self.assertIn("skill", broken[0])
             self.assertIn("references/missing.md", broken[0])
 
+    def test_parent_traversal_reference_emits_warn_finding(self) -> None:
+        # ``..`` segments could escape the skill root entirely.  The
+        # walker skips them, but the audit needs the diagnostic to
+        # see them — ``audit_skill_system`` does not otherwise
+        # validate intra-skill reference syntax, so silently skipping
+        # would leave the offending link entirely unreported when the
+        # audit runs without ``validate_skill``.  Surface a
+        # [foundry reachability] WARN.  The ref must start with one
+        # of the body-pattern prefixes (``references/``,
+        # ``capabilities/``, ``scripts/``, ``assets/``) to be picked
+        # up by ``extract_body_references`` at all — a leading
+        # ``../`` alone never reaches the walker.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(
+                skill,
+                body="See [escape](references/../escape.md).\n",
+            )
+            findings = find_orphan_references(
+                skill, [], skill_audit_prefix="skill",
+            )
+            traversal = [
+                f for f in findings
+                if "parent traversal" in f
+                and "[foundry reachability]" in f
+            ]
+            self.assertEqual(
+                len(traversal), 1,
+                f"expected one parent-traversal WARN, got {findings!r}",
+            )
+            self.assertTrue(traversal[0].startswith(LEVEL_WARN + ":"))
+            self.assertIn("skill", traversal[0])
+            self.assertIn("references/../escape.md", traversal[0])
+
     def test_surface_walk_warnings_false_suppresses_diagnostics(self) -> None:
         # validate_skill passes surface_walk_warnings=False because
         # validate_skill_references already emits broken-reference
