@@ -602,6 +602,7 @@ def validate_skill(
     # independent of --allow-nested-references: that flag suppresses
     # depth warnings; this rule only asks whether a file is reachable
     # at all.
+    #
     # validate_skill targets a single skill — there is no enclosing
     # skills/ directory, so allowed_orphans entries keyed
     # ``skills/<name>/...`` have nothing to disambiguate.  Pass
