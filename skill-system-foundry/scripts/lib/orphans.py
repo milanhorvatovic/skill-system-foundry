@@ -72,9 +72,15 @@ def _list_reference_files(skill_root: str) -> list[str]:
     * Broken links and links pointing at non-files are skipped
       silently (``os.path.isfile`` returns False).
 
-    Hidden files (names starting with ``.``) are excluded so noise
-    like editor swap files or ``.DS_Store`` does not surface as an
-    orphan finding.
+    Hidden files and hidden directories are scanned the same as any
+    other entry: a stale ``references/.notes.md`` or a stale file
+    under ``references/.draft/`` consumes bundle bytes and review
+    attention just like a visible orphan, and the rule's documented
+    surface is "every file under ``references/``".  Genuinely
+    transient noise (``.DS_Store``, editor swap files) is best
+    handled at the source — ``.gitignore`` keeps it out of the
+    checkout, or ``orphan_references.allowed_orphans`` opts the
+    specific path out for cases that must remain in the tree.
     """
     candidates: list[str] = []
     locations: list[str] = []
@@ -92,10 +98,8 @@ def _list_reference_files(skill_root: str) -> list[str]:
 
     for location in locations:
         for root, dirs, files in os.walk(location, followlinks=False):
-            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            dirs[:] = sorted(dirs)
             for filename in sorted(files):
-                if filename.startswith("."):
-                    continue
                 filepath = os.path.join(root, filename)
                 if not os.path.isfile(filepath):
                     continue

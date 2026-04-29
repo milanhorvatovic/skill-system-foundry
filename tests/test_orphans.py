@@ -410,6 +410,57 @@ class NonMarkdownOrphanTests(unittest.TestCase):
             self.assertEqual(find_orphan_references(skill, []), [])
 
 
+class HiddenFileOrphanTests(unittest.TestCase):
+    """Hidden files and hidden subdirectories under references/ are
+    audited the same as any other entry — the rule's documented
+    surface is "every file under references/", and silently skipping
+    dotfiles would let a stale ``references/.notes.md`` (or anything
+    under a hidden subdirectory) accumulate invisibly.  Genuinely
+    transient noise (``.DS_Store``, editor swap files) belongs in
+    ``.gitignore`` or ``orphan_references.allowed_orphans``."""
+
+    def test_hidden_file_under_references_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            write_text(
+                os.path.join(skill, "references", ".notes.md"),
+                "# Hidden notes\n",
+            )
+            findings = find_orphan_references(skill, [])
+            self.assertEqual(len(findings), 1)
+            self.assertIn("references/.notes.md", findings[0])
+
+    def test_file_under_hidden_directory_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            write_text(
+                os.path.join(skill, "references", ".draft", "stale.md"),
+                "# Draft\n",
+            )
+            findings = find_orphan_references(skill, [])
+            self.assertEqual(len(findings), 1)
+            self.assertIn("references/.draft/stale.md", findings[0])
+
+    def test_allow_list_can_suppress_hidden_orphan(self) -> None:
+        # Hidden files that must remain in the tree opt out the same
+        # way visible orphans do — through ``allowed_orphans``.  This
+        # gives users an explicit, auditable suppression instead of
+        # the previous undocumented blind spot.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            write_text(
+                os.path.join(skill, "references", ".DS_Store"),
+                "",
+            )
+            findings = find_orphan_references(
+                skill, ["references/.DS_Store"],
+            )
+            self.assertEqual(findings, [])
+
+
 # ===================================================================
 # Path normalization
 # ===================================================================
