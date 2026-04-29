@@ -219,7 +219,7 @@ def walk_reachable(
         except (OSError, UnicodeError) as exc:
             rel = _to_rel(filepath)
             warnings.append(
-                f"{LEVEL_WARN}: [foundry] cannot read '{rel}' "
+                f"{LEVEL_WARN}: [foundry reachability] cannot read '{rel}' "
                 f"({exc.__class__.__name__}: {exc}) — reachability walk "
                 f"skipped its references"
             )
@@ -243,22 +243,24 @@ def walk_reachable(
 
             if not is_within_directory(ref_abs, skill_root):
                 warnings.append(
-                    f"{LEVEL_INFO}: [foundry] reference '{ref}' in '{rel}' "
-                    f"resolves outside the skill directory — excluded "
-                    f"from reachability"
+                    f"{LEVEL_INFO}: [foundry reachability] reference '{ref}' "
+                    f"in '{rel}' resolves outside the skill directory — "
+                    f"excluded from reachability"
                 )
                 continue
 
             if not os.path.exists(ref_abs):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry] reference '{ref}' in '{rel}' "
-                    f"does not exist — reachability walk skipped it"
+                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
+                    f"in '{rel}' does not exist — reachability walk "
+                    f"skipped it"
                 )
                 continue
             if not os.path.isfile(ref_abs):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry] reference '{ref}' in '{rel}' "
-                    f"is not a regular file — reachability walk skipped it"
+                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
+                    f"in '{rel}' is not a regular file — reachability walk "
+                    f"skipped it"
                 )
                 continue
 
