@@ -140,6 +140,109 @@ class NestedCapabilityReferencesTests(unittest.TestCase):
             self.assertEqual(find_orphan_references(skill, []), [])
 
 
+class SourceDirRelativeResolutionTests(unittest.TestCase):
+    """The walker resolves refs source-dir-first with a skill-root
+    fallback, matching ``lib.references.resolve_reference``.  A
+    capability that links to its own ``references/foo.md`` reaches
+    ``capabilities/<name>/references/foo.md`` and is not flagged as
+    orphan."""
+
+    def test_capability_local_reference_via_source_dir_is_reachable(self) -> None:
+        # The capability body uses ``references/steps.md`` — an
+        # ambiguous form that could mean either the skill's top-level
+        # references or the capability's own local references.  The
+        # walker must try source-dir first so it follows the link to
+        # ``capabilities/deploy/references/steps.md`` instead of
+        # falsely flagging that file as orphan.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            write_skill_md(
+                skill,
+                body="See [deploy](capabilities/deploy/capability.md).\n",
+            )
+            cap_dir = os.path.join(skill, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n\nSee [steps](references/steps.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "steps.md"),
+                "# Steps\n",
+            )
+            findings = find_orphan_references(
+                skill, [], skill_audit_prefix="skill",
+            )
+            orphan = [f for f in findings if "is unreferenced" in f]
+            self.assertEqual(
+                orphan, [],
+                "capability-local reference resolved via source-dir "
+                f"must not be flagged as orphan; got: {findings!r}",
+            )
+            broken = [f for f in findings if "does not exist" in f]
+            self.assertEqual(
+                broken, [],
+                "source-dir resolution must succeed before the walker "
+                f"falls back to skill-root; got: {findings!r}",
+            )
+
+    def test_skill_root_fallback_still_works(self) -> None:
+        # The foundry's documented convention also accepts the
+        # explicit skill-root form.  When the source-dir candidate
+        # does not exist, the walker must fall back to the skill-root
+        # candidate so existing capabilities that use the explicit
+        # ``capabilities/<name>/references/foo.md`` form keep working.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            write_skill_md(
+                skill,
+                body="See [deploy](capabilities/deploy/capability.md).\n",
+            )
+            cap_dir = os.path.join(skill, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n\nSee [steps]"
+                "(capabilities/deploy/references/steps.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "steps.md"),
+                "# Steps\n",
+            )
+            findings = find_orphan_references(
+                skill, [], skill_audit_prefix="skill",
+            )
+            orphan = [f for f in findings if "is unreferenced" in f]
+            self.assertEqual(
+                orphan, [],
+                "explicit skill-root form must reach the capability-"
+                f"local reference; got: {findings!r}",
+            )
+
+    def test_top_level_reference_still_resolves_against_skill_root(self) -> None:
+        # Pin the regression direction: a SKILL.md body that links
+        # ``references/foo.md`` must keep resolving against the skill
+        # root.  Source-dir for SKILL.md is the skill root itself,
+        # so the source-dir candidate equals the skill-root candidate
+        # and the existing behavior is preserved.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            write_skill_md(
+                skill,
+                body="See [guide](references/guide.md).\n",
+            )
+            write_text(
+                os.path.join(skill, "references", "guide.md"),
+                "# Guide\n",
+            )
+            findings = find_orphan_references(
+                skill, [], skill_audit_prefix="skill",
+            )
+            self.assertEqual(
+                findings, [],
+                "top-level reference from SKILL.md must reach "
+                f"references/guide.md; got: {findings!r}",
+            )
+
+
 class MultiSkillAuditKeyingTests(unittest.TestCase):
     """Hybrid keying: ``skills/<name>/...`` is audit-root-relative."""
 

@@ -186,6 +186,20 @@ def walk_reachable(
       during the walk.  The walk continues past every recoverable
       condition so the caller always receives a complete visited set.
 
+    Refs are resolved *source-dir first*, then *skill-root*: each ref
+    is first joined to the directory of the file that contains it, and
+    only when that does not resolve to a regular file does the walker
+    fall back to ``skill_root``.  This mirrors
+    :func:`lib.references.resolve_reference` so a capability body that
+    legitimately links to its own ``references/foo.md`` (resolving to
+    ``capabilities/<name>/references/foo.md``) is not mistakenly
+    walked against ``<skill_root>/references/foo.md`` and then
+    flagged as a broken link plus its target file as an orphan.  The
+    fallback preserves the foundry's documented skill-root convention:
+    explicit ``capabilities/<name>/references/foo.md`` and
+    ``references/foo.md`` from a top-level entry continue to resolve
+    against the skill root, exactly as before.
+
     Refs that resolve outside *skill_root* are recorded as ``INFO`` and
     skipped — they are by definition out of scope for an intra-skill
     orphan check.  Refs that do not resolve to a regular file are
@@ -254,9 +268,55 @@ def walk_reachable(
                 )
                 continue
 
-            ref_abs = os.path.normpath(os.path.join(skill_root, ref_norm))
+            # Source-dir-first resolution, with skill-root fallback.
+            # The source candidate is the convention used by
+            # ``lib.references.resolve_reference``: a reference is
+            # joined to the directory of the file that contains it.
+            # When that resolves to a regular file inside the skill
+            # tree, that wins — a capability that links to its own
+            # ``references/foo.md`` reaches
+            # ``capabilities/<name>/references/foo.md``.  Otherwise
+            # fall back to the skill-root form so the foundry's
+            # documented full-path convention
+            # (``capabilities/<name>/references/foo.md`` from anywhere)
+            # keeps working.  The fallback path is also the one used
+            # for the broken-link / non-file diagnostics so the
+            # message points at the canonical skill-root location.
+            source_dir = os.path.dirname(filepath)
+            source_candidate = os.path.normpath(
+                os.path.join(source_dir, ref_norm)
+            )
+            root_candidate = os.path.normpath(
+                os.path.join(skill_root, ref_norm)
+            )
 
-            if not is_within_directory(ref_abs, skill_root):
+            ref_abs: str | None = None
+            if (
+                is_within_directory(source_candidate, skill_root)
+                and os.path.isfile(source_candidate)
+            ):
+                ref_abs = source_candidate
+            elif (
+                is_within_directory(root_candidate, skill_root)
+                and os.path.isfile(root_candidate)
+            ):
+                ref_abs = root_candidate
+
+            if ref_abs is not None:
+                _visit(ref_abs)
+                continue
+
+            # Neither candidate resolved.  Decide which form to
+            # report on so the diagnostic points at the place the
+            # author most likely meant.  Prefer the source-dir form
+            # for capability-local-looking refs (anything with a
+            # known body-pattern prefix that *could* have been
+            # source-dir-relative); otherwise default to the
+            # skill-root form to keep messages stable for the
+            # historic convention.
+            report_path = root_candidate
+
+            if not is_within_directory(report_path, skill_root):
                 warnings.append(
                     f"{LEVEL_INFO}: [foundry reachability] reference '{ref}' "
                     f"in '{rel}' resolves outside the skill directory — "
@@ -264,22 +324,18 @@ def walk_reachable(
                 )
                 continue
 
-            if not os.path.exists(ref_abs):
+            if not os.path.exists(report_path):
                 warnings.append(
                     f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
                     f"in '{rel}' does not exist — reachability walk "
                     f"skipped it"
                 )
                 continue
-            if not os.path.isfile(ref_abs):
-                warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' is not a regular file — reachability walk "
-                    f"skipped it"
-                )
-                continue
-
-            _visit(ref_abs)
+            warnings.append(
+                f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
+                f"in '{rel}' is not a regular file — reachability walk "
+                f"skipped it"
+            )
 
     if os.path.isfile(skill_md):
         _visit(skill_md)
