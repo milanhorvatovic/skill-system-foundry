@@ -20,6 +20,7 @@ from lib.constants import LEVEL_FAIL, LEVEL_WARN
 from lib.router_table import (
     audit_router_table,
     expected_path,
+    extract_capability_paths,
     parse_router_table,
 )
 
@@ -759,6 +760,54 @@ class StripFencedRegionsTests(unittest.TestCase):
             + "   ```\n"
         )
         self.assertIsNone(parse_router_table(body))
+
+
+class ExtractCapabilityPathsTests(unittest.TestCase):
+    """Tests for the public ``extract_capability_paths`` helper.
+
+    Stats (and any future load-graph tooling) consumes router-table
+    capability paths through this helper rather than reimplementing the
+    strict + recovery cascade owned by this module.
+    """
+
+    def test_no_router_table_returns_empty(self) -> None:
+        body = "# Skill\n\nNo router table here.\n"
+        self.assertEqual(extract_capability_paths(body), [])
+
+    def test_canonical_rows_yield_canonical_paths(self) -> None:
+        body = "# Skill\n\n" + CANONICAL_TABLE
+        self.assertEqual(
+            extract_capability_paths(body),
+            [
+                "capabilities/alpha/capability.md",
+                "capabilities/beta/capability.md",
+            ],
+        )
+
+    def test_decorated_path_cell_recovered_via_audit_helper(self) -> None:
+        """Backtick-wrapped path cells fall through to the recovery
+        cascade and still produce the canonical path."""
+        body = (
+            "# Skill\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| design | when | `capabilities/design/capability.md` |\n"
+        )
+        self.assertEqual(
+            extract_capability_paths(body),
+            ["capabilities/design/capability.md"],
+        )
+
+    def test_unrecoverable_path_cell_dropped(self) -> None:
+        """A path cell that does not match the canonical shape and
+        cannot be recovered is silently dropped."""
+        body = (
+            "# Skill\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| design | when | totally-wrong-path |\n"
+        )
+        self.assertEqual(extract_capability_paths(body), [])
 
 
 if __name__ == "__main__":

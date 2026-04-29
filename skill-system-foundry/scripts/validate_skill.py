@@ -47,6 +47,7 @@ from lib.constants import (
     RE_SECOND_PERSON, RE_IMPERATIVE_START,
     RE_MARKDOWN_LINK_REF, RE_BACKTICK_REF,
     RECOGNIZED_DIRS,
+    DIR_CAPABILITIES,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
@@ -238,8 +239,32 @@ def _check_references(
             )
             continue
 
-        # Nested reference check — only when flag is not set
-        if not allow_nested_refs:
+        # Nested reference check — only when flag is not set.
+        # The agentskills.io spec only requires references to stay
+        # one level deep from SKILL.md.  The foundry extends this
+        # convention so that ``capability.md`` is also treated as
+        # an entry point with its own one-hop scope (see
+        # ``.github/instructions/markdown.instructions.md``):
+        # links from a capability body that reach into ``references/``
+        # are first-level under that entry point, not nested under
+        # the parent SKILL.md.  Skip the recursion in that case.
+        #
+        # Match the canonical three-segment shape exactly —
+        # capabilities/<name>/capability.md relative to the skill
+        # root.  An unrelated reference file or asset that happens
+        # to be named capability.md (e.g., references/capability.md)
+        # is NOT a foundry entry point and must still have its own
+        # links checked for nesting.
+        rel_to_root = os.path.relpath(ref_path, skill_root).replace(
+            os.sep, "/",
+        )
+        rel_parts = rel_to_root.split("/")
+        is_capability_entry = (
+            len(rel_parts) == 3
+            and rel_parts[0] == DIR_CAPABILITIES
+            and rel_parts[2] == FILE_CAPABILITY_MD
+        )
+        if not allow_nested_refs and not is_capability_entry:
             # Strip fenced code blocks from referenced content so example
             # links inside ``` don't trigger false nested-reference WARNs.
             ref_stripped = re.sub(
@@ -305,15 +330,24 @@ def validate_body(
 
 def validate_skill_references(
     skill_path: str, skill_root: str, entry_file: str,
+    allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
     Walks *skill_path*, reads each ``.md`` file, and checks that all
     intra-skill references resolve from *skill_root*.  The entry file
     (*entry_file*) is skipped because it is already validated by
-    :func:`validate_body`.  Nested-reference depth checks are always
-    skipped for non-entry files because the spec constrains nesting
-    from entry points only.
+    :func:`validate_body`.
+
+    Nested-reference depth checks are skipped for plain reference and
+    asset files (the spec constrains depth from entry points only),
+    but ``capability.md`` files are themselves entry points under the
+    foundry's router-skill convention — their own one-hop boundary is
+    enforced when *allow_nested_refs* is False, matching how the
+    parent ``SKILL.md`` is validated.  This catches chains like
+    ``SKILL.md -> capabilities/x/capability.md -> references/a.md ->
+    references/b.md`` that would otherwise slip past the audit
+    because the parent's own check stops at the capability boundary.
     """
     errors: list[str] = []
     passes: list[str] = []
@@ -328,21 +362,39 @@ def validate_skill_references(
             if os.path.abspath(filepath) == entry_abs:
                 continue
 
+            # Build the cross-platform display label up front so every
+            # finding (read error, nested-ref WARN) uses the POSIX form
+            # — Windows runners would otherwise emit backslash paths in
+            # WARN messages, which is inconsistent with the rest of the
+            # codebase and breaks substring assertions in tests.
+            rel_label = os.path.relpath(filepath, skill_root).replace(
+                os.sep, "/",
+            )
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
             except (OSError, UnicodeError) as exc:
-                rel_label = os.path.relpath(filepath, skill_root)
                 errors.append(
                     f"{LEVEL_WARN}: [spec] '{rel_label}' cannot be read "
                     f"({exc.__class__.__name__}: {exc})"
                 )
                 continue
 
-            rel_label = os.path.relpath(filepath, skill_root)
+            # Capability entry points get the same one-hop boundary
+            # treatment as the parent SKILL.md — mirror the user's
+            # ``--allow-nested-references`` flag.  Non-capability,
+            # non-entry files are not subject to the depth rule.
+            rel_parts = rel_label.split("/")
+            is_capability_entry = (
+                len(rel_parts) == 3
+                and rel_parts[0] == DIR_CAPABILITIES
+                and rel_parts[2] == FILE_CAPABILITY_MD
+            )
+            file_allow_nested = (
+                allow_nested_refs if is_capability_entry else True
+            )
             file_errors, _file_passes = _check_references(
-                content, rel_label, skill_root,
-                True,  # nested refs allowed in non-entry files; spec constrains depth from entry points only
+                content, rel_label, skill_root, file_allow_nested,
             )
 
             files_checked += 1
@@ -439,7 +491,7 @@ def validate_skill(
         # Validate references in all .md files across the skill tree
         # (walk skill_root, not skill_path, so the entire skill is scanned)
         ref_errors, ref_passes = validate_skill_references(
-            skill_root, skill_root, skill_md,
+            skill_root, skill_root, skill_md, allow_nested_refs,
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
@@ -522,7 +574,7 @@ def validate_skill(
 
     # Validate references in all other .md files in the skill tree
     sref_errors, sref_passes = validate_skill_references(
-        skill_path, skill_root, skill_md,
+        skill_path, skill_root, skill_md, allow_nested_refs,
     )
     errors.extend(sref_errors)
     passes.extend(sref_passes)

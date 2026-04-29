@@ -356,6 +356,48 @@ def _recover_segment(path_cell: str) -> str | None:
     return _parse_path_cell(candidate)
 
 
+def extract_capability_paths(body: str) -> list[str]:
+    """Return canonical ``capabilities/<name>/capability.md`` paths from
+    a router table inside *body*.
+
+    Strict shape parsing is tried first; rows whose path cell carries
+    common author decoration (backticks, ``[text](url)`` wrappers,
+    leading ``./``, trailing ``#fragment``) fall through to the same
+    decoration-stripping recovery that ``audit_router_table`` uses, so
+    the recovered name still produces the canonical path string.
+
+    Returns an empty list when *body* contains no router-shaped table
+    or when no row has a recoverable canonical path.  Order follows
+    the first-seen position in the table; duplicates are not removed
+    — the caller is expected to dedupe alongside other reference
+    sources.
+
+    The router-table semantics live in this module by design.  Stats
+    consumes this helper so its load-graph traversal does not have
+    to reimplement the strict + recovery cascade.  ``audit_router_table``
+    keeps its own per-row walk because the audit needs row-level
+    finding tuples (FAIL/WARN with line numbers); a future
+    consolidation could share the recovery cascade by extracting it
+    into a separate sub-helper consumed by both, but that refactor
+    is out of scope here.
+    """
+    parsed = parse_router_table(body)
+    if parsed is None:
+        return []
+    rows, _findings = parsed
+    paths: list[str] = []
+    for _capability, _trigger, path_cell in rows:
+        name = _parse_path_cell(path_cell.strip())
+        if name is None:
+            name = _recover_segment(path_cell)
+        if name is None:
+            continue
+        paths.append(
+            f"{DIR_CAPABILITIES}/{name}/{FILE_CAPABILITY_MD}"
+        )
+    return paths
+
+
 def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
     """Audit the router table of the skill at *skill_path*.
 

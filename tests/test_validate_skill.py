@@ -406,6 +406,179 @@ class ValidateBodyTests(unittest.TestCase):
         nested_warns = [e for e in errors if "nested" in e.lower()]
         self.assertEqual(nested_warns, [])
 
+    def test_capability_ref_in_body_detected(self) -> None:
+        """References to capabilities/<name>/capability.md are detected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            cap_file = os.path.join(
+                tmpdir, "capabilities", "design", "capability.md"
+            )
+            write_text(cap_file, "# Design\n\nCapability body.\n")
+            body = (
+                "# Skill\n\nSee [design](capabilities/design/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
+        # Capability ref must resolve — no broken-link WARN
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+
+    def test_capability_chain_warns_when_capability_refs_have_nested_refs(self) -> None:
+        """SKILL.md → capability.md → references/a.md → references/b.md
+        must produce a nested-ref WARN attributed to the capability.
+        capability.md is treated as its own entry-point boundary, so
+        its referenced files are checked for nesting just as SKILL.md's
+        are.  Pins the gap that opened when we exempted capability
+        targets from the parent's own check."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # capability.md links to references/a.md
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md"
+                ),
+                "# Design\n\n"
+                "See [primer](references/a.md) for details.\n",
+            )
+            # references/a.md links to references/b.md (nested)
+            write_text(
+                os.path.join(tmpdir, "references", "a.md"),
+                "# A\n\n"
+                "Then see [more](references/b.md) for follow-up.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "b.md"),
+                "# B\n\nLeaf.\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "# Skill\n\n"
+                "See [design](capabilities/design/capability.md).\n",
+            )
+            errors, _passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md, allow_nested_refs=False,
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(
+            len(nested_warns), 1,
+            "capability.md's body refs must be checked for nesting "
+            f"because capability.md is itself an entry point; got: {nested_warns}",
+        )
+        self.assertIn("capabilities/design/capability.md", nested_warns[0])
+
+    def test_capability_chain_silent_with_allow_nested_refs(self) -> None:
+        """When --allow-nested-references is on, the capability-as-
+        entry-point check is suppressed too — pins the existing
+        opt-out semantics so the meta-skill's own self-check (which
+        uses --allow-nested-references) keeps working."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md"
+                ),
+                "# Design\n\nSee [primer](references/a.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "a.md"),
+                "# A\n\nThen see [more](references/b.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "b.md"),
+                "# B\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "# Skill\n\n"
+                "See [design](capabilities/design/capability.md).\n",
+            )
+            errors, _passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md, allow_nested_refs=True,
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(nested_warns, [])
+
+    def test_unrelated_file_named_capability_md_still_nested_checked(self) -> None:
+        """An unrelated reference file that happens to be named
+        capability.md (e.g., references/capability.md) is NOT a spec
+        entry point — its own links must still be checked for nesting.
+        Pins the canonical-shape narrowing of the entry-point
+        exemption."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                os.path.join(tmpdir, "references", "capability.md"),
+                "# Misnamed reference\n\n"
+                "See [deeper](references/deeper.md) for more.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "deeper.md"),
+                "# Deeper\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "See [misnamed](references/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(
+            len(nested_warns), 1,
+            "references/capability.md is not a spec entry point; its "
+            "nested references must still be flagged when "
+            "--allow-nested-references is off",
+        )
+        self.assertIn("references/capability.md", nested_warns[0])
+
+    def test_capability_link_not_treated_as_nested_ref(self) -> None:
+        """capability.md is its own entry point per the spec — links
+        from a capability into references/ are first-level under that
+        entry point, not nested under the parent SKILL.md.  When
+        --allow-nested-references is OFF, a SKILL.md → capability.md →
+        references/foo.md chain must NOT trigger a nested-ref WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md"
+                ),
+                "# Design\n\n"
+                "See [guide](references/authoring.md) for details.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "authoring.md"),
+                "# Authoring\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "See [design](capabilities/design/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(
+            nested_warns, [],
+            "capability.md is its own entry point and must not trigger "
+            "the nested-references WARN when its body links to references/",
+        )
+
+    def test_broken_capability_ref_detected(self) -> None:
+        """A broken capabilities/ link produces a WARN like other categories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [missing](capabilities/missing/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("capabilities/missing/capability.md", broken_warns[0])
+
     def test_body_with_nested_refs_returns_warn(self) -> None:
         """A body with nested references (ref file contains refs) produces a WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
