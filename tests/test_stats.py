@@ -195,12 +195,38 @@ class DiscoveryBoundaryAgreementTests(unittest.TestCase):
 class ExtractBodyReferencesTests(unittest.TestCase):
     """Tests for ``extract_body_references``."""
 
-    def test_capability_link_detected(self) -> None:
+    def test_capability_link_detected_when_entry(self) -> None:
+        """A markdown link to a capability.md is picked up by the
+        body regex when the caller is processing the entry SKILL.md."""
         body = "[design](capabilities/design/capability.md)"
         self.assertIn(
             "capabilities/design/capability.md",
+            extract_body_references(body, include_router_table=True),
+        )
+
+    def test_capability_link_filtered_when_not_entry(self) -> None:
+        """A markdown link to a capability.md inside a non-entry body
+        (capability or reference doc) is NOT returned — capability
+        paths are entry-point-only edges, even when written as links."""
+        body = "[design](capabilities/design/capability.md)"
+        self.assertNotIn(
+            "capabilities/design/capability.md",
             extract_body_references(body),
         )
+
+    def test_nested_capability_resource_kept_in_non_entry_body(self) -> None:
+        """A capability that links into its OWN nested resources via
+        the skill-root-relative path (``capabilities/<name>/references/foo.md``)
+        is a legitimate intra-capability reference and must stay in the
+        load graph — only ``capabilities/<name>/capability.md`` itself
+        is filtered as an entry-point-only edge."""
+        body = (
+            "# Design\n\n"
+            "See [setup](capabilities/design/references/setup.md) "
+            "for details.\n"
+        )
+        refs = extract_body_references(body)
+        self.assertIn("capabilities/design/references/setup.md", refs)
 
     def test_reference_link_detected(self) -> None:
         body = "[guide](references/guide.md)"
@@ -617,6 +643,81 @@ class ComputeStatsGraphTests(unittest.TestCase):
         # And no broken-link WARN should be raised for the ghost path.
         warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
         self.assertFalse(any("ghost" in w for w in warns))
+
+    def test_unreadable_skill_md_emits_fail_not_traceback(self) -> None:
+        """A SKILL.md that exists but cannot be decoded as UTF-8
+        produces a structured FAIL finding, not a traceback."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Write bytes that are not valid UTF-8.
+            with open(skill_md, "wb") as f:
+                f.write(b"---\nname: x\n\xff\xfe invalid utf-8\n---\n# Body\n")
+            result = compute_stats(tmpdir)
+        fails = [e for e in result["errors"] if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fails), 1)
+        self.assertIn("cannot read", fails[0])
+        # No metrics computed beyond the early exit
+        self.assertEqual(result["files"], [])
+
+    def test_capability_path_in_non_entry_body_not_followed(self) -> None:
+        """A capability or reference body that mentions
+        ``capabilities/<name>/capability.md`` in backticks or markdown
+        links is NOT treated as a live load edge — that's an entry-
+        point-only edge.  Pins the non-entry capability-path filter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[a](capabilities/a/capability.md)\n"
+                ),
+            )
+            # Capability A's body mentions capability B in backticks
+            # as a documentation example.  B is NOT linked from
+            # SKILL.md and must NOT be added to the load graph.
+            write_text(
+                os.path.join(tmpdir, "capabilities", "a", "capability.md"),
+                "# A\n\nFor a similar pattern see "
+                "`capabilities/b/capability.md`.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "capabilities", "b", "capability.md"),
+                "# B\n\nUnrelated capability that is not linked.\n",
+            )
+            result = compute_stats(tmpdir)
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertIn("capabilities/a/capability.md", paths)
+        self.assertNotIn("capabilities/b/capability.md", paths)
+        # No broken-ref WARN for capability B either.
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertFalse(any("capabilities/b" in w for w in warns))
+
+    def test_missing_excluded_category_ref_does_not_warn(self) -> None:
+        """A missing scripts/foo.py or assets/template.md reference
+        is silently excluded from load_bytes — no broken-ref WARN
+        because the category is excluded at the gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "Run `scripts/missing.py` and use "
+                    "[tmpl](assets/missing.md).\n"
+                ),
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertFalse(
+            any(
+                "scripts/missing.py" in w or "assets/missing.md" in w
+                for w in warns
+            ),
+            f"expected no WARN for excluded categories, got: {warns}",
+        )
+        # And neither path is in files[]
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertNotIn("scripts/missing.py", paths)
+        self.assertNotIn("assets/missing.md", paths)
 
     def test_external_symlink_classified_as_info(self) -> None:
         """A symlink whose target lies outside the skill root is

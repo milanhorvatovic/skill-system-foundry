@@ -238,8 +238,17 @@ def _check_references(
             )
             continue
 
-        # Nested reference check — only when flag is not set
-        if not allow_nested_refs:
+        # Nested reference check — only when flag is not set.
+        # capability.md is its own entry point per the spec ("cross-
+        # references stay one level deep from each entry point —
+        # entry points are SKILL.md and capability.md"), so links in
+        # a capability body that reach into references/ are first-
+        # level under that entry point, not nested under the parent
+        # SKILL.md.  Skip the recursion in that case.
+        is_capability_entry = (
+            os.path.basename(ref_path) == FILE_CAPABILITY_MD
+        )
+        if not allow_nested_refs and not is_capability_entry:
             # Strip fenced code blocks from referenced content so example
             # links inside ``` don't trigger false nested-reference WARNs.
             ref_stripped = re.sub(

@@ -26,7 +26,9 @@ import re
 
 from .constants import (
     DIR_ASSETS,
+    DIR_CAPABILITIES,
     DIR_SCRIPTS,
+    FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -148,6 +150,20 @@ def extract_body_references(
     raw_refs.extend(RE_BACKTICK_REF.findall(stripped))
     if include_router_table:
         raw_refs.extend(extract_capability_paths(content))
+    else:
+        # Capability *entry-point* paths are entry-point-only edges.
+        # A non-entry body that references ``capabilities/<name>/capability.md``
+        # is either a documentation example or an architecture violation
+        # (capabilities don't reference each other — see
+        # audit_skill_system).  Either way, do not treat it as a live
+        # load edge.  Nested capability resources like
+        # ``capabilities/<name>/references/foo.md`` remain legitimate
+        # — those are skill-root-relative links from within a
+        # capability into its own local references and must stay in
+        # the load graph.
+        raw_refs = [
+            r for r in raw_refs if not _is_capability_entry_path(r)
+        ]
 
     seen: set[str] = set()
     cleaned: list[str] = []
@@ -178,6 +194,25 @@ def category_of(rel_path: str) -> str:
 def is_excluded_from_load(rel_path: str) -> bool:
     """Return True when a path's bytes should not contribute to load."""
     return category_of(rel_path) in _EXCLUDED_LOAD_CATEGORIES
+
+
+def _is_capability_entry_path(ref_path: str) -> bool:
+    """Return True when *ref_path* is a capability entry point.
+
+    A capability entry point matches the canonical shape
+    ``capabilities/<name>/capability.md`` exactly — three segments,
+    leading directory ``capabilities``, trailing file
+    ``capability.md``.  Nested capability resources like
+    ``capabilities/<name>/references/foo.md`` do NOT match — those
+    are legitimate intra-capability references that must stay in the
+    load graph.
+    """
+    parts = ref_path.replace("\\", "/").split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == DIR_CAPABILITIES
+        and parts[2] == FILE_CAPABILITY_MD
+    )
 
 
 # ===================================================================
@@ -252,11 +287,28 @@ def compute_stats(skill_path: str) -> dict:
 
     # Best-effort skill-name resolution from frontmatter; falls back to
     # the directory basename when frontmatter is absent or malformed.
-    frontmatter, _body, _scalar_findings = load_frontmatter(skill_md)
+    # Wrap both entry-file reads in try/except so a permission error or
+    # invalid UTF-8 surfaces as a structured FAIL instead of a
+    # traceback through the CLI.
+    try:
+        frontmatter, _body, _scalar_findings = load_frontmatter(skill_md)
+    except (OSError, UnicodeError) as exc:
+        result["errors"].append(
+            f"{LEVEL_FAIL}: [foundry] cannot read {FILE_SKILL_MD} "
+            f"({exc.__class__.__name__}: {exc})"
+        )
+        return result
     if frontmatter and "_parse_error" not in frontmatter and frontmatter.get("name"):
         result["skill"] = str(frontmatter["name"])
 
-    discovery_count = discovery_bytes_of(skill_md)
+    try:
+        discovery_count = discovery_bytes_of(skill_md)
+    except (OSError, UnicodeError) as exc:
+        result["errors"].append(
+            f"{LEVEL_FAIL}: [foundry] cannot scan {FILE_SKILL_MD} "
+            f"frontmatter ({exc.__class__.__name__}: {exc})"
+        )
+        return result
     if discovery_count == 0:
         result["errors"].append(
             f"{LEVEL_WARN}: [foundry] {FILE_SKILL_MD} has no parseable "
@@ -333,6 +385,15 @@ def compute_stats(skill_path: str) -> dict:
                 continue
 
             ref_abs = os.path.normpath(os.path.join(skill_path, ref_norm))
+
+            # Decline at the gate for excluded categories.  A missing
+            # scripts/foo.py or assets/template.md must not emit a
+            # broken-ref WARN, since those categories are silently
+            # excluded from load_bytes anyway — the existence check
+            # below would fire a false-positive warning on every
+            # missing helper script that the entry happens to mention.
+            if is_excluded_from_load(ref_norm):
+                continue
 
             # External / cross-skill references resolve outside the
             # skill root; report once and skip — they are not part of

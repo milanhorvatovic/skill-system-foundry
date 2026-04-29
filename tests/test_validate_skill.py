@@ -423,6 +423,40 @@ class ValidateBodyTests(unittest.TestCase):
         broken_warns = [e for e in errors if "does not exist" in e]
         self.assertEqual(broken_warns, [])
 
+    def test_capability_link_not_treated_as_nested_ref(self) -> None:
+        """capability.md is its own entry point per the spec — links
+        from a capability into references/ are first-level under that
+        entry point, not nested under the parent SKILL.md.  When
+        --allow-nested-references is OFF, a SKILL.md → capability.md →
+        references/foo.md chain must NOT trigger a nested-ref WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md"
+                ),
+                "# Design\n\n"
+                "See [guide](references/authoring.md) for details.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "authoring.md"),
+                "# Authoring\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "See [design](capabilities/design/capability.md).\n"
+            )
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(
+            nested_warns, [],
+            "capability.md is its own entry point and must not trigger "
+            "the nested-references WARN when its body links to references/",
+        )
+
     def test_broken_capability_ref_detected(self) -> None:
         """A broken capabilities/ link produces a WARN like other categories."""
         with tempfile.TemporaryDirectory() as tmpdir:
