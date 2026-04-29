@@ -188,7 +188,8 @@ def walk_reachable(
 
     Refs are resolved against ``skill_root`` only.  Markdown links
     in skill files follow the foundry's documented convention
-    (``references/directory-structure.md``): paths are written
+    (see the *Path Convention* section of
+    ``references/directory-structure.md``): paths are written
     relative to the directory that contains ``SKILL.md`` regardless
     of which file contains the link.  The walker therefore does not
     reinterpret refs relative to the source file's directory — a
@@ -197,6 +198,22 @@ def walk_reachable(
     matching how :func:`validate_skill._check_references` validates
     the same body.  Keeping the walker's resolution aligned with the
     validator's keeps audit and validation findings consistent.
+
+    This intentionally diverges from
+    :func:`lib.references.resolve_reference`, which tries source-dir
+    first and then falls back to ``system_root``.  That resolver is
+    used only by the bundle / cross-skill graph (where the same path
+    string can target different files depending on the source skill),
+    so source-dir-first is the right default *there*.  Inside a
+    single skill the convention is fixed by
+    ``directory-structure.md``, so adopting source-dir-first here
+    would (a) silently mask the broken-link findings
+    :func:`validate_skill._check_references` already emits against
+    the same body, and (b) let an author write
+    ``references/foo.md`` from a capability and have the walker
+    silently route it to ``capabilities/<name>/references/foo.md`` —
+    a divergence that would compound across files and gradually
+    erode the convention.
 
     Refs that resolve outside *skill_root* are recorded as ``INFO`` and
     skipped — they are by definition out of scope for an intra-skill
