@@ -105,6 +105,159 @@ class YamlConformanceConfigTests(unittest.TestCase):
         )
 
 
+class AllowedOrphansConfigTests(unittest.TestCase):
+    """``orphan_references.allowed_orphans`` exposes a tuple of strings."""
+
+    def test_default_is_empty_tuple(self) -> None:
+        self.assertEqual(constants.ALLOWED_ORPHANS, ())
+
+    def test_loads_normalized_entries(self) -> None:
+        config_text = (
+            "skill:\n"
+            "  name:\n"
+            "    max_length: 64\n"
+            "    min_length: 2\n"
+            "    format_pattern: ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$\n"
+            "    reserved_words:\n"
+            "      - anthropic\n"
+            "  description:\n"
+            "    max_length: 1024\n"
+            "    xml_tag_pattern: <[^>]+>\n"
+            "    trigger_phrases:\n"
+            "      - triggers on\n"
+            "    voice_patterns:\n"
+            "      first_person: x\n"
+            "      first_person_plural: x\n"
+            "      second_person: x\n"
+            "      imperative_start: x\n"
+            "  body:\n"
+            "    max_lines: 500\n"
+            "    reference_patterns:\n"
+            "      markdown_link: x\n"
+            "      backtick: x\n"
+            "  compatibility:\n"
+            "    max_length: 500\n"
+            "  known_frontmatter_keys:\n"
+            "    - name\n"
+            "  frontmatter_suggestions:\n"
+            "    max_matches: 3\n"
+            "    cutoff: 0.6\n"
+            "  allowed_tools:\n"
+            "    max_tools: 20\n"
+            "    mcp_tool_pattern: ^mcp$\n"
+            "    harness_tool_shape_pattern: ^[A-Z]\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "        cli_tools:\n"
+            "          - bash\n"
+            "    fence_languages:\n"
+            "      Bash:\n"
+            "        languages:\n"
+            "          - bash\n"
+            "        scripts_dir_indicator: true\n"
+            "  metadata:\n"
+            "    version:\n"
+            "      pattern: ^x$\n"
+            "    author:\n"
+            "      max_length: 128\n"
+            "  license:\n"
+            "    known_spdx:\n"
+            "      - MIT\n"
+            "  recognized_subdirectories:\n"
+            "    - scripts\n"
+            "plain_scalar:\n"
+            "  indicators:\n"
+            "    flow: x\n"
+            "    alias: x\n"
+            "    reserved: x\n"
+            "    directive: x\n"
+            "    block_entry: x\n"
+            "    mapping_key: x\n"
+            "    anchor: x\n"
+            "    block_scalar: x\n"
+            "    quote_single: \"'\"\n"
+            "    quote_double: '\"'\n"
+            "    tag: x\n"
+            "  context_whitespace:\n"
+            "    - ' '\n"
+            "prose_yaml:\n"
+            "  opt_out_marker: <!-- yaml-ignore -->\n"
+            "  in_scope_globs:\n"
+            "    - SKILL.md\n"
+            "yaml_conformance:\n"
+            "  construct_ids:\n"
+            "    - x\n"
+            "codex_config:\n"
+            "  known_top_level_keys:\n"
+            "    - interface\n"
+            "  known_interface_keys:\n"
+            "    - display_name\n"
+            "  known_policy_keys:\n"
+            "    - allow_implicit_invocation\n"
+            "  known_dependencies_keys:\n"
+            "    - tools\n"
+            "  known_tool_keys:\n"
+            "    - type\n"
+            "  interface:\n"
+            "    max_display_name_length: 64\n"
+            "    max_short_description_length: 200\n"
+            "    hex_color_pattern: ^#$\n"
+            "  dependencies:\n"
+            "    known_tool_types:\n"
+            "      - mcp\n"
+            "    known_transports:\n"
+            "      - x\n"
+            "dependency_direction:\n"
+            "  roles_ref_pattern: roles/\n"
+            "  sibling_capability_ref_pattern: x\n"
+            "role_composition:\n"
+            "  min_skills: 2\n"
+            "  skill_ref_pattern: x\n"
+            "  capability_ref_pattern: x\n"
+            "orphan_references:\n"
+            "  allowed_orphans:\n"
+            "    - references/staged.md\n"
+            "    - ./references/dotted.md\n"
+            "    - skills/foo/references/audit.md\n"
+            "bundle:\n"
+            "  max_reference_depth: 25\n"
+            "  description_max_length: 200\n"
+            "  infer_max_walk_depth: 5\n"
+            "  valid_targets:\n"
+            "    - claude\n"
+            "  default_target: claude\n"
+            "  exclude_patterns:\n"
+            "    - .git\n"
+        )
+
+        import builtins
+        import io
+
+        real_open = builtins.open
+        target = constants.CONFIG_PATH
+
+        def fake_open(file, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if file == target:
+                return io.StringIO(config_text)
+            return real_open(file, *args, **kwargs)
+
+        try:
+            with unittest.mock.patch("builtins.open", new=fake_open):
+                importlib.reload(constants)
+            self.assertEqual(
+                constants.ALLOWED_ORPHANS,
+                (
+                    "references/staged.md",
+                    "references/dotted.md",
+                    "skills/foo/references/audit.md",
+                ),
+            )
+        finally:
+            importlib.reload(constants)
+
+
 class DescriptionTriggerPhrasesTests(unittest.TestCase):
     """``DESCRIPTION_TRIGGER_PHRASES`` exposes the configured phrase list."""
 
@@ -365,6 +518,13 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(self._full_config_minus("prose_yaml"))
         self.assertIn("prose_yaml", str(ctx.exception))
+
+    def test_missing_orphan_references_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus("orphan_references")
+            )
+        self.assertIn("orphan_references", str(ctx.exception))
 
     def test_missing_yaml_conformance_raises(self) -> None:
         with self.assertRaises(RuntimeError) as ctx:

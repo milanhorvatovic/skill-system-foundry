@@ -319,6 +319,39 @@ role_composition:
   capability_ref_pattern: \bskills/[a-z0-9-]+/capabilities/[a-z0-9-]+/capability\.md(?![.\w])
 
 # ============================================================
+# Orphan Reference Audit
+# ============================================================
+# The orphan-reference rule (see audit_skill_system / validate_skill)
+# walks the per-skill reference graph from every SKILL.md and every
+# capabilities/<name>/capability.md, then flags any file under a
+# references/ directory (top-level references/ AND
+# capabilities/<name>/references/) that the walk did not reach.
+#
+# allowed_orphans entries opt specific paths out of the rule.  Paths
+# use forward-slash POSIX form regardless of platform.  Two keying
+# forms are accepted in the same flat list:
+#
+#   - skills/<name>/...           audit-root-relative; matches that
+#                                 specific skill in a deployed-system
+#                                 audit (entry must start with
+#                                 'skills/').
+#   - <anything else>             skill-root-relative; matches in
+#                                 every skill's local check.
+#
+# Entries are normalized to POSIX form before comparison so Windows
+# checkouts and POSIX checkouts behave identically.  The list is empty
+# by default — the meta-skill itself reports zero orphans without any
+# entries.  To opt out, add block-style list items under
+# allowed_orphans, e.g.:
+#
+#   orphan_references:
+#     allowed_orphans:
+#       - references/staged-for-review.md
+#       - skills/foo/references/staged.md
+orphan_references:
+  allowed_orphans:
+
+# ============================================================
 # Bundle Packaging
 # ============================================================
 bundle:
