@@ -149,6 +149,7 @@ def find_orphan_references(
     *,
     audit_root: str | None = None,
     skill_audit_prefix: str | None = None,
+    surface_walk_warnings: bool = True,
 ) -> list[str]:
     """Return WARN finding strings for every orphan in *skill_root*.
 
@@ -172,6 +173,18 @@ def find_orphan_references(
         ``skills/foo`` for system-root mode, the skill basename for
         skill-root mode).  Defaults to the skill directory's basename
         so a CLI consumer always sees a stable label.
+    surface_walk_warnings:
+        When True (the default), reachability-walk diagnostics
+        (broken / out-of-skill / unreadable references encountered
+        during the walk) are emitted as findings prefixed with the
+        skill label.  ``audit_skill_system`` wants this — it does not
+        otherwise validate intra-skill references, so the walk's view
+        is the only signal of *why* a target file appears orphan.
+        ``validate_skill`` callers should pass ``False`` because
+        ``validate_skill_references`` already emits equivalent
+        broken-reference findings against the same graph; surfacing
+        them again would double the WARN count for every broken
+        intra-skill link.
 
     Returns
     -------
@@ -197,16 +210,10 @@ def find_orphan_references(
     )
 
     findings: list[str] = []
-    # Surface reachability-walk diagnostics with the skill prefix so
-    # audit consumers see *why* a target file might appear orphan
-    # (e.g., a malformed link in some upstream file caused the walk
-    # to stop short).  validate_skill emits its own broken-reference
-    # findings via validate_skill_references, so these duplicate
-    # nothing in skill-validation runs but add real diagnostic value
-    # when audit_skill_system runs the rule on its own.
-    for warning in walk_warnings:
-        level, _, rest = warning.partition(": ")
-        findings.append(f"{level}: {skill_audit_prefix} {rest}")
+    if surface_walk_warnings:
+        for warning in walk_warnings:
+            level, _, rest = warning.partition(": ")
+            findings.append(f"{level}: {skill_audit_prefix} {rest}")
 
     if not candidates:
         return findings

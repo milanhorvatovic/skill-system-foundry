@@ -321,6 +321,36 @@ class WalkWarningSurfacingTests(unittest.TestCase):
             self.assertIn("skill", broken[0])
             self.assertIn("references/missing.md", broken[0])
 
+    def test_surface_walk_warnings_false_suppresses_diagnostics(self) -> None:
+        # validate_skill passes surface_walk_warnings=False because
+        # validate_skill_references already emits broken-reference
+        # findings against the same graph.  Surfacing them again
+        # would double the WARN count for every broken intra-skill
+        # link.  Orphan findings (the rule's actual scope) must still
+        # fire — the gating only suppresses the upstream diagnostics.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(
+                skill,
+                body="See [missing](references/missing.md).\n",
+            )
+            write_text(
+                os.path.join(skill, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            findings = find_orphan_references(
+                skill, [],
+                skill_audit_prefix="skill",
+                surface_walk_warnings=False,
+            )
+            self.assertFalse(
+                any("does not exist" in f for f in findings),
+                f"walk warnings should be suppressed, got {findings!r}",
+            )
+            orphan = [f for f in findings if "is unreferenced" in f]
+            self.assertEqual(len(orphan), 1)
+            self.assertIn("references/orphan.md", orphan[0])
+
 
 class PathNormalizationTests(unittest.TestCase):
     """Allow-list entries normalize Windows separators and ./ prefixes."""

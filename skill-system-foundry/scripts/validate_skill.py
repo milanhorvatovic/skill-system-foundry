@@ -608,11 +608,17 @@ def validate_skill(
     # ``skills/<name>/...`` have nothing to disambiguate.  Pass
     # audit_root=None so those entries are skipped, matching the
     # documented hybrid-keying semantics.
+    #
+    # Suppress reachability-walk diagnostics: validate_skill_references
+    # (above) already walks the same graph and emits equivalent broken-
+    # reference WARNs.  Letting find_orphan_references re-emit them
+    # would double the WARN count for every broken intra-skill link.
     orphan_findings = find_orphan_references(
         skill_path,
         ALLOWED_ORPHANS,
         audit_root=None,
         skill_audit_prefix=os.path.basename(skill_path.rstrip(os.sep)),
+        surface_walk_warnings=False,
     )
     if orphan_findings:
         errors.extend(orphan_findings)

@@ -3593,6 +3593,28 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
                 f"expected an orphan-references pass, got {passes!r}",
             )
 
+    def test_broken_link_is_not_double_reported(self) -> None:
+        # validate_skill_references already emits broken-reference
+        # findings against the per-skill graph.  find_orphan_references
+        # walks the same graph, so without gating it would re-emit
+        # equivalent diagnostics and double the WARN count.  Pin the
+        # gating: a single broken intra-skill link produces exactly
+        # one "does not exist" finding from the spec rule, and zero
+        # from the orphan rule's reachability walk.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [missing](references/missing.md).\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            broken = [e for e in errors if "does not exist" in e]
+            self.assertEqual(
+                len(broken), 1,
+                f"expected exactly one broken-link finding, got {broken!r}",
+            )
+            self.assertIn("[spec]", broken[0])
+
 
 if __name__ == "__main__":
     unittest.main()

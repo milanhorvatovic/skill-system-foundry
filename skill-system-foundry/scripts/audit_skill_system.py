@@ -665,9 +665,8 @@ def audit_skill_system(
     # entries simply don't match anything in that mode.
     orphan_targets: list[tuple[str, str, str | None]] = []
     for skill in registered_skills:
-        skill_name = os.path.basename(skill["path"])
         orphan_targets.append(
-            (skill["path"], f"{DIR_SKILLS}/{skill_name}", system_root)
+            (skill["path"], f"{DIR_SKILLS}/{skill['name']}", system_root)
         )
     if has_top_level_skill:
         # Skill-root mode: derive the prefix from the SKILL.md name
