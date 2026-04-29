@@ -71,6 +71,7 @@ from lib.discovery import (
     read_file,
 )
 from lib.constants import (
+    ALLOWED_ORPHANS,
     DIR_SKILLS, DIR_CAPABILITIES, DIR_SHARED,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
@@ -80,6 +81,7 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     collect_foundry_config_findings,
 )
+from lib.orphans import find_orphan_references
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.router_table import audit_router_table
 from lib.validation import validate_description_triggers
@@ -643,6 +645,48 @@ def audit_skill_system(
                 print(
                     f"  ✓ {skill['name']}: router table consistent"
                 )
+
+    # --- Orphan References ---
+    # Per-skill rule: any file under references/ or
+    # capabilities/<name>/references/ that no SKILL.md or capability.md
+    # reaches via the configured body reference patterns.  Fires in
+    # both system-root mode (every registered skill) and skill-root
+    # mode (the top-level skill).  The rule is independent of
+    # --allow-nested-references — that flag suppresses depth warnings;
+    # this rule only asks whether each file is reachable at all.
+    if verbose:
+        print("\n== Orphan References ==")
+
+    orphan_targets: list[tuple[str, str]] = []
+    for skill in registered_skills:
+        skill_name = os.path.basename(skill["path"])
+        orphan_targets.append(
+            (skill["path"], f"{DIR_SKILLS}/{skill_name}")
+        )
+    if has_top_level_skill:
+        # Skill-root mode: derive the prefix from the SKILL.md name
+        # frontmatter, falling back to the directory basename.
+        top_label = os.path.basename(system_root.rstrip(os.sep))
+        try:
+            fm, _, _ = load_frontmatter(
+                os.path.join(system_root, FILE_SKILL_MD)
+            )
+            if fm and isinstance(fm.get("name"), str) and fm["name"].strip():
+                top_label = fm["name"].strip()
+        except OSError:
+            pass
+        orphan_targets.append((system_root, top_label))
+
+    for skill_root, prefix in orphan_targets:
+        orphan_findings = find_orphan_references(
+            skill_root,
+            ALLOWED_ORPHANS,
+            audit_root=system_root,
+            skill_audit_prefix=prefix,
+        )
+        errors.extend(orphan_findings)
+        if not orphan_findings and verbose:
+            print(f"  ✓ {prefix}: no orphan references")
 
     # --- Manifest ---
     if verbose:

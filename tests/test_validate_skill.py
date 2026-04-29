@@ -3537,5 +3537,62 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
             self.assertEqual(offenders, [])
 
 
+class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
+    """End-to-end tests for the orphan-reference rule wired through validate_skill."""
+
+    def test_orphan_under_references_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            write_text(
+                os.path.join(skill_dir, "references", "stale.md"),
+                "# Stale\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(len(orphan), 1)
+            self.assertIn("references/stale.md", orphan[0])
+
+    def test_capability_mode_skips_orphan_check(self) -> None:
+        # Running --capability targets a single capability.md, not a
+        # full skill tree.  The orphan rule's scope is the whole
+        # skill, so the capability invocation must not emit the
+        # finding (the parent SKILL.md invocation owns the check).
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            cap_dir = os.path.join(skill_dir, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "stale.md"),
+                "# Stale\n",
+            )
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(orphan, [])
+
+    def test_clean_skill_passes_orphan_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [guide](references/guide.md).\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(orphan, [])
+            self.assertTrue(
+                any("orphan references" in p for p in passes),
+                f"expected an orphan-references pass, got {passes!r}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

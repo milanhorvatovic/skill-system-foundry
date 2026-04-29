@@ -2142,6 +2142,51 @@ class CheckVersionConsistencyTests(unittest.TestCase):
             )
 
 
+class AuditOrphanReferencesTests(unittest.TestCase):
+    """audit_skill_system surfaces orphan-reference findings."""
+
+    def test_system_root_mode_warns_on_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        self.assertIn("skills/demo-skill/references/orphan.md", orphan[0])
+
+    def test_skill_root_mode_warns_on_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "my-meta")
+            write_skill_md(skill_dir, name="my-meta")
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            errors = audit_skill_system(skill_dir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        self.assertIn("my-meta/references/orphan.md", orphan[0])
+
+    def test_clean_skill_emits_no_orphan_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [guide](references/guide.md).\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(orphan, [])
+
+
 class AuditProseYamlAggregationTests(unittest.TestCase):
     """``--check-prose-yaml`` and ``--foundry-self`` on audit_skill_system."""
 

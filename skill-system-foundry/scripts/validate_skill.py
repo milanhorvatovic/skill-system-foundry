@@ -41,6 +41,7 @@ from lib.validation import (
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.constants import (
+    ALLOWED_ORPHANS,
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
     RE_XML_TAG, RE_FIRST_PERSON, RE_FIRST_PERSON_PLURAL,
@@ -53,6 +54,7 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     collect_foundry_config_findings,
 )
+from lib.orphans import find_orphan_references
 
 
 def find_skill_root(start_dir: str) -> str | None:
@@ -591,6 +593,25 @@ def validate_skill(
     coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
     errors.extend(coh_errors)
     passes.extend(coh_passes)
+
+    # Orphan-reference rule — flag files under references/ that no
+    # SKILL.md or capability.md reaches via the configured body
+    # reference patterns.  Skipped in capability mode (the rule's
+    # scope is the whole skill tree, not a single capability) — the
+    # parent SKILL.md invocation owns the check.  The rule is
+    # independent of --allow-nested-references: that flag suppresses
+    # depth warnings; this rule only asks whether a file is reachable
+    # at all.
+    orphan_findings = find_orphan_references(
+        skill_path,
+        ALLOWED_ORPHANS,
+        audit_root=skill_path,
+        skill_audit_prefix=os.path.basename(skill_path.rstrip(os.sep)),
+    )
+    if orphan_findings:
+        errors.extend(orphan_findings)
+    else:
+        passes.append("orphan references: none under references/ trees")
 
     return errors, passes
 
