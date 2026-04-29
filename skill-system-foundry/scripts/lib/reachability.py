@@ -306,14 +306,10 @@ def walk_reachable(
                 _visit(ref_abs)
                 continue
 
-            # Neither candidate resolved.  Decide which form to
-            # report on so the diagnostic points at the place the
-            # author most likely meant.  Prefer the source-dir form
-            # for capability-local-looking refs (anything with a
-            # known body-pattern prefix that *could* have been
-            # source-dir-relative); otherwise default to the
-            # skill-root form to keep messages stable for the
-            # historic convention.
+            # Neither candidate resolved.  Report against the
+            # skill-root candidate to keep diagnostics stable for
+            # the historic convention used by this reachability
+            # walk.
             report_path = root_candidate
 
             if not is_within_directory(report_path, skill_root):
