@@ -3574,6 +3574,39 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
             orphan = [e for e in errors if "is unreferenced" in e]
             self.assertEqual(orphan, [])
 
+    def test_capability_mode_does_not_flag_capability_local_references(self) -> None:
+        # Pin against the regression Codex flagged: in capability mode,
+        # ``skill_path`` is the capability directory, not the skill
+        # root.  If the orphan rule were run against the capability
+        # directory it would treat ``capabilities/<name>/references/``
+        # as a top-level ``references/`` tree without an entry point
+        # and emit false orphan WARNs for every legitimate capability-
+        # local reference file.  Guard: the rule must be skipped
+        # entirely in capability mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [deploy](capabilities/deploy/capability.md).\n",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n\nSee [steps](references/steps.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "steps.md"),
+                "# Steps\n",
+            )
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(
+                orphan, [],
+                "capability-mode validation must not run the orphan "
+                "rule — running it against the capability directory "
+                f"falsely flags legitimate capability-local references; got: {orphan!r}",
+            )
+
     def test_clean_skill_passes_orphan_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "demo-skill")

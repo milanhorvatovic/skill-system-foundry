@@ -597,10 +597,12 @@ def validate_skill(
     # SKILL.md or capability.md reaches via the configured body
     # reference patterns.  Skipped in capability mode (the rule's
     # scope is the whole skill tree, not a single capability) — the
-    # parent SKILL.md invocation owns the check.  The rule is
-    # independent of --allow-nested-references: that flag suppresses
-    # depth warnings; this rule only asks whether a file is reachable
-    # at all.
+    # parent SKILL.md invocation owns the check.  Running it on a
+    # capability directory would treat that directory as a standalone
+    # skill root and emit false orphan WARNs for any capability-local
+    # ``references/`` files.  The rule is independent of
+    # --allow-nested-references: that flag suppresses depth warnings;
+    # this rule only asks whether a file is reachable at all.
     #
     # validate_skill targets a single skill — there is no enclosing
     # skills/ directory, so allowed_orphans entries keyed
@@ -612,17 +614,18 @@ def validate_skill(
     # (above) already walks the same graph and emits equivalent broken-
     # reference WARNs.  Letting find_orphan_references re-emit them
     # would double the WARN count for every broken intra-skill link.
-    orphan_findings = find_orphan_references(
-        skill_path,
-        ALLOWED_ORPHANS,
-        audit_root=None,
-        skill_audit_prefix=os.path.basename(skill_path.rstrip(os.sep)),
-        surface_walk_warnings=False,
-    )
-    if orphan_findings:
-        errors.extend(orphan_findings)
-    else:
-        passes.append("orphan references: none under references/ trees")
+    if not is_capability:
+        orphan_findings = find_orphan_references(
+            skill_path,
+            ALLOWED_ORPHANS,
+            audit_root=None,
+            skill_audit_prefix=os.path.basename(skill_path.rstrip(os.sep)),
+            surface_walk_warnings=False,
+        )
+        if orphan_findings:
+            errors.extend(orphan_findings)
+        else:
+            passes.append("orphan references: none under references/ trees")
 
     return errors, passes
 
