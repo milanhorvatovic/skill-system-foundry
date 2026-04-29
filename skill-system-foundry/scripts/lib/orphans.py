@@ -285,8 +285,14 @@ def find_unresolved_allowed_orphans(
 
     Returns one INFO-level finding per unresolved entry, deterministic
     in input order.  Empty *allowed_orphans* trivially returns ``[]``.
+    A fully-empty audit (no skill roots and no audit root — partial
+    distribution-repo mode) also returns ``[]`` so allow-list entries
+    are not falsely flagged as stale just because the run cannot reach
+    any skill; the partial-audit WARN already signals the limitation.
     """
     findings: list[str] = []
+    if not skill_roots and audit_root is None:
+        return findings
     resolved_audit_root = (
         os.path.abspath(audit_root) if audit_root is not None else None
     )

@@ -488,6 +488,22 @@ class FindUnresolvedAllowedOrphansTests(unittest.TestCase):
                 [],
             )
 
+    def test_fully_empty_audit_returns_no_findings(self) -> None:
+        # Distribution-repo / partial-audit mode: no skill roots and
+        # no audit root means the audit cannot reach any skill.  An
+        # allow-list entry has nothing to resolve against, but it is
+        # not "stale" — it is simply out of scope for this run.  The
+        # partial-audit WARN already signals the limitation; emitting
+        # one INFO per allow-list entry would just be noise.
+        self.assertEqual(
+            find_unresolved_allowed_orphans(
+                ["references/anything.md", "skills/foo/x.md"],
+                [],
+                None,
+            ),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

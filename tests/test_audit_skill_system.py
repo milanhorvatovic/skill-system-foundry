@@ -2247,6 +2247,45 @@ class AuditOrphanReferencesTests(unittest.TestCase):
         stale = [e for e in errors if "allowed_orphans entry" in e]
         self.assertEqual(stale, [])
 
+    def test_skill_root_label_falls_back_via_abspath_for_dot(self) -> None:
+        # Skill-root mode invoked as ``.``: when the SKILL.md
+        # frontmatter's ``name`` is missing or unreadable, the
+        # display label must fall back to the *absolute* path's
+        # basename, not the literal ``.`` token.  Without the
+        # ``os.path.abspath`` wrapper, ``basename(".".rstrip(os.sep))``
+        # yields ``.`` and findings render as e.g.
+        # ``./references/orphan.md is unreferenced`` — confusing.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "labeled-skill")
+            os.makedirs(skill_dir)
+            # Frontmatter without ``name`` so the orphan-target
+            # label-derivation falls through to the basename branch.
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w", encoding="utf-8",
+            ) as f:
+                f.write(
+                    "---\n"
+                    "description: Demo skill. Triggers when running this test.\n"
+                    "---\n# Demo\n"
+                )
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(skill_dir)
+                errors = audit_skill_system(".", verbose=False)
+            finally:
+                os.chdir(original_cwd)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        # The label is the absolute-path basename, never the raw
+        # ``.`` token.
+        self.assertIn("labeled-skill/references/orphan.md", orphan[0])
+        self.assertNotIn("./references/orphan.md", orphan[0])
+
 
 class AuditProseYamlAggregationTests(unittest.TestCase):
     """``--check-prose-yaml`` and ``--foundry-self`` on audit_skill_system."""

@@ -709,8 +709,18 @@ def audit_skill_system(
     # the system root (for ``skills/<name>/...`` entries); in skill-
     # root mode ``skills/<name>/...`` entries are silently skipped
     # because they target a layout this invocation cannot inspect.
+    #
+    # Derive the global audit_root from orphan_targets directly so
+    # there is one source of truth — the third tuple element is the
+    # per-target audit_root (system_root for registered skills, None
+    # for the top-level skill).  Picking the first non-None value
+    # mirrors the old ``system_root if has_skills_dir else None``
+    # gate without re-deriving it from has_skills_dir.
     unresolved_skill_roots = [t[0] for t in orphan_targets]
-    unresolved_audit_root = system_root if has_skills_dir else None
+    unresolved_audit_root = next(
+        (t[2] for t in orphan_targets if t[2] is not None),
+        None,
+    )
     stale_findings = find_unresolved_allowed_orphans(
         ALLOWED_ORPHANS,
         unresolved_skill_roots,
