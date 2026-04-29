@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import re
 import sys
 import os
 
@@ -46,7 +45,6 @@ from lib.constants import (
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
     RE_XML_TAG, RE_FIRST_PERSON, RE_FIRST_PERSON_PLURAL,
     RE_SECOND_PERSON, RE_IMPERATIVE_START,
-    RE_MARKDOWN_LINK_REF, RE_BACKTICK_REF,
     RECOGNIZED_DIRS,
     DIR_CAPABILITIES,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
@@ -55,6 +53,7 @@ from lib.constants import (
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references
+from lib.reachability import extract_body_references
 
 
 def find_skill_root(start_dir: str) -> str | None:
@@ -153,15 +152,16 @@ def _check_references(
     errors: list[str] = []
     passes: list[str] = []
 
-    # Strip fenced code blocks so example links inside ``` are not
-    # treated as real references.
-    stripped = re.sub(r"```[^\n]*\n.*?```", "", body, flags=re.DOTALL)
-
-    refs = RE_MARKDOWN_LINK_REF.findall(stripped)
-    backtick_refs = RE_BACKTICK_REF.findall(stripped)
-    refs = list(set(refs + backtick_refs))
-    # Exclude template placeholders (e.g., references/<file>.md)
-    refs = [r for r in refs if "<" not in r and ">" not in r]
+    # Single source of truth for body reference extraction lives in
+    # lib.reachability.extract_body_references — applies the same
+    # configured ``reference_patterns`` regexes, strips fenced code
+    # blocks, and drops template placeholders.  Pass
+    # ``filter_capability_entries=False`` so this rule still validates
+    # ``capabilities/<name>/capability.md`` references for existence
+    # and depth (the reachability walker filters those out because
+    # they are entry-point-only edges, but validation still needs to
+    # check that they resolve).
+    refs = extract_body_references(body, filter_capability_entries=False)
 
     broken_found = False
     nested_found = False
@@ -267,16 +267,15 @@ def _check_references(
             and rel_parts[2] == FILE_CAPABILITY_MD
         )
         if not allow_nested_refs and not is_capability_entry:
-            # Strip fenced code blocks from referenced content so example
-            # links inside ``` don't trigger false nested-reference WARNs.
-            ref_stripped = re.sub(
-                r"```[^\n]*\n.*?```", "", ref_content, flags=re.DOTALL,
+            # Reuse the shared body-reference extractor so the nested
+            # check sees the exact same set of links the outer scan
+            # would.  ``filter_capability_entries=False`` keeps
+            # references to ``capabilities/<name>/capability.md``
+            # in scope — they are still legitimate one-hop targets
+            # under the foundry router-skill convention.
+            nested_refs = extract_body_references(
+                ref_content, filter_capability_entries=False,
             )
-            nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_stripped)
-            nested_backtick_refs = RE_BACKTICK_REF.findall(ref_stripped)
-            nested_refs = list(set(nested_refs + nested_backtick_refs))
-            # Exclude template placeholders in nested refs too
-            nested_refs = [r for r in nested_refs if "<" not in r and ">" not in r]
             if nested_refs:
                 nested_found = True
                 errors.append(

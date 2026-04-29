@@ -214,6 +214,19 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             extract_body_references(body),
         )
 
+    def test_filter_capability_entries_false_keeps_capability_link(
+        self,
+    ) -> None:
+        """``filter_capability_entries=False`` keeps capability entry
+        paths in scope — used by validate_skill so the rule still
+        validates references to ``capabilities/<name>/capability.md``
+        for existence and depth even when found in a non-entry body."""
+        body = "[design](capabilities/design/capability.md)"
+        self.assertIn(
+            "capabilities/design/capability.md",
+            extract_body_references(body, filter_capability_entries=False),
+        )
+
     def test_capability_link_filtered_with_anchor_fragment(self) -> None:
         """Anchored capability links (``capabilities/foo/capability.md#section``)
         in non-entry bodies are still recognized as entry-point edges
