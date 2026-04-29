@@ -714,6 +714,38 @@ class MissingSectionFailFastTests(unittest.TestCase):
         self.assertIn("trigger_phrases", str(ctx.exception))
         self.assertIn("duplicate", str(ctx.exception).lower())
 
+    def test_allowed_orphans_absolute_path_raises(self) -> None:
+        # Absolute / UNC entries would only match on a specific
+        # machine's filesystem, silently failing to suppress the rule
+        # everywhere else.  Loader must refuse loudly.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "orphan_references:\n  allowed_orphans:\n",
+                    "orphan_references:\n  allowed_orphans:\n"
+                    "    - /absolute/path.md\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("allowed_orphans", message)
+        self.assertIn("/absolute/path.md", message)
+
+    def test_allowed_orphans_parent_traversal_raises(self) -> None:
+        # ``..`` segments could escape the intended root.  They never
+        # match a candidate orphan inside the skill, so silently
+        # accepting them would make the entry inert.  Refuse loudly.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "orphan_references:\n  allowed_orphans:\n",
+                    "orphan_references:\n  allowed_orphans:\n"
+                    "    - references/../escape.md\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("allowed_orphans", message)
+        self.assertIn("'..'", message)
+
     def test_duplicate_error_surfaces_raw_and_normalized_forms(self) -> None:
         # Author writes 'Triggers When' (mixed case) and again as
         # 'triggers when' — both normalize to the same value.  The

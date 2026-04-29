@@ -440,6 +440,39 @@ for _entry in _raw_allowed_orphans:
             "in 'orphan_references.allowed_orphans'; remove the entry "
             "or replace it with a real path."
         )
+    # Entries are documented as skill-root-relative or
+    # ``skills/<name>/...`` audit-root-relative.  Reject anything that
+    # would make matching environment-dependent: absolute paths and
+    # UNC roots (``/foo``, ``//host/share``) would only match on
+    # specific machines, drive-letter prefixes (``C:/foo``) likewise,
+    # and ``..`` segments could escape the intended root entirely.
+    # Each invalid form silently never matches a candidate orphan,
+    # so it would suppress the rule by accident — make it loud.
+    if _candidate.startswith("/"):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}. "
+            "Entries must be relative POSIX paths and must not start "
+            "with '/'."
+        )
+    if (
+        len(_candidate) >= 2
+        and _candidate[0].isalpha()
+        and _candidate[1] == ":"
+    ):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}. "
+            "Entries must be relative POSIX paths and must not use a "
+            "drive-letter prefix."
+        )
+    if ".." in _candidate.split("/"):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}. "
+            "Entries must be relative POSIX paths and must not contain "
+            "'..' segments."
+        )
     _normalized_orphans.append(_candidate)
 ALLOWED_ORPHANS = tuple(_normalized_orphans)
 
