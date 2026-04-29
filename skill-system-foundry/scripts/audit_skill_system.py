@@ -81,7 +81,7 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     collect_foundry_config_findings,
 )
-from lib.orphans import find_orphan_references
+from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.router_table import audit_router_table
 from lib.validation import validate_description_triggers
@@ -670,8 +670,12 @@ def audit_skill_system(
         )
     if has_top_level_skill:
         # Skill-root mode: derive the prefix from the SKILL.md name
-        # frontmatter, falling back to the directory basename.
-        top_label = os.path.basename(system_root.rstrip(os.sep))
+        # frontmatter, falling back to the directory basename.  Use
+        # the absolute path's basename so a target invoked as ``.``
+        # or with a trailing separator (where ``basename`` would
+        # otherwise yield ``.`` or empty) still produces a usable
+        # display label.
+        top_label = os.path.basename(os.path.abspath(system_root))
         try:
             fm, _, _ = load_frontmatter(
                 os.path.join(system_root, FILE_SKILL_MD)
@@ -697,6 +701,24 @@ def audit_skill_system(
         errors.extend(orphan_findings)
         if not orphan_findings and verbose:
             print(f"  ✓ {prefix}: no orphan references")
+
+    # Stale allow-list detection: any allowed_orphans entry that does
+    # not resolve to an existing file under the audited skills is
+    # surfaced as INFO so dead entries don't accumulate silently.  In
+    # system-root mode the lookup spans every audited skill root plus
+    # the system root (for ``skills/<name>/...`` entries); in skill-
+    # root mode ``skills/<name>/...`` entries are silently skipped
+    # because they target a layout this invocation cannot inspect.
+    unresolved_skill_roots = [t[0] for t in orphan_targets]
+    unresolved_audit_root = system_root if has_skills_dir else None
+    stale_findings = find_unresolved_allowed_orphans(
+        ALLOWED_ORPHANS,
+        unresolved_skill_roots,
+        unresolved_audit_root,
+    )
+    errors.extend(stale_findings)
+    if not stale_findings and verbose and ALLOWED_ORPHANS:
+        print("  ✓ allowed_orphans: every entry resolves to an existing file")
 
     # --- Manifest ---
     if verbose:

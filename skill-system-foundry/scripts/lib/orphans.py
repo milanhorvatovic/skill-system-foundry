@@ -38,6 +38,7 @@ from .constants import (
     DIR_CAPABILITIES,
     DIR_REFERENCES,
     DIR_SKILLS,
+    LEVEL_INFO,
     LEVEL_WARN,
 )
 from .reachability import walk_reachable
@@ -61,10 +62,19 @@ def _list_reference_files(skill_root: str) -> list[str]:
     any other extension — because a non-markdown file consumes disk
     space and review attention just as a stale ``.md`` does.
 
-    Symbolic links are followed; broken or directory-pointing entries
-    are skipped silently.  Hidden files (names starting with ``.``)
-    are excluded so noise like editor swap files or ``.DS_Store`` does
-    not surface as an orphan finding.
+    Symbolic-link handling is intentionally asymmetric:
+
+    * Symlinks to regular files inside ``references/`` are included
+      as candidates (``os.path.isfile`` follows the link).
+    * Symlinks to directories are NOT descended (``os.walk`` is
+      called with ``followlinks=False``) — author per-directory
+      resources via real directories instead.
+    * Broken links and links pointing at non-files are skipped
+      silently (``os.path.isfile`` returns False).
+
+    Hidden files (names starting with ``.``) are excluded so noise
+    like editor swap files or ``.DS_Store`` does not surface as an
+    orphan finding.
     """
     candidates: list[str] = []
     locations: list[str] = []
@@ -237,4 +247,75 @@ def find_orphan_references(
             f"configuration.yaml"
         )
 
+    return findings
+
+
+# ===================================================================
+# Stale allow-list detection
+# ===================================================================
+
+
+def find_unresolved_allowed_orphans(
+    allowed_orphans: tuple[str, ...] | list[str],
+    skill_roots: list[str],
+    audit_root: str | None,
+) -> list[str]:
+    """Return INFO findings for ``allowed_orphans`` entries that don't resolve.
+
+    An entry is *unresolved* when it does not point at an existing
+    regular file under any of the audited skill roots (or under
+    *audit_root* for ``skills/...``-prefixed entries).  Without this
+    surface, allow-list entries silently rot when the referenced file
+    is renamed, moved, or removed — and a real orphan that the entry
+    was meant to suppress would re-appear unnoticed once a future
+    rename collides with the stale path.
+
+    Hybrid keying matches the rule's runtime semantics:
+
+    * ``skills/<name>/...``  — checked against *audit_root* only.
+      When *audit_root* is ``None`` (skill-root mode), the entry is
+      *not applicable* in this audit — it would target a deployed
+      system layout — so it is silently skipped here rather than
+      flagged.  Re-running the same config in system-root mode
+      against a deployed system would still apply the entry, so
+      "skipped" is the right outcome.
+    * Any other entry — checked against every entry in *skill_roots*.
+      The entry is unresolved only when *no* skill root resolves it
+      to an existing file.
+
+    Returns one INFO-level finding per unresolved entry, deterministic
+    in input order.  Empty *allowed_orphans* trivially returns ``[]``.
+    """
+    findings: list[str] = []
+    resolved_audit_root = (
+        os.path.abspath(audit_root) if audit_root is not None else None
+    )
+    abs_skill_roots = [os.path.abspath(p) for p in skill_roots]
+    for entry in allowed_orphans:
+        norm = _normalize_path(entry)
+        if not norm:
+            continue
+        if norm.startswith(f"{DIR_SKILLS}/"):
+            if resolved_audit_root is None:
+                continue
+            candidate = os.path.normpath(
+                os.path.join(resolved_audit_root, norm)
+            )
+            if os.path.isfile(candidate):
+                continue
+        else:
+            matched = False
+            for skill_root in abs_skill_roots:
+                candidate = os.path.normpath(os.path.join(skill_root, norm))
+                if os.path.isfile(candidate):
+                    matched = True
+                    break
+            if matched:
+                continue
+        findings.append(
+            f"{LEVEL_INFO}: orphan_references.allowed_orphans entry "
+            f"'{entry}' does not resolve to an existing file under the "
+            f"audited skills — remove it from configuration.yaml or "
+            f"update the path"
+        )
     return findings

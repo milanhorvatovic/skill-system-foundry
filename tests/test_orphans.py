@@ -22,8 +22,8 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.constants import LEVEL_WARN
-from lib.orphans import find_orphan_references
+from lib.constants import LEVEL_INFO, LEVEL_WARN
+from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 
 
 # ===================================================================
@@ -378,6 +378,115 @@ class PathNormalizationTests(unittest.TestCase):
                 skill, ["./references/staged.md"],
             )
             self.assertEqual(findings, [])
+
+
+class FindUnresolvedAllowedOrphansTests(unittest.TestCase):
+    """Stale allow-list detection: entries that don't resolve to a real
+    file are surfaced as INFO so the list does not silently rot."""
+
+    def test_resolved_skill_root_relative_entry_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            write_text(
+                os.path.join(skill, "references", "real.md"), "# Real\n",
+            )
+            self.assertEqual(
+                find_unresolved_allowed_orphans(
+                    ["references/real.md"], [skill], None,
+                ),
+                [],
+            )
+
+    def test_unresolved_skill_root_relative_entry_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            findings = find_unresolved_allowed_orphans(
+                ["references/missing.md"], [skill], None,
+            )
+            self.assertEqual(len(findings), 1)
+            self.assertTrue(findings[0].startswith(LEVEL_INFO + ":"))
+            self.assertIn("references/missing.md", findings[0])
+
+    def test_skill_root_relative_matches_any_skill(self) -> None:
+        # When the entry resolves under at least one skill in the
+        # audit, it is doing its job — even if other skills lack
+        # the file — so no INFO is emitted.
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = tmp
+            foo = os.path.join(audit, "skills", "foo")
+            bar = os.path.join(audit, "skills", "bar")
+            _build_skill(foo)
+            _build_skill(bar)
+            write_text(
+                os.path.join(foo, "references", "shared.md"), "# Shared\n",
+            )
+            self.assertEqual(
+                find_unresolved_allowed_orphans(
+                    ["references/shared.md"], [foo, bar], audit,
+                ),
+                [],
+            )
+
+    def test_skills_prefixed_entry_resolved_under_audit_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = tmp
+            foo = os.path.join(audit, "skills", "foo")
+            _build_skill(foo)
+            write_text(
+                os.path.join(foo, "references", "staged.md"), "# Staged\n",
+            )
+            self.assertEqual(
+                find_unresolved_allowed_orphans(
+                    ["skills/foo/references/staged.md"], [foo], audit,
+                ),
+                [],
+            )
+
+    def test_skills_prefixed_entry_unresolved_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = tmp
+            foo = os.path.join(audit, "skills", "foo")
+            _build_skill(foo)
+            findings = find_unresolved_allowed_orphans(
+                ["skills/foo/references/missing.md"], [foo], audit,
+            )
+            self.assertEqual(len(findings), 1)
+            self.assertIn(
+                "skills/foo/references/missing.md", findings[0],
+            )
+
+    def test_skills_prefixed_entry_inert_when_audit_root_is_none(self) -> None:
+        # In skill-root mode skills/...-prefixed entries can't apply
+        # (the layout has no skills/ directory).  They are silently
+        # skipped from stale-detection so a config shared across
+        # modes doesn't generate noise on every skill-root run.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            self.assertEqual(
+                find_unresolved_allowed_orphans(
+                    ["skills/foo/references/missing.md"],
+                    [skill],
+                    None,
+                ),
+                [],
+            )
+
+    def test_empty_or_blank_entries_are_skipped(self) -> None:
+        # ``_normalize_path`` collapses leading "./" and whitespace;
+        # a fully blank entry is dropped so it doesn't fire a
+        # nonsense INFO every audit run.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            _build_skill(skill)
+            self.assertEqual(
+                find_unresolved_allowed_orphans(
+                    ["", "  "], [skill], None,
+                ),
+                [],
+            )
 
 
 if __name__ == "__main__":

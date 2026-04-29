@@ -2210,6 +2210,43 @@ class AuditOrphanReferencesTests(unittest.TestCase):
         orphan = [e for e in errors if "is unreferenced" in e]
         self.assertEqual(orphan, [])
 
+    def test_stale_allowed_orphans_entry_emits_info(self) -> None:
+        # An ``allowed_orphans`` entry that no longer points at any
+        # real file is surfaced as INFO so the list cannot silently
+        # rot.  Patch ALLOWED_ORPHANS at the call site so we don't
+        # need to round-trip through configuration.yaml.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            with mock.patch(
+                "audit_skill_system.ALLOWED_ORPHANS",
+                ("references/never-existed.md",),
+            ):
+                errors = audit_skill_system(tmpdir, verbose=False)
+        stale = [
+            e for e in errors
+            if "allowed_orphans entry" in e
+            and "never-existed.md" in e
+        ]
+        self.assertEqual(len(stale), 1)
+        self.assertTrue(stale[0].startswith("INFO:"))
+
+    def test_resolved_allowed_orphans_entry_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "staged.md"),
+                "# Staged\n",
+            )
+            with mock.patch(
+                "audit_skill_system.ALLOWED_ORPHANS",
+                ("references/staged.md",),
+            ):
+                errors = audit_skill_system(tmpdir, verbose=False)
+        stale = [e for e in errors if "allowed_orphans entry" in e]
+        self.assertEqual(stale, [])
+
 
 class AuditProseYamlAggregationTests(unittest.TestCase):
     """``--check-prose-yaml`` and ``--foundry-self`` on audit_skill_system."""
