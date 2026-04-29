@@ -423,6 +423,81 @@ class ValidateBodyTests(unittest.TestCase):
         broken_warns = [e for e in errors if "does not exist" in e]
         self.assertEqual(broken_warns, [])
 
+    def test_capability_chain_warns_when_capability_refs_have_nested_refs(self) -> None:
+        """SKILL.md → capability.md → references/a.md → references/b.md
+        must produce a nested-ref WARN attributed to the capability.
+        capability.md is treated as its own entry-point boundary, so
+        its referenced files are checked for nesting just as SKILL.md's
+        are.  Pins the gap that opened when we exempted capability
+        targets from the parent's own check."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # capability.md links to references/a.md
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md"
+                ),
+                "# Design\n\n"
+                "See [primer](references/a.md) for details.\n",
+            )
+            # references/a.md links to references/b.md (nested)
+            write_text(
+                os.path.join(tmpdir, "references", "a.md"),
+                "# A\n\n"
+                "Then see [more](references/b.md) for follow-up.\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "b.md"),
+                "# B\n\nLeaf.\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "# Skill\n\n"
+                "See [design](capabilities/design/capability.md).\n",
+            )
+            errors, _passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md, allow_nested_refs=False,
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(
+            len(nested_warns), 1,
+            "capability.md's body refs must be checked for nesting "
+            f"because capability.md is itself an entry point; got: {nested_warns}",
+        )
+        self.assertIn("capabilities/design/capability.md", nested_warns[0])
+
+    def test_capability_chain_silent_with_allow_nested_refs(self) -> None:
+        """When --allow-nested-references is on, the capability-as-
+        entry-point check is suppressed too — pins the existing
+        opt-out semantics so the meta-skill's own self-check (which
+        uses --allow-nested-references) keeps working."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "design", "capability.md"
+                ),
+                "# Design\n\nSee [primer](references/a.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "a.md"),
+                "# A\n\nThen see [more](references/b.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "b.md"),
+                "# B\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "# Skill\n\n"
+                "See [design](capabilities/design/capability.md).\n",
+            )
+            errors, _passes = validate_skill_references(
+                tmpdir, tmpdir, skill_md, allow_nested_refs=True,
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(nested_warns, [])
+
     def test_unrelated_file_named_capability_md_still_nested_checked(self) -> None:
         """An unrelated reference file that happens to be named
         capability.md (e.g., references/capability.md) is NOT a spec

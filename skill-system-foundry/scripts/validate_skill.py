@@ -330,15 +330,24 @@ def validate_body(
 
 def validate_skill_references(
     skill_path: str, skill_root: str, entry_file: str,
+    allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
     Walks *skill_path*, reads each ``.md`` file, and checks that all
     intra-skill references resolve from *skill_root*.  The entry file
     (*entry_file*) is skipped because it is already validated by
-    :func:`validate_body`.  Nested-reference depth checks are always
-    skipped for non-entry files because the spec constrains nesting
-    from entry points only.
+    :func:`validate_body`.
+
+    Nested-reference depth checks are skipped for plain reference and
+    asset files (the spec constrains depth from entry points only),
+    but ``capability.md`` files are themselves entry points under the
+    foundry's router-skill convention — their own one-hop boundary is
+    enforced when *allow_nested_refs* is False, matching how the
+    parent ``SKILL.md`` is validated.  This catches chains like
+    ``SKILL.md -> capabilities/x/capability.md -> references/a.md ->
+    references/b.md`` that would otherwise slip past the audit
+    because the parent's own check stops at the capability boundary.
     """
     errors: list[str] = []
     passes: list[str] = []
@@ -365,9 +374,24 @@ def validate_skill_references(
                 continue
 
             rel_label = os.path.relpath(filepath, skill_root)
+            # Capability entry points get the same one-hop boundary
+            # treatment as the parent SKILL.md — mirror the user's
+            # ``--allow-nested-references`` flag.  Non-capability,
+            # non-entry files are not subject to the depth rule.
+            rel_to_root = os.path.relpath(filepath, skill_root).replace(
+                os.sep, "/",
+            )
+            rel_parts = rel_to_root.split("/")
+            is_capability_entry = (
+                len(rel_parts) == 3
+                and rel_parts[0] == DIR_CAPABILITIES
+                and rel_parts[2] == FILE_CAPABILITY_MD
+            )
+            file_allow_nested = (
+                allow_nested_refs if is_capability_entry else True
+            )
             file_errors, _file_passes = _check_references(
-                content, rel_label, skill_root,
-                True,  # nested refs allowed in non-entry files; spec constrains depth from entry points only
+                content, rel_label, skill_root, file_allow_nested,
             )
 
             files_checked += 1
@@ -464,7 +488,7 @@ def validate_skill(
         # Validate references in all .md files across the skill tree
         # (walk skill_root, not skill_path, so the entire skill is scanned)
         ref_errors, ref_passes = validate_skill_references(
-            skill_root, skill_root, skill_md,
+            skill_root, skill_root, skill_md, allow_nested_refs,
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
@@ -547,7 +571,7 @@ def validate_skill(
 
     # Validate references in all other .md files in the skill tree
     sref_errors, sref_passes = validate_skill_references(
-        skill_path, skill_root, skill_md,
+        skill_path, skill_root, skill_md, allow_nested_refs,
     )
     errors.extend(sref_errors)
     passes.extend(sref_passes)

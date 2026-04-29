@@ -728,6 +728,29 @@ class ComputeStatsGraphTests(unittest.TestCase):
         # load_bytes is just SKILL.md
         self.assertEqual(result["load_bytes"], skill_md_size)
 
+    def test_malformed_frontmatter_emits_warn(self) -> None:
+        """A SKILL.md whose YAML frontmatter fails to parse is not
+        discoverable as-is; the metric is still computed but a WARN
+        signals that the numbers shouldn't be read as a clean
+        result.  Uses an indent-indicator block-scalar header — one
+        of the foundry's pinned ``_parse_error`` triggers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "SKILL.md"),
+                "---\n"
+                "name: x\n"
+                "description: |2\n"
+                "  body line\n"
+                "---\n"
+                "# Body\n",
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any("parse error" in w for w in warns),
+            f"expected frontmatter parse-error WARN, got: {warns}",
+        )
+
     def test_unreadable_skill_md_emits_fail_not_traceback(self) -> None:
         """A SKILL.md that exists but cannot be decoded as UTF-8
         produces a structured FAIL finding, not a traceback."""

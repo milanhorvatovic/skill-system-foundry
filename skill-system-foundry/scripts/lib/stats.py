@@ -308,7 +308,18 @@ def compute_stats(skill_path: str) -> dict:
             f"({exc.__class__.__name__}: {exc})"
         )
         return result
-    if frontmatter and "_parse_error" not in frontmatter and frontmatter.get("name"):
+    if frontmatter and "_parse_error" in frontmatter:
+        # The skill is not discoverable as-is — surface the parse error
+        # so consumers don't read the metric as a clean signal.  Stats
+        # continues anyway so the load graph (which doesn't depend on
+        # the parsed frontmatter) is still useful for debugging.
+        result["errors"].append(
+            f"{LEVEL_WARN}: [foundry] {FILE_SKILL_MD} frontmatter has a "
+            f"parse error ({frontmatter['_parse_error']}); the skill "
+            f"is not discoverable as-is — fix the frontmatter before "
+            f"trusting these numbers"
+        )
+    elif frontmatter and frontmatter.get("name"):
         result["skill"] = str(frontmatter["name"])
 
     try:

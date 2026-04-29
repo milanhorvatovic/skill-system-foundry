@@ -70,7 +70,8 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── audit_skill_system.py    ← audit entire skill system
 │       ├── scaffold.py              ← scaffold new components from templates
 │       ├── bundle.py                ← bundle for distribution (zip)
-│       └── stats.py                 ← report skill token-budget proxies
+│       ├── stats.py                 ← report skill token-budget proxies
+│       └── yaml_conformance_report.py  ← run the YAML 1.2.2 corpus
 ├── scripts/                         ← repository infrastructure (not part of the meta-skill)
 │   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
 │   └── lib/
@@ -181,7 +182,7 @@ python scripts/stats.py . --json
 
 `stats.py` reports two byte-based proxies for a skill's context cost: `discovery_bytes` (the SKILL.md frontmatter block) and `load_bytes` (SKILL.md plus every capability and reference file reachable through markdown links, backticks, and bare router-table path cells). Files under `scripts/` and `assets/` are excluded — they are not loaded into the model's context during skill use. Bytes are not tokens and are not comparable across models or tokenizers; treat the number as a deterministic on-disk signal for tracking the relative cost of authoring decisions over time. Counts are taken from raw on-disk UTF-8 bytes, so CRLF terminators on Windows checkouts produce higher numbers than the same content on POSIX checkouts.
 
-Only a missing `SKILL.md` is a FAIL; broken references, parent-traversal attempts, and external references are surfaced as WARN/INFO findings while the run still emits a usable metric.
+A missing or unreadable `SKILL.md` is a FAIL — that includes the file not existing, an I/O error during read, or invalid UTF-8 in either the frontmatter scan or the body. Everything else recovers: broken references, parent-traversal attempts, external references, undecodable referenced files, and frontmatter parse errors are surfaced as WARN/INFO findings while the run still emits a usable metric.
 
 ### Linting Shell Scripts
 
