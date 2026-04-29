@@ -142,12 +142,24 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
 def _check_references(
     body: str, source_label: str, skill_root: str,
     allow_nested_refs: bool = False,
+    include_router_table: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Check markdown references in *body* against the skill root.
 
     *source_label* identifies the file in error messages (e.g.
     ``"SKILL.md"`` or ``"references/guide.md"``).  All intra-skill
     references are resolved relative to *skill_root*.
+
+    *include_router_table* (default False) augments the body
+    reference set with capability paths recovered from a router
+    table.  Only the SKILL.md entry legitimately carries one, so
+    callers pass ``True`` only for that file — the validator then
+    catches misspelled router-table cells (e.g.
+    ``capabilities/typo/capability.md``) that the body regexes
+    alone would miss because router-table cells are bare paths,
+    not markdown links.  Without this, a misspelled cell would
+    only be caught by the reachability walker, forcing the orphan
+    rule to surface walk warnings to remain trustworthy.
     """
     errors: list[str] = []
     passes: list[str] = []
@@ -161,7 +173,11 @@ def _check_references(
     # and depth (the reachability walker filters those out because
     # they are entry-point-only edges, but validation still needs to
     # check that they resolve).
-    refs = extract_body_references(body, filter_capability_entries=False)
+    refs = extract_body_references(
+        body,
+        filter_capability_entries=False,
+        include_router_table=include_router_table,
+    )
 
     broken_found = False
     nested_found = False
@@ -320,8 +336,14 @@ def validate_body(
     else:
         passes.append(f"body: {line_count} lines (max {MAX_BODY_LINES})")
 
+    # Only the SKILL.md entry carries a router table.  Pass the flag
+    # so misspelled router-table cells (bare-path, no markdown link)
+    # are caught here — without this they would only be flagged by
+    # the reachability walker, forcing the orphan rule to surface
+    # walk warnings.
     ref_errors, ref_passes = _check_references(
         body, entry_filename, skill_root, allow_nested_refs,
+        include_router_table=(entry_filename == FILE_SKILL_MD),
     )
     errors.extend(ref_errors)
     passes.extend(ref_passes)
@@ -614,6 +636,10 @@ def validate_skill(
     # (above) already walks the same graph and emits equivalent broken-
     # reference WARNs.  Letting find_orphan_references re-emit them
     # would double the WARN count for every broken intra-skill link.
+    # The suppression stays safe because validate_body invokes
+    # _check_references on SKILL.md with include_router_table=True,
+    # so even router-table-only cells (which the body regex misses)
+    # are validated for existence before reaching this rule.
     if not is_capability:
         orphan_findings = find_orphan_references(
             skill_path,

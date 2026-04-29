@@ -3655,6 +3655,45 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
                 f"expected an orphan-references pass, got {passes!r}",
             )
 
+    def test_router_table_cell_typo_is_caught_by_check_references(self) -> None:
+        # Router-table cells are bare paths, not markdown links, so
+        # the body reference regex misses them.  validate_body must
+        # plumb include_router_table=True into _check_references when
+        # validating SKILL.md so a misspelled router-table cell
+        # surfaces as a [spec] broken-link WARN — without this, the
+        # reachability walker would be the only signal, forcing the
+        # orphan rule to surface walk warnings to remain trustworthy.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body=(
+                    "# Demo\n\n"
+                    "## Capabilities\n\n"
+                    "| Capability | Trigger | Path |\n"
+                    "|---|---|---|\n"
+                    "| deploy | when deploying | "
+                    "capabilities/typo/capability.md |\n"
+                ),
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            broken = [
+                e for e in errors
+                if "does not exist" in e
+                and "capabilities/typo/capability.md" in e
+            ]
+            self.assertEqual(
+                len(broken), 1,
+                "misspelled router-table cell must produce a "
+                f"[spec] broken-link WARN; got: {errors!r}",
+            )
+            self.assertIn("[spec]", broken[0])
+
     def test_broken_link_is_not_double_reported(self) -> None:
         # validate_skill_references already emits broken-reference
         # findings against the per-skill graph.  find_orphan_references
