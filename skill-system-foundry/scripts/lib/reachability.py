@@ -186,19 +186,17 @@ def walk_reachable(
       during the walk.  The walk continues past every recoverable
       condition so the caller always receives a complete visited set.
 
-    Refs are resolved *source-dir first*, then *skill-root*: each ref
-    is first joined to the directory of the file that contains it, and
-    only when that does not resolve to a regular file does the walker
-    fall back to ``skill_root``.  This mirrors
-    :func:`lib.references.resolve_reference` so a capability body that
-    legitimately links to its own ``references/foo.md`` (resolving to
-    ``capabilities/<name>/references/foo.md``) is not mistakenly
-    walked against ``<skill_root>/references/foo.md`` and then
-    flagged as a broken link plus its target file as an orphan.  The
-    fallback preserves the foundry's documented skill-root convention:
-    explicit ``capabilities/<name>/references/foo.md`` and
-    ``references/foo.md`` from a top-level entry continue to resolve
-    against the skill root, exactly as before.
+    Refs are resolved against ``skill_root`` only.  Markdown links
+    in skill files follow the foundry's documented convention
+    (``references/directory-structure.md``): paths are written
+    relative to the directory that contains ``SKILL.md`` regardless
+    of which file contains the link.  The walker therefore does not
+    reinterpret refs relative to the source file's directory — a
+    capability body that wants to link its own local references must
+    use the explicit ``capabilities/<name>/references/foo.md`` form,
+    matching how :func:`validate_skill._check_references` validates
+    the same body.  Keeping the walker's resolution aligned with the
+    validator's keeps audit and validation findings consistent.
 
     Refs that resolve outside *skill_root* are recorded as ``INFO`` and
     skipped — they are by definition out of scope for an intra-skill
@@ -268,51 +266,12 @@ def walk_reachable(
                 )
                 continue
 
-            # Source-dir-first resolution, with skill-root fallback.
-            # The source candidate is the convention used by
-            # ``lib.references.resolve_reference``: a reference is
-            # joined to the directory of the file that contains it.
-            # When that resolves to a regular file inside the skill
-            # tree, that wins — a capability that links to its own
-            # ``references/foo.md`` reaches
-            # ``capabilities/<name>/references/foo.md``.  Otherwise
-            # fall back to the skill-root form so the foundry's
-            # documented full-path convention
-            # (``capabilities/<name>/references/foo.md`` from anywhere)
-            # keeps working.  The fallback path is also the one used
-            # for the broken-link / non-file diagnostics so the
-            # message points at the canonical skill-root location.
-            source_dir = os.path.dirname(filepath)
-            source_candidate = os.path.normpath(
-                os.path.join(source_dir, ref_norm)
-            )
-            root_candidate = os.path.normpath(
-                os.path.join(skill_root, ref_norm)
-            )
+            # Skill-root-only resolution.  See the docstring above
+            # and ``references/directory-structure.md`` for the
+            # convention rationale.
+            ref_abs = os.path.normpath(os.path.join(skill_root, ref_norm))
 
-            ref_abs: str | None = None
-            if (
-                is_within_directory(source_candidate, skill_root)
-                and os.path.isfile(source_candidate)
-            ):
-                ref_abs = source_candidate
-            elif (
-                is_within_directory(root_candidate, skill_root)
-                and os.path.isfile(root_candidate)
-            ):
-                ref_abs = root_candidate
-
-            if ref_abs is not None:
-                _visit(ref_abs)
-                continue
-
-            # Neither candidate resolved.  Report against the
-            # skill-root candidate to keep diagnostics stable for
-            # the historic convention used by this reachability
-            # walk.
-            report_path = root_candidate
-
-            if not is_within_directory(report_path, skill_root):
+            if not is_within_directory(ref_abs, skill_root):
                 warnings.append(
                     f"{LEVEL_INFO}: [foundry reachability] reference '{ref}' "
                     f"in '{rel}' resolves outside the skill directory — "
@@ -320,18 +279,22 @@ def walk_reachable(
                 )
                 continue
 
-            if not os.path.exists(report_path):
+            if not os.path.exists(ref_abs):
                 warnings.append(
                     f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
                     f"in '{rel}' does not exist — reachability walk "
                     f"skipped it"
                 )
                 continue
-            warnings.append(
-                f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
-                f"in '{rel}' is not a regular file — reachability walk "
-                f"skipped it"
-            )
+            if not os.path.isfile(ref_abs):
+                warnings.append(
+                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
+                    f"in '{rel}' is not a regular file — reachability walk "
+                    f"skipped it"
+                )
+                continue
+
+            _visit(ref_abs)
 
     if os.path.isfile(skill_md):
         _visit(skill_md)
