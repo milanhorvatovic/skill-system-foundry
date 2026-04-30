@@ -562,7 +562,7 @@ def validate_tool_coherence(
         parent_raw
     )
 
-    skill_md = os.path.join(skill_root, FILE_SKILL_MD)
+    skill_md = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
     in_scope_files = _gather_in_scope_files(skill_root)
     has_scripts_dir = os.path.isdir(
         os.path.join(skill_root, DIR_SCRIPTS)
@@ -572,13 +572,16 @@ def validate_tool_coherence(
 
     # Build per-file (declared_set, explicit_empty) once.  Capabilities
     # may declare their own ``allowed-tools``; if silent they inherit
-    # the parent's effective set.
+    # the parent's effective set.  ``in_scope_files`` and the keys of
+    # ``capability_data`` are both already absolute (see
+    # ``_gather_in_scope_files`` and ``load_capability_data``), so the
+    # comparisons and lookup do not need a re-absolutize.
     file_effective: dict[str, tuple[set[str], bool]] = {}
     for path in in_scope_files:
-        if os.path.abspath(path) == os.path.abspath(skill_md):
+        if path == skill_md:
             file_effective[path] = (parent_declared, parent_explicit_empty)
             continue
-        cap_record = capability_data.get(os.path.abspath(path))
+        cap_record = capability_data.get(path)
         cap_fm = cap_record.frontmatter if cap_record is not None else None
         cap_declared, cap_has_field, cap_empty = _effective_tokens_from_fm(
             cap_fm
