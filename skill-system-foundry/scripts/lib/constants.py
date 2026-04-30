@@ -368,6 +368,29 @@ KNOWN_SPDX_LICENSES = frozenset(_skill["license"]["known_spdx"])
 # Recognized skill subdirectories
 RECOGNIZED_DIRS = frozenset(_skill["recognized_subdirectories"])
 
+# Capability frontmatter governance — bottom-up aggregation model.
+# ``CAPABILITY_SKILL_ONLY_FIELDS`` enumerates frontmatter keys whose
+# authoritative home is the parent SKILL.md; capabilities declaring
+# them get an INFO redirect.  Dotted entries (``metadata.author``)
+# traverse nested mappings.  The list is YAML-driven so adding a new
+# field is a configuration edit only.
+if "capability_frontmatter" not in _skill:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.capability_frontmatter'; this foundry build is "
+        "incomplete."
+    )
+_capability_frontmatter = _skill["capability_frontmatter"]
+if "skill_only_fields" not in _capability_frontmatter:
+    raise RuntimeError(
+        "configuration.yaml is missing required list "
+        "'skill.capability_frontmatter.skill_only_fields'; this "
+        "foundry build is incomplete."
+    )
+CAPABILITY_SKILL_ONLY_FIELDS: tuple[str, ...] = tuple(
+    _capability_frontmatter["skill_only_fields"]
+)
+
 # --- Plain Scalar Divergence Detection ---
 _plain_scalar = _config["plain_scalar"]
 PLAIN_SCALAR_INDICATORS = _plain_scalar["indicators"]
@@ -529,6 +552,7 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _catalogs, _claude_code_catalog, _fence_languages
+del _capability_frontmatter
 del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _orphan_refs, _raw_allowed_orphans, _normalized_orphans

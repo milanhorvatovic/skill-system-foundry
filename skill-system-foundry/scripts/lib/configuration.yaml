@@ -196,6 +196,28 @@ skill:
     - capabilities
     - agents
 
+  # Capability frontmatter governance (foundry convention).
+  #
+  # The meta-skill uses a *bottom-up aggregation* model for capability
+  # frontmatter: each capability may declare its own scoped fields
+  # (today only ``allowed-tools``), and the parent SKILL.md is
+  # validated as a superset of the union of capability declarations.
+  #
+  # ``skill_only_fields`` enumerates frontmatter keys whose
+  # authoritative home is the parent SKILL.md.  When a capability
+  # declares any of these, the validator emits an INFO suggesting
+  # removal — the capability's value is informational only and the
+  # parent governs the field.  Dotted entries traverse nested
+  # mappings (``metadata.author`` targets ``frontmatter['metadata']
+  # ['author']``).
+  capability_frontmatter:
+    skill_only_fields:
+      - license
+      - compatibility
+      - metadata.author
+      - metadata.version
+      - metadata.spec
+
 # ============================================================
 # Plain Scalar Divergence Detection
 # ============================================================
