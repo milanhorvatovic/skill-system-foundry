@@ -2517,6 +2517,38 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         ]
         self.assertEqual(len(infos), 1)
 
+    def test_allowed_tools_only_capability_is_not_registered_like(
+        self,
+    ) -> None:
+        # The audit's "has full frontmatter — verify it's not
+        # registered in discovery" INFO gates on BOTH ``name`` and
+        # ``description`` being present, not on ``fm is not None``.
+        # A capability whose only frontmatter field is the new
+        # authoritative ``allowed-tools`` must not trigger that INFO
+        # — the foundry's own capabilities follow this shape, and the
+        # rule was added before the PR but the gating condition makes
+        # it correct under the new convention.  Pin the behaviour so
+        # future refactors do not silently regress it.
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                skill_dir, allowed_tools="Bash Read", body=router_body,
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        full_fm_infos = [e for e in errors if "has full frontmatter" in e]
+        self.assertEqual(full_fm_infos, [])
+
     def test_capability_malformed_allowed_tools_value_emits_warn(
         self,
     ) -> None:
