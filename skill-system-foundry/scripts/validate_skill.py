@@ -654,11 +654,19 @@ def validate_skill(
     # skill-only field, the redirect still fires here.
     for cap_md, record in sorted(capability_data.items()):
         cap_fm = record.frontmatter
-        if cap_fm and "_parse_error" in cap_fm:
-            # Parse error already surfaces via the audit / capability
-            # validator paths; skip silently here to avoid double-FAIL.
-            continue
         cap_rel = os.path.relpath(cap_md, skill_path).replace(os.sep, "/")
+        if cap_fm and "_parse_error" in cap_fm:
+            # Surface as a FAIL so ``validate_skill.py <parent>`` —
+            # the canonical skill-level validation entry point —
+            # catches malformed or unreadable capability frontmatter
+            # instead of silently skipping the file.  Without this the
+            # aggregation and skill-only-fields rules quietly drop the
+            # capability's contribution and the run still passes.
+            errors.append(
+                f"{LEVEL_FAIL}: [spec] {cap_rel} frontmatter parse error: "
+                f"{cap_fm['_parse_error']}"
+            )
+            continue
         sof_errors, sof_passes = validate_capability_skill_only_fields(
             cap_fm, cap_rel,
         )

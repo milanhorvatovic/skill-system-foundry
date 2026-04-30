@@ -3843,6 +3843,29 @@ class CapabilityAggregationIntegrationTests(unittest.TestCase):
         self.assertEqual(agg_fails, [])
         self.assertEqual(agg_infos, [])
 
+    def test_unreadable_capability_frontmatter_emits_fail(self) -> None:
+        # ``validate_skill.py <parent>`` is the canonical skill-level
+        # validator; an unreadable capability frontmatter must surface
+        # as a FAIL there, not silently disappear into the aggregation
+        # / skill-only-fields rules' "no contribution" handling.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Read")
+            cap_dir = os.path.join(skill_dir, "capabilities", "broken")
+            os.makedirs(cap_dir)
+            cap_md = os.path.join(cap_dir, "capability.md")
+            with open(cap_md, "wb") as fh:
+                # Invalid UTF-8 forces UnicodeDecodeError on read.
+                fh.write(b"---\n\xff\xfe\n---\n# Cap\n")
+            errors, _ = validate_skill(skill_dir)
+        parse_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "frontmatter parse error" in e
+            and "capabilities/broken/capability.md" in e
+        ]
+        self.assertEqual(len(parse_fails), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
