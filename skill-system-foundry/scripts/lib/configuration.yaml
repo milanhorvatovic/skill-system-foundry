@@ -208,8 +208,7 @@ skill:
   # declares any of these, the validator emits an INFO suggesting
   # removal — the capability's value is informational only and the
   # parent governs the field.  Dotted entries traverse nested
-  # mappings (``metadata.author`` targets ``frontmatter['metadata']
-  # ['author']``).
+  # mappings (``metadata.author`` targets ``frontmatter['metadata']['author']``).
   capability_frontmatter:
     skill_only_fields:
       - license
