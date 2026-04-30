@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import re
 import sys
 import os
 
@@ -41,11 +40,11 @@ from lib.validation import (
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.constants import (
+    ALLOWED_ORPHANS,
     MAX_DESCRIPTION_CHARS,
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
     RE_XML_TAG, RE_FIRST_PERSON, RE_FIRST_PERSON_PLURAL,
     RE_SECOND_PERSON, RE_IMPERATIVE_START,
-    RE_MARKDOWN_LINK_REF, RE_BACKTICK_REF,
     RECOGNIZED_DIRS,
     DIR_CAPABILITIES,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
@@ -53,6 +52,8 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     collect_foundry_config_findings,
 )
+from lib.orphans import find_orphan_references
+from lib.reachability import extract_body_references
 
 
 def find_skill_root(start_dir: str) -> str | None:
@@ -141,25 +142,42 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
 def _check_references(
     body: str, source_label: str, skill_root: str,
     allow_nested_refs: bool = False,
+    include_router_table: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Check markdown references in *body* against the skill root.
 
     *source_label* identifies the file in error messages (e.g.
     ``"SKILL.md"`` or ``"references/guide.md"``).  All intra-skill
     references are resolved relative to *skill_root*.
+
+    *include_router_table* (default False) augments the body
+    reference set with capability paths recovered from a router
+    table.  Only the SKILL.md entry legitimately carries one, so
+    callers pass ``True`` only for that file — the validator then
+    catches misspelled router-table cells (e.g.
+    ``capabilities/typo/capability.md``) that the body regexes
+    alone would miss because router-table cells are bare paths,
+    not markdown links.  Without this, a misspelled cell would
+    only be caught by the reachability walker, forcing the orphan
+    rule to surface walk warnings to remain trustworthy.
     """
     errors: list[str] = []
     passes: list[str] = []
 
-    # Strip fenced code blocks so example links inside ``` are not
-    # treated as real references.
-    stripped = re.sub(r"```[^\n]*\n.*?```", "", body, flags=re.DOTALL)
-
-    refs = RE_MARKDOWN_LINK_REF.findall(stripped)
-    backtick_refs = RE_BACKTICK_REF.findall(stripped)
-    refs = list(set(refs + backtick_refs))
-    # Exclude template placeholders (e.g., references/<file>.md)
-    refs = [r for r in refs if "<" not in r and ">" not in r]
+    # Single source of truth for body reference extraction lives in
+    # lib.reachability.extract_body_references — applies the same
+    # configured ``reference_patterns`` regexes, strips fenced code
+    # blocks, and drops template placeholders.  Pass
+    # ``filter_capability_entries=False`` so this rule still validates
+    # ``capabilities/<name>/capability.md`` references for existence
+    # and depth (the reachability walker filters those out because
+    # they are entry-point-only edges, but validation still needs to
+    # check that they resolve).
+    refs = extract_body_references(
+        body,
+        filter_capability_entries=False,
+        include_router_table=include_router_table,
+    )
 
     broken_found = False
     nested_found = False
@@ -265,16 +283,15 @@ def _check_references(
             and rel_parts[2] == FILE_CAPABILITY_MD
         )
         if not allow_nested_refs and not is_capability_entry:
-            # Strip fenced code blocks from referenced content so example
-            # links inside ``` don't trigger false nested-reference WARNs.
-            ref_stripped = re.sub(
-                r"```[^\n]*\n.*?```", "", ref_content, flags=re.DOTALL,
+            # Reuse the shared body-reference extractor so the nested
+            # check sees the exact same set of links the outer scan
+            # would.  ``filter_capability_entries=False`` keeps
+            # references to ``capabilities/<name>/capability.md``
+            # in scope — they are still legitimate one-hop targets
+            # under the foundry router-skill convention.
+            nested_refs = extract_body_references(
+                ref_content, filter_capability_entries=False,
             )
-            nested_refs = RE_MARKDOWN_LINK_REF.findall(ref_stripped)
-            nested_backtick_refs = RE_BACKTICK_REF.findall(ref_stripped)
-            nested_refs = list(set(nested_refs + nested_backtick_refs))
-            # Exclude template placeholders in nested refs too
-            nested_refs = [r for r in nested_refs if "<" not in r and ">" not in r]
             if nested_refs:
                 nested_found = True
                 errors.append(
@@ -319,8 +336,14 @@ def validate_body(
     else:
         passes.append(f"body: {line_count} lines (max {MAX_BODY_LINES})")
 
+    # Only the SKILL.md entry carries a router table.  Pass the flag
+    # so misspelled router-table cells (bare-path, no markdown link)
+    # are caught here — without this they would only be flagged by
+    # the reachability walker, forcing the orphan rule to surface
+    # walk warnings.
     ref_errors, ref_passes = _check_references(
         body, entry_filename, skill_root, allow_nested_refs,
+        include_router_table=(entry_filename == FILE_SKILL_MD),
     )
     errors.extend(ref_errors)
     passes.extend(ref_passes)
@@ -591,6 +614,44 @@ def validate_skill(
     coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
     errors.extend(coh_errors)
     passes.extend(coh_passes)
+
+    # Orphan-reference rule — flag files under references/ that no
+    # SKILL.md or capability.md reaches via the configured body
+    # reference patterns.  Skipped in capability mode (the rule's
+    # scope is the whole skill tree, not a single capability) — the
+    # parent SKILL.md invocation owns the check.  Running it on a
+    # capability directory would treat that directory as a standalone
+    # skill root and emit false orphan WARNs for any capability-local
+    # ``references/`` files.  The rule is independent of
+    # --allow-nested-references: that flag suppresses depth warnings;
+    # this rule only asks whether a file is reachable at all.
+    #
+    # validate_skill targets a single skill — there is no enclosing
+    # skills/ directory, so allowed_orphans entries keyed
+    # ``skills/<name>/...`` have nothing to disambiguate.  Pass
+    # audit_root=None so those entries are skipped, matching the
+    # documented hybrid-keying semantics.
+    #
+    # Suppress reachability-walk diagnostics: validate_skill_references
+    # (above) already walks the same graph and emits equivalent broken-
+    # reference WARNs.  Letting find_orphan_references re-emit them
+    # would double the WARN count for every broken intra-skill link.
+    # The suppression stays safe because validate_body invokes
+    # _check_references on SKILL.md with include_router_table=True,
+    # so even router-table-only cells (which the body regex misses)
+    # are validated for existence before reaching this rule.
+    if not is_capability:
+        orphan_findings = find_orphan_references(
+            skill_path,
+            ALLOWED_ORPHANS,
+            audit_root=None,
+            skill_audit_prefix=os.path.basename(os.path.abspath(skill_path)),
+            surface_walk_warnings=False,
+        )
+        if orphan_findings:
+            errors.extend(orphan_findings)
+        else:
+            passes.append("orphan references: none under references/ trees")
 
     return errors, passes
 

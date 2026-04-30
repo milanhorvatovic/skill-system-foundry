@@ -2142,6 +2142,178 @@ class CheckVersionConsistencyTests(unittest.TestCase):
             )
 
 
+class AuditOrphanReferencesTests(unittest.TestCase):
+    """audit_skill_system surfaces orphan-reference findings."""
+
+    def test_system_root_mode_warns_on_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        self.assertIn("skills/demo-skill/references/orphan.md", orphan[0])
+
+    def test_skill_root_mode_warns_on_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "my-meta")
+            write_skill_md(skill_dir, name="my-meta")
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            errors = audit_skill_system(skill_dir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        self.assertIn("my-meta/references/orphan.md", orphan[0])
+
+    def test_skill_root_mode_top_label_survives_unicode_error(self) -> None:
+        # Defensive: the orphan block reads the top-level SKILL.md to
+        # derive a display label.  If load_frontmatter raises
+        # UnicodeError on a non-UTF-8 file, the audit must not crash
+        # — the label falls back to the directory basename and the
+        # rest of the orphan check continues.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "broken-skill")
+            write_skill_md(skill_dir, name="broken-skill")
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            with mock.patch(
+                "audit_skill_system.load_frontmatter",
+                side_effect=UnicodeDecodeError(
+                    "utf-8", b"", 0, 1, "fake bad byte",
+                ),
+            ):
+                errors = audit_skill_system(skill_dir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        self.assertIn("broken-skill/references/orphan.md", orphan[0])
+
+    def test_clean_skill_emits_no_orphan_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [guide](references/guide.md).\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            errors = audit_skill_system(tmpdir, verbose=False)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(orphan, [])
+
+    def test_stale_allowed_orphans_entry_emits_info(self) -> None:
+        # An ``allowed_orphans`` entry that no longer points at any
+        # real file is surfaced as INFO so the list cannot silently
+        # rot.  Patch ALLOWED_ORPHANS at the call site so we don't
+        # need to round-trip through configuration.yaml.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            with mock.patch(
+                "audit_skill_system.ALLOWED_ORPHANS",
+                ("references/never-existed.md",),
+            ):
+                errors = audit_skill_system(tmpdir, verbose=False)
+        stale = [
+            e for e in errors
+            if "allowed_orphans entry" in e
+            and "never-existed.md" in e
+        ]
+        self.assertEqual(len(stale), 1)
+        self.assertTrue(stale[0].startswith("INFO:"))
+
+    def test_resolved_allowed_orphans_entry_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "staged.md"),
+                "# Staged\n",
+            )
+            with mock.patch(
+                "audit_skill_system.ALLOWED_ORPHANS",
+                ("references/staged.md",),
+            ):
+                errors = audit_skill_system(tmpdir, verbose=False)
+        stale = [e for e in errors if "allowed_orphans entry" in e]
+        self.assertEqual(stale, [])
+
+    def test_stale_detection_inert_when_skills_dir_is_empty(self) -> None:
+        # Empty-``skills/`` directory: the directory exists but
+        # contains no registered skills, and there is no top-level
+        # SKILL.md either.  The audit cannot reach any skill so
+        # allow-list entries have nothing to resolve against.  Both
+        # ``references/...`` and ``skills/...``-prefixed entries must
+        # be silently skipped — they are out of scope for a partial
+        # audit, not stale.  This locks in the behavioral improvement
+        # introduced when ``unresolved_audit_root`` moved from
+        # ``system_root if has_skills_dir else None`` to
+        # ``next((t[2] for t in orphan_targets ...), None)``: under
+        # the old gate, allowed_orphans entries would surface as INFO
+        # in this configuration even though the audit could not
+        # legitimately validate them.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "skills"))
+            with mock.patch(
+                "audit_skill_system.ALLOWED_ORPHANS",
+                (
+                    "references/anything.md",
+                    "skills/foo/references/x.md",
+                ),
+            ):
+                errors = audit_skill_system(tmpdir, verbose=False)
+        stale = [e for e in errors if "allowed_orphans entry" in e]
+        self.assertEqual(stale, [])
+
+    def test_skill_root_label_falls_back_via_abspath_for_dot(self) -> None:
+        # Skill-root mode invoked as ``.``: when the SKILL.md
+        # frontmatter's ``name`` is missing or unreadable, the
+        # display label must fall back to the *absolute* path's
+        # basename, not the literal ``.`` token.  Without the
+        # ``os.path.abspath`` wrapper, ``basename(".".rstrip(os.sep))``
+        # yields ``.`` and findings render as e.g.
+        # ``./references/orphan.md is unreferenced`` — confusing.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "labeled-skill")
+            os.makedirs(skill_dir)
+            # Frontmatter without ``name`` so the orphan-target
+            # label-derivation falls through to the basename branch.
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w", encoding="utf-8",
+            ) as f:
+                f.write(
+                    "---\n"
+                    "description: Demo skill. Triggers when running this test.\n"
+                    "---\n# Demo\n"
+                )
+            write_text(
+                os.path.join(skill_dir, "references", "orphan.md"),
+                "# Orphan\n",
+            )
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(skill_dir)
+                errors = audit_skill_system(".", verbose=False)
+            finally:
+                os.chdir(original_cwd)
+        orphan = [e for e in errors if "is unreferenced" in e]
+        self.assertEqual(len(orphan), 1)
+        # The label is the absolute-path basename, never the raw
+        # ``.`` token.
+        self.assertIn("labeled-skill/references/orphan.md", orphan[0])
+        self.assertNotIn("./references/orphan.md", orphan[0])
+
+
 class AuditProseYamlAggregationTests(unittest.TestCase):
     """``--check-prose-yaml`` and ``--foundry-self`` on audit_skill_system."""
 

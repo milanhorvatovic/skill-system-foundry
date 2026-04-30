@@ -31,7 +31,7 @@ python scripts/audit_skill_system.py <system-path> [--verbose] [--allow-orchestr
 
 > **Note:** This is not the same as the distribution repository root. For single-skill validation, use `validate_skill.py` instead.
 
-The script checks: spec compliance (frontmatter fields, naming, line counts), dependency direction (no upward references), role composition (2+ skills/capabilities, best-effort heuristic), nesting depth, shared resource usage, and manifest presence. Path validity and orphan detection require manual review (see checklist below).
+The script checks: spec compliance (frontmatter fields, naming, line counts), dependency direction (no upward references), role composition (2+ skills/capabilities, best-effort heuristic), nesting depth, shared resource usage, manifest presence, and orphan references — every file under `references/` (or `capabilities/<name>/references/`) that no `SKILL.md` and no `capability.md` reaches via the configured body reference patterns is flagged as `WARN`. Suppress legitimate cases (e.g. a reference file staged for an upcoming skill) by listing the path under `orphan_references.allowed_orphans` in `scripts/lib/configuration.yaml`. The orphan rule fires the same way in both system-root mode and skill-root mode and is independent of `--allow-nested-references`.
 
 ### Manual Checklist
 
@@ -55,7 +55,7 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 
 **Manifest:**
 - [ ] Complete and matches filesystem
-- [ ] No orphaned files or phantom entries
+- [ ] No phantom entries (orphaned reference files are flagged automatically — see the orphan-reference rule above)
 
 ## Key Resources
 

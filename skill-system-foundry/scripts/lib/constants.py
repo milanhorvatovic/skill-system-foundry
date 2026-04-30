@@ -395,6 +395,87 @@ MIN_ROLE_SKILLS = int(_role["min_skills"])
 RE_SKILL_REF = re.compile(_role["skill_ref_pattern"])
 RE_CAPABILITY_REF = re.compile(_role["capability_ref_pattern"])
 
+# --- Orphan Reference Audit ---
+# Fail-fast when the section is missing so a stale checkout produces a
+# clear error at import rather than a silent KeyError later.
+if "orphan_references" not in _config:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'orphan_references'; this foundry build is incomplete."
+    )
+_orphan_refs = _config["orphan_references"]
+if "allowed_orphans" not in _orphan_refs:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'orphan_references.allowed_orphans'; leave the value blank "
+        "(or list block-style entries beneath it) to keep the rule "
+        "fully active."
+    )
+_raw_allowed_orphans = _orphan_refs["allowed_orphans"]
+# A key with no value (``allowed_orphans:`` followed by no items) is
+# returned as ``""`` by the YAML subset parser; ``None`` is also
+# accepted for forward-compat.  Coerce both to a real empty list so
+# downstream consumers don't need to special-case the absent form.
+if _raw_allowed_orphans is None or _raw_allowed_orphans == "":
+    _raw_allowed_orphans = []
+if not isinstance(_raw_allowed_orphans, list):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'orphan_references.allowed_orphans': expected a list, got "
+        f"{type(_raw_allowed_orphans).__name__}."
+    )
+_normalized_orphans: list[str] = []
+for _entry in _raw_allowed_orphans:
+    if not isinstance(_entry, str):
+        raise RuntimeError(
+            "configuration.yaml has a non-string entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}."
+        )
+    _candidate = _entry.replace("\\", "/").strip()
+    if _candidate.startswith("./"):
+        _candidate = _candidate[2:]
+    if not _candidate:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry "
+            "in 'orphan_references.allowed_orphans'; remove the entry "
+            "or replace it with a real path."
+        )
+    # Entries are documented as skill-root-relative or
+    # ``skills/<name>/...`` audit-root-relative.  Reject anything that
+    # would make matching environment-dependent: absolute paths and
+    # UNC roots (``/foo``, ``//host/share``) would only match on
+    # specific machines, drive-letter prefixes (``C:/foo``) likewise,
+    # and ``..`` segments could escape the intended root entirely.
+    # Each invalid form silently never matches a candidate orphan,
+    # so it would suppress the rule by accident — make it loud.
+    if _candidate.startswith("/"):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}. "
+            "Entries must be relative POSIX paths and must not start "
+            "with '/'."
+        )
+    if (
+        len(_candidate) >= 2
+        and _candidate[0].isalpha()
+        and _candidate[1] == ":"
+    ):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}. "
+            "Entries must be relative POSIX paths and must not use a "
+            "drive-letter prefix."
+        )
+    if ".." in _candidate.split("/"):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'orphan_references.allowed_orphans': {_entry!r}. "
+            "Entries must be relative POSIX paths and must not contain "
+            "'..' segments."
+        )
+    _normalized_orphans.append(_candidate)
+ALLOWED_ORPHANS = tuple(_normalized_orphans)
+
 # --- Bundle Packaging ---
 _bundle = _config["bundle"]
 BUNDLE_MAX_REFERENCE_DEPTH = int(_bundle["max_reference_depth"])
@@ -450,5 +531,6 @@ del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _catalogs, _claude_code_catalog, _fence_languages
 del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
+del _orphan_refs, _raw_allowed_orphans, _normalized_orphans
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf

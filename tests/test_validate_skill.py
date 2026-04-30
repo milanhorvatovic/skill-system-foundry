@@ -3537,5 +3537,185 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
             self.assertEqual(offenders, [])
 
 
+class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
+    """End-to-end tests for the orphan-reference rule wired through validate_skill."""
+
+    def test_orphan_under_references_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            write_text(
+                os.path.join(skill_dir, "references", "stale.md"),
+                "# Stale\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(len(orphan), 1)
+            self.assertIn("references/stale.md", orphan[0])
+
+    def test_capability_mode_skips_orphan_check(self) -> None:
+        # Running --capability targets a single capability.md, not a
+        # full skill tree.  The orphan rule's scope is the whole
+        # skill, so the capability invocation must not emit the
+        # finding (the parent SKILL.md invocation owns the check).
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            cap_dir = os.path.join(skill_dir, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "stale.md"),
+                "# Stale\n",
+            )
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(orphan, [])
+
+    def test_capability_mode_does_not_flag_capability_local_references(self) -> None:
+        # Pin against the regression Codex flagged: in capability mode,
+        # ``skill_path`` is the capability directory, not the skill
+        # root.  If the orphan rule were run against the capability
+        # directory it would treat ``capabilities/<name>/references/``
+        # as a top-level ``references/`` tree without an entry point
+        # and emit false orphan WARNs for every legitimate capability-
+        # local reference file.  Guard: the rule must be skipped
+        # entirely in capability mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [deploy](capabilities/deploy/capability.md).\n",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n\nSee [steps](references/steps.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "steps.md"),
+                "# Steps\n",
+            )
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(
+                orphan, [],
+                "capability-mode validation must not run the orphan "
+                "rule — running it against the capability directory "
+                f"falsely flags legitimate capability-local references; got: {orphan!r}",
+            )
+
+    def test_orphan_prefix_uses_absolute_basename(self) -> None:
+        # When validate_skill is invoked with ``.`` (or a path that
+        # ends in a separator), ``os.path.basename`` would otherwise
+        # return ``"."`` / ``""`` and the orphan WARN would render
+        # ``./references/stale.md`` instead of ``demo-skill/references/stale.md``.
+        # Pin the abspath-normalization fix that makes the CLI label
+        # stable, mirroring the same fix in audit_skill_system.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(skill_dir, body="# Demo\n")
+            write_text(
+                os.path.join(skill_dir, "references", "stale.md"),
+                "# Stale\n",
+            )
+            cwd = os.getcwd()
+            try:
+                os.chdir(skill_dir)
+                errors, _ = validate_skill(".")
+            finally:
+                os.chdir(cwd)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(len(orphan), 1)
+            self.assertIn("demo-skill/references/stale.md", orphan[0])
+            self.assertNotIn(
+                "./references/stale.md", orphan[0],
+                "prefix must use the abspath basename, not the literal "
+                f"'.' from the input path; got: {orphan[0]!r}",
+            )
+
+    def test_clean_skill_passes_orphan_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [guide](references/guide.md).\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            errors, passes = validate_skill(skill_dir)
+            orphan = [e for e in errors if "is unreferenced" in e]
+            self.assertEqual(orphan, [])
+            self.assertTrue(
+                any("orphan references" in p for p in passes),
+                f"expected an orphan-references pass, got {passes!r}",
+            )
+
+    def test_router_table_cell_typo_is_caught_by_check_references(self) -> None:
+        # Router-table cells are bare paths, not markdown links, so
+        # the body reference regex misses them.  validate_body must
+        # plumb include_router_table=True into _check_references when
+        # validating SKILL.md so a misspelled router-table cell
+        # surfaces as a [spec] broken-link WARN — without this, the
+        # reachability walker would be the only signal, forcing the
+        # orphan rule to surface walk warnings to remain trustworthy.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body=(
+                    "# Demo\n\n"
+                    "## Capabilities\n\n"
+                    "| Capability | Trigger | Path |\n"
+                    "|---|---|---|\n"
+                    "| deploy | when deploying | "
+                    "capabilities/typo/capability.md |\n"
+                ),
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            broken = [
+                e for e in errors
+                if "does not exist" in e
+                and "capabilities/typo/capability.md" in e
+            ]
+            self.assertEqual(
+                len(broken), 1,
+                "misspelled router-table cell must produce a "
+                f"[spec] broken-link WARN; got: {errors!r}",
+            )
+            self.assertIn("[spec]", broken[0])
+
+    def test_broken_link_is_not_double_reported(self) -> None:
+        # validate_skill_references already emits broken-reference
+        # findings against the per-skill graph.  find_orphan_references
+        # walks the same graph, so without gating it would re-emit
+        # equivalent diagnostics and double the WARN count.  Pin the
+        # gating: a single broken intra-skill link produces exactly
+        # one "does not exist" finding from the spec rule, and zero
+        # from the orphan rule's reachability walk.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="See [missing](references/missing.md).\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+            broken = [e for e in errors if "does not exist" in e]
+            self.assertEqual(
+                len(broken), 1,
+                f"expected exactly one broken-link finding, got {broken!r}",
+            )
+            self.assertIn("[spec]", broken[0])
+
+
 if __name__ == "__main__":
     unittest.main()

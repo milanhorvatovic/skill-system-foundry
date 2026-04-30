@@ -25,33 +25,24 @@ of the same content will report higher than a POSIX checkout.
 """
 
 import os
-import re
 
 from .constants import (
     DIR_ASSETS,
-    DIR_CAPABILITIES,
     DIR_SCRIPTS,
-    FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
     LEVEL_INFO,
     LEVEL_WARN,
-    RE_BACKTICK_REF,
-    RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
-from .references import is_within_directory, strip_fragment
-from .router_table import extract_capability_paths
+from .reachability import extract_body_references
+from .references import is_within_directory
 
 
 # Directory categories whose bytes are excluded from ``load_bytes``.
 # Scripts execute outside the model's context window; assets are
 # templates copied or rewritten by tooling, not loaded as instructions.
 _EXCLUDED_LOAD_CATEGORIES = frozenset({DIR_SCRIPTS, DIR_ASSETS})
-
-# Pattern that strips fenced code blocks before reference scanning, so
-# example links inside ``` are not treated as real references.
-_RE_FENCED_BLOCK = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
 
 
 # ===================================================================
@@ -125,69 +116,11 @@ def discovery_bytes_of(markdown_path: str) -> int:
 # ===================================================================
 # Reference extraction
 # ===================================================================
-
-
-def extract_body_references(
-    content: str, *, include_router_table: bool = False,
-) -> list[str]:
-    """Return cleaned reference paths from a markdown body.
-
-    Applies the body ``reference_patterns`` from ``configuration.yaml``
-    (markdown-link and backtick forms) after stripping fenced code
-    blocks.  When *include_router_table* is True, the result is also
-    augmented with capability paths recovered from a router table in
-    *content* — those paths are bare cells, not markdown links, so the
-    body regexes alone would miss them.  Only the SKILL.md entry point
-    legitimately carries a router table, so callers pass
-    ``include_router_table=True`` only for that file.
-
-    Anchor fragments, queries, and title suffixes are stripped via
-    :func:`strip_fragment`.  Template placeholders (containing ``<``
-    or ``>``) are dropped.  Order is preserved as the body presents
-    them, with duplicates removed on first sight.  Router-table
-    capability paths follow whatever links were found in prose.
-    """
-    stripped = _RE_FENCED_BLOCK.sub("", content)
-    raw_refs: list[str] = []
-    raw_refs.extend(RE_MARKDOWN_LINK_REF.findall(stripped))
-    raw_refs.extend(RE_BACKTICK_REF.findall(stripped))
-    if include_router_table:
-        raw_refs.extend(extract_capability_paths(content))
-    else:
-        # Capability *entry-point* paths are entry-point-only edges.
-        # A non-entry body that references ``capabilities/<name>/capability.md``
-        # is either a documentation example or an architecture violation
-        # (capabilities don't reference each other — see
-        # audit_skill_system).  Either way, do not treat it as a live
-        # load edge.  Nested capability resources like
-        # ``capabilities/<name>/references/foo.md`` remain legitimate
-        # — those are skill-root-relative links from within a
-        # capability into its own local references and must stay in
-        # the load graph.
-        #
-        # Apply ``strip_fragment`` before the shape check so anchored
-        # links (``capabilities/foo/capability.md#section``) and
-        # query-suffixed links are recognized as entry-point paths
-        # too — they would otherwise survive this filter and be
-        # followed during traversal as a live edge.
-        raw_refs = [
-            r for r in raw_refs
-            if not _is_capability_entry_path(strip_fragment(r))
-        ]
-
-    seen: set[str] = set()
-    cleaned: list[str] = []
-    for ref in raw_refs:
-        if "<" in ref or ">" in ref:
-            continue
-        clean = strip_fragment(ref)
-        if not clean:
-            continue
-        if clean in seen:
-            continue
-        seen.add(clean)
-        cleaned.append(clean)
-    return cleaned
+#
+# ``extract_body_references`` is provided by ``lib.reachability`` and
+# imported above.  It is the single source of truth for body reference
+# extraction; both the byte-budget metric (this module) and the
+# orphan-reference audit consume it.
 
 
 def category_of(rel_path: str) -> str:
@@ -204,25 +137,6 @@ def category_of(rel_path: str) -> str:
 def is_excluded_from_load(rel_path: str) -> bool:
     """Return True when a path's bytes should not contribute to load."""
     return category_of(rel_path) in _EXCLUDED_LOAD_CATEGORIES
-
-
-def _is_capability_entry_path(ref_path: str) -> bool:
-    """Return True when *ref_path* is a capability entry point.
-
-    A capability entry point matches the canonical shape
-    ``capabilities/<name>/capability.md`` exactly — three segments,
-    leading directory ``capabilities``, trailing file
-    ``capability.md``.  Nested capability resources like
-    ``capabilities/<name>/references/foo.md`` do NOT match — those
-    are legitimate intra-capability references that must stay in the
-    load graph.
-    """
-    parts = ref_path.replace("\\", "/").split("/")
-    return (
-        len(parts) == 3
-        and parts[0] == DIR_CAPABILITIES
-        and parts[2] == FILE_CAPABILITY_MD
-    )
 
 
 # ===================================================================

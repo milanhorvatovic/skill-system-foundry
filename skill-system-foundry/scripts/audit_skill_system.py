@@ -71,6 +71,7 @@ from lib.discovery import (
     read_file,
 )
 from lib.constants import (
+    ALLOWED_ORPHANS,
     DIR_SKILLS, DIR_CAPABILITIES, DIR_SHARED,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
@@ -80,6 +81,7 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     collect_foundry_config_findings,
 )
+from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.router_table import audit_router_table
 from lib.validation import validate_description_triggers
@@ -643,6 +645,99 @@ def audit_skill_system(
                 print(
                     f"  ✓ {skill['name']}: router table consistent"
                 )
+
+    # --- Orphan References ---
+    # Per-skill rule: any file under references/ or
+    # capabilities/<name>/references/ that no SKILL.md or capability.md
+    # reaches via the configured body reference patterns.  Fires in
+    # both system-root mode (every registered skill) and skill-root
+    # mode (the top-level skill).  The rule is independent of
+    # --allow-nested-references — that flag suppresses depth warnings;
+    # this rule only asks whether each file is reachable at all.
+    if verbose:
+        print("\n== Orphan References ==")
+
+    # Pair each (skill_root, prefix) target with the audit_root that
+    # makes ``skills/<name>/...``-keyed allowed_orphans entries
+    # meaningful.  In system-root mode that is the system root (which
+    # contains skills/).  In skill-root mode there is no enclosing
+    # skills/ directory, so audit_root is None — skills/-prefixed
+    # entries simply don't match anything in that mode.
+    orphan_targets: list[tuple[str, str, str | None]] = []
+    for skill in registered_skills:
+        orphan_targets.append(
+            (skill["path"], f"{DIR_SKILLS}/{skill['name']}", system_root)
+        )
+    if has_top_level_skill:
+        # Skill-root mode: derive the prefix from the SKILL.md name
+        # frontmatter, falling back to the directory basename.  Use
+        # the absolute path's basename so a target invoked as ``.``
+        # or with a trailing separator (where ``basename`` would
+        # otherwise yield ``.`` or empty) still produces a usable
+        # display label.
+        top_label = os.path.basename(os.path.abspath(system_root))
+        try:
+            fm, _, _ = load_frontmatter(
+                os.path.join(system_root, FILE_SKILL_MD)
+            )
+            if fm and isinstance(fm.get("name"), str) and fm["name"].strip():
+                top_label = fm["name"].strip()
+        except (OSError, UnicodeError):
+            # load_frontmatter opens with encoding="utf-8"; non-UTF-8
+            # SKILL.md files raise UnicodeDecodeError.  Fall back to
+            # the directory basename so the audit completes — the
+            # spec-compliance check elsewhere will surface the
+            # underlying file problem.
+            pass
+        orphan_targets.append((system_root, top_label, None))
+
+    for skill_root, prefix, audit_root in orphan_targets:
+        orphan_findings = find_orphan_references(
+            skill_root,
+            ALLOWED_ORPHANS,
+            audit_root=audit_root,
+            skill_audit_prefix=prefix,
+        )
+        errors.extend(orphan_findings)
+        if not orphan_findings and verbose:
+            print(f"  ✓ {prefix}: no orphan references")
+
+    # Stale allow-list detection: any allowed_orphans entry that does
+    # not resolve to an existing file under the audited skills is
+    # surfaced as INFO so dead entries don't accumulate silently.  In
+    # system-root mode the lookup spans every audited skill root plus
+    # the system root (for ``skills/<name>/...`` entries); in skill-
+    # root mode ``skills/<name>/...`` entries are silently skipped
+    # because they target a layout this invocation cannot inspect.
+    #
+    # Derive the global audit_root from orphan_targets directly so
+    # there is one source of truth — the third tuple element is the
+    # per-target audit_root (system_root for registered skills, None
+    # for the top-level skill).  Picking the first non-None value
+    # mirrors the old ``system_root if has_skills_dir else None``
+    # gate without re-deriving it from has_skills_dir.
+    #
+    # Invariant: every non-None audit_root in orphan_targets equals
+    # system_root.  The orphan_targets construction above is the only
+    # place that populates the third element, and it always passes
+    # system_root for registered skills and None for the top-level
+    # skill — so ``next()`` returns either system_root or None.  If a
+    # future contributor adds a new orphan_target variant with a
+    # different audit_root, this derivation must be revisited (use a
+    # set comprehension and check cardinality).
+    unresolved_skill_roots = [t[0] for t in orphan_targets]
+    unresolved_audit_root = next(
+        (t[2] for t in orphan_targets if t[2] is not None),
+        None,
+    )
+    stale_findings = find_unresolved_allowed_orphans(
+        ALLOWED_ORPHANS,
+        unresolved_skill_roots,
+        unresolved_audit_root,
+    )
+    errors.extend(stale_findings)
+    if not stale_findings and verbose and ALLOWED_ORPHANS:
+        print("  ✓ allowed_orphans: every entry resolves to an existing file")
 
     # --- Manifest ---
     if verbose:
