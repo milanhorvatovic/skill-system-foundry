@@ -22,7 +22,7 @@ from .constants import (
 )
 from .fence_scan import has_fence_with_language
 from .discovery import CapabilityRecord, load_capability_data
-from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
+from .frontmatter import strip_frontmatter_for_scan
 
 
 # Regex used to strip the optional ``(...)`` argument suffix from
