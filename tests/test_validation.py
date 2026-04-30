@@ -1327,6 +1327,26 @@ class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
         fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fails, [])
 
+    def test_parse_artifact_token_does_not_pressure_parent(self) -> None:
+        # ``allowed-tools: []`` parses as the literal string token
+        # ``"[]"`` under the foundry's stdlib-only YAML parser.  That
+        # token is a parse artifact, not a real tool, and pressuring
+        # the author to copy it into the parent SKILL.md would make
+        # the parent strictly worse.  Aggregation must skip
+        # unrecognised tokens — ``validate_allowed_tools`` already
+        # diagnoses them on the offending capability — and only
+        # enforce parent-superset for catalog/MCP/harness-shaped
+        # tokens.
+        write_skill_md(self.skill_dir, allowed_tools="Read")
+        write_capability_md(
+            self.skill_dir, "alpha", allowed_tools="[]",
+        )
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Read"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
 
 # ===================================================================
 # validate_capability_skill_only_fields

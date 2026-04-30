@@ -810,7 +810,23 @@ def aggregate_capability_allowed_tools(
         capabilities_with_field += 1
         rel = os.path.relpath(abs_path, skill_root).replace(os.sep, "/")
         for token in tokens:
-            declared_by.setdefault(token, []).append(rel)
+            # Filter out parse artifacts like ``"[]"`` (the literal
+            # string the YAML subset parser produces from
+            # ``allowed-tools: []``) or other obvious non-tools.  A
+            # token is "real" when it is in the catalog, matches the
+            # MCP server pattern, or matches the PascalCase harness
+            # shape (uncatalogued harness tools still flow through to
+            # parent enforcement so authors can adopt new tools
+            # without a YAML edit).  Unrecognised tokens are left to
+            # ``validate_allowed_tools`` diagnostics on the offending
+            # capability instead of polluting the parent with a
+            # ``"[]" missing from SKILL.md`` FAIL.
+            if (
+                token in KNOWN_TOOLS
+                or RE_MCP_TOOL_NAME.match(token)
+                or RE_HARNESS_TOOL_SHAPE.match(token)
+            ):
+                declared_by.setdefault(token, []).append(rel)
 
     if capabilities_with_field == 0:
         passes.append(
