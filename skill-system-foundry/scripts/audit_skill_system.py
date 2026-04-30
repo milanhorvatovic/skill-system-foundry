@@ -69,6 +69,8 @@ from lib.discovery import (
     find_router_audit_targets,
     check_line_count,
     read_file,
+    load_capability_data,
+    CapabilityRecord,
 )
 from lib.constants import (
     ALLOWED_ORPHANS,
@@ -88,7 +90,6 @@ from lib.validation import (
     validate_description_triggers,
     aggregate_capability_allowed_tools,
     validate_capability_skill_only_fields,
-    load_capability_data,
 )
 
 
@@ -391,6 +392,19 @@ def audit_skill_system(
     registered_skills = [s for s in skills if s["type"] == "registered"]
     capabilities = [s for s in skills if s["type"] == "capability"]
 
+    # Audit-wide capability discovery pass.  Reads each
+    # ``capability.md`` once and stores frontmatter + plain-scalar
+    # findings keyed by absolute path.  The aggregation rule per skill
+    # consumes a per-skill sub-dict; the per-capability loop below
+    # consumes the full dict.  Net: one read per ``capability.md``
+    # regardless of how many audit rules touch it.
+    system_capability_data: dict[str, CapabilityRecord] = {}
+    per_skill_capability_data: dict[str, dict[str, CapabilityRecord]] = {}
+    for skill in registered_skills:
+        sub = load_capability_data(skill["path"])
+        per_skill_capability_data[skill["path"]] = sub
+        system_capability_data.update(sub)
+
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
               f"{len(roles)} roles")
@@ -491,12 +505,12 @@ def audit_skill_system(
         # per-skill rules iterate only the deployed-system layout.
         # Use ``validate_skill.py --foundry-self`` for the skill-root
         # equivalent self-check.
-        # Single discovery pass per skill — keeps the aggregation rule
-        # at one read per ``capability.md`` even as future rules land
-        # on the same data.
-        skill_capability_data = load_capability_data(skill["path"])
+        # Audit-wide discovery pass populated this dict; aggregation
+        # consumes the per-skill slice without re-reading capability
+        # frontmatters.
         agg_errors, _ = aggregate_capability_allowed_tools(
-            skill["path"], fm, capability_data=skill_capability_data,
+            skill["path"], fm,
+            capability_data=per_skill_capability_data[skill["path"]],
         )
         for finding in agg_errors:
             level, _, detail = finding.partition(": ")
@@ -515,7 +529,18 @@ def audit_skill_system(
 
     for cap in capabilities:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
-        fm, _, scalar_findings = load_frontmatter(cap_md)
+        # Audit-wide discovery pass populated this record; fall back
+        # to a fresh read only when a capability path was discovered
+        # outside the per-skill walk (a defensive guard — under the
+        # current ``find_skill_dirs`` contract every capability lives
+        # under a registered skill so the ``or`` branch should not
+        # fire in practice).
+        cap_record = system_capability_data.get(os.path.abspath(cap_md))
+        if cap_record is None:
+            fm_freshly, _, scalar_findings_freshly = load_frontmatter(cap_md)
+            cap_record = CapabilityRecord(fm_freshly, scalar_findings_freshly)
+        fm = cap_record.frontmatter
+        scalar_findings = cap_record.scalar_findings
         if fm and "_parse_error" in fm:
             errors.append(
                 f"{LEVEL_FAIL}: {cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD} "

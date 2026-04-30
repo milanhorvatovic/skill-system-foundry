@@ -1,5 +1,6 @@
 """Component discovery: find skills and roles in a skill system."""
 
+import glob
 import os
 from typing import NamedTuple
 
@@ -231,3 +232,47 @@ def read_file(filepath: str) -> str:
     """Read file content."""
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
+
+
+class CapabilityRecord(NamedTuple):
+    """Discovered ``capability.md`` payload — frontmatter dict (or
+    ``None`` for unreadable files / files without frontmatter) plus
+    the plain-scalar divergence findings emitted during YAML parsing.
+
+    The pair is stored together so consumers that need both
+    (the audit's per-capability loop) and consumers that need only
+    the frontmatter (validation rules) can share one discovery pass.
+    """
+    frontmatter: dict | None
+    scalar_findings: list[str]
+
+
+def load_capability_data(skill_root: str) -> dict[str, CapabilityRecord]:
+    """Load every ``capabilities/**/capability.md`` payload once.
+
+    Returns a mapping from absolute path to :class:`CapabilityRecord`.
+    Parse errors are kept as a frontmatter dict carrying
+    ``_parse_error`` so callers can decide whether to skip or surface
+    them — matches the contract of :func:`load_frontmatter`.
+
+    Single discovery pass: ``aggregate_capability_allowed_tools``,
+    ``validate_tool_coherence``, the skill-only-fields walk in
+    ``validate_skill.py``, and the audit's per-capability loop all
+    consume from one dict instead of re-reading the same file
+    multiple times.  Callers that hold a ``capability_data`` dict
+    pass it through to keep I/O O(1) per file even as new rules
+    land on the same data.
+    """
+    result: dict[str, CapabilityRecord] = {}
+    capability_glob = os.path.join(
+        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
+    )
+    for path in sorted(glob.glob(capability_glob, recursive=True)):
+        abs_path = os.path.abspath(path)
+        try:
+            fm, _, scalar_findings = load_frontmatter(path)
+        except (OSError, UnicodeDecodeError):
+            result[abs_path] = CapabilityRecord(None, [])
+            continue
+        result[abs_path] = CapabilityRecord(fm, scalar_findings)
+    return result

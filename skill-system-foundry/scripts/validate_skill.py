@@ -28,6 +28,7 @@ from lib.reporting import (
     print_summary,
     to_json_output,
 )
+from lib.discovery import load_capability_data
 from lib.validation import (
     validate_name,
     validate_allowed_tools,
@@ -38,7 +39,6 @@ from lib.validation import (
     validate_tool_coherence,
     aggregate_capability_allowed_tools,
     validate_capability_skill_only_fields,
-    load_capability_data,
 )
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
@@ -652,7 +652,8 @@ def validate_skill(
     # themselves a separate FAIL in the audit's nesting-depth rule,
     # but if a nested capability does exist and declares a
     # skill-only field, the redirect still fires here.
-    for cap_md, cap_fm in sorted(capability_data.items()):
+    for cap_md, record in sorted(capability_data.items()):
+        cap_fm = record.frontmatter
         if cap_fm and "_parse_error" in cap_fm:
             # Parse error already surfaces via the audit / capability
             # validator paths; skip silently here to avoid double-FAIL.

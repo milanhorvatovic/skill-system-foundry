@@ -21,6 +21,7 @@ from .constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 from .fence_scan import has_fence_with_language
+from .discovery import CapabilityRecord, load_capability_data
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 
 
@@ -488,7 +489,7 @@ def validate_tool_coherence(
     skill_root: str,
     frontmatter: dict | None,
     *,
-    capability_data: dict[str, dict | None] | None = None,
+    capability_data: dict[str, CapabilityRecord] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check that fence-language and `scripts/` signals match `allowed-tools`.
 
@@ -577,7 +578,8 @@ def validate_tool_coherence(
         if os.path.abspath(path) == os.path.abspath(skill_md):
             file_effective[path] = (parent_declared, parent_explicit_empty)
             continue
-        cap_fm = capability_data.get(os.path.abspath(path))
+        cap_record = capability_data.get(os.path.abspath(path))
+        cap_fm = cap_record.frontmatter if cap_record is not None else None
         cap_declared, cap_has_field, cap_empty = _effective_tokens_from_fm(
             cap_fm
         )
@@ -637,37 +639,6 @@ def validate_tool_coherence(
             )
 
     return errors, passes
-
-
-def load_capability_data(skill_root: str) -> dict[str, dict | None]:
-    """Load every ``capabilities/**/capability.md`` frontmatter once.
-
-    Returns a mapping from absolute path to frontmatter dict (or
-    ``None`` when the file is unreadable or has no frontmatter).
-    Parse errors are kept as a dict carrying ``_parse_error`` so
-    callers can decide whether to skip or surface them — matches the
-    contract of :func:`load_frontmatter`.
-
-    Single discovery pass: ``aggregate_capability_allowed_tools``,
-    ``validate_tool_coherence``, and the skill-only-fields walk in
-    ``validate_skill.py`` all consume from one dict instead of
-    re-reading the same file three times.  Callers that hold a
-    ``capability_data`` dict pass it through to keep I/O O(1) per
-    file even as new rules land on the same data.
-    """
-    result: dict[str, dict | None] = {}
-    capability_glob = os.path.join(
-        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
-    )
-    for path in sorted(glob.glob(capability_glob, recursive=True)):
-        abs_path = os.path.abspath(path)
-        try:
-            fm, _, _ = load_frontmatter(path)
-        except (OSError, UnicodeDecodeError):
-            result[abs_path] = None
-            continue
-        result[abs_path] = fm
-    return result
 
 
 def _effective_tokens_from_fm(
@@ -749,7 +720,7 @@ def aggregate_capability_allowed_tools(
     skill_root: str,
     parent_frontmatter: dict | None,
     *,
-    capability_data: dict[str, dict | None] | None = None,
+    capability_data: dict[str, CapabilityRecord] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Validate parent ``allowed-tools`` as a superset of the union of
     capability-declared ``allowed-tools``.
@@ -806,8 +777,10 @@ def aggregate_capability_allowed_tools(
     declared_by: dict[str, list[str]] = {}
     capabilities_with_field = 0
     silent_capability_paths: list[str] = []
-    for abs_path, fm in sorted(capability_data.items()):
-        tokens, has_field, _is_empty = _effective_tokens_from_fm(fm)
+    for abs_path, record in sorted(capability_data.items()):
+        tokens, has_field, _is_empty = _effective_tokens_from_fm(
+            record.frontmatter
+        )
         if not has_field:
             silent_capability_paths.append(abs_path)
             continue
