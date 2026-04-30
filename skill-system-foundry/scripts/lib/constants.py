@@ -583,7 +583,8 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
 del _allowed_tools, _catalogs, _claude_code_catalog, _fence_languages
-del _capability_frontmatter
+del _capability_frontmatter, _raw_skill_only_fields
+del _normalized_skill_only_fields, _seen_skill_only_fields
 del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _orphan_refs, _raw_allowed_orphans, _normalized_orphans
