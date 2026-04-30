@@ -786,19 +786,23 @@ def aggregate_capability_allowed_tools(
 
     declared_by: dict[str, list[str]] = {}
     capabilities_with_field = 0
-    # Every capability path the rule can scan for body signals — both
-    # silent-on-``allowed-tools`` and declaring-its-own forms.  A
-    # capability that declares its own set but forgot to include a
-    # tool its body genuinely uses is a coherence FAIL (the per-file
-    # check fires), and the parent-unused INFO below should still
-    # suppress on that body signal so the two findings don't
-    # contradict ("X unused" + "X needed by capability Y").
-    all_capability_paths: list[str] = []
+    # Capability paths to scan for body signals when suppressing the
+    # parent-unused INFO.  Includes silent-on-``allowed-tools`` paths
+    # (they inherit the parent set, so a fence is a real signal) and
+    # declaring paths (a fence the capability forgot to declare is a
+    # coherence FAIL on its own; suppressing the INFO avoids two
+    # contradictory messages about the same token).  *Excludes*
+    # explicit-empty capabilities: ``allowed-tools: ""`` is documented
+    # as opting the capability out of local fence semantics, so a
+    # docs-only fence in such a capability is not evidence the parent
+    # actually needs the tool.
+    signal_capability_paths: list[str] = []
     for abs_path, record in sorted(capability_data.items()):
-        all_capability_paths.append(abs_path)
-        tokens, has_field, _is_empty = _effective_tokens_from_fm(
+        tokens, has_field, is_empty = _effective_tokens_from_fm(
             record.frontmatter
         )
+        if not is_empty:
+            signal_capability_paths.append(abs_path)
         if not has_field:
             continue
         capabilities_with_field += 1
@@ -866,7 +870,7 @@ def aggregate_capability_allowed_tools(
         if languages and os.path.isfile(skill_md):
             signaled_by_parent = _file_has_fence_in_languages(skill_md, languages)
         if not signaled_by_parent and languages:
-            for cap_path in all_capability_paths:
+            for cap_path in signal_capability_paths:
                 if _file_has_fence_in_languages(cap_path, languages):
                     signaled_by_parent = True
                     break

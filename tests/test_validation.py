@@ -1286,6 +1286,31 @@ class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
         infos = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(infos, [])
 
+    def test_explicit_empty_capability_fence_does_not_suppress_info(
+        self,
+    ) -> None:
+        # ``allowed-tools: ""`` opts the capability out of local fence
+        # semantics; a Bash fence in such a capability is docs-only
+        # and must not be treated as evidence the parent needs Bash.
+        # The parent-unused INFO should fire so over-permissioning
+        # surfaces.  A second declaring capability provides the
+        # union so the rule actually runs (capabilities_with_field>0).
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(
+            self.skill_dir, "alpha",
+            allowed_tools='""',
+            body=_bash_fence_body(),
+        )
+        write_capability_md(
+            self.skill_dir, "beta", allowed_tools="Read",
+        )
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("Bash", infos[0])
+
     def test_capability_parse_error_skipped(self) -> None:
         # Malformed capability frontmatter must not crash the rule.
         write_skill_md(self.skill_dir, allowed_tools="Read")
