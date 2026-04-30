@@ -4,14 +4,14 @@ description: >
   <Description of what this capability does and when to use it.
   Max 1024 characters. Be specific about contexts, keywords, and use cases.
   Third-person voice recommended (foundry convention).>
-# allowed-tools: <optional, space-delimited harness tools needed by THIS
+# allowed-tools: optional, space-delimited harness tools needed by THIS
 #   capability — e.g. "Bash Read".  The foundry uses bottom-up
 #   aggregation: the parent SKILL.md must be a superset of the union of
 #   capability-declared sets.  Declaring per-capability tools enables
 #   precise validation and makes future tool surface changes
 #   self-documenting.  Skill-wide fields (license, compatibility,
 #   metadata.author/version/spec) belong only on the parent SKILL.md;
-#   declaring them here triggers an INFO redirect.>
+#   declaring them here triggers an INFO redirect.
 ---
 # <Capability Name>
 <!-- TEMPLATE GUIDE: Save this file as `capability.md` inside the capability
