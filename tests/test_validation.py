@@ -1500,6 +1500,26 @@ class ValidateToolCoherencePerFileTests(unittest.TestCase):
         fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fails, [])
 
+    def test_offending_paths_use_forward_slashes(self) -> None:
+        # FAIL messages must cite capability paths with forward
+        # slashes regardless of platform — Windows ``os.sep`` is the
+        # backslash, which would otherwise leak into output and break
+        # cross-platform-deterministic test assertions.
+        write_skill_md(self.skill_dir, body="# Skill\n\nplain body\n")
+        write_capability_md(
+            self.skill_dir, "alpha", body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "no allowed-tools"},
+        )
+        fence_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "fence(s) found in" in e
+        ]
+        self.assertEqual(len(fence_fails), 1)
+        self.assertIn("capabilities/alpha/capability.md", fence_fails[0])
+        self.assertNotIn("capabilities\\alpha", fence_fails[0])
+
     def test_capability_declared_does_not_cover_parent_fence(self) -> None:
         # Capability declares Bash; SKILL.md has a Bash fence; parent
         # does not declare Bash → FAIL on the parent file (the

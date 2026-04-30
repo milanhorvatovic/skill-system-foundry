@@ -616,7 +616,9 @@ def validate_tool_coherence(
             if tool_name in declared:
                 continue
             if _file_has_fence_in_languages(path, languages):
-                offending.append(os.path.relpath(path, skill_root))
+                offending.append(
+                    os.path.relpath(path, skill_root).replace(os.sep, "/")
+                )
         if offending:
             errors.append(
                 f"{LEVEL_FAIL}: [foundry] '{tool_name}' fence(s) found in "
