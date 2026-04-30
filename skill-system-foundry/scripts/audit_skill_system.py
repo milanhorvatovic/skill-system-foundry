@@ -398,12 +398,33 @@ def audit_skill_system(
     # consumes a per-skill sub-dict; the per-capability loop below
     # consumes the full dict.  Net: one read per ``capability.md``
     # regardless of how many audit rules touch it.
+    #
+    # Two sources feed the dict so it stays exhaustive over the
+    # ``capabilities`` list ``find_skill_dirs`` returns: registered
+    # skills (the bulk path) and orphan capability-only directories
+    # — ``skills/<name>/capabilities/<cap>/`` where the parent has no
+    # ``SKILL.md``.  ``find_skill_dirs`` surfaces the latter for the
+    # capability-isolation rule, so the lookup below must cover them
+    # too.
     system_capability_data: dict[str, CapabilityRecord] = {}
     per_skill_capability_data: dict[str, dict[str, CapabilityRecord]] = {}
     for skill in registered_skills:
         sub = load_capability_data(skill["path"])
         per_skill_capability_data[skill["path"]] = sub
         system_capability_data.update(sub)
+    for cap in capabilities:
+        cap_md_abs = os.path.abspath(
+            os.path.join(cap["path"], FILE_CAPABILITY_MD)
+        )
+        if cap_md_abs in system_capability_data:
+            continue
+        try:
+            fm, _, cap_scalar_findings = load_frontmatter(cap_md_abs)
+        except (OSError, UnicodeDecodeError):
+            fm, cap_scalar_findings = None, []
+        system_capability_data[cap_md_abs] = CapabilityRecord(
+            fm, cap_scalar_findings,
+        )
 
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
@@ -529,16 +550,10 @@ def audit_skill_system(
 
     for cap in capabilities:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
-        # Audit-wide discovery pass populated this record; fall back
-        # to a fresh read only when a capability path was discovered
-        # outside the per-skill walk (a defensive guard — under the
-        # current ``find_skill_dirs`` contract every capability lives
-        # under a registered skill so the ``or`` branch should not
-        # fire in practice).
-        cap_record = system_capability_data.get(os.path.abspath(cap_md))
-        if cap_record is None:
-            fm_freshly, _, scalar_findings_freshly = load_frontmatter(cap_md)
-            cap_record = CapabilityRecord(fm_freshly, scalar_findings_freshly)
+        # Audit-wide discovery pass populated this record (covering
+        # both registered-skill and orphan-capability paths above), so
+        # the lookup is unconditional — no fallback needed.
+        cap_record = system_capability_data[os.path.abspath(cap_md)]
         fm = cap_record.frontmatter
         scalar_findings = cap_record.scalar_findings
         if fm and "_parse_error" in fm:
