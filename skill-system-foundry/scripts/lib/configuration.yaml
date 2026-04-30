@@ -98,8 +98,19 @@ skill:
     # with their own bucket shape when convenient.
     catalogs:
       claude_code:
-        # Source: https://code.claude.com/docs/en/skills
-        # Last checked: 2026-04-26
+        # Provenance for the canonical upstream source of truth.  The
+        # ``source_url`` is the page consumed by the
+        # ``tool-catalog-drift`` workflow at
+        # ``.github/workflows/tool-catalog-drift.yaml`` (helper at
+        # ``.github/scripts/tool_catalog_drift.py``).  ``last_checked``
+        # is rewritten by the helper on every successful run, whether
+        # or not drift was detected, so the YAML diff alone tells you
+        # when the catalog was last reconciled with upstream.  These
+        # values were comments before #118 promoted them to structured
+        # YAML so the drift helper has a single source of truth.
+        provenance:
+          source_url: https://code.claude.com/docs/en/tools-reference.md
+          last_checked: "2026-05-01"
         harness_tools:
           - Bash
           - Read
