@@ -3794,6 +3794,31 @@ class CapabilityAggregationIntegrationTests(unittest.TestCase):
         ]
         self.assertEqual(agg_fails, [])
 
+    def test_skill_only_field_in_nested_capability_emits_info(self) -> None:
+        # The skill-only-fields walk must be recursive — matches the
+        # aggregation rule and the audit's discovery walk.  A nested
+        # capability declaring license still triggers the redirect.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            nested = os.path.join(
+                skill_dir,
+                "capabilities", "outer", "capabilities", "inner",
+            )
+            os.makedirs(nested)
+            with open(
+                os.path.join(nested, "capability.md"), "w", encoding="utf-8",
+            ) as fh:
+                fh.write("---\nlicense: MIT\n---\n\n# Inner\n")
+            errors, _ = validate_skill(skill_dir)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "capabilities/outer/capabilities/inner/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
     def test_clean_aggregation_passes_through(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")

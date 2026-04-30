@@ -484,6 +484,12 @@ def audit_skill_system(
         # raw finding format is ``LEVEL: [foundry] message``; the audit
         # injects the skill name *after* the foundry tag so the prefix
         # stays left-aligned and consistent with other tagged findings.
+        # Skill-root mode (top-level SKILL.md, no skills/ directory)
+        # has an empty registered_skills list, so this loop does not
+        # fire there \u2014 by design, matching the policy that most
+        # per-skill rules iterate only the deployed-system layout.
+        # Use ``validate_skill.py --foundry-self`` for the skill-root
+        # equivalent self-check.
         agg_errors, _ = aggregate_capability_allowed_tools(skill["path"], fm)
         for finding in agg_errors:
             level, _, detail = finding.partition(": ")

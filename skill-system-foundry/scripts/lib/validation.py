@@ -729,8 +729,10 @@ def aggregate_capability_allowed_tools(
       simply has a partial set — the per-capability attribution
       tells the author exactly which capability needs the tool.
     - **INFO** per tool: parent declares a tool no capability declares
-      and the SKILL.md body has no fence/``scripts/`` signal for it
-      either, suggesting the tool may be unused.
+      in its own frontmatter and no file inheriting the parent set
+      (SKILL.md, or a capability silent on ``allowed-tools``) signals
+      a need via fence-language or ``scripts/`` directory presence.
+      Suggests the tool may be unused — verify or remove.
 
     Set semantics: ``parse_allowed_tools_tokens`` strips
     ``(...)`` arguments, so ``Bash(git:*)`` declared in a capability
@@ -765,9 +767,11 @@ def aggregate_capability_allowed_tools(
 
     declared_by: dict[str, list[str]] = {}
     capabilities_with_field = 0
+    silent_capability_paths: list[str] = []
     for path in capability_paths:
         tokens, has_field, _is_empty = _capability_effective_tokens(path)
         if not has_field:
+            silent_capability_paths.append(path)
             continue
         capabilities_with_field += 1
         rel = os.path.relpath(path, skill_root).replace(os.sep, "/")
@@ -812,10 +816,6 @@ def aggregate_capability_allowed_tools(
     # actively relies on, breaking coherence on the next run.
     skill_md = os.path.join(skill_root, FILE_SKILL_MD)
     has_scripts_dir = os.path.isdir(os.path.join(skill_root, DIR_SCRIPTS))
-    silent_capability_paths = [
-        path for path in capability_paths
-        if not _capability_effective_tokens(path)[1]
-    ]
     for token in sorted(parent_declared - union):
         languages = TOOL_FENCE_LANGUAGES.get(token)
         signaled_by_parent = False

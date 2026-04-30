@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import glob
 import sys
 import os
 
@@ -637,27 +638,28 @@ def validate_skill(
     passes.extend(agg_passes)
 
     # Per-capability skill-only-fields INFO redirect.  Walks every
-    # ``capabilities/<name>/capability.md`` and emits an INFO when the
-    # capability declares a field whose authoritative home is the
-    # parent SKILL.md (license, compatibility, metadata.*).
-    capabilities_root = os.path.join(skill_path, DIR_CAPABILITIES)
-    if os.path.isdir(capabilities_root):
-        for cap_name in sorted(os.listdir(capabilities_root)):
-            cap_dir = os.path.join(capabilities_root, cap_name)
-            cap_md = os.path.join(cap_dir, FILE_CAPABILITY_MD)
-            if not os.path.isfile(cap_md):
-                continue
-            cap_fm, _, _ = load_frontmatter(cap_md)
-            if cap_fm and "_parse_error" in cap_fm:
-                # Parse error already surfaces via the audit / capability
-                # validator paths; skip silently here to avoid double-FAIL.
-                continue
-            cap_rel = os.path.relpath(cap_md, skill_path).replace(os.sep, "/")
-            sof_errors, sof_passes = validate_capability_skill_only_fields(
-                cap_fm, cap_rel,
-            )
-            errors.extend(sof_errors)
-            passes.extend(sof_passes)
+    # ``capabilities/**/capability.md`` recursively — matches the
+    # aggregation rule and the audit's ``find_skill_dirs`` discovery
+    # walk so all three rules agree on which capability files
+    # contribute findings.  Nested capabilities are themselves a
+    # separate FAIL in the audit's nesting-depth rule, but if a
+    # nested capability does exist and declares a skill-only field,
+    # the redirect still fires here.
+    capability_glob = os.path.join(
+        skill_path, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
+    )
+    for cap_md in sorted(glob.glob(capability_glob, recursive=True)):
+        cap_fm, _, _ = load_frontmatter(cap_md)
+        if cap_fm and "_parse_error" in cap_fm:
+            # Parse error already surfaces via the audit / capability
+            # validator paths; skip silently here to avoid double-FAIL.
+            continue
+        cap_rel = os.path.relpath(cap_md, skill_path).replace(os.sep, "/")
+        sof_errors, sof_passes = validate_capability_skill_only_fields(
+            cap_fm, cap_rel,
+        )
+        errors.extend(sof_errors)
+        passes.extend(sof_passes)
 
     # Orphan-reference rule — flag files under references/ that no
     # SKILL.md or capability.md reaches via the configured body
