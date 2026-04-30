@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import glob
 import sys
 import os
 
@@ -39,6 +38,7 @@ from lib.validation import (
     validate_tool_coherence,
     aggregate_capability_allowed_tools,
     validate_capability_skill_only_fields,
+    load_capability_data,
 )
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
@@ -618,11 +618,20 @@ def validate_skill(
     errors.extend(codex_errors)
     passes.extend(codex_passes)
 
+    # Single discovery pass — read every ``capabilities/**/capability.md``
+    # frontmatter once and share the result across the three rules
+    # that consume it (coherence per-file effective set, aggregation
+    # union, skill-only-fields walk).  Avoids re-reading the same
+    # files three times in a single validation run.
+    capability_data = load_capability_data(skill_path)
+
     # Tool coherence — fence and `scripts/` signals must match
     # ``allowed-tools``.  Top-level peer call (not nested under the
     # `allowed-tools` conditional) so the rule fires even when the
     # frontmatter omits the field entirely.
-    coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
+    coh_errors, coh_passes = validate_tool_coherence(
+        skill_path, frontmatter, capability_data=capability_data,
+    )
     errors.extend(coh_errors)
     passes.extend(coh_passes)
 
@@ -632,24 +641,18 @@ def validate_skill(
     # fence/scripts signals, aggregation catches frontmatter
     # declarations.
     agg_errors, agg_passes = aggregate_capability_allowed_tools(
-        skill_path, frontmatter,
+        skill_path, frontmatter, capability_data=capability_data,
     )
     errors.extend(agg_errors)
     passes.extend(agg_passes)
 
-    # Per-capability skill-only-fields INFO redirect.  Walks every
-    # ``capabilities/**/capability.md`` recursively — matches the
-    # aggregation rule and the audit's ``find_skill_dirs`` discovery
-    # walk so all three rules agree on which capability files
-    # contribute findings.  Nested capabilities are themselves a
-    # separate FAIL in the audit's nesting-depth rule, but if a
-    # nested capability does exist and declares a skill-only field,
-    # the redirect still fires here.
-    capability_glob = os.path.join(
-        skill_path, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
-    )
-    for cap_md in sorted(glob.glob(capability_glob, recursive=True)):
-        cap_fm, _, _ = load_frontmatter(cap_md)
+    # Per-capability skill-only-fields INFO redirect.  Iterates the
+    # discovery dict above so all three rules agree on which
+    # capability files contribute findings.  Nested capabilities are
+    # themselves a separate FAIL in the audit's nesting-depth rule,
+    # but if a nested capability does exist and declares a
+    # skill-only field, the redirect still fires here.
+    for cap_md, cap_fm in sorted(capability_data.items()):
         if cap_fm and "_parse_error" in cap_fm:
             # Parse error already surfaces via the audit / capability
             # validator paths; skip silently here to avoid double-FAIL.

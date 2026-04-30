@@ -88,6 +88,7 @@ from lib.validation import (
     validate_description_triggers,
     aggregate_capability_allowed_tools,
     validate_capability_skill_only_fields,
+    load_capability_data,
 )
 
 
@@ -490,7 +491,13 @@ def audit_skill_system(
         # per-skill rules iterate only the deployed-system layout.
         # Use ``validate_skill.py --foundry-self`` for the skill-root
         # equivalent self-check.
-        agg_errors, _ = aggregate_capability_allowed_tools(skill["path"], fm)
+        # Single discovery pass per skill — keeps the aggregation rule
+        # at one read per ``capability.md`` even as future rules land
+        # on the same data.
+        skill_capability_data = load_capability_data(skill["path"])
+        agg_errors, _ = aggregate_capability_allowed_tools(
+            skill["path"], fm, capability_data=skill_capability_data,
+        )
         for finding in agg_errors:
             level, _, detail = finding.partition(": ")
             tag_prefix = "[foundry] "

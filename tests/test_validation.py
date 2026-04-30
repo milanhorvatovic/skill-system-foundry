@@ -1161,14 +1161,32 @@ class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
     # --- INFO path (parent unused) ---
 
     def test_parent_unused_tool_emits_info(self) -> None:
+        # Bash IS observable (fence-language entry defined) so a
+        # parent-declared Bash that no capability declares — and that
+        # has no Bash fence in SKILL.md and no scripts/ directory —
+        # genuinely fires the parent-unused INFO.
         write_skill_md(self.skill_dir, allowed_tools="Bash Read")
-        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Read")
         errors, _ = aggregate_capability_allowed_tools(
             self.skill_dir, {"allowed-tools": "Bash Read"},
         )
         infos = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(infos), 1)
-        self.assertIn("Read", infos[0])
+        self.assertIn("Bash", infos[0])
+
+    def test_parent_unused_no_signal_mechanism_suppressed(self) -> None:
+        # ``Read`` has no fence-language entry and is not a
+        # scripts_dir_indicator — the validator has no observable
+        # basis to flag it.  Even when no capability declares it, the
+        # INFO must NOT fire (would otherwise be a false positive
+        # against any genuine SKILL.md-body use of the tool).
+        write_skill_md(self.skill_dir, allowed_tools="Read Write")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Write")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Read Write"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
 
     def test_parent_unused_tool_with_signal_silenced(self) -> None:
         # When SKILL.md body has a Bash fence, the INFO for "Bash

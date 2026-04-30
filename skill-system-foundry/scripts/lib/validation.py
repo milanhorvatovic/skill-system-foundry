@@ -485,7 +485,10 @@ def validate_known_keys(frontmatter: object) -> tuple[list[str], list[str]]:
 
 
 def validate_tool_coherence(
-    skill_root: str, frontmatter: dict | None,
+    skill_root: str,
+    frontmatter: dict | None,
+    *,
+    capability_data: dict[str, dict | None] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check that fence-language and `scripts/` signals match `allowed-tools`.
 
@@ -563,6 +566,8 @@ def validate_tool_coherence(
     has_scripts_dir = os.path.isdir(
         os.path.join(skill_root, DIR_SCRIPTS)
     )
+    if capability_data is None:
+        capability_data = load_capability_data(skill_root)
 
     # Build per-file (declared_set, explicit_empty) once.  Capabilities
     # may declare their own ``allowed-tools``; if silent they inherit
@@ -572,8 +577,9 @@ def validate_tool_coherence(
         if os.path.abspath(path) == os.path.abspath(skill_md):
             file_effective[path] = (parent_declared, parent_explicit_empty)
             continue
-        cap_declared, cap_has_field, cap_empty = _capability_effective_tokens(
-            path
+        cap_fm = capability_data.get(os.path.abspath(path))
+        cap_declared, cap_has_field, cap_empty = _effective_tokens_from_fm(
+            cap_fm
         )
         if cap_has_field:
             file_effective[path] = (cap_declared, cap_empty)
@@ -633,23 +639,50 @@ def validate_tool_coherence(
     return errors, passes
 
 
-def _capability_effective_tokens(
-    capability_md_path: str,
-) -> tuple[set[str], bool, bool]:
-    """Return ``(declared_tokens, has_field, is_explicit_empty)``.
+def load_capability_data(skill_root: str) -> dict[str, dict | None]:
+    """Load every ``capabilities/**/capability.md`` frontmatter once.
 
-    Loads the capability's frontmatter once and reports whether the
-    file declares its own ``allowed-tools`` (``has_field``), the
-    parsed bare-token set, and whether the value is an explicit-empty
-    declaration.  Returns ``(set(), False, False)`` for unreadable
-    files or capabilities without frontmatter — callers fall back to
-    the parent's declared set in that case.
+    Returns a mapping from absolute path to frontmatter dict (or
+    ``None`` when the file is unreadable or has no frontmatter).
+    Parse errors are kept as a dict carrying ``_parse_error`` so
+    callers can decide whether to skip or surface them — matches the
+    contract of :func:`load_frontmatter`.
+
+    Single discovery pass: ``aggregate_capability_allowed_tools``,
+    ``validate_tool_coherence``, and the skill-only-fields walk in
+    ``validate_skill.py`` all consume from one dict instead of
+    re-reading the same file three times.  Callers that hold a
+    ``capability_data`` dict pass it through to keep I/O O(1) per
+    file even as new rules land on the same data.
     """
-    try:
-        fm, _, _ = load_frontmatter(capability_md_path)
-    except (OSError, UnicodeDecodeError):
-        return set(), False, False
+    result: dict[str, dict | None] = {}
+    capability_glob = os.path.join(
+        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
+    )
+    for path in sorted(glob.glob(capability_glob, recursive=True)):
+        abs_path = os.path.abspath(path)
+        try:
+            fm, _, _ = load_frontmatter(path)
+        except (OSError, UnicodeDecodeError):
+            result[abs_path] = None
+            continue
+        result[abs_path] = fm
+    return result
+
+
+def _effective_tokens_from_fm(
+    fm: dict | None,
+) -> tuple[set[str], bool, bool]:
+    """Pure derivation of ``(declared_tokens, has_field, is_explicit_empty)``
+    from a pre-loaded frontmatter dict.
+
+    Treats ``None``, non-dict, parse-error, and ``allowed-tools``-absent
+    inputs uniformly as "silent" (returns ``(set(), False, False)``) —
+    callers fall back to the parent's declared set in that case.
+    """
     if not isinstance(fm, dict) or "allowed-tools" not in fm:
+        return set(), False, False
+    if "_parse_error" in fm:
         return set(), False, False
     raw = fm["allowed-tools"]
     return (
@@ -713,7 +746,10 @@ def _file_has_fence_in_languages(
 
 
 def aggregate_capability_allowed_tools(
-    skill_root: str, parent_frontmatter: dict | None,
+    skill_root: str,
+    parent_frontmatter: dict | None,
+    *,
+    capability_data: dict[str, dict | None] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Validate parent ``allowed-tools`` as a superset of the union of
     capability-declared ``allowed-tools``.
@@ -756,25 +792,27 @@ def aggregate_capability_allowed_tools(
         else set()
     )
 
-    # Recursive glob matches ``_gather_in_scope_files`` — nested
-    # capabilities are a separate FAIL in the audit's nesting-depth
-    # rule, but the aggregation rule must still see them so the two
-    # rules cannot drift on which files contribute to the union.
-    capability_glob = os.path.join(
-        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
-    )
-    capability_paths = sorted(glob.glob(capability_glob, recursive=True))
+    # Single discovery pass: ``load_capability_data`` matches the
+    # recursive glob in ``_gather_in_scope_files`` so the aggregation
+    # rule and the coherence rule cannot drift on which files
+    # contribute to the union.  Nested capabilities are themselves a
+    # separate FAIL in the audit's nesting-depth rule but their
+    # ``allowed-tools`` declarations still feed the aggregation set
+    # — drift between the two rules would silently mis-attribute
+    # tools.
+    if capability_data is None:
+        capability_data = load_capability_data(skill_root)
 
     declared_by: dict[str, list[str]] = {}
     capabilities_with_field = 0
     silent_capability_paths: list[str] = []
-    for path in capability_paths:
-        tokens, has_field, _is_empty = _capability_effective_tokens(path)
+    for abs_path, fm in sorted(capability_data.items()):
+        tokens, has_field, _is_empty = _effective_tokens_from_fm(fm)
         if not has_field:
-            silent_capability_paths.append(path)
+            silent_capability_paths.append(abs_path)
             continue
         capabilities_with_field += 1
-        rel = os.path.relpath(path, skill_root).replace(os.sep, "/")
+        rel = os.path.relpath(abs_path, skill_root).replace(os.sep, "/")
         for token in tokens:
             declared_by.setdefault(token, []).append(rel)
 
@@ -805,19 +843,34 @@ def aggregate_capability_allowed_tools(
             f"({len(declared_by[token])} capability declaration(s))"
         )
 
-    # INFO — parent declares tools no capability declares.  Suppress
-    # the INFO when *any* file inheriting the parent's declared set
-    # actually signals a need for the tool: a fence in SKILL.md, a
-    # fence in a capability that is silent on ``allowed-tools`` (and
-    # therefore inherits the parent set), or a top-level ``scripts/``
-    # directory for tools flagged as script-presence indicators.
-    # Without the silent-capability scan the INFO would suggest
-    # removing a parent-declared tool that a fallback capability
-    # actively relies on, breaking coherence on the next run.
+    # INFO — parent declares tools no capability declares.  The rule
+    # only fires for tokens the validator can *observe*: tokens with a
+    # fence-language entry (``Bash`` today) or a
+    # ``scripts_dir_indicator`` flag.  Tokens with no observation
+    # mechanism (``Read`` / ``Write`` / ``Edit`` / ``Glob`` / ``Grep``
+    # / ``WebFetch``) are silently suppressed because we have no
+    # principled basis to flag them — the SKILL.md body might
+    # genuinely need the tool and there is no fence to confirm.
+    # Adding a new fence-language entry to YAML automatically extends
+    # this rule; no parallel allow-list to keep in sync.
+    #
+    # Among observable tokens, suppress the INFO when *any* file
+    # inheriting the parent's declared set actually signals a need:
+    # a fence in SKILL.md, a fence in a capability that is silent on
+    # ``allowed-tools`` (and therefore inherits the parent set), or a
+    # top-level ``scripts/`` directory for tools flagged as
+    # script-presence indicators.  Without the silent-capability scan
+    # the INFO would suggest removing a parent-declared tool that a
+    # fallback capability actively relies on, breaking coherence on
+    # the next run.
     skill_md = os.path.join(skill_root, FILE_SKILL_MD)
     has_scripts_dir = os.path.isdir(os.path.join(skill_root, DIR_SCRIPTS))
     for token in sorted(parent_declared - union):
         languages = TOOL_FENCE_LANGUAGES.get(token)
+        is_script_indicator = token in TOOLS_INDICATING_SCRIPTS
+        if not languages and not is_script_indicator:
+            # No observation mechanism — never speculate.
+            continue
         signaled_by_parent = False
         if languages and os.path.isfile(skill_md):
             signaled_by_parent = _file_has_fence_in_languages(skill_md, languages)
@@ -829,7 +882,7 @@ def aggregate_capability_allowed_tools(
         if (
             not signaled_by_parent
             and has_scripts_dir
-            and token in TOOLS_INDICATING_SCRIPTS
+            and is_script_indicator
         ):
             signaled_by_parent = True
         if signaled_by_parent:
