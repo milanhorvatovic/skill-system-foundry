@@ -1,3 +1,7 @@
+---
+allowed-tools: Bash Read
+---
+
 # Bundling
 
 Package a skill as a self-contained zip bundle for distribution. The archive packages exactly one skill directory, preserves its internal layout, and excludes large or non-essential assets not required at runtime (patterns defined in [configuration.yaml](scripts/lib/configuration.yaml)).

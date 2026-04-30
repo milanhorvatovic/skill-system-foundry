@@ -29,11 +29,15 @@ The audit runs in two modes:
 * **Skill-root mode** — <system-root> contains SKILL.md directly,
   i.e., it is itself a skill (typically the foundry meta-skill or any
   integrator-built meta-skill).  In this mode the top-level SKILL.md
-  is audited by the router-table consistency rule only; checks that
-  iterate discovered skills (spec compliance, dependency direction,
-  shared resources, capability entry naming, etc.) walk skills/<name>/
-  and do not treat the top-level skill as a discovered skill unless a
-  skills/ directory is also present.
+  is audited by the rules whose scope is structural consistency
+  between a parent SKILL.md and its capabilities — today the
+  router-table consistency rule, the orphan-references rule, the
+  bottom-up ``allowed-tools`` aggregation rule, and the per-capability
+  skill-only-fields redirect.  Other checks that iterate discovered
+  skills (spec compliance, dependency direction, shared resources,
+  capability entry naming, etc.) walk skills/<name>/ and do not treat
+  the top-level skill as a discovered skill unless a skills/ directory
+  is also present.
 
 If neither mode applies (no skills/ and no top-level SKILL.md), the
 script runs a partial audit and emits a warning.
@@ -69,6 +73,9 @@ from lib.discovery import (
     find_router_audit_targets,
     check_line_count,
     read_file,
+    load_capability_data,
+    top_level_skill_entry,
+    CapabilityRecord,
 )
 from lib.constants import (
     ALLOWED_ORPHANS,
@@ -84,7 +91,12 @@ from lib.constants import (
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.router_table import audit_router_table
-from lib.validation import validate_description_triggers
+from lib.validation import (
+    validate_description_triggers,
+    aggregate_capability_allowed_tools,
+    validate_allowed_tools,
+    validate_capability_skill_only_fields,
+)
 
 
 def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
@@ -386,6 +398,90 @@ def audit_skill_system(
     registered_skills = [s for s in skills if s["type"] == "registered"]
     capabilities = [s for s in skills if s["type"] == "capability"]
 
+    # Aggregation targets — the rule fires per parent SKILL.md and is
+    # structural (parent must be a superset of capability declarations),
+    # so it belongs in the same category as router-table and
+    # orphan-references which already fire in both deployed-system and
+    # skill-root modes.  In skill-root mode the meta-skill sits at
+    # ``system_root`` itself rather than under ``skills/<name>/``, so
+    # ``find_skill_dirs`` does not surface it; ``top_level_skill_entry``
+    # supplies the synthetic entry whose ``name`` mirrors the
+    # SKILL.md frontmatter.
+    aggregation_targets: list[dict[str, str]] = list(registered_skills)
+    skill_root_entry = top_level_skill_entry(system_root)
+    if skill_root_entry is not None:
+        aggregation_targets.append(skill_root_entry)
+
+    # Capability-isolation targets — broader than ``capabilities``.
+    # ``find_skill_dirs`` does not surface
+    # ``<system_root>/capabilities/<cap>/`` in skill-root mode, so the
+    # capability-isolation loop (parse-error FAIL, scalar findings,
+    # "has full frontmatter" INFO, skill-only-fields redirect) would
+    # silently skip the top-level skill's own capabilities.  Synthesize
+    # entries for them here so the rule's coverage matches the
+    # aggregation rule that just gained skill-root coverage.  The
+    # *narrower* ``capabilities`` list still drives the
+    # dependency-direction and nesting-depth loops below — those rules
+    # produce false-positive FAILs on the foundry's own capability
+    # documentation (which explains ``roles/`` paths in prose), so
+    # they remain deployed-system-only by design.
+    capability_isolation_targets: list[dict[str, str]] = list(capabilities)
+    if skill_root_entry is not None:
+        top_caps_dir = os.path.join(system_root, DIR_CAPABILITIES)
+        if os.path.isdir(top_caps_dir):
+            for cap_name in sorted(os.listdir(top_caps_dir)):
+                cap_path = os.path.join(top_caps_dir, cap_name)
+                cap_entry = os.path.join(cap_path, FILE_CAPABILITY_MD)
+                if os.path.isdir(cap_path) and os.path.isfile(cap_entry):
+                    capability_isolation_targets.append({
+                        "name": cap_name,
+                        "path": cap_path,
+                        "type": "capability",
+                        "parent": skill_root_entry["name"],
+                    })
+
+    # Audit-wide capability discovery pass.  Reads each
+    # ``capability.md`` once and stores frontmatter + plain-scalar
+    # findings keyed by absolute path.  The aggregation loop consumes
+    # a per-target sub-dict; the per-capability loop below consumes the
+    # full dict.  Net: one read per ``capability.md`` regardless of how
+    # many audit rules touch it.
+    #
+    # Two sources feed the dict so it stays exhaustive over both
+    # the ``capabilities`` list ``find_skill_dirs`` returns and the
+    # ``aggregation_targets`` list above: aggregation targets (the bulk
+    # path — registered skills plus the top-level skill in skill-root
+    # mode) and orphan capability-only directories
+    # (``skills/<name>/capabilities/<cap>/`` where the parent has no
+    # ``SKILL.md``).  ``find_skill_dirs`` surfaces the latter for the
+    # capability-isolation rule, so the lookup below must cover them
+    # too.
+    system_capability_data: dict[str, CapabilityRecord] = {}
+    per_skill_capability_data: dict[str, dict[str, CapabilityRecord]] = {}
+    for skill in aggregation_targets:
+        sub = load_capability_data(skill["path"])
+        per_skill_capability_data[skill["path"]] = sub
+        system_capability_data.update(sub)
+    for cap in capabilities:
+        cap_md_abs = os.path.abspath(
+            os.path.join(cap["path"], FILE_CAPABILITY_MD)
+        )
+        if cap_md_abs in system_capability_data:
+            continue
+        try:
+            fm, _, cap_scalar_findings = load_frontmatter(cap_md_abs)
+        except (OSError, UnicodeDecodeError) as exc:
+            # Match ``load_capability_data``: surface I/O failures
+            # as a ``_parse_error`` record so the capability-isolation
+            # loop FAILs the file via its existing parse-error branch
+            # instead of silently skipping or deferring the crash to a
+            # later body-read site.
+            fm = {"_parse_error": f"unreadable: {exc}"}
+            cap_scalar_findings = []
+        system_capability_data[cap_md_abs] = CapabilityRecord(
+            fm, cap_scalar_findings,
+        )
+
     if verbose:
         print(f"Found: {len(registered_skills)} skills, {len(capabilities)} capabilities, "
               f"{len(roles)} roles")
@@ -475,13 +571,63 @@ def audit_skill_system(
         elif verbose:
             print(f"  \u2713 {skill['name']}: spec compliant ({body_lines} body lines)")
 
+    # --- Bottom-up allowed-tools aggregation ---
+    # Parent SKILL.md ``allowed-tools`` must be a superset of the
+    # union of capability-declared sets.  Iterates
+    # ``aggregation_targets`` so the rule fires in both
+    # deployed-system mode (registered skills under
+    # ``skills/<name>/``) and skill-root mode (a top-level
+    # SKILL.md).  Matches the scoping of the router-table and
+    # orphan-references rules \u2014 each is a structural consistency
+    # check between a parent SKILL.md and its capabilities, which
+    # makes both modes equally relevant.  The raw finding format is
+    # ``LEVEL: [foundry] message``; the audit injects the skill
+    # name after the foundry tag so the prefix stays left-aligned
+    # and consistent with other tagged findings.
+    if aggregation_targets and verbose:
+        print("\n== Allowed-Tools Aggregation ==")
+    for skill in aggregation_targets:
+        skill_md_path = os.path.join(skill["path"], FILE_SKILL_MD)
+        try:
+            agg_fm, _, _ = load_frontmatter(skill_md_path)
+        except (OSError, UnicodeDecodeError):
+            agg_fm = None
+        # Spec-compliance and router-table loops already FAIL on
+        # missing or unparseable parent frontmatter; aggregation
+        # can only run against a parsed dict, so skip silently
+        # here to avoid double-FAIL.
+        if agg_fm is None or "_parse_error" in agg_fm:
+            continue
+        agg_errors, _ = aggregate_capability_allowed_tools(
+            skill["path"], agg_fm,
+            capability_data=per_skill_capability_data[skill["path"]],
+        )
+        for finding in agg_errors:
+            level, _, detail = finding.partition(": ")
+            tag_prefix = "[foundry] "
+            if detail.startswith(tag_prefix):
+                detail = detail[len(tag_prefix):]
+                errors.append(
+                    f"{level}: [foundry] {skill['name']}: {detail}"
+                )
+            else:
+                errors.append(f"{level}: {skill['name']}: {detail}")
+        if not agg_errors and verbose:
+            print(f"  ✓ {skill['name']}: aggregation clean")
+
     # --- Capabilities should not be registered ---
     if verbose:
         print("\n== Capability Isolation ==")
 
-    for cap in capabilities:
+    for cap in capability_isolation_targets:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
-        fm, _, scalar_findings = load_frontmatter(cap_md)
+        # Audit-wide discovery pass populated this record (covering
+        # registered-skill capabilities, orphan capability-only
+        # directories, and top-level skill-root capabilities), so the
+        # lookup is unconditional — no fallback needed.
+        cap_record = system_capability_data[os.path.abspath(cap_md)]
+        fm = cap_record.frontmatter
+        scalar_findings = cap_record.scalar_findings
         if fm and "_parse_error" in fm:
             errors.append(
                 f"{LEVEL_FAIL}: {cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD} "
@@ -499,12 +645,47 @@ def audit_skill_system(
         elif verbose:
             print(f"  \u2713 {cap['parent']}/{cap['name']}: not registered")
 
+        cap_rel = (
+            f"{cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD}"
+        )
+
+        # Capability-scope ``allowed-tools`` validation.  Capability
+        # declarations are now authoritative input for aggregation
+        # and the per-file coherence check, so they need the same
+        # type/catalog diagnostics ``SKILL.md``'s ``allowed-tools``
+        # gets.  Without this loop a capability declaring
+        # ``allowed-tools: {bash: true}`` (a mapping) would
+        # contribute zero tokens to aggregation and pass the audit
+        # silently.  Findings are re-emitted with the capability
+        # path so attribution stays with the offending file.
+        if isinstance(fm, dict) and "allowed-tools" in fm:
+            at_errors, _ = validate_allowed_tools(fm["allowed-tools"])
+            for finding in at_errors:
+                level, _, detail = finding.partition(": ")
+                errors.append(f"{level}: {cap_rel} {detail}")
+
+        # Skill-only-fields INFO redirect \u2014 capability frontmatter must
+        # not duplicate fields whose authoritative home is the parent
+        # SKILL.md (license, compatibility, metadata.author/version/spec).
+        sof_errors, _ = validate_capability_skill_only_fields(fm, cap_rel)
+        errors.extend(sof_errors)
+
     # --- Dependency Direction ---
     if verbose:
         print("\n== Dependency Direction ==")
 
     for cap in capabilities:
-        content = read_file(os.path.join(cap["path"], FILE_CAPABILITY_MD))
+        cap_md_path = os.path.join(cap["path"], FILE_CAPABILITY_MD)
+        # Skip capabilities the discovery pass already marked
+        # unreadable (``_parse_error`` record).  The capability
+        # isolation loop above has already FAILed them; reading the
+        # body again here would re-crash on invalid UTF-8 or repeat
+        # the I/O error.
+        cap_record = system_capability_data.get(os.path.abspath(cap_md_path))
+        cap_fm = cap_record.frontmatter if cap_record is not None else None
+        if isinstance(cap_fm, dict) and "_parse_error" in cap_fm:
+            continue
+        content = read_file(cap_md_path)
         issues = check_upward_references(content, "capability")
         for level, issue in issues:
             errors.append(

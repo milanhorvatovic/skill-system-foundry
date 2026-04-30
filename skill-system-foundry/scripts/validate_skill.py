@@ -28,6 +28,7 @@ from lib.reporting import (
     print_summary,
     to_json_output,
 )
+from lib.discovery import load_capability_data
 from lib.validation import (
     validate_name,
     validate_allowed_tools,
@@ -36,6 +37,8 @@ from lib.validation import (
     validate_license,
     validate_known_keys,
     validate_tool_coherence,
+    aggregate_capability_allowed_tools,
+    validate_capability_skill_only_fields,
 )
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
@@ -508,6 +511,14 @@ def validate_skill(
                 f"{LEVEL_INFO}: [foundry] Capability has 'name' in frontmatter — this is fine for "
                 "documentation but won't be used for discovery"
             )
+        # Skill-only frontmatter fields (license, compatibility, metadata.*)
+        # — emit INFO redirect when a capability declares any of them.
+        cap_rel = os.path.relpath(skill_md, skill_root).replace(os.sep, "/")
+        sof_errors, sof_passes = validate_capability_skill_only_fields(
+            frontmatter, cap_rel,
+        )
+        errors.extend(sof_errors)
+        passes.extend(sof_passes)
         body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
         errors.extend(body_errors)
         passes.extend(body_passes)
@@ -607,13 +618,88 @@ def validate_skill(
     errors.extend(codex_errors)
     passes.extend(codex_passes)
 
+    # Single discovery pass — read every ``capabilities/**/capability.md``
+    # frontmatter once and share the result across the three rules
+    # that consume it (coherence per-file effective set, aggregation
+    # union, skill-only-fields walk).  Avoids re-reading the same
+    # files three times in a single validation run.
+    capability_data = load_capability_data(skill_path)
+
     # Tool coherence — fence and `scripts/` signals must match
     # ``allowed-tools``.  Top-level peer call (not nested under the
     # `allowed-tools` conditional) so the rule fires even when the
     # frontmatter omits the field entirely.
-    coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
+    coh_errors, coh_passes = validate_tool_coherence(
+        skill_path, frontmatter, capability_data=capability_data,
+    )
     errors.extend(coh_errors)
     passes.extend(coh_passes)
+
+    # Bottom-up aggregation — parent SKILL.md ``allowed-tools`` must be
+    # a superset of the union of capability-declared sets.  Layered on
+    # top of the per-file coherence check above: coherence catches
+    # fence/scripts signals, aggregation catches frontmatter
+    # declarations.
+    agg_errors, agg_passes = aggregate_capability_allowed_tools(
+        skill_path, frontmatter, capability_data=capability_data,
+    )
+    errors.extend(agg_errors)
+    passes.extend(agg_passes)
+
+    # Per-capability skill-only-fields INFO redirect.  Iterates the
+    # discovery dict above so all three rules agree on which
+    # capability files contribute findings.  Nested capabilities are
+    # themselves a separate FAIL in the audit's nesting-depth rule,
+    # but if a nested capability does exist and declares a
+    # skill-only field, the redirect still fires here.
+    for cap_md, record in sorted(capability_data.items()):
+        cap_fm = record.frontmatter
+        cap_rel = os.path.relpath(cap_md, skill_path).replace(os.sep, "/")
+        if cap_fm and "_parse_error" in cap_fm:
+            # Surface as a FAIL so ``validate_skill.py <parent>`` —
+            # the canonical skill-level validation entry point —
+            # catches malformed or unreadable capability frontmatter
+            # instead of silently skipping the file.  Without this the
+            # aggregation and skill-only-fields rules quietly drop the
+            # capability's contribution and the run still passes.
+            # Tagged ``[foundry]`` because ``capability.md`` (and
+            # therefore its frontmatter parse contract) is a foundry
+            # convention, not an Agent Skills spec requirement —
+            # matches how the audit's capability-isolation block
+            # emits its own findings.
+            errors.append(
+                f"{LEVEL_FAIL}: [foundry] {cap_rel} frontmatter parse error: "
+                f"{cap_fm['_parse_error']}"
+            )
+            continue
+        # Plain-scalar divergence findings from the YAML subset parser.
+        # Re-emit with the capability path so the parent run is
+        # consistent with the audit, which already surfaces these in
+        # its capability-isolation loop.  Without this loop a
+        # capability that uses ambiguous quoting would slip through
+        # ``validate_skill.py <parent>``.
+        for finding in record.scalar_findings:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {cap_rel} {detail}")
+        # Capability-scope ``allowed-tools`` validation.  Capability
+        # declarations are now authoritative input for aggregation and
+        # the per-file coherence check, so they need the same
+        # type/catalog diagnostics ``SKILL.md``'s ``allowed-tools``
+        # gets.  Without this loop a capability could declare
+        # ``allowed-tools: {bash: true}`` (a mapping), contribute zero
+        # tokens to aggregation, and pass the parent run silently.
+        # Findings are re-emitted with the capability path so
+        # attribution stays with the offending file.
+        if isinstance(cap_fm, dict) and "allowed-tools" in cap_fm:
+            at_errors, _ = validate_allowed_tools(cap_fm["allowed-tools"])
+            for finding in at_errors:
+                level, _, detail = finding.partition(": ")
+                errors.append(f"{level}: {cap_rel} {detail}")
+        sof_errors, sof_passes = validate_capability_skill_only_fields(
+            cap_fm, cap_rel,
+        )
+        errors.extend(sof_errors)
+        passes.extend(sof_passes)
 
     # Orphan-reference rule — flag files under references/ that no
     # SKILL.md or capability.md reaches via the configured body

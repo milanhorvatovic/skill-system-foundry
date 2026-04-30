@@ -167,6 +167,9 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      - MIT\n"
             "  recognized_subdirectories:\n"
             "    - scripts\n"
+            "  capability_frontmatter:\n"
+            "    skill_only_fields:\n"
+            "      - license\n"
             "plain_scalar:\n"
             "  indicators:\n"
             "    flow: x\n"
@@ -465,6 +468,32 @@ class ToolFenceLanguagesTests(unittest.TestCase):
         self.assertIsInstance(constants.TOOLS_INDICATING_SCRIPTS, frozenset)
 
 
+class CapabilitySkillOnlyFieldsTests(unittest.TestCase):
+    """``CAPABILITY_SKILL_ONLY_FIELDS`` shape and contents."""
+
+    def test_is_tuple(self) -> None:
+        self.assertIsInstance(constants.CAPABILITY_SKILL_ONLY_FIELDS, tuple)
+
+    def test_includes_top_level_fields(self) -> None:
+        self.assertIn("license", constants.CAPABILITY_SKILL_ONLY_FIELDS)
+        self.assertIn("compatibility", constants.CAPABILITY_SKILL_ONLY_FIELDS)
+
+    def test_includes_metadata_subfields(self) -> None:
+        self.assertIn(
+            "metadata.author", constants.CAPABILITY_SKILL_ONLY_FIELDS
+        )
+        self.assertIn(
+            "metadata.version", constants.CAPABILITY_SKILL_ONLY_FIELDS
+        )
+        self.assertIn(
+            "metadata.spec", constants.CAPABILITY_SKILL_ONLY_FIELDS
+        )
+
+    def test_entries_are_strings(self) -> None:
+        for field in constants.CAPABILITY_SKILL_ONLY_FIELDS:
+            self.assertIsInstance(field, str)
+
+
 class MissingSectionFailFastTests(unittest.TestCase):
     """Re-importing ``lib.constants`` against a config missing a
     required section raises ``RuntimeError`` at import time."""
@@ -648,6 +677,46 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 self._full_config_minus_nested("skill", "frontmatter_suggestions")
             )
         self.assertIn("frontmatter_suggestions", str(ctx.exception))
+
+    def test_missing_capability_frontmatter_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("skill", "capability_frontmatter")
+            )
+        self.assertIn("capability_frontmatter", str(ctx.exception))
+
+    def test_missing_skill_only_fields_raises(self) -> None:
+        # Removing the only child leaf below ``capability_frontmatter:``
+        # leaves the YAML key dangling, which the foundry's stdlib-only
+        # parser surfaces as a non-mapping value.  The shape check
+        # added in this branch fires first with a more actionable
+        # message naming the offending parent — that is the canonical
+        # failure mode for "skill_only_fields is missing" because the
+        # parent shape itself is the discriminator.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested(
+                    "capability_frontmatter", "skill_only_fields",
+                )
+            )
+        self.assertIn("capability_frontmatter", str(ctx.exception))
+
+    def test_capability_frontmatter_non_mapping_raises(self) -> None:
+        # A typo like ``capability_frontmatter: []`` would otherwise
+        # pass the ``"skill_only_fields" in _capability_frontmatter``
+        # check (lists support ``in`` for elements) and crash with a
+        # bare TypeError on the next subscript.  The shape check must
+        # raise a clear RuntimeError naming the offending key so the
+        # fail-fast contract holds for malformed scalars and lists.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "capability_frontmatter:\n    skill_only_fields:\n      - license\n      - compatibility\n      - metadata.author\n      - metadata.version\n      - metadata.spec",
+                    "capability_frontmatter: []",
+                )
+            )
+        self.assertIn("capability_frontmatter", str(ctx.exception))
+        self.assertIn("expected a mapping", str(ctx.exception))
 
     def _full_config_with_substitution(self, old: str, new: str) -> str:
         """Return configuration text with *old* replaced by *new* exactly once."""

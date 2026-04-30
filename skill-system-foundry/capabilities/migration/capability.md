@@ -1,3 +1,7 @@
+---
+allowed-tools: Bash Read Write Edit
+---
+
 # Migration
 
 Convert existing flat skill structures into the router+capabilities pattern. Consolidates duplicate logic, reduces discovery tokens, and establishes proper layering.

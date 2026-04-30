@@ -1,5 +1,6 @@
 """Component discovery: find skills and roles in a skill system."""
 
+import glob
 import os
 from typing import NamedTuple
 
@@ -90,14 +91,15 @@ def find_skill_dirs(system_root: str) -> list[dict[str, str]]:
     return skills
 
 
-def _top_level_skill_entry(system_root: str) -> dict[str, str] | None:
+def top_level_skill_entry(system_root: str) -> dict[str, str] | None:
     """Return a synthetic registered-skill entry when SKILL.md sits at *system_root*.
 
     Complements ``find_skill_dirs`` for the *skill-root mode* — auditing
     a single skill directory (the foundry meta-skill or any
     integrator-built meta-skill) without first deploying it under a
-    ``skills/`` tree.  Only consumed by ``find_router_audit_targets``;
-    promote to public when a second caller appears.
+    ``skills/`` tree.  Consumed by audit rules that fire in both
+    skill-root and deployed-system modes
+    (``find_router_audit_targets``, the aggregation rule).
 
     The returned ``name`` prefers the SKILL.md frontmatter ``name`` so
     findings are prefixed with the canonical skill name even when the
@@ -113,7 +115,11 @@ def _top_level_skill_entry(system_root: str) -> dict[str, str] | None:
     name = os.path.basename(os.path.abspath(system_root))
     try:
         fm, _, _ = load_frontmatter(skill_md)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # ``load_frontmatter`` opens with strict UTF-8 and reads.
+        # Catch both I/O errors and decode errors so the skill-root
+        # entry falls back to the basename instead of crashing the
+        # caller — matches the docstring's "unreadable" promise.
         fm = None
     if fm is not None and "_parse_error" not in fm:
         fm_name = fm.get("name")
@@ -176,7 +182,7 @@ def find_router_audit_targets(system_root: str) -> list[dict[str, str]]:
             "type": "registered",
         })
 
-    skill_root_entry = _top_level_skill_entry(system_root)
+    skill_root_entry = top_level_skill_entry(system_root)
     if skill_root_entry is not None:
         targets.append(skill_root_entry)
     elif os.path.isdir(os.path.join(system_root, DIR_CAPABILITIES)):
@@ -231,3 +237,61 @@ def read_file(filepath: str) -> str:
     """Read file content."""
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
+
+
+class CapabilityRecord(NamedTuple):
+    """Discovered ``capability.md`` payload — frontmatter dict (or
+    ``None`` for files without frontmatter) plus the plain-scalar
+    divergence findings emitted during YAML parsing.
+
+    Unreadable files (``OSError`` / ``UnicodeDecodeError``) are
+    represented as a frontmatter dict containing ``_parse_error``;
+    audit and validate paths branch on that sentinel to FAIL the file
+    rather than treating it the same as "frontmatter absent".  The
+    distinction matters: a missing frontmatter is silent by design,
+    while an unreadable file must surface as an actionable failure.
+
+    The pair is stored together so consumers that need both
+    (the audit's per-capability loop) and consumers that need only
+    the frontmatter (validation rules) can share one discovery pass.
+    """
+    frontmatter: dict | None
+    scalar_findings: list[str]
+
+
+def load_capability_data(skill_root: str) -> dict[str, CapabilityRecord]:
+    """Load every ``capabilities/**/capability.md`` payload once.
+
+    Returns a mapping from absolute path to :class:`CapabilityRecord`.
+    Parse errors are kept as a frontmatter dict carrying
+    ``_parse_error`` so callers can decide whether to skip or surface
+    them — matches the contract of :func:`load_frontmatter`.
+
+    Single discovery pass: ``aggregate_capability_allowed_tools``,
+    ``validate_tool_coherence``, the skill-only-fields walk in
+    ``validate_skill.py``, and the audit's per-capability loop all
+    consume from one dict instead of re-reading the same file
+    multiple times.  Callers that hold a ``capability_data`` dict
+    pass it through to keep I/O O(1) per file even as new rules
+    land on the same data.
+    """
+    result: dict[str, CapabilityRecord] = {}
+    capability_glob = os.path.join(
+        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
+    )
+    for path in sorted(glob.glob(capability_glob, recursive=True)):
+        abs_path = os.path.abspath(path)
+        try:
+            fm, _, scalar_findings = load_frontmatter(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            # Surface I/O failures as a parse-error record so callers
+            # (audit capability-isolation, validate_skill skill-only
+            # walk) can emit a FAIL through the existing
+            # ``_parse_error`` branch instead of silently skipping the
+            # file or crashing later when the body is read elsewhere.
+            result[abs_path] = CapabilityRecord(
+                {"_parse_error": f"unreadable: {exc}"}, [],
+            )
+            continue
+        result[abs_path] = CapabilityRecord(fm, scalar_findings)
+    return result

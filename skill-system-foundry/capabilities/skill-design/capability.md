@@ -1,3 +1,7 @@
+---
+allowed-tools: Bash Read Write Edit
+---
+
 # Skill Design
 
 Create skills, capabilities, roles, and manifests. Decide architecture (standalone vs router), write effective descriptions, and understand directory conventions.

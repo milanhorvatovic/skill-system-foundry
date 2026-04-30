@@ -1,3 +1,7 @@
+---
+allowed-tools: Bash Read Write
+---
+
 # Deployment
 
 Deploy skills to AI tools, set up deployment pointers (wrapper files or symlinks), and use tool-specific extensions.

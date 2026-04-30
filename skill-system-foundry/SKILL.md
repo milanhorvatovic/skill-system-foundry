@@ -4,7 +4,7 @@ description: >
   Designs and evolves AI-agnostic skill systems with skills, capabilities, and
   roles. Triggers on skill/capability creation, role definition, router
   migration, consistency audits, or token efficiency.
-allowed-tools: Bash Read Write Edit Glob Grep
+allowed-tools: Bash Read Write Edit
 compatibility: Requires Python 3.12+ (stdlib only) for validation, scaffolding, and bundling scripts.
 license: MIT
 metadata:

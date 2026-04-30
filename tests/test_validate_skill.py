@@ -3486,8 +3486,12 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
                 and "fence" in e
             ]
             self.assertEqual(len(bash_fails), 1)
+            # Coherence FAIL paths are normalized to forward slashes
+            # for cross-platform deterministic output, so assert
+            # against the POSIX form rather than os.path.join (which
+            # produces backslashes on Windows).
             self.assertIn(
-                os.path.join("capabilities", "demo", "capability.md"),
+                "capabilities/demo/capability.md",
                 bash_fails[0],
             )
 
@@ -3715,6 +3719,180 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
                 f"expected exactly one broken-link finding, got {broken!r}",
             )
             self.assertIn("[spec]", broken[0])
+
+
+class CapabilityAggregationIntegrationTests(unittest.TestCase):
+    """End-to-end checks that validate_skill wires the bottom-up
+    aggregation rule and the skill-only-fields INFO redirect."""
+
+    def test_aggregation_fails_when_capability_declares_unparented_tool(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Read")
+            write_capability_md(
+                skill_dir, "alpha", allowed_tools="Bash Read",
+            )
+            errors, _ = validate_skill(skill_dir)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "capabilities/alpha/capability.md" in e
+        ]
+        self.assertEqual(len(agg_fails), 1)
+        self.assertIn("Bash", agg_fails[0])
+
+    def test_skill_only_field_in_capability_emits_info(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Read")
+            write_capability_md(
+                skill_dir, "alpha",
+                extra_frontmatter="license: MIT\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "capabilities/alpha/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
+    def test_capability_mode_runs_skill_only_fields_check(self) -> None:
+        # ``--capability`` invocation should still emit the INFO
+        # redirect when the capability frontmatter declares a
+        # skill-only field.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Read")
+            write_capability_md(
+                skill_dir, "alpha",
+                extra_frontmatter="metadata:\n  version: 1.0.0\n",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "alpha")
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO) and "'metadata.version'" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
+    def test_capability_mode_skips_aggregation(self) -> None:
+        # In --capability mode, aggregation is owned by the parent
+        # invocation; running on a single capability must not emit
+        # aggregation FAILs.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Read")
+            write_capability_md(
+                skill_dir, "alpha", allowed_tools="Bash",
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "alpha")
+            errors, _ = validate_skill(cap_dir, is_capability=True)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "missing from SKILL.md 'allowed-tools'" in e
+        ]
+        self.assertEqual(agg_fails, [])
+
+    def test_skill_only_field_in_nested_capability_emits_info(self) -> None:
+        # The skill-only-fields walk must be recursive — matches the
+        # aggregation rule and the audit's discovery walk.  A nested
+        # capability declaring license still triggers the redirect.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            nested = os.path.join(
+                skill_dir,
+                "capabilities", "outer", "capabilities", "inner",
+            )
+            os.makedirs(nested)
+            with open(
+                os.path.join(nested, "capability.md"), "w", encoding="utf-8",
+            ) as fh:
+                fh.write("---\nlicense: MIT\n---\n\n# Inner\n")
+            errors, _ = validate_skill(skill_dir)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "capabilities/outer/capabilities/inner/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
+    def test_clean_aggregation_passes_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Bash Read Write")
+            write_capability_md(
+                skill_dir, "alpha", allowed_tools="Bash Read",
+            )
+            write_capability_md(
+                skill_dir, "beta", allowed_tools="Read Write",
+            )
+            errors, _ = validate_skill(skill_dir)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "missing from SKILL.md 'allowed-tools'" in e
+        ]
+        agg_infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "is not declared by any capability" in e
+        ]
+        self.assertEqual(agg_fails, [])
+        self.assertEqual(agg_infos, [])
+
+    def test_capability_malformed_allowed_tools_value_emits_warn(
+        self,
+    ) -> None:
+        # Capability ``allowed-tools`` is now authoritative input for
+        # aggregation/coherence; the parent run must surface
+        # type/catalog diagnostics on it (e.g., a mapping value)
+        # instead of silently treating it as zero tokens.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Bash")
+            write_capability_md(
+                skill_dir, "alpha",
+                extra_frontmatter="allowed-tools:\n  bash: true\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+        type_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "allowed-tools" in e
+            and "should be a space-separated string" in e
+            and "capabilities/alpha/capability.md" in e
+        ]
+        self.assertEqual(len(type_warns), 1)
+
+    def test_unreadable_capability_frontmatter_emits_fail(self) -> None:
+        # ``validate_skill.py <parent>`` is the canonical skill-level
+        # validator; an unreadable capability frontmatter must surface
+        # as a FAIL there, not silently disappear into the aggregation
+        # / skill-only-fields rules' "no contribution" handling.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Read")
+            cap_dir = os.path.join(skill_dir, "capabilities", "broken")
+            os.makedirs(cap_dir)
+            cap_md = os.path.join(cap_dir, "capability.md")
+            with open(cap_md, "wb") as fh:
+                # Invalid UTF-8 forces UnicodeDecodeError on read.
+                fh.write(b"---\n\xff\xfe\n---\n# Cap\n")
+            errors, _ = validate_skill(skill_dir)
+        parse_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "frontmatter parse error" in e
+            and "capabilities/broken/capability.md" in e
+        ]
+        self.assertEqual(len(parse_fails), 1)
 
 
 if __name__ == "__main__":

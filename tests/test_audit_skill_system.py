@@ -2375,5 +2375,243 @@ class AuditProseYamlAggregationTests(unittest.TestCase):
         self.assertIn("alias indicator", findings[0]["message"])
 
 
+class AuditCapabilityAggregationTests(unittest.TestCase):
+    """audit_skill_system surfaces aggregation FAILs and skill-only-fields
+    INFOs from capability frontmatter."""
+
+    def test_capability_declares_unparented_tool_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                skill_dir, allowed_tools="Read", body=router_body,
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "demo-skill" in e
+            and "capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(agg_fails), 1)
+        self.assertIn("Bash", agg_fails[0])
+        # Tag stays at the front of the message; skill name slots in
+        # after the foundry tag for readable left-aligned output.
+        self.assertTrue(
+            agg_fails[0].startswith("FAIL: [foundry] demo-skill:"),
+            f"unexpected prefix in: {agg_fails[0]!r}",
+        )
+
+    def test_capability_skill_only_field_emits_info(self) -> None:
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(skill_dir, body=router_body)
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(cap_dir, frontmatter="license: MIT")
+            errors = audit_skill_system(system_root)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "demo-skill/capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
+    def test_skill_root_mode_runs_aggregation(self) -> None:
+        # In skill-root mode (top-level SKILL.md, no skills/ tree),
+        # aggregation must still fire — matches the scoping of
+        # router-table and orphan-references.  A capability declares
+        # ``Bash`` but the parent omits it, so a FAIL is expected.
+        with tempfile.TemporaryDirectory() as system_root:
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                system_root, allowed_tools="Read", body=router_body,
+            )
+            cap_dir = os.path.join(system_root, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "capabilities/my-cap/capability.md" in e
+            and "Bash" in e
+        ]
+        self.assertEqual(len(agg_fails), 1)
+
+    def test_skill_root_mode_aggregation_clean_emits_no_fail(self) -> None:
+        # Parent declares the union of capability declarations; no
+        # FAIL should fire even though the audit now runs the rule in
+        # skill-root mode.
+        with tempfile.TemporaryDirectory() as system_root:
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                system_root, allowed_tools="Bash Read", body=router_body,
+            )
+            cap_dir = os.path.join(system_root, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "missing from SKILL.md 'allowed-tools'" in e
+        ]
+        self.assertEqual(agg_fails, [])
+
+    def test_skill_root_mode_capability_skill_only_field_emits_info(
+        self,
+    ) -> None:
+        # Skill-only-fields redirect must also fire on top-level
+        # capabilities in skill-root mode.  Without the synthetic
+        # capability entries the audit's per-capability loop would
+        # skip ``<system_root>/capabilities/<name>/`` entirely.
+        with tempfile.TemporaryDirectory() as system_root:
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(system_root, body=router_body)
+            cap_dir = os.path.join(system_root, "capabilities", "my-cap")
+            _write_capability_md(cap_dir, frontmatter="license: MIT")
+            errors = audit_skill_system(system_root)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
+    def test_allowed_tools_only_capability_is_not_registered_like(
+        self,
+    ) -> None:
+        # The audit's "has full frontmatter — verify it's not
+        # registered in discovery" INFO gates on BOTH ``name`` and
+        # ``description`` being present, not on ``fm is not None``.
+        # A capability whose only frontmatter field is the new
+        # authoritative ``allowed-tools`` must not trigger that INFO
+        # — the foundry's own capabilities follow this shape, and the
+        # rule was added before the PR but the gating condition makes
+        # it correct under the new convention.  Pin the behaviour so
+        # future refactors do not silently regress it.
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                skill_dir, allowed_tools="Bash Read", body=router_body,
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        full_fm_infos = [e for e in errors if "has full frontmatter" in e]
+        self.assertEqual(full_fm_infos, [])
+
+    def test_capability_malformed_allowed_tools_value_emits_warn(
+        self,
+    ) -> None:
+        # Capability allowed-tools is now authoritative input for
+        # aggregation/coherence; the audit must surface type/catalog
+        # diagnostics on it (e.g., a mapping value) instead of
+        # silently treating it as zero tokens.
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                skill_dir, allowed_tools="Bash", body=router_body,
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools:\n  bash: true",
+            )
+            errors = audit_skill_system(system_root)
+        type_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "allowed-tools" in e
+            and "should be a space-separated string" in e
+            and "demo-skill/capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(type_warns), 1)
+
+    def test_unreadable_capability_emits_parse_error_fail(self) -> None:
+        # I/O failures during capability frontmatter load must surface
+        # as FAILs through the existing _parse_error branch — the
+        # previous silent ``CapabilityRecord(None, [])`` fallback hid
+        # them and let downstream body reads crash.
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(skill_dir, body=router_body)
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            os.makedirs(cap_dir)
+            cap_md = os.path.join(cap_dir, "capability.md")
+            # Write invalid UTF-8 to force UnicodeDecodeError on read.
+            with open(cap_md, "wb") as fh:
+                fh.write(b"---\n\xff\xfe\n---\n# Cap\n")
+            errors = audit_skill_system(system_root)
+        parse_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "frontmatter parse error" in e
+            and "capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(parse_fails), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
