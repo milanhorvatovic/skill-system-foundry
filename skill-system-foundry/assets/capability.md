@@ -46,9 +46,7 @@ Notes:
 - Capabilities are NOT registered in the discovery layer
 - Frontmatter is included to keep capabilities portable and promotion-ready
   (shared resource paths may need updating on promotion to standalone)
-- Bottom-up aggregation: per-capability ``allowed-tools`` is unioned and
-  the parent SKILL.md is validated as a superset.  Skill-wide fields
-  (license, compatibility, metadata.*) belong only on the parent.
+- Bottom-up aggregation: per-capability ``allowed-tools`` is unioned and the parent SKILL.md is validated as a superset.  Skill-wide fields (license, compatibility, metadata.*) belong only on the parent.
 - Must not reference sibling capabilities
 - Cross-capability orchestration is a role's job
 - Prefer keeping a skill standalone until 3+ distinct operations justify a router
