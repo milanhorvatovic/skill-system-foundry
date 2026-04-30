@@ -759,8 +759,14 @@ def aggregate_capability_allowed_tools(
     is bare-token only and does not reason about argument patterns.
 
     Returns ``(errors, passes)`` per the standard validator contract.
-    Skills with no capabilities declaring ``allowed-tools`` produce
-    only an informational pass entry.
+    Skills with no capabilities declaring ``allowed-tools`` produce a
+    "no capabilities declare" pass entry, but the parent-unused INFO
+    scan still runs against the parent's declared set: silent
+    capabilities (and SKILL.md itself) remain valid signal sources, so
+    a router with ``allowed-tools: Bash``, only silent capabilities,
+    and no Bash fence anywhere still surfaces the over-permissioning.
+    The rule is silent only when every parent-declared observable
+    tool is signalled somewhere.
     """
     errors: list[str] = []
     passes: list[str] = []
