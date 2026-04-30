@@ -3486,8 +3486,12 @@ class ValidateSkillToolCoherenceIntegrationTests(unittest.TestCase):
                 and "fence" in e
             ]
             self.assertEqual(len(bash_fails), 1)
+            # Coherence FAIL paths are normalized to forward slashes
+            # for cross-platform deterministic output, so assert
+            # against the POSIX form rather than os.path.join (which
+            # produces backslashes on Windows).
             self.assertIn(
-                os.path.join("capabilities", "demo", "capability.md"),
+                "capabilities/demo/capability.md",
                 bash_fails[0],
             )
 

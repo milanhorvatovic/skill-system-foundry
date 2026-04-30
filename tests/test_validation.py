@@ -746,8 +746,10 @@ class ValidateToolCoherenceTests(unittest.TestCase):
         )
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(len(fail_errors), 1)
+        # Coherence FAIL paths are normalized to forward slashes for
+        # cross-platform output stability.
         self.assertIn(
-            os.path.join("capabilities", "demo", "capability.md"),
+            "capabilities/demo/capability.md",
             fail_errors[0],
         )
 
@@ -767,8 +769,10 @@ class ValidateToolCoherenceTests(unittest.TestCase):
         )
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(len(fail_errors), 1)
+        # Coherence FAIL paths are normalized to forward slashes for
+        # cross-platform output stability.
         self.assertIn(
-            os.path.join("capabilities", "group", "sub", "capability.md"),
+            "capabilities/group/sub/capability.md",
             fail_errors[0],
         )
 
