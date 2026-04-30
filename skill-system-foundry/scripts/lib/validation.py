@@ -829,11 +829,18 @@ def aggregate_capability_allowed_tools(
                 declared_by.setdefault(token, []).append(rel)
 
     if capabilities_with_field == 0:
+        # Note this is a pass entry, not an early return: silent
+        # capabilities still serve as fallback signal sources (their
+        # body fences inherit the parent's set), so the
+        # parent-unused observable-tool scan below must still run to
+        # flag a router with ``allowed-tools: Bash``, only silent
+        # capabilities, and no Bash fence anywhere.  Returning early
+        # would hide that over-permissioning until the first
+        # capability adopts ``allowed-tools``.
         passes.append(
             "aggregation: no capabilities declare 'allowed-tools' — "
             "parent governs tool scope"
         )
-        return errors, passes
 
     # FAIL — per (capability, tool) for tokens missing from the parent.
     for token in sorted(declared_by.keys()):

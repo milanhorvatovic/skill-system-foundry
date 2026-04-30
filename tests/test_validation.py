@@ -1070,23 +1070,55 @@ class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
 
     # --- No capabilities or all silent ---
 
-    def test_no_capabilities_emits_only_pass_entry(self) -> None:
-        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+    def test_no_capabilities_emits_pass_entry_no_fails(self) -> None:
+        # SKILL.md body has a Bash fence so the parent-unused INFO is
+        # suppressed for that observable token; ``Read`` has no
+        # observation mechanism so it never produces an INFO either.
+        # The pass entry confirms the rule ran with no capability
+        # declarations.
+        write_skill_md(
+            self.skill_dir, allowed_tools="Bash Read",
+            body=_bash_fence_body(),
+        )
         errors, passes = aggregate_capability_allowed_tools(
             self.skill_dir, {"allowed-tools": "Bash Read"},
         )
-        self.assertEqual(errors, [])
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
         self.assertTrue(any("aggregation:" in p for p in passes))
 
-    def test_all_capabilities_silent_emits_pass_entry(self) -> None:
+    def test_all_capabilities_silent_emits_pass_entry_no_fails(self) -> None:
+        # Silent capabilities inherit the parent's set; one carries
+        # the Bash fence so the observable parent-unused INFO is
+        # suppressed.  ``Read`` is unobservable.
         write_skill_md(self.skill_dir, allowed_tools="Bash Read")
-        write_capability_md(self.skill_dir, "alpha")
+        write_capability_md(self.skill_dir, "alpha", body=_bash_fence_body())
         write_capability_md(self.skill_dir, "beta")
         errors, passes = aggregate_capability_allowed_tools(
             self.skill_dir, {"allowed-tools": "Bash Read"},
         )
-        self.assertEqual(errors, [])
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
         self.assertTrue(any("no capabilities declare" in p for p in passes))
+
+    def test_silent_only_router_with_unsignalled_observable_tool_emits_info(
+        self,
+    ) -> None:
+        # Router declares Bash, no capability declares allowed-tools,
+        # no body anywhere has a Bash fence, no scripts/ directory —
+        # the parent is over-permissioned and the INFO must fire even
+        # though no capability has opted into the field.  Without
+        # this scan a router with only silent capabilities never
+        # surfaces the over-permissioning until the first capability
+        # adopts ``allowed-tools``.
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(self.skill_dir, "alpha")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("Bash", infos[0])
 
     # --- Clean superset ---
 
