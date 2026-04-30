@@ -115,7 +115,11 @@ def top_level_skill_entry(system_root: str) -> dict[str, str] | None:
     name = os.path.basename(os.path.abspath(system_root))
     try:
         fm, _, _ = load_frontmatter(skill_md)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # ``load_frontmatter`` opens with strict UTF-8 and reads.
+        # Catch both I/O errors and decode errors so the skill-root
+        # entry falls back to the basename instead of crashing the
+        # caller — matches the docstring's "unreadable" promise.
         fm = None
     if fm is not None and "_parse_error" not in fm:
         fm_name = fm.get("name")
