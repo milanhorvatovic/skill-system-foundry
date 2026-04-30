@@ -15,12 +15,13 @@ from .constants import (
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
     DESCRIPTION_TRIGGER_PHRASES, DESCRIPTION_TRIGGER_EXAMPLE_PHRASES,
+    CAPABILITY_SKILL_ONLY_FIELDS,
     DIR_CAPABILITIES, DIR_SCRIPTS,
     FILE_CAPABILITY_MD, FILE_SKILL_MD,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
 )
 from .fence_scan import has_fence_with_language
-from .frontmatter import strip_frontmatter_for_scan
+from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 
 
 # Regex used to strip the optional ``(...)`` argument suffix from
@@ -502,21 +503,35 @@ def validate_tool_coherence(
       is a YAML edit only — set the flag on its ``fence_languages``
       entry and the rule fires automatically.
 
+    **Per-file effective declared set.**  Fence findings attribute to
+    the file containing the fence and consult that file's *effective*
+    declared set: a ``capability.md`` that declares its own
+    ``allowed-tools`` is checked against its own tokens; a capability
+    silent on the field falls back to the parent's declared set;
+    ``SKILL.md`` always uses the parent's declared set.  This pairs
+    with the bottom-up aggregation rule
+    (:func:`aggregate_capability_allowed_tools`) which separately
+    enforces parent-as-superset.
+
+    The ``scripts/``-presence check stays at parent scope — there is
+    no per-capability ``scripts/`` directory in the foundry layout —
+    and consults only the parent's declared set.
+
     *frontmatter* is the parent skill's frontmatter dict (or ``None``
     for skills without frontmatter / when called in capability mode
-    with the parent's frontmatter passed in by the caller).  When the
-    frontmatter declares the harness tool, both checks for that tool
-    are skipped.
+    with the parent's frontmatter passed in by the caller).
 
     **Explicit-empty opt-out.**  When ``allowed-tools`` is *present* in
     frontmatter as an explicitly empty value — ``allowed-tools: ""``
     (or whitespace-only) or ``allowed-tools: []`` — the author has
     deliberately declared zero harness tools and the rule suppresses
-    both fence and ``scripts/`` checks.  Docs-only skills can therefore
-    include illustrative ``bash`` fences without being forced into a
-    noise ``Bash`` declaration.  Distinct from key-absent: when the
-    field is missing entirely the rule still fires (the painful #100
-    case where the author hasn't thought about tools at all).
+    both fence and ``scripts/`` checks for that file.  At parent
+    scope this also disables the parent-level ``scripts/`` check.
+    A capability declaring an explicit-empty value opts itself out of
+    its local fence checks but does not affect peers.  Distinct from
+    key-absent: when the field is missing entirely the rule still
+    fires (the painful #100 case where the author hasn't thought
+    about tools at all).
 
     Malformed values (non-string, non-list scalars; mappings; or lists
     with no string elements) do **not** count as a deliberate opt-out
@@ -532,33 +547,56 @@ def validate_tool_coherence(
     errors: list[str] = []
     passes: list[str] = []
 
-    has_field = isinstance(frontmatter, dict) and "allowed-tools" in frontmatter
-    raw_value = frontmatter["allowed-tools"] if has_field else None
-    declared = parse_allowed_tools_tokens(raw_value) if has_field else set()
-    if has_field and _is_explicit_empty_allowed_tools(raw_value):
-        # Author-declared zero tools — respect the declaration.
-        passes.append(
-            "tool-coherence: explicit empty 'allowed-tools' — "
-            "fence and scripts/ checks suppressed"
-        )
-        return errors, passes
+    parent_has_field = (
+        isinstance(frontmatter, dict) and "allowed-tools" in frontmatter
+    )
+    parent_raw = frontmatter["allowed-tools"] if parent_has_field else None
+    parent_declared = (
+        parse_allowed_tools_tokens(parent_raw) if parent_has_field else set()
+    )
+    parent_explicit_empty = parent_has_field and _is_explicit_empty_allowed_tools(
+        parent_raw
+    )
 
+    skill_md = os.path.join(skill_root, FILE_SKILL_MD)
     in_scope_files = _gather_in_scope_files(skill_root)
     has_scripts_dir = os.path.isdir(
         os.path.join(skill_root, DIR_SCRIPTS)
     )
 
+    # Build per-file (declared_set, explicit_empty) once.  Capabilities
+    # may declare their own ``allowed-tools``; if silent they inherit
+    # the parent's effective set.
+    file_effective: dict[str, tuple[set[str], bool]] = {}
+    for path in in_scope_files:
+        if os.path.abspath(path) == os.path.abspath(skill_md):
+            file_effective[path] = (parent_declared, parent_explicit_empty)
+            continue
+        cap_declared, cap_has_field, cap_empty = _capability_effective_tokens(
+            path
+        )
+        if cap_has_field:
+            file_effective[path] = (cap_declared, cap_empty)
+        else:
+            file_effective[path] = (parent_declared, parent_explicit_empty)
+
+    if parent_explicit_empty:
+        passes.append(
+            "tool-coherence: explicit empty 'allowed-tools' at SKILL.md "
+            "— parent-level fence and scripts/ checks suppressed"
+        )
+
     for tool_name in sorted(TOOL_FENCE_LANGUAGES.keys()):
         languages = TOOL_FENCE_LANGUAGES[tool_name]
-        if tool_name in declared:
-            passes.append(
-                f"tool-coherence: '{tool_name}' declared in allowed-tools"
-            )
-            continue
 
-        # Fence check (FAIL)
+        # Fence check (FAIL) — per-file with the file's effective set.
         offending: list[str] = []
         for path in in_scope_files:
+            declared, explicit_empty = file_effective[path]
+            if explicit_empty:
+                continue
+            if tool_name in declared:
+                continue
             if _file_has_fence_in_languages(path, languages):
                 offending.append(os.path.relpath(path, skill_root))
         if offending:
@@ -570,14 +608,22 @@ def validate_tool_coherence(
                 f"(or scoped form like '{tool_name}(...)') to 'allowed-tools' "
                 "frontmatter."
             )
+        elif tool_name in parent_declared:
+            passes.append(
+                f"tool-coherence: '{tool_name}' declared in allowed-tools"
+            )
 
-        # Script-presence check (WARN) — fires only for tools whose
-        # YAML entry sets ``scripts_dir_indicator: true``.  Keeps the
-        # coupling between "tool" and "scripts/ is a presence signal"
-        # explicit in configuration, so adding a future tool is one
-        # YAML edit and the rule does not depend on a magic
-        # fence-language string.
-        if has_scripts_dir and tool_name in TOOLS_INDICATING_SCRIPTS:
+        # Script-presence check (WARN) — parent-scope only.  The
+        # ``scripts/`` directory has no capability-level analogue in
+        # the foundry layout, so the rule consults only the parent's
+        # declared set.  Suppressed when the parent declares an
+        # explicit-empty ``allowed-tools``.
+        if (
+            has_scripts_dir
+            and tool_name in TOOLS_INDICATING_SCRIPTS
+            and not parent_explicit_empty
+            and tool_name not in parent_declared
+        ):
             errors.append(
                 f"{LEVEL_WARN}: [foundry] skill has a 'scripts/' directory "
                 f"but '{tool_name}' is not declared in 'allowed-tools' — "
@@ -585,6 +631,32 @@ def validate_tool_coherence(
             )
 
     return errors, passes
+
+
+def _capability_effective_tokens(
+    capability_md_path: str,
+) -> tuple[set[str], bool, bool]:
+    """Return ``(declared_tokens, has_field, is_explicit_empty)``.
+
+    Loads the capability's frontmatter once and reports whether the
+    file declares its own ``allowed-tools`` (``has_field``), the
+    parsed bare-token set, and whether the value is an explicit-empty
+    declaration.  Returns ``(set(), False, False)`` for unreadable
+    files or capabilities without frontmatter — callers fall back to
+    the parent's declared set in that case.
+    """
+    try:
+        fm, _, _ = load_frontmatter(capability_md_path)
+    except (OSError, UnicodeDecodeError):
+        return set(), False, False
+    if not isinstance(fm, dict) or "allowed-tools" not in fm:
+        return set(), False, False
+    raw = fm["allowed-tools"]
+    return (
+        parse_allowed_tools_tokens(raw),
+        True,
+        _is_explicit_empty_allowed_tools(raw),
+    )
 
 
 def _gather_in_scope_files(skill_root: str) -> list[str]:
@@ -638,3 +710,187 @@ def _file_has_fence_in_languages(
         return False
     body = strip_frontmatter_for_scan(content)
     return has_fence_with_language(body, languages)
+
+
+def aggregate_capability_allowed_tools(
+    skill_root: str, parent_frontmatter: dict | None,
+) -> tuple[list[str], list[str]]:
+    """Validate parent ``allowed-tools`` as a superset of the union of
+    capability-declared ``allowed-tools``.
+
+    Bottom-up aggregation: each ``capabilities/<name>/capability.md``
+    may declare its own scoped ``allowed-tools``; the parent SKILL.md
+    must declare every bare token the capability set contributes.
+    Findings:
+
+    - **FAIL** per (capability, tool): a capability declares a tool
+      the parent does not.  The same FAIL fires whether the parent
+      omits the field entirely, has an explicit-empty value, or
+      simply has a partial set — the per-capability attribution
+      tells the author exactly which capability needs the tool.
+    - **INFO** per tool: parent declares a tool no capability declares
+      and the SKILL.md body has no fence/``scripts/`` signal for it
+      either, suggesting the tool may be unused.
+
+    Set semantics: ``parse_allowed_tools_tokens`` strips
+    ``(...)`` arguments, so ``Bash(git:*)`` declared in a capability
+    plus ``Bash`` declared in the parent compare cleanly.  The rule
+    is bare-token only and does not reason about argument patterns.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    Skills with no capabilities declaring ``allowed-tools`` produce
+    only an informational pass entry.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+
+    parent_has_field = (
+        isinstance(parent_frontmatter, dict)
+        and "allowed-tools" in parent_frontmatter
+    )
+    parent_declared = (
+        parse_allowed_tools_tokens(parent_frontmatter["allowed-tools"])
+        if parent_has_field
+        else set()
+    )
+
+    capability_glob = os.path.join(
+        skill_root, DIR_CAPABILITIES, "*", FILE_CAPABILITY_MD,
+    )
+    capability_paths = sorted(glob.glob(capability_glob))
+
+    declared_by: dict[str, list[str]] = {}
+    capabilities_with_field = 0
+    for path in capability_paths:
+        tokens, has_field, _is_empty = _capability_effective_tokens(path)
+        if not has_field:
+            continue
+        capabilities_with_field += 1
+        rel = os.path.relpath(path, skill_root).replace(os.sep, "/")
+        for token in tokens:
+            declared_by.setdefault(token, []).append(rel)
+
+    if capabilities_with_field == 0:
+        passes.append(
+            "aggregation: no capabilities declare 'allowed-tools' — "
+            "parent governs tool scope"
+        )
+        return errors, passes
+
+    # FAIL — per (capability, tool) for tokens missing from the parent.
+    for token in sorted(declared_by.keys()):
+        if token in parent_declared:
+            continue
+        for rel in sorted(declared_by[token]):
+            errors.append(
+                f"{LEVEL_FAIL}: [foundry] '{token}' declared in {rel} "
+                f"is missing from SKILL.md 'allowed-tools' — the parent "
+                "must declare every tool any capability declares "
+                "(bottom-up aggregation)."
+            )
+
+    union = set(declared_by.keys())
+    covered = parent_declared & union
+    for token in sorted(covered):
+        passes.append(
+            f"aggregation: '{token}' covered by SKILL.md "
+            f"({len(declared_by[token])} capability declaration(s))"
+        )
+
+    # INFO — parent declares tools no capability declares.  Suppress
+    # the INFO when the parent SKILL.md body itself signals a need
+    # for the tool (fence in SKILL.md, or ``scripts/`` directory for
+    # tools flagged as script-presence indicators).
+    skill_md = os.path.join(skill_root, FILE_SKILL_MD)
+    has_scripts_dir = os.path.isdir(os.path.join(skill_root, DIR_SCRIPTS))
+    for token in sorted(parent_declared - union):
+        languages = TOOL_FENCE_LANGUAGES.get(token)
+        signaled_by_parent = False
+        if languages and os.path.isfile(skill_md):
+            signaled_by_parent = _file_has_fence_in_languages(skill_md, languages)
+        if (
+            not signaled_by_parent
+            and has_scripts_dir
+            and token in TOOLS_INDICATING_SCRIPTS
+        ):
+            signaled_by_parent = True
+        if signaled_by_parent:
+            continue
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] '{token}' in SKILL.md 'allowed-tools' "
+            "is not declared by any capability — verify it is needed by "
+            "the SKILL.md body itself, or remove to keep the parent's "
+            "tool surface minimal."
+        )
+
+    return errors, passes
+
+
+def validate_capability_skill_only_fields(
+    capability_frontmatter: dict | None, capability_rel_path: str,
+) -> tuple[list[str], list[str]]:
+    """Emit an INFO when a capability declares skill-only frontmatter fields.
+
+    Bottom-up aggregation makes only ``allowed-tools`` per-capability;
+    every other frontmatter field's authoritative home is the parent
+    SKILL.md.  When a capability declares one of the fields listed in
+    ``CAPABILITY_SKILL_ONLY_FIELDS`` (today: ``license``,
+    ``compatibility``, ``metadata.author``, ``metadata.version``,
+    ``metadata.spec``), the validator emits a per-field INFO
+    suggesting removal — the value is informational only at the
+    capability level and the parent governs the field, so leaving
+    the duplicate is a drift risk.
+
+    *capability_rel_path* is used for attribution in the message and
+    should be a forward-slash POSIX-style relative path
+    (e.g. ``capabilities/foo/capability.md``).
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+
+    if not isinstance(capability_frontmatter, dict):
+        return errors, passes
+
+    declared_skill_only: list[str] = []
+    for field in CAPABILITY_SKILL_ONLY_FIELDS:
+        if _frontmatter_has_dotted_field(capability_frontmatter, field):
+            declared_skill_only.append(field)
+
+    if not declared_skill_only:
+        passes.append(
+            f"capability frontmatter: {capability_rel_path} declares "
+            "no skill-only fields"
+        )
+        return errors, passes
+
+    for field in declared_skill_only:
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] '{field}' in {capability_rel_path} "
+            "frontmatter is informational only — the parent SKILL.md "
+            "governs this field.  Consider removing to reduce drift risk."
+        )
+
+    return errors, passes
+
+
+def _frontmatter_has_dotted_field(frontmatter: dict, dotted: str) -> bool:
+    """Return True when *dotted* (e.g. ``metadata.author``) resolves to
+    a present key in *frontmatter*.
+
+    Walks dotted segments through nested mappings.  Missing
+    intermediate keys, non-dict intermediate values, or a missing
+    leaf key all return False.  Treating "value is None" the same as
+    "key absent" would silently swallow ``metadata: null`` — but the
+    spec / foundry already classify ``null`` as malformed elsewhere,
+    so this helper only checks key presence.
+    """
+    cursor: object = frontmatter
+    parts = dotted.split(".")
+    for part in parts[:-1]:
+        if not isinstance(cursor, dict) or part not in cursor:
+            return False
+        cursor = cursor[part]
+    leaf = parts[-1]
+    return isinstance(cursor, dict) and leaf in cursor
