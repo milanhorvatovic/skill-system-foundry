@@ -543,6 +543,8 @@ def audit_skill_system(
                 )
             else:
                 errors.append(f"{level}: {skill['name']}: {detail}")
+        if not agg_errors and verbose:
+            print(f"  ✓ {skill['name']}: aggregation clean")
 
     # --- Capabilities should not be registered ---
     if verbose:
