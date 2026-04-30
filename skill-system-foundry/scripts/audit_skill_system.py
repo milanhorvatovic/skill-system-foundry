@@ -437,8 +437,14 @@ def audit_skill_system(
             continue
         try:
             fm, _, cap_scalar_findings = load_frontmatter(cap_md_abs)
-        except (OSError, UnicodeDecodeError):
-            fm, cap_scalar_findings = None, []
+        except (OSError, UnicodeDecodeError) as exc:
+            # Match ``load_capability_data``: surface I/O failures
+            # as a ``_parse_error`` record so the capability-isolation
+            # loop FAILs the file via its existing parse-error branch
+            # instead of silently skipping or deferring the crash to a
+            # later body-read site.
+            fm = {"_parse_error": f"unreadable: {exc}"}
+            cap_scalar_findings = []
         system_capability_data[cap_md_abs] = CapabilityRecord(
             fm, cap_scalar_findings,
         )
@@ -619,7 +625,17 @@ def audit_skill_system(
         print("\n== Dependency Direction ==")
 
     for cap in capabilities:
-        content = read_file(os.path.join(cap["path"], FILE_CAPABILITY_MD))
+        cap_md_path = os.path.join(cap["path"], FILE_CAPABILITY_MD)
+        # Skip capabilities the discovery pass already marked
+        # unreadable (``_parse_error`` record).  The capability
+        # isolation loop above has already FAILed them; reading the
+        # body again here would re-crash on invalid UTF-8 or repeat
+        # the I/O error.
+        cap_record = system_capability_data.get(os.path.abspath(cap_md_path))
+        cap_fm = cap_record.frontmatter if cap_record is not None else None
+        if isinstance(cap_fm, dict) and "_parse_error" in cap_fm:
+            continue
+        content = read_file(cap_md_path)
         issues = check_upward_references(content, "capability")
         for level, issue in issues:
             errors.append(

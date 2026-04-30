@@ -2490,6 +2490,36 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         ]
         self.assertEqual(agg_fails, [])
 
+    def test_unreadable_capability_emits_parse_error_fail(self) -> None:
+        # I/O failures during capability frontmatter load must surface
+        # as FAILs through the existing _parse_error branch — the
+        # previous silent ``CapabilityRecord(None, [])`` fallback hid
+        # them and let downstream body reads crash.
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(skill_dir, body=router_body)
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            os.makedirs(cap_dir)
+            cap_md = os.path.join(cap_dir, "capability.md")
+            # Write invalid UTF-8 to force UnicodeDecodeError on read.
+            with open(cap_md, "wb") as fh:
+                fh.write(b"---\n\xff\xfe\n---\n# Cap\n")
+            errors = audit_skill_system(system_root)
+        parse_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "frontmatter parse error" in e
+            and "capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(parse_fails), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

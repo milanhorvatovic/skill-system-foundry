@@ -272,8 +272,15 @@ def load_capability_data(skill_root: str) -> dict[str, CapabilityRecord]:
         abs_path = os.path.abspath(path)
         try:
             fm, _, scalar_findings = load_frontmatter(path)
-        except (OSError, UnicodeDecodeError):
-            result[abs_path] = CapabilityRecord(None, [])
+        except (OSError, UnicodeDecodeError) as exc:
+            # Surface I/O failures as a parse-error record so callers
+            # (audit capability-isolation, validate_skill skill-only
+            # walk) can emit a FAIL through the existing
+            # ``_parse_error`` branch instead of silently skipping the
+            # file or crashing later when the body is read elsewhere.
+            result[abs_path] = CapabilityRecord(
+                {"_parse_error": f"unreadable: {exc}"}, [],
+            )
             continue
         result[abs_path] = CapabilityRecord(fm, scalar_findings)
     return result
