@@ -94,6 +94,7 @@ from lib.router_table import audit_router_table
 from lib.validation import (
     validate_description_triggers,
     aggregate_capability_allowed_tools,
+    validate_allowed_tools,
     validate_capability_skill_only_fields,
 )
 
@@ -644,12 +645,28 @@ def audit_skill_system(
         elif verbose:
             print(f"  \u2713 {cap['parent']}/{cap['name']}: not registered")
 
-        # Skill-only-fields INFO redirect \u2014 capability frontmatter must
-        # not duplicate fields whose authoritative home is the parent
-        # SKILL.md (license, compatibility, metadata.author/version/spec).
         cap_rel = (
             f"{cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD}"
         )
+
+        # Capability-scope ``allowed-tools`` validation.  Capability
+        # declarations are now authoritative input for aggregation
+        # and the per-file coherence check, so they need the same
+        # type/catalog diagnostics ``SKILL.md``'s ``allowed-tools``
+        # gets.  Without this loop a capability declaring
+        # ``allowed-tools: {bash: true}`` (a mapping) would
+        # contribute zero tokens to aggregation and pass the audit
+        # silently.  Findings are re-emitted with the capability
+        # path so attribution stays with the offending file.
+        if isinstance(fm, dict) and "allowed-tools" in fm:
+            at_errors, _ = validate_allowed_tools(fm["allowed-tools"])
+            for finding in at_errors:
+                level, _, detail = finding.partition(": ")
+                errors.append(f"{level}: {cap_rel} {detail}")
+
+        # Skill-only-fields INFO redirect \u2014 capability frontmatter must
+        # not duplicate fields whose authoritative home is the parent
+        # SKILL.md (license, compatibility, metadata.author/version/spec).
         sof_errors, _ = validate_capability_skill_only_fields(fm, cap_rel)
         errors.extend(sof_errors)
 

@@ -2517,6 +2517,39 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         ]
         self.assertEqual(len(infos), 1)
 
+    def test_capability_malformed_allowed_tools_value_emits_warn(
+        self,
+    ) -> None:
+        # Capability allowed-tools is now authoritative input for
+        # aggregation/coherence; the audit must surface type/catalog
+        # diagnostics on it (e.g., a mapping value) instead of
+        # silently treating it as zero tokens.
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                skill_dir, allowed_tools="Bash", body=router_body,
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools:\n  bash: true",
+            )
+            errors = audit_skill_system(system_root)
+        type_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "allowed-tools" in e
+            and "should be a space-separated string" in e
+            and "demo-skill/capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(type_warns), 1)
+
     def test_unreadable_capability_emits_parse_error_fail(self) -> None:
         # I/O failures during capability frontmatter load must surface
         # as FAILs through the existing _parse_error branch — the
