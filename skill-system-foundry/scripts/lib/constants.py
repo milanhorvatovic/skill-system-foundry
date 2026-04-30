@@ -387,8 +387,39 @@ if "skill_only_fields" not in _capability_frontmatter:
         "'skill.capability_frontmatter.skill_only_fields'; this "
         "foundry build is incomplete."
     )
+# Fail-fast normalization mirrors the trigger_phrases handling above.
+# A malformed list (empty, non-list, empty entries, duplicates) would
+# otherwise silently neuter the skill-only-fields rule and let
+# capability frontmatter drift land without a finding.
+_raw_skill_only_fields = _capability_frontmatter["skill_only_fields"]
+if not isinstance(_raw_skill_only_fields, list) or not _raw_skill_only_fields:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.capability_frontmatter.skill_only_fields': expected "
+        f"a non-empty list, got {_raw_skill_only_fields!r}."
+    )
+_normalized_skill_only_fields: list[str] = []
+_seen_skill_only_fields: set[str] = set()
+for _field in _raw_skill_only_fields:
+    _candidate = str(_field).strip()
+    if not _candidate:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry "
+            "in 'skill.capability_frontmatter.skill_only_fields'; "
+            "remove the entry or replace it with a real field name — "
+            "empty entries silently disable the redirect."
+        )
+    if _candidate in _seen_skill_only_fields:
+        raise RuntimeError(
+            f"configuration.yaml has a duplicate entry '{_field}' "
+            "in 'skill.capability_frontmatter.skill_only_fields'; "
+            "remove the redundant entry — duplicates indicate a "
+            "config edit accident."
+        )
+    _seen_skill_only_fields.add(_candidate)
+    _normalized_skill_only_fields.append(_candidate)
 CAPABILITY_SKILL_ONLY_FIELDS: tuple[str, ...] = tuple(
-    _capability_frontmatter["skill_only_fields"]
+    sorted(_normalized_skill_only_fields)
 )
 
 # --- Plain Scalar Divergence Detection ---
