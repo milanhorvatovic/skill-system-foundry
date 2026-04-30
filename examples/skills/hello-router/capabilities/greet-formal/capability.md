@@ -3,8 +3,6 @@ description: >
   Produces a formal, business-appropriate greeting line for a named
   recipient. Activates when the request asks for a formal,
   business-appropriate, or honorific greeting.
-metadata:
-  version: "1.0.0"
 ---
 # Greet Formal
 
