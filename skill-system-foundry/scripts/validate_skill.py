@@ -662,8 +662,13 @@ def validate_skill(
             # instead of silently skipping the file.  Without this the
             # aggregation and skill-only-fields rules quietly drop the
             # capability's contribution and the run still passes.
+            # Tagged ``[foundry]`` because ``capability.md`` (and
+            # therefore its frontmatter parse contract) is a foundry
+            # convention, not an Agent Skills spec requirement —
+            # matches how the audit's capability-isolation block
+            # emits its own findings.
             errors.append(
-                f"{LEVEL_FAIL}: [spec] {cap_rel} frontmatter parse error: "
+                f"{LEVEL_FAIL}: [foundry] {cap_rel} frontmatter parse error: "
                 f"{cap_fm['_parse_error']}"
             )
             continue
