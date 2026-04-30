@@ -54,12 +54,15 @@ def write_capability_md(
 
     The capability has no frontmatter by default and is never
     registered in discovery — the parent ``SKILL.md`` is the
-    discovery boundary.  Frontmatter on a capability is optional, but
-    selected fields are *not* informational: ``allowed-tools`` feeds
-    the bottom-up aggregation rule, and the skill-only fields
-    enumerated in ``CAPABILITY_SKILL_ONLY_FIELDS`` (``license``,
-    ``compatibility``, ``metadata.author``/``version``/``spec``)
-    trigger an INFO redirect when declared at this layer.
+    discovery boundary.  Frontmatter on a capability is optional and
+    its fields fall into two categories: ``allowed-tools`` is
+    *behaviourally meaningful* — it feeds the bottom-up aggregation
+    rule and the per-file effective coherence check — while the
+    skill-only fields enumerated in ``CAPABILITY_SKILL_ONLY_FIELDS``
+    (``license``, ``compatibility``,
+    ``metadata.author``/``version``/``spec``) are *informational only
+    at the capability layer*; the parent SKILL.md is authoritative,
+    and declaring them on a capability triggers an INFO redirect.
 
     Pass *allowed_tools* (string written verbatim after the
     ``allowed-tools:`` key) or *extra_frontmatter* (raw lines appended
