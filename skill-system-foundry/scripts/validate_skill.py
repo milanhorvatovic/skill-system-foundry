@@ -667,6 +667,15 @@ def validate_skill(
                 f"{cap_fm['_parse_error']}"
             )
             continue
+        # Plain-scalar divergence findings from the YAML subset parser.
+        # Re-emit with the capability path so the parent run is
+        # consistent with the audit, which already surfaces these in
+        # its capability-isolation loop.  Without this loop a
+        # capability that uses ambiguous quoting would slip through
+        # ``validate_skill.py <parent>``.
+        for finding in record.scalar_findings:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {cap_rel} {detail}")
         # Capability-scope ``allowed-tools`` validation.  Capability
         # declarations are now authoritative input for aggregation and
         # the per-file coherence check, so they need the same
