@@ -1393,7 +1393,11 @@ class ValidateCapabilitySkillOnlyFieldsTests(unittest.TestCase):
     """Capabilities declaring skill-wide frontmatter fields produce an
     INFO redirect."""
 
-    def test_no_frontmatter_emits_pass(self) -> None:
+    def test_no_frontmatter_is_silent(self) -> None:
+        # ``None`` frontmatter is the "capability without frontmatter"
+        # case — the rule has nothing to redirect, and emitting a pass
+        # entry per absent capability would noise up --json output for
+        # large systems.  Verify both channels stay empty.
         errors, passes = validate_capability_skill_only_fields(
             None, "capabilities/foo/capability.md",
         )
