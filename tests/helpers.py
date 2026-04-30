@@ -52,12 +52,19 @@ def write_capability_md(
 ) -> None:
     """Write a ``capability.md`` under ``capabilities/<name>/``.
 
-    The capability has no frontmatter by default — the foundry's
-    convention treats capability frontmatter as informational only.
+    The capability has no frontmatter by default and is never
+    registered in discovery — the parent ``SKILL.md`` is the
+    discovery boundary.  Frontmatter on a capability is optional, but
+    selected fields are *not* informational: ``allowed-tools`` feeds
+    the bottom-up aggregation rule, and the skill-only fields
+    enumerated in ``CAPABILITY_SKILL_ONLY_FIELDS`` (``license``,
+    ``compatibility``, ``metadata.author``/``version``/``spec``)
+    trigger an INFO redirect when declared at this layer.
+
     Pass *allowed_tools* (string written verbatim after the
     ``allowed-tools:`` key) or *extra_frontmatter* (raw lines appended
-    inside the frontmatter block) to author capabilities that exercise
-    the bottom-up aggregation rule.
+    inside the frontmatter block) to author capabilities that
+    exercise the validation rules.
     """
     body_text = body if body.endswith("\n") else f"{body}\n"
     if allowed_tools is None and not extra_frontmatter:

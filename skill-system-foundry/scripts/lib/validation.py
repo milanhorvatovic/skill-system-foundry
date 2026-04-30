@@ -526,16 +526,23 @@ def validate_tool_coherence(
     with the parent's frontmatter passed in by the caller).
 
     **Explicit-empty opt-out.**  When ``allowed-tools`` is *present* in
-    frontmatter as an explicitly empty value — ``allowed-tools: ""``
-    (or whitespace-only) or ``allowed-tools: []`` — the author has
+    frontmatter as an explicitly empty value, the author has
     deliberately declared zero harness tools and the rule suppresses
-    both fence and ``scripts/`` checks for that file.  At parent
-    scope this also disables the parent-level ``scripts/`` check.
-    A capability declaring an explicit-empty value opts itself out of
-    its local fence checks but does not affect peers.  Distinct from
-    key-absent: when the field is missing entirely the rule still
-    fires (the painful #100 case where the author hasn't thought
-    about tools at all).
+    both fence and ``scripts/`` checks for that file.  Authors writing
+    YAML must use ``allowed-tools: ""`` (or any whitespace-only
+    string) — the foundry's stdlib-only YAML subset parser does not
+    support flow sequences, so the inline-list spelling
+    ``allowed-tools: []`` parses as the literal string ``"[]"`` and is
+    treated as an unrecognised tool token, not an opt-out.  Callers
+    invoking the validator directly with already-parsed Python data
+    can also pass ``[]`` and the rule recognises it as the empty-list
+    opt-out, but this path is not reachable from author-facing YAML.
+    At parent scope the opt-out also disables the parent-level
+    ``scripts/`` check.  A capability declaring an explicit-empty
+    value opts itself out of its local fence checks but does not
+    affect peers.  Distinct from key-absent: when the field is missing
+    entirely the rule still fires (the painful #100 case where the
+    author hasn't thought about tools at all).
 
     Malformed values (non-string, non-list scalars; mappings; or lists
     with no string elements) do **not** count as a deliberate opt-out
