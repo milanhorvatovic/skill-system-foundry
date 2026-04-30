@@ -1266,6 +1266,26 @@ class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
         infos = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(infos, [])
 
+    def test_declaring_capability_fence_suppresses_parent_unused_info(
+        self,
+    ) -> None:
+        # Parent declares Bash + Read; the only capability declares
+        # ``allowed-tools: Read`` but its body still contains a Bash
+        # fence.  Coherence FAILs separately on the capability for
+        # the missing Bash declaration; aggregation's parent-unused
+        # INFO must not fire and contradict that FAIL with a
+        # "Bash unused" message about the same token.
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(
+            self.skill_dir, "alpha", allowed_tools="Read",
+            body=_bash_fence_body(),
+        )
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
+
     def test_capability_parse_error_skipped(self) -> None:
         # Malformed capability frontmatter must not crash the rule.
         write_skill_md(self.skill_dir, allowed_tools="Read")

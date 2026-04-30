@@ -786,13 +786,20 @@ def aggregate_capability_allowed_tools(
 
     declared_by: dict[str, list[str]] = {}
     capabilities_with_field = 0
-    silent_capability_paths: list[str] = []
+    # Every capability path the rule can scan for body signals — both
+    # silent-on-``allowed-tools`` and declaring-its-own forms.  A
+    # capability that declares its own set but forgot to include a
+    # tool its body genuinely uses is a coherence FAIL (the per-file
+    # check fires), and the parent-unused INFO below should still
+    # suppress on that body signal so the two findings don't
+    # contradict ("X unused" + "X needed by capability Y").
+    all_capability_paths: list[str] = []
     for abs_path, record in sorted(capability_data.items()):
+        all_capability_paths.append(abs_path)
         tokens, has_field, _is_empty = _effective_tokens_from_fm(
             record.frontmatter
         )
         if not has_field:
-            silent_capability_paths.append(abs_path)
             continue
         capabilities_with_field += 1
         rel = os.path.relpath(abs_path, skill_root).replace(os.sep, "/")
@@ -838,14 +845,15 @@ def aggregate_capability_allowed_tools(
     # this rule; no parallel allow-list to keep in sync.
     #
     # Among observable tokens, suppress the INFO when *any* file
-    # inheriting the parent's declared set actually signals a need:
-    # a fence in SKILL.md, a fence in a capability that is silent on
-    # ``allowed-tools`` (and therefore inherits the parent set), or a
-    # top-level ``scripts/`` directory for tools flagged as
-    # script-presence indicators.  Without the silent-capability scan
-    # the INFO would suggest removing a parent-declared tool that a
-    # fallback capability actively relies on, breaking coherence on
-    # the next run.
+    # inheriting or relying on the tool actually signals a need: a
+    # fence in SKILL.md, a fence in *any* capability body (silent or
+    # declaring), or a top-level ``scripts/`` directory for tools
+    # flagged as script-presence indicators.  The capability scan
+    # spans *all* capability paths, not only silent ones — a
+    # capability that declares its own set but forgot to include a
+    # body-signalled tool is a coherence FAIL on its own; the
+    # parent-unused INFO would otherwise contradict that FAIL with a
+    # "tool unused" message about the same token.
     skill_md = os.path.join(skill_root, FILE_SKILL_MD)
     has_scripts_dir = os.path.isdir(os.path.join(skill_root, DIR_SCRIPTS))
     for token in sorted(parent_declared - union):
@@ -858,7 +866,7 @@ def aggregate_capability_allowed_tools(
         if languages and os.path.isfile(skill_md):
             signaled_by_parent = _file_has_fence_in_languages(skill_md, languages)
         if not signaled_by_parent and languages:
-            for cap_path in silent_capability_paths:
+            for cap_path in all_capability_paths:
                 if _file_has_fence_in_languages(cap_path, languages):
                     signaled_by_parent = True
                     break
