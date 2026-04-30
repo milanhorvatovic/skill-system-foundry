@@ -480,13 +480,21 @@ def audit_skill_system(
             print(f"  \u2713 {skill['name']}: spec compliant ({body_lines} body lines)")
 
         # Bottom-up aggregation \u2014 parent SKILL.md ``allowed-tools`` must
-        # be a superset of the union of capability-declared sets.  Each
-        # finding is prefixed with the skill name so the audit's per-skill
-        # attribution stays consistent with the rest of the report.
+        # be a superset of the union of capability-declared sets.  The
+        # raw finding format is ``LEVEL: [foundry] message``; the audit
+        # injects the skill name *after* the foundry tag so the prefix
+        # stays left-aligned and consistent with other tagged findings.
         agg_errors, _ = aggregate_capability_allowed_tools(skill["path"], fm)
         for finding in agg_errors:
             level, _, detail = finding.partition(": ")
-            errors.append(f"{level}: {skill['name']} {detail}")
+            tag_prefix = "[foundry] "
+            if detail.startswith(tag_prefix):
+                detail = detail[len(tag_prefix):]
+                errors.append(
+                    f"{level}: [foundry] {skill['name']}: {detail}"
+                )
+            else:
+                errors.append(f"{level}: {skill['name']}: {detail}")
 
     # --- Capabilities should not be registered ---
     if verbose:

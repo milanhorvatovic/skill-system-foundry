@@ -1208,6 +1208,46 @@ class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
         fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fails, [])
 
+    def test_nested_capability_contributes_to_union(self) -> None:
+        # Nested capabilities are a separate FAIL in the audit, but
+        # the aggregation rule must still see them so coherence and
+        # aggregation cannot drift on which files contribute.
+        write_skill_md(self.skill_dir, allowed_tools="Read")
+        nested = os.path.join(
+            self.skill_dir, "capabilities", "outer", "capabilities", "inner",
+        )
+        os.makedirs(nested)
+        with open(
+            os.path.join(nested, "capability.md"), "w", encoding="utf-8",
+        ) as fh:
+            fh.write("---\nallowed-tools: Bash\n---\n\n# Inner\n")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Read"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fails), 1)
+        self.assertIn("Bash", fails[0])
+        self.assertIn("inner", fails[0])
+
+    def test_silent_capability_fence_suppresses_parent_unused_info(self) -> None:
+        # Parent declares Bash + Read; one capability declares Read,
+        # another is silent on ``allowed-tools`` and contains a Bash
+        # fence (it inherits the parent set).  The INFO "Bash unused
+        # by any capability" must NOT fire — removing Bash from the
+        # parent would break the silent capability's coherence.
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(
+            self.skill_dir, "alpha", allowed_tools="Read",
+        )
+        write_capability_md(
+            self.skill_dir, "beta", body=_bash_fence_body(),
+        )
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
+
     def test_capability_parse_error_skipped(self) -> None:
         # Malformed capability frontmatter must not crash the rule.
         write_skill_md(self.skill_dir, allowed_tools="Read")

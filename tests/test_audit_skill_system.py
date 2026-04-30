@@ -2405,6 +2405,12 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         ]
         self.assertEqual(len(agg_fails), 1)
         self.assertIn("Bash", agg_fails[0])
+        # Tag stays at the front of the message; skill name slots in
+        # after the foundry tag for readable left-aligned output.
+        self.assertTrue(
+            agg_fails[0].startswith("FAIL: [foundry] demo-skill:"),
+            f"unexpected prefix in: {agg_fails[0]!r}",
+        )
 
     def test_capability_skill_only_field_emits_info(self) -> None:
         with tempfile.TemporaryDirectory() as system_root:

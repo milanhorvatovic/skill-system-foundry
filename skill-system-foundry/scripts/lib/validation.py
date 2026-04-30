@@ -754,10 +754,14 @@ def aggregate_capability_allowed_tools(
         else set()
     )
 
+    # Recursive glob matches ``_gather_in_scope_files`` — nested
+    # capabilities are a separate FAIL in the audit's nesting-depth
+    # rule, but the aggregation rule must still see them so the two
+    # rules cannot drift on which files contribute to the union.
     capability_glob = os.path.join(
-        skill_root, DIR_CAPABILITIES, "*", FILE_CAPABILITY_MD,
+        skill_root, DIR_CAPABILITIES, "**", FILE_CAPABILITY_MD,
     )
-    capability_paths = sorted(glob.glob(capability_glob))
+    capability_paths = sorted(glob.glob(capability_glob, recursive=True))
 
     declared_by: dict[str, list[str]] = {}
     capabilities_with_field = 0
@@ -798,16 +802,30 @@ def aggregate_capability_allowed_tools(
         )
 
     # INFO — parent declares tools no capability declares.  Suppress
-    # the INFO when the parent SKILL.md body itself signals a need
-    # for the tool (fence in SKILL.md, or ``scripts/`` directory for
-    # tools flagged as script-presence indicators).
+    # the INFO when *any* file inheriting the parent's declared set
+    # actually signals a need for the tool: a fence in SKILL.md, a
+    # fence in a capability that is silent on ``allowed-tools`` (and
+    # therefore inherits the parent set), or a top-level ``scripts/``
+    # directory for tools flagged as script-presence indicators.
+    # Without the silent-capability scan the INFO would suggest
+    # removing a parent-declared tool that a fallback capability
+    # actively relies on, breaking coherence on the next run.
     skill_md = os.path.join(skill_root, FILE_SKILL_MD)
     has_scripts_dir = os.path.isdir(os.path.join(skill_root, DIR_SCRIPTS))
+    silent_capability_paths = [
+        path for path in capability_paths
+        if not _capability_effective_tokens(path)[1]
+    ]
     for token in sorted(parent_declared - union):
         languages = TOOL_FENCE_LANGUAGES.get(token)
         signaled_by_parent = False
         if languages and os.path.isfile(skill_md):
             signaled_by_parent = _file_has_fence_in_languages(skill_md, languages)
+        if not signaled_by_parent and languages:
+            for cap_path in silent_capability_paths:
+                if _file_has_fence_in_languages(cap_path, languages):
+                    signaled_by_parent = True
+                    break
         if (
             not signaled_by_parent
             and has_scripts_dir
