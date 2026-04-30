@@ -806,6 +806,20 @@ def aggregate_capability_allowed_tools(
     # actually needs the tool.
     signal_capability_paths: list[str] = []
     for abs_path, record in sorted(capability_data.items()):
+        # Known-unreadable capabilities (``_parse_error`` sentinel
+        # set by ``load_capability_data``) cannot contribute a body
+        # signal — opening the file again here would only round-trip
+        # through the fence helper's ``UnicodeDecodeError`` recovery.
+        # Skip them up front so the parent-unused scan stays focused
+        # on files that can actually carry a fence.  The capability
+        # parse-error FAIL is owned by ``validate_skill`` and the
+        # audit's capability-isolation block; aggregation does not
+        # need to re-emit it.
+        if (
+            isinstance(record.frontmatter, dict)
+            and "_parse_error" in record.frontmatter
+        ):
+            continue
         tokens, has_field, is_empty = _effective_tokens_from_fm(
             record.frontmatter
         )
