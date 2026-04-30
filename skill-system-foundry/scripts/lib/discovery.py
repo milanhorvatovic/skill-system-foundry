@@ -241,8 +241,15 @@ def read_file(filepath: str) -> str:
 
 class CapabilityRecord(NamedTuple):
     """Discovered ``capability.md`` payload — frontmatter dict (or
-    ``None`` for unreadable files / files without frontmatter) plus
-    the plain-scalar divergence findings emitted during YAML parsing.
+    ``None`` for files without frontmatter) plus the plain-scalar
+    divergence findings emitted during YAML parsing.
+
+    Unreadable files (``OSError`` / ``UnicodeDecodeError``) are
+    represented as a frontmatter dict containing ``_parse_error``;
+    audit and validate paths branch on that sentinel to FAIL the file
+    rather than treating it the same as "frontmatter absent".  The
+    distinction matters: a missing frontmatter is silent by design,
+    while an unreadable file must surface as an actionable failure.
 
     The pair is stored together so consumers that need both
     (the audit's per-capability loop) and consumers that need only
