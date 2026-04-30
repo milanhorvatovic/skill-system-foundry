@@ -2375,5 +2375,59 @@ class AuditProseYamlAggregationTests(unittest.TestCase):
         self.assertIn("alias indicator", findings[0]["message"])
 
 
+class AuditCapabilityAggregationTests(unittest.TestCase):
+    """audit_skill_system surfaces aggregation FAILs and skill-only-fields
+    INFOs from capability frontmatter."""
+
+    def test_capability_declares_unparented_tool_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                skill_dir, allowed_tools="Read", body=router_body,
+            )
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "demo-skill" in e
+            and "capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(agg_fails), 1)
+        self.assertIn("Bash", agg_fails[0])
+
+    def test_capability_skill_only_field_emits_info(self) -> None:
+        with tempfile.TemporaryDirectory() as system_root:
+            skill_dir = os.path.join(system_root, "skills", "demo-skill")
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(skill_dir, body=router_body)
+            cap_dir = os.path.join(skill_dir, "capabilities", "my-cap")
+            _write_capability_md(cap_dir, frontmatter="license: MIT")
+            errors = audit_skill_system(system_root)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "demo-skill/capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

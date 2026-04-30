@@ -47,16 +47,38 @@ def write_capability_md(
     capability_name: str,
     *,
     body: str = "# Capability\n",
+    allowed_tools: str | None = None,
+    extra_frontmatter: str = "",
 ) -> None:
-    """Write a minimal ``capability.md`` under ``capabilities/<name>/``.
+    """Write a ``capability.md`` under ``capabilities/<name>/``.
 
     The capability has no frontmatter by default — the foundry's
     convention treats capability frontmatter as informational only.
+    Pass *allowed_tools* (string written verbatim after the
+    ``allowed-tools:`` key) or *extra_frontmatter* (raw lines appended
+    inside the frontmatter block) to author capabilities that exercise
+    the bottom-up aggregation rule.
     """
     body_text = body if body.endswith("\n") else f"{body}\n"
+    if allowed_tools is None and not extra_frontmatter:
+        write_text(
+            os.path.join(
+                skill_dir, "capabilities", capability_name, "capability.md",
+            ),
+            body_text,
+        )
+        return
+    fm_lines: list[str] = ["---"]
+    if allowed_tools is not None:
+        fm_lines.append(f"allowed-tools: {allowed_tools}")
+    if extra_frontmatter:
+        for line in extra_frontmatter.splitlines():
+            fm_lines.append(line)
+    fm_lines.append("---")
+    content = "\n".join(fm_lines) + "\n\n" + body_text
     write_text(
         os.path.join(
             skill_dir, "capabilities", capability_name, "capability.md",
         ),
-        body_text,
+        content,
     )

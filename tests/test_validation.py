@@ -19,7 +19,9 @@ if SCRIPTS_DIR not in sys.path:
 
 from helpers import write_capability_md, write_skill_md, write_text
 from lib.validation import (
+    aggregate_capability_allowed_tools,
     parse_allowed_tools_tokens,
+    validate_capability_skill_only_fields,
     validate_description_triggers,
     validate_name,
     validate_tool_coherence,
@@ -1044,6 +1046,372 @@ class ValidateDescriptionTriggersTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(matched)
+
+
+# ===================================================================
+# aggregate_capability_allowed_tools
+# ===================================================================
+
+
+class AggregateCapabilityAllowedToolsTests(unittest.TestCase):
+    """Bottom-up aggregation: parent SKILL.md must be a superset of
+    the union of capability-declared ``allowed-tools``."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.skill_dir = self._tmp.name
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    # --- No capabilities or all silent ---
+
+    def test_no_capabilities_emits_only_pass_entry(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        errors, passes = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(any("aggregation:" in p for p in passes))
+
+    def test_all_capabilities_silent_emits_pass_entry(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(self.skill_dir, "alpha")
+        write_capability_md(self.skill_dir, "beta")
+        errors, passes = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        self.assertEqual(errors, [])
+        self.assertTrue(any("no capabilities declare" in p for p in passes))
+
+    # --- Clean superset ---
+
+    def test_parent_superset_clean(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read Write")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        write_capability_md(self.skill_dir, "beta", allowed_tools="Read")
+        errors, passes = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read Write"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+        self.assertTrue(
+            any("'Bash' covered by SKILL.md" in p for p in passes)
+        )
+
+    def test_capability_subset_of_parent_clean(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read Write")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read Write"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
+    # --- FAIL paths (parent missing tool) ---
+
+    def test_capability_declares_tool_parent_missing_fails(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Read")
+        write_capability_md(
+            self.skill_dir, "alpha", allowed_tools="Bash Read",
+        )
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Read"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fails), 1)
+        self.assertIn("Bash", fails[0])
+        self.assertIn("capabilities/alpha/capability.md", fails[0])
+
+    def test_parent_missing_field_entirely_fails(self) -> None:
+        write_skill_md(self.skill_dir)
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"description": "no allowed-tools field"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fails), 1)
+        self.assertIn("Bash", fails[0])
+        self.assertIn("capabilities/alpha/capability.md", fails[0])
+
+    def test_explicit_empty_parent_with_capability_tools_fails(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools='""')
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": ""},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fails), 1)
+        self.assertIn("Bash", fails[0])
+
+    def test_per_capability_attribution_with_multiple(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Read")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        write_capability_md(self.skill_dir, "beta", allowed_tools="Bash")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Read"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        # Two FAILs — one per capability — same tool name, different
+        # attribution.
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(any("alpha" in f for f in fails))
+        self.assertTrue(any("beta" in f for f in fails))
+
+    # --- INFO path (parent unused) ---
+
+    def test_parent_unused_tool_emits_info(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Bash")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("Read", infos[0])
+
+    def test_parent_unused_tool_with_signal_silenced(self) -> None:
+        # When SKILL.md body has a Bash fence, the INFO for "Bash
+        # unused by any capability" should be suppressed because the
+        # parent body itself signals the need.
+        body = "# Skill\n\n```bash\necho hi\n```\n"
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read", body=body)
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Read")
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
+
+    def test_parent_unused_tool_with_scripts_dir_silenced(self) -> None:
+        write_skill_md(self.skill_dir, allowed_tools="Bash Read")
+        write_capability_md(self.skill_dir, "alpha", allowed_tools="Read")
+        os.makedirs(os.path.join(self.skill_dir, "scripts"))
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash Read"},
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
+
+    # --- Set semantics: scoped argument forms ---
+
+    def test_scoped_capability_token_satisfied_by_bare_parent(self) -> None:
+        # ``Bash(git:*)`` in capability + ``Bash`` in parent should
+        # satisfy the rule — set check is bare-token only.
+        write_skill_md(self.skill_dir, allowed_tools="Bash")
+        write_capability_md(
+            self.skill_dir, "alpha", allowed_tools="Bash(git add *)",
+        )
+        errors, _ = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Bash"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
+    def test_capability_parse_error_skipped(self) -> None:
+        # Malformed capability frontmatter must not crash the rule.
+        write_skill_md(self.skill_dir, allowed_tools="Read")
+        cap_path = os.path.join(
+            self.skill_dir, "capabilities", "broken", "capability.md",
+        )
+        os.makedirs(os.path.dirname(cap_path))
+        with open(cap_path, "w", encoding="utf-8") as fh:
+            fh.write("---\nallowed-tools: [unterminated\n")
+        errors, passes = aggregate_capability_allowed_tools(
+            self.skill_dir, {"allowed-tools": "Read"},
+        )
+        # No crash; the broken capability contributes nothing to the union.
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
+
+# ===================================================================
+# validate_capability_skill_only_fields
+# ===================================================================
+
+
+class ValidateCapabilitySkillOnlyFieldsTests(unittest.TestCase):
+    """Capabilities declaring skill-wide frontmatter fields produce an
+    INFO redirect."""
+
+    def test_no_frontmatter_emits_pass(self) -> None:
+        errors, passes = validate_capability_skill_only_fields(
+            None, "capabilities/foo/capability.md",
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(passes, [])
+
+    def test_empty_frontmatter_emits_pass(self) -> None:
+        errors, passes = validate_capability_skill_only_fields(
+            {}, "capabilities/foo/capability.md",
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+        self.assertIn("no skill-only fields", passes[0])
+
+    def test_license_declared_emits_info(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {"license": "MIT"}, "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("'license'", infos[0])
+        self.assertIn("capabilities/foo/capability.md", infos[0])
+
+    def test_compatibility_declared_emits_info(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {"compatibility": "Python 3.12"}, "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("'compatibility'", infos[0])
+
+    def test_metadata_author_declared_emits_info(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {"metadata": {"author": "x"}}, "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("'metadata.author'", infos[0])
+
+    def test_metadata_version_declared_emits_info(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {"metadata": {"version": "1.0.0"}},
+            "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("'metadata.version'", infos[0])
+
+    def test_metadata_spec_declared_emits_info(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {"metadata": {"spec": "agentskills.io"}},
+            "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("'metadata.spec'", infos[0])
+
+    def test_multiple_fields_emit_one_info_per_field(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {
+                "license": "MIT",
+                "metadata": {"author": "x", "version": "1.0.0"},
+            },
+            "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 3)
+
+    def test_non_skill_only_fields_are_silent(self) -> None:
+        # ``allowed-tools`` is the per-capability field — declaring it
+        # must NOT trigger the redirect.
+        errors, passes = validate_capability_skill_only_fields(
+            {"allowed-tools": "Bash"},
+            "capabilities/foo/capability.md",
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_metadata_without_targeted_subfield_silent(self) -> None:
+        errors, passes = validate_capability_skill_only_fields(
+            {"metadata": {"experimental": True}},
+            "capabilities/foo/capability.md",
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
+
+    def test_non_dict_metadata_does_not_crash(self) -> None:
+        errors, _ = validate_capability_skill_only_fields(
+            {"metadata": "scalar"},
+            "capabilities/foo/capability.md",
+        )
+        # ``metadata`` is a scalar, no nested keys present; rule is silent.
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(infos, [])
+
+
+# ===================================================================
+# validate_tool_coherence — per-file effective set (issue #120)
+# ===================================================================
+
+
+class ValidateToolCoherencePerFileTests(unittest.TestCase):
+    """Capability-level ``allowed-tools`` overrides the parent fallback
+    inside ``validate_tool_coherence`` for fence findings local to the
+    capability."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.skill_dir = self._tmp.name
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_capability_declared_satisfies_local_fence(self) -> None:
+        # Parent omits ``allowed-tools`` entirely; capability declares
+        # ``Bash`` and contains a Bash fence.  Coherence rule should
+        # not FAIL on the capability fence (the capability covers it).
+        # Parent SKILL.md has no fence so no parent FAIL either —
+        # aggregation, not coherence, owns the parent-superset finding.
+        write_skill_md(self.skill_dir, body="# Skill\n\nplain body\n")
+        write_capability_md(
+            self.skill_dir, "alpha",
+            allowed_tools="Bash",
+            body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "parent has no allowed-tools"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
+    def test_capability_silent_falls_back_to_parent(self) -> None:
+        # Capability silent on the field; parent declares Bash; fence
+        # in capability is covered by the parent fallback.
+        write_skill_md(
+            self.skill_dir, allowed_tools="Bash",
+            body="# Skill\n\nplain body\n",
+        )
+        write_capability_md(
+            self.skill_dir, "alpha", body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"allowed-tools": "Bash"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
+    def test_capability_explicit_empty_suppresses_local_fence(self) -> None:
+        # Capability declares ``allowed-tools: ""`` — opts itself out
+        # of fence FAIL even when the parent declares nothing.
+        write_skill_md(self.skill_dir, body="# Skill\n\nplain body\n")
+        write_capability_md(
+            self.skill_dir, "alpha",
+            allowed_tools='""',
+            body=_bash_fence_body(),
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "parent has no allowed-tools"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(fails, [])
+
+    def test_capability_declared_does_not_cover_parent_fence(self) -> None:
+        # Capability declares Bash; SKILL.md has a Bash fence; parent
+        # does not declare Bash → FAIL on the parent file (the
+        # capability declaration does not propagate upward — that's
+        # the aggregation rule's job).
+        write_skill_md(self.skill_dir, body=_bash_fence_body())
+        write_capability_md(
+            self.skill_dir, "alpha", allowed_tools="Bash",
+        )
+        errors, _ = validate_tool_coherence(
+            self.skill_dir, {"description": "parent omits"},
+        )
+        fails = [e for e in errors if e.startswith(LEVEL_FAIL)]
+        self.assertEqual(len(fails), 1)
+        self.assertIn("SKILL.md", fails[0])
 
 
 if __name__ == "__main__":
