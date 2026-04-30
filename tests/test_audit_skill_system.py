@@ -2434,6 +2434,62 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         ]
         self.assertEqual(len(infos), 1)
 
+    def test_skill_root_mode_runs_aggregation(self) -> None:
+        # In skill-root mode (top-level SKILL.md, no skills/ tree),
+        # aggregation must still fire — matches the scoping of
+        # router-table and orphan-references.  A capability declares
+        # ``Bash`` but the parent omits it, so a FAIL is expected.
+        with tempfile.TemporaryDirectory() as system_root:
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                system_root, allowed_tools="Read", body=router_body,
+            )
+            cap_dir = os.path.join(system_root, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "capabilities/my-cap/capability.md" in e
+            and "Bash" in e
+        ]
+        self.assertEqual(len(agg_fails), 1)
+
+    def test_skill_root_mode_aggregation_clean_emits_no_fail(self) -> None:
+        # Parent declares the union of capability declarations; no
+        # FAIL should fire even though the audit now runs the rule in
+        # skill-root mode.
+        with tempfile.TemporaryDirectory() as system_root:
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(
+                system_root, allowed_tools="Bash Read", body=router_body,
+            )
+            cap_dir = os.path.join(system_root, "capabilities", "my-cap")
+            _write_capability_md(
+                cap_dir, frontmatter="allowed-tools: Bash Read",
+            )
+            errors = audit_skill_system(system_root)
+        agg_fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL)
+            and "missing from SKILL.md 'allowed-tools'" in e
+        ]
+        self.assertEqual(agg_fails, [])
+
 
 if __name__ == "__main__":
     unittest.main()

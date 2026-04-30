@@ -70,6 +70,7 @@ from lib.discovery import (
     check_line_count,
     read_file,
     load_capability_data,
+    top_level_skill_entry,
     CapabilityRecord,
 )
 from lib.constants import (
@@ -392,23 +393,39 @@ def audit_skill_system(
     registered_skills = [s for s in skills if s["type"] == "registered"]
     capabilities = [s for s in skills if s["type"] == "capability"]
 
+    # Aggregation targets — the rule fires per parent SKILL.md and is
+    # structural (parent must be a superset of capability declarations),
+    # so it belongs in the same category as router-table and
+    # orphan-references which already fire in both deployed-system and
+    # skill-root modes.  In skill-root mode the meta-skill sits at
+    # ``system_root`` itself rather than under ``skills/<name>/``, so
+    # ``find_skill_dirs`` does not surface it; ``top_level_skill_entry``
+    # supplies the synthetic entry whose ``name`` mirrors the
+    # SKILL.md frontmatter.
+    aggregation_targets: list[dict[str, str]] = list(registered_skills)
+    skill_root_entry = top_level_skill_entry(system_root)
+    if skill_root_entry is not None:
+        aggregation_targets.append(skill_root_entry)
+
     # Audit-wide capability discovery pass.  Reads each
     # ``capability.md`` once and stores frontmatter + plain-scalar
-    # findings keyed by absolute path.  The aggregation rule per skill
-    # consumes a per-skill sub-dict; the per-capability loop below
-    # consumes the full dict.  Net: one read per ``capability.md``
-    # regardless of how many audit rules touch it.
+    # findings keyed by absolute path.  The aggregation loop consumes
+    # a per-target sub-dict; the per-capability loop below consumes the
+    # full dict.  Net: one read per ``capability.md`` regardless of how
+    # many audit rules touch it.
     #
-    # Two sources feed the dict so it stays exhaustive over the
-    # ``capabilities`` list ``find_skill_dirs`` returns: registered
-    # skills (the bulk path) and orphan capability-only directories
-    # — ``skills/<name>/capabilities/<cap>/`` where the parent has no
-    # ``SKILL.md``.  ``find_skill_dirs`` surfaces the latter for the
+    # Two sources feed the dict so it stays exhaustive over both
+    # the ``capabilities`` list ``find_skill_dirs`` returns and the
+    # ``aggregation_targets`` list above: aggregation targets (the bulk
+    # path — registered skills plus the top-level skill in skill-root
+    # mode) and orphan capability-only directories
+    # (``skills/<name>/capabilities/<cap>/`` where the parent has no
+    # ``SKILL.md``).  ``find_skill_dirs`` surfaces the latter for the
     # capability-isolation rule, so the lookup below must cover them
     # too.
     system_capability_data: dict[str, CapabilityRecord] = {}
     per_skill_capability_data: dict[str, dict[str, CapabilityRecord]] = {}
-    for skill in registered_skills:
+    for skill in aggregation_targets:
         sub = load_capability_data(skill["path"])
         per_skill_capability_data[skill["path"]] = sub
         system_capability_data.update(sub)
@@ -515,22 +532,35 @@ def audit_skill_system(
         elif verbose:
             print(f"  \u2713 {skill['name']}: spec compliant ({body_lines} body lines)")
 
-        # Bottom-up aggregation \u2014 parent SKILL.md ``allowed-tools`` must
-        # be a superset of the union of capability-declared sets.  The
-        # raw finding format is ``LEVEL: [foundry] message``; the audit
-        # injects the skill name *after* the foundry tag so the prefix
-        # stays left-aligned and consistent with other tagged findings.
-        # Skill-root mode (top-level SKILL.md, no skills/ directory)
-        # has an empty registered_skills list, so this loop does not
-        # fire there \u2014 by design, matching the policy that most
-        # per-skill rules iterate only the deployed-system layout.
-        # Use ``validate_skill.py --foundry-self`` for the skill-root
-        # equivalent self-check.
-        # Audit-wide discovery pass populated this dict; aggregation
-        # consumes the per-skill slice without re-reading capability
-        # frontmatters.
+    # --- Bottom-up allowed-tools aggregation ---
+    # Parent SKILL.md ``allowed-tools`` must be a superset of the
+    # union of capability-declared sets.  Iterates
+    # ``aggregation_targets`` so the rule fires in both
+    # deployed-system mode (registered skills under
+    # ``skills/<name>/``) and skill-root mode (a top-level
+    # SKILL.md).  Matches the scoping of the router-table and
+    # orphan-references rules \u2014 each is a structural consistency
+    # check between a parent SKILL.md and its capabilities, which
+    # makes both modes equally relevant.  The raw finding format is
+    # ``LEVEL: [foundry] message``; the audit injects the skill
+    # name after the foundry tag so the prefix stays left-aligned
+    # and consistent with other tagged findings.
+    if aggregation_targets and verbose:
+        print("\n== Allowed-Tools Aggregation ==")
+    for skill in aggregation_targets:
+        skill_md_path = os.path.join(skill["path"], FILE_SKILL_MD)
+        try:
+            agg_fm, _, _ = load_frontmatter(skill_md_path)
+        except (OSError, UnicodeDecodeError):
+            agg_fm = None
+        # Spec-compliance and router-table loops already FAIL on
+        # missing or unparseable parent frontmatter; aggregation
+        # can only run against a parsed dict, so skip silently
+        # here to avoid double-FAIL.
+        if agg_fm is None or "_parse_error" in agg_fm:
+            continue
         agg_errors, _ = aggregate_capability_allowed_tools(
-            skill["path"], fm,
+            skill["path"], agg_fm,
             capability_data=per_skill_capability_data[skill["path"]],
         )
         for finding in agg_errors:
