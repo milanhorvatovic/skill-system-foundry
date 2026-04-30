@@ -1,3 +1,7 @@
+---
+allowed-tools: Bash Read
+---
+
 # Validation
 
 Validate individual skills against the Agent Skills specification and audit entire skill systems for structural consistency.
