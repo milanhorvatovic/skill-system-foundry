@@ -381,6 +381,17 @@ if "capability_frontmatter" not in _skill:
         "incomplete."
     )
 _capability_frontmatter = _skill["capability_frontmatter"]
+# Reject scalar / list shapes before indexing — a typo like
+# ``capability_frontmatter: []`` would otherwise pass the ``in``
+# check (lists support ``in`` for elements) and crash with a bare
+# ``TypeError`` on the next subscript, breaking the fail-fast
+# RuntimeError contract used elsewhere in this loader.
+if not isinstance(_capability_frontmatter, dict):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.capability_frontmatter': expected a mapping, got "
+        f"{type(_capability_frontmatter).__name__}."
+    )
 if "skill_only_fields" not in _capability_frontmatter:
     raise RuntimeError(
         "configuration.yaml is missing required list "

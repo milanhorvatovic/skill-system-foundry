@@ -686,13 +686,37 @@ class MissingSectionFailFastTests(unittest.TestCase):
         self.assertIn("capability_frontmatter", str(ctx.exception))
 
     def test_missing_skill_only_fields_raises(self) -> None:
+        # Removing the only child leaf below ``capability_frontmatter:``
+        # leaves the YAML key dangling, which the foundry's stdlib-only
+        # parser surfaces as a non-mapping value.  The shape check
+        # added in this branch fires first with a more actionable
+        # message naming the offending parent — that is the canonical
+        # failure mode for "skill_only_fields is missing" because the
+        # parent shape itself is the discriminator.
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_minus_nested(
                     "capability_frontmatter", "skill_only_fields",
                 )
             )
-        self.assertIn("skill_only_fields", str(ctx.exception))
+        self.assertIn("capability_frontmatter", str(ctx.exception))
+
+    def test_capability_frontmatter_non_mapping_raises(self) -> None:
+        # A typo like ``capability_frontmatter: []`` would otherwise
+        # pass the ``"skill_only_fields" in _capability_frontmatter``
+        # check (lists support ``in`` for elements) and crash with a
+        # bare TypeError on the next subscript.  The shape check must
+        # raise a clear RuntimeError naming the offending key so the
+        # fail-fast contract holds for malformed scalars and lists.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "capability_frontmatter:\n    skill_only_fields:\n      - license\n      - compatibility\n      - metadata.author\n      - metadata.version\n      - metadata.spec",
+                    "capability_frontmatter: []",
+                )
+            )
+        self.assertIn("capability_frontmatter", str(ctx.exception))
+        self.assertIn("expected a mapping", str(ctx.exception))
 
     def _full_config_with_substitution(self, old: str, new: str) -> str:
         """Return configuration text with *old* replaced by *new* exactly once."""
