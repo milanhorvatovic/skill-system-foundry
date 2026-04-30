@@ -2490,6 +2490,33 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         ]
         self.assertEqual(agg_fails, [])
 
+    def test_skill_root_mode_capability_skill_only_field_emits_info(
+        self,
+    ) -> None:
+        # Skill-only-fields redirect must also fire on top-level
+        # capabilities in skill-root mode.  Without the synthetic
+        # capability entries the audit's per-capability loop would
+        # skip ``<system_root>/capabilities/<name>/`` entirely.
+        with tempfile.TemporaryDirectory() as system_root:
+            router_body = (
+                "# Demo Skill\n\n"
+                "## Capabilities\n\n"
+                "| Capability | Trigger | Path |\n"
+                "|---|---|---|\n"
+                "| my-cap | When my-cap is needed | capabilities/my-cap/capability.md |\n"
+            )
+            write_skill_md(system_root, body=router_body)
+            cap_dir = os.path.join(system_root, "capabilities", "my-cap")
+            _write_capability_md(cap_dir, frontmatter="license: MIT")
+            errors = audit_skill_system(system_root)
+        infos = [
+            e for e in errors
+            if e.startswith(LEVEL_INFO)
+            and "'license'" in e
+            and "capabilities/my-cap/capability.md" in e
+        ]
+        self.assertEqual(len(infos), 1)
+
     def test_unreadable_capability_emits_parse_error_fail(self) -> None:
         # I/O failures during capability frontmatter load must surface
         # as FAILs through the existing _parse_error branch — the

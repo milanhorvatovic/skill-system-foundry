@@ -29,11 +29,15 @@ The audit runs in two modes:
 * **Skill-root mode** — <system-root> contains SKILL.md directly,
   i.e., it is itself a skill (typically the foundry meta-skill or any
   integrator-built meta-skill).  In this mode the top-level SKILL.md
-  is audited by the router-table consistency rule only; checks that
-  iterate discovered skills (spec compliance, dependency direction,
-  shared resources, capability entry naming, etc.) walk skills/<name>/
-  and do not treat the top-level skill as a discovered skill unless a
-  skills/ directory is also present.
+  is audited by the rules whose scope is structural consistency
+  between a parent SKILL.md and its capabilities — today the
+  router-table consistency rule, the orphan-references rule, the
+  bottom-up ``allowed-tools`` aggregation rule, and the per-capability
+  skill-only-fields redirect.  Other checks that iterate discovered
+  skills (spec compliance, dependency direction, shared resources,
+  capability entry naming, etc.) walk skills/<name>/ and do not treat
+  the top-level skill as a discovered skill unless a skills/ directory
+  is also present.
 
 If neither mode applies (no skills/ and no top-level SKILL.md), the
 script runs a partial audit and emits a warning.
@@ -407,6 +411,34 @@ def audit_skill_system(
     if skill_root_entry is not None:
         aggregation_targets.append(skill_root_entry)
 
+    # Capability-isolation targets — broader than ``capabilities``.
+    # ``find_skill_dirs`` does not surface
+    # ``<system_root>/capabilities/<cap>/`` in skill-root mode, so the
+    # capability-isolation loop (parse-error FAIL, scalar findings,
+    # "has full frontmatter" INFO, skill-only-fields redirect) would
+    # silently skip the top-level skill's own capabilities.  Synthesize
+    # entries for them here so the rule's coverage matches the
+    # aggregation rule that just gained skill-root coverage.  The
+    # *narrower* ``capabilities`` list still drives the
+    # dependency-direction and nesting-depth loops below — those rules
+    # produce false-positive FAILs on the foundry's own capability
+    # documentation (which explains ``roles/`` paths in prose), so
+    # they remain deployed-system-only by design.
+    capability_isolation_targets: list[dict[str, str]] = list(capabilities)
+    if skill_root_entry is not None:
+        top_caps_dir = os.path.join(system_root, DIR_CAPABILITIES)
+        if os.path.isdir(top_caps_dir):
+            for cap_name in sorted(os.listdir(top_caps_dir)):
+                cap_path = os.path.join(top_caps_dir, cap_name)
+                cap_entry = os.path.join(cap_path, FILE_CAPABILITY_MD)
+                if os.path.isdir(cap_path) and os.path.isfile(cap_entry):
+                    capability_isolation_targets.append({
+                        "name": cap_name,
+                        "path": cap_path,
+                        "type": "capability",
+                        "parent": skill_root_entry["name"],
+                    })
+
     # Audit-wide capability discovery pass.  Reads each
     # ``capability.md`` once and stores frontmatter + plain-scalar
     # findings keyed by absolute path.  The aggregation loop consumes
@@ -586,11 +618,12 @@ def audit_skill_system(
     if verbose:
         print("\n== Capability Isolation ==")
 
-    for cap in capabilities:
+    for cap in capability_isolation_targets:
         cap_md = os.path.join(cap["path"], FILE_CAPABILITY_MD)
         # Audit-wide discovery pass populated this record (covering
-        # both registered-skill and orphan-capability paths above), so
-        # the lookup is unconditional — no fallback needed.
+        # registered-skill capabilities, orphan capability-only
+        # directories, and top-level skill-root capabilities), so the
+        # lookup is unconditional — no fallback needed.
         cap_record = system_capability_data[os.path.abspath(cap_md)]
         fm = cap_record.frontmatter
         scalar_findings = cap_record.scalar_findings
