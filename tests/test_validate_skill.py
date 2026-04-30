@@ -3843,6 +3843,30 @@ class CapabilityAggregationIntegrationTests(unittest.TestCase):
         self.assertEqual(agg_fails, [])
         self.assertEqual(agg_infos, [])
 
+    def test_capability_malformed_allowed_tools_value_emits_warn(
+        self,
+    ) -> None:
+        # Capability ``allowed-tools`` is now authoritative input for
+        # aggregation/coherence; the parent run must surface
+        # type/catalog diagnostics on it (e.g., a mapping value)
+        # instead of silently treating it as zero tokens.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, allowed_tools="Bash")
+            write_capability_md(
+                skill_dir, "alpha",
+                extra_frontmatter="allowed-tools:\n  bash: true\n",
+            )
+            errors, _ = validate_skill(skill_dir)
+        type_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "allowed-tools" in e
+            and "should be a space-separated string" in e
+            and "capabilities/alpha/capability.md" in e
+        ]
+        self.assertEqual(len(type_warns), 1)
+
     def test_unreadable_capability_frontmatter_emits_fail(self) -> None:
         # ``validate_skill.py <parent>`` is the canonical skill-level
         # validator; an unreadable capability frontmatter must surface

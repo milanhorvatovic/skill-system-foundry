@@ -667,6 +667,20 @@ def validate_skill(
                 f"{cap_fm['_parse_error']}"
             )
             continue
+        # Capability-scope ``allowed-tools`` validation.  Capability
+        # declarations are now authoritative input for aggregation and
+        # the per-file coherence check, so they need the same
+        # type/catalog diagnostics ``SKILL.md``'s ``allowed-tools``
+        # gets.  Without this loop a capability could declare
+        # ``allowed-tools: {bash: true}`` (a mapping), contribute zero
+        # tokens to aggregation, and pass the parent run silently.
+        # Findings are re-emitted with the capability path so
+        # attribution stays with the offending file.
+        if isinstance(cap_fm, dict) and "allowed-tools" in cap_fm:
+            at_errors, _ = validate_allowed_tools(cap_fm["allowed-tools"])
+            for finding in at_errors:
+                level, _, detail = finding.partition(": ")
+                errors.append(f"{level}: {cap_rel} {detail}")
         sof_errors, sof_passes = validate_capability_skill_only_fields(
             cap_fm, cap_rel,
         )
