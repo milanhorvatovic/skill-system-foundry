@@ -548,6 +548,32 @@ def _load_fixture_markdown() -> str:
 class MainTests(unittest.TestCase):
     """End-to-end tests of ``main`` with mocked fetch."""
 
+    def test_default_mode_no_drift_does_not_modify_file(self) -> None:
+        # No-drift runs must leave the YAML untouched so the catalog's
+        # commit history is not polluted by weekly date-only bumps.
+        markdown = _load_fixture_markdown()
+        upstream = mod.extract_tools(markdown)
+        catalog_yaml = _HAPPY_CATALOG.replace(
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "          - Edit\n",
+            (
+                "        harness_tools:\n"
+                + "".join(f"          - {t}\n" for t in sorted(upstream))
+            ),
+        )
+        with _CatalogTempFile(catalog_yaml) as path, _patched_fetch(markdown):
+            with redirect_stdout(io.StringIO()):
+                code = mod.main([
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 0)
+            with open(path, "r", encoding="utf-8") as fh:
+                rewritten = fh.read()
+            self.assertEqual(rewritten, catalog_yaml)
+
     def test_dry_run_no_drift_exits_zero(self) -> None:
         # Build a catalog whose harness_tools matches the fixture exactly.
         markdown = _load_fixture_markdown()

@@ -605,14 +605,20 @@ def run(
     additions, removals = diff(catalog, extracted)
 
     summary = render_summary(additions, removals, source_url, today_iso)
+    drift_detected = bool(additions or removals)
 
-    if not dry_run:
+    # Only rewrite the file when drift is detected.  ``last_checked``
+    # tracks "date the catalog was last changed to reflect upstream",
+    # not "date the workflow last ran" — the GitHub Actions run
+    # history already provides the latter signal, and bumping the
+    # date on every quiet run would produce a noisy commit cadence.
+    if not dry_run and drift_detected:
         new_yaml = apply_additions(yaml_text, additions, today_iso)
         if new_yaml != yaml_text:
             with open(catalog_path, "w", encoding="utf-8") as fh:
                 fh.write(new_yaml)
 
-    return (bool(additions or removals), summary)
+    return (drift_detected, summary)
 
 
 def main(argv: list[str] | None = None) -> int:
