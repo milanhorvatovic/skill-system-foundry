@@ -36,6 +36,8 @@ from lib.validation import (
     validate_license,
     validate_known_keys,
     validate_tool_coherence,
+    aggregate_capability_allowed_tools,
+    validate_capability_skill_only_fields,
 )
 from lib.codex_config import validate_codex_config
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
@@ -508,6 +510,14 @@ def validate_skill(
                 f"{LEVEL_INFO}: [foundry] Capability has 'name' in frontmatter — this is fine for "
                 "documentation but won't be used for discovery"
             )
+        # Skill-only frontmatter fields (license, compatibility, metadata.*)
+        # — emit INFO redirect when a capability declares any of them.
+        cap_rel = os.path.relpath(skill_md, skill_root).replace(os.sep, "/")
+        sof_errors, sof_passes = validate_capability_skill_only_fields(
+            frontmatter, cap_rel,
+        )
+        errors.extend(sof_errors)
+        passes.extend(sof_passes)
         body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
         errors.extend(body_errors)
         passes.extend(body_passes)
@@ -614,6 +624,40 @@ def validate_skill(
     coh_errors, coh_passes = validate_tool_coherence(skill_path, frontmatter)
     errors.extend(coh_errors)
     passes.extend(coh_passes)
+
+    # Bottom-up aggregation — parent SKILL.md ``allowed-tools`` must be
+    # a superset of the union of capability-declared sets.  Layered on
+    # top of the per-file coherence check above: coherence catches
+    # fence/scripts signals, aggregation catches frontmatter
+    # declarations.
+    agg_errors, agg_passes = aggregate_capability_allowed_tools(
+        skill_path, frontmatter,
+    )
+    errors.extend(agg_errors)
+    passes.extend(agg_passes)
+
+    # Per-capability skill-only-fields INFO redirect.  Walks every
+    # ``capabilities/<name>/capability.md`` and emits an INFO when the
+    # capability declares a field whose authoritative home is the
+    # parent SKILL.md (license, compatibility, metadata.*).
+    capabilities_root = os.path.join(skill_path, DIR_CAPABILITIES)
+    if os.path.isdir(capabilities_root):
+        for cap_name in sorted(os.listdir(capabilities_root)):
+            cap_dir = os.path.join(capabilities_root, cap_name)
+            cap_md = os.path.join(cap_dir, FILE_CAPABILITY_MD)
+            if not os.path.isfile(cap_md):
+                continue
+            cap_fm, _, _ = load_frontmatter(cap_md)
+            if cap_fm and "_parse_error" in cap_fm:
+                # Parse error already surfaces via the audit / capability
+                # validator paths; skip silently here to avoid double-FAIL.
+                continue
+            cap_rel = os.path.relpath(cap_md, skill_path).replace(os.sep, "/")
+            sof_errors, sof_passes = validate_capability_skill_only_fields(
+                cap_fm, cap_rel,
+            )
+            errors.extend(sof_errors)
+            passes.extend(sof_passes)
 
     # Orphan-reference rule — flag files under references/ that no
     # SKILL.md or capability.md reaches via the configured body

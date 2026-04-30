@@ -84,7 +84,11 @@ from lib.constants import (
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.router_table import audit_router_table
-from lib.validation import validate_description_triggers
+from lib.validation import (
+    validate_description_triggers,
+    aggregate_capability_allowed_tools,
+    validate_capability_skill_only_fields,
+)
 
 
 def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
@@ -475,6 +479,15 @@ def audit_skill_system(
         elif verbose:
             print(f"  \u2713 {skill['name']}: spec compliant ({body_lines} body lines)")
 
+        # Bottom-up aggregation \u2014 parent SKILL.md ``allowed-tools`` must
+        # be a superset of the union of capability-declared sets.  Each
+        # finding is prefixed with the skill name so the audit's per-skill
+        # attribution stays consistent with the rest of the report.
+        agg_errors, _ = aggregate_capability_allowed_tools(skill["path"], fm)
+        for finding in agg_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']} {detail}")
+
     # --- Capabilities should not be registered ---
     if verbose:
         print("\n== Capability Isolation ==")
@@ -498,6 +511,15 @@ def audit_skill_system(
             )
         elif verbose:
             print(f"  \u2713 {cap['parent']}/{cap['name']}: not registered")
+
+        # Skill-only-fields INFO redirect \u2014 capability frontmatter must
+        # not duplicate fields whose authoritative home is the parent
+        # SKILL.md (license, compatibility, metadata.author/version/spec).
+        cap_rel = (
+            f"{cap['parent']}/capabilities/{cap['name']}/{FILE_CAPABILITY_MD}"
+        )
+        sof_errors, _ = validate_capability_skill_only_fields(fm, cap_rel)
+        errors.extend(sof_errors)
 
     # --- Dependency Direction ---
     if verbose:
