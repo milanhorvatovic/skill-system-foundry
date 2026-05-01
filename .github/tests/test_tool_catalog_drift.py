@@ -438,6 +438,32 @@ class ApplyAdditionsTests(unittest.TestCase):
         second = mod.apply_additions(first, {"Glob"}, "2026-05-01")
         self.assertEqual(first, second)
 
+    def test_eof_insertion_repairs_missing_trailing_newline(self) -> None:
+        # Regression: when the catalog file ends with the harness_tools
+        # list (no trailing sibling), splitlines(keepends=True) yields
+        # a final element without ``\n``.  Extending with new ``- Tool\n``
+        # items would concatenate them onto the last existing line and
+        # produce invalid YAML.  Confirm the writer repairs the gap.
+        eof_catalog = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        provenance:\n"
+            "          source_url: https://example.test/tools.md\n"
+            "          last_checked: \"2026-04-26\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read"  # NOTE: no trailing newline
+        )
+        out = mod.apply_additions(eof_catalog, {"Glob"}, "2026-05-01")
+        # The final existing item is on its own line and the new item
+        # follows it as a separate list entry — no concatenation.
+        self.assertIn("          - Read\n", out)
+        self.assertIn("          - Glob\n", out)
+        # And the new item must not glue onto the previous line.
+        self.assertNotIn("- Read          - Glob", out)
+
     def test_preserves_cli_tools_block(self) -> None:
         out = mod.apply_additions(
             _HAPPY_CATALOG, {"Glob"}, "2026-05-01"

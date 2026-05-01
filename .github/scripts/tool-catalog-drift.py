@@ -488,6 +488,12 @@ def apply_additions(
 
     if insert_at >= len(lines) and new_items:
         # End-of-file insertion — list runs to the very last line.
+        # If that last line lacks a trailing newline, appending the
+        # first ``- Tool\n`` would concatenate it onto the previous
+        # line and produce invalid YAML.  Repair the previous line
+        # before extending.
+        if rebuilt and not rebuilt[-1].endswith("\n"):
+            rebuilt[-1] += "\n"
         rebuilt.extend(new_items)
 
     return "".join(rebuilt)
