@@ -36,6 +36,7 @@ keep their shape.
 
 import argparse
 import datetime
+import json
 import os
 import re
 import sys
@@ -582,12 +583,12 @@ def run(
     catalog_path: str,
     today_iso: str,
     dry_run: bool,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, dict]:
     """Run the drift sweep against the catalog at *catalog_path*.
 
-    Returns ``(drift_detected, summary)``.  In default (non-dry-run)
-    mode, additions are applied to the catalog file and
-    ``last_checked`` is updated regardless of drift state.  In dry-run
+    Returns ``(drift_detected, summary, json_payload)``.  In default
+    (non-dry-run) mode, additions are applied to the catalog file and
+    ``last_checked`` is updated when drift is detected.  In dry-run
     mode, no file edits happen.
 
     Raises :class:`FetchError` or :class:`ParseError` on hard-fail
@@ -606,6 +607,15 @@ def run(
 
     summary = render_summary(additions, removals, source_url, today_iso)
     drift_detected = bool(additions or removals)
+    json_payload = {
+        "drift": drift_detected,
+        "source_url": source_url,
+        "checked": today_iso,
+        "additions": sorted(additions),
+        "removals": sorted(removals),
+        "catalog_size": len(catalog),
+        "upstream_size": len(extracted),
+    }
 
     # Only rewrite the file when drift is detected.  ``last_checked``
     # tracks "date the catalog was last changed to reflect upstream",
@@ -618,7 +628,7 @@ def run(
             with open(catalog_path, "w", encoding="utf-8") as fh:
                 fh.write(new_yaml)
 
-    return (drift_detected, summary)
+    return (drift_detected, summary, json_payload)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -664,12 +674,22 @@ def main(argv: list[str] | None = None) -> int:
             "workflow to compose the PR body."
         ),
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit the drift result as a JSON object to stdout instead "
+            "of human-readable markdown. Object keys: drift (bool), "
+            "source_url, checked, additions, removals, catalog_size, "
+            "upstream_size. Useful for tooling consumers."
+        ),
+    )
     args = parser.parse_args(argv)
 
     today_iso = args.today or _today_iso()
 
     try:
-        drift_detected, summary = run(
+        drift_detected, summary, json_payload = run(
             catalog_path=args.catalog_path,
             today_iso=today_iso,
             dry_run=args.dry_run,
@@ -684,7 +704,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: I/O error: {exc}", file=sys.stderr)
         return 4
 
-    sys.stdout.write(summary)
+    if args.json:
+        sys.stdout.write(json.dumps(json_payload, indent=2, sort_keys=True))
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(summary)
 
     if args.summary_out:
         with open(args.summary_out, "w", encoding="utf-8") as fh:

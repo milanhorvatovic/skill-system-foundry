@@ -692,6 +692,64 @@ class MainTests(unittest.TestCase):
             if os.path.exists(summary_path):
                 os.unlink(summary_path)
 
+    def test_json_mode_emits_machine_readable_payload(self) -> None:
+        markdown = _load_fixture_markdown()
+        with _CatalogTempFile(_HAPPY_CATALOG) as path, _patched_fetch(markdown):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = mod.main([
+                    "--dry-run",
+                    "--json",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 1)
+            import json as _json
+            payload = _json.loads(stdout.getvalue())
+            self.assertEqual(payload["drift"], True)
+            self.assertEqual(payload["checked"], "2026-05-01")
+            self.assertIn("AskUserQuestion", payload["additions"])
+            # ``Edit`` is in the happy catalog already so it must NOT
+            # appear in additions.
+            self.assertNotIn("Edit", payload["additions"])
+            self.assertEqual(payload["catalog_size"], 3)
+            self.assertGreater(payload["upstream_size"], 30)
+            self.assertIsInstance(payload["additions"], list)
+            self.assertIsInstance(payload["removals"], list)
+            # Lists are sorted for stable diffing.
+            self.assertEqual(
+                payload["additions"], sorted(payload["additions"])
+            )
+
+    def test_json_mode_no_drift_returns_empty_lists(self) -> None:
+        markdown = _load_fixture_markdown()
+        upstream = mod.extract_tools(markdown)
+        catalog_yaml = _HAPPY_CATALOG.replace(
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "          - Edit\n",
+            (
+                "        harness_tools:\n"
+                + "".join(f"          - {t}\n" for t in sorted(upstream))
+            ),
+        )
+        with _CatalogTempFile(catalog_yaml) as path, _patched_fetch(markdown):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = mod.main([
+                    "--dry-run",
+                    "--json",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 0)
+            import json as _json
+            payload = _json.loads(stdout.getvalue())
+            self.assertEqual(payload["drift"], False)
+            self.assertEqual(payload["additions"], [])
+            self.assertEqual(payload["removals"], [])
+
     def test_today_default_uses_system_date(self) -> None:
         # Smoke-test: run without --today and confirm today's date
         # appears in the rewritten YAML.
