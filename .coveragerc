@@ -17,3 +17,9 @@ omit =
     tests/helpers.py
     */__pycache__/*
     .git/*
+    # tool-catalog-drift is exercised by its own suite under
+    # .github/tests/ via the dedicated ci-helper-tests.yaml
+    # workflow, not the meta-skill matrix.  Excluding it here so
+    # check-per-file-coverage.py does not flag it as 0.0% covered
+    # in the python-tests.yaml run.
+    .github/scripts/tool-catalog-drift.py
