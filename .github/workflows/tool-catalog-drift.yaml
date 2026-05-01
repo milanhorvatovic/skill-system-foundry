@@ -1,0 +1,204 @@
+name: Tool catalog drift
+
+# Weekly sweep that compares the hand-maintained Claude Code tool
+# catalog at ``skill-system-foundry/scripts/lib/configuration.yaml``
+# (under ``skill.allowed_tools.catalogs.claude_code``) against the
+# canonical upstream source URL.  The URL itself is read from
+# ``skill.allowed_tools.catalogs.claude_code.provenance.source_url``
+# in the catalog YAML — that field is the single source of truth,
+# so updating it is a YAML-only change and does not require editing
+# this workflow.
+#
+# Behavior:
+#   * No drift detected — no PR opened.  If a stale drift PR exists on
+#     the rolling branch ``chore/tool-catalog-drift`` it is closed and
+#     the branch deleted (drift was resolved manually since the last
+#     run).
+#   * Drift detected — additions are auto-applied to the catalog,
+#     ``last_checked`` is bumped to today, and a single rolling PR is
+#     opened or force-updated against ``chore/tool-catalog-drift``.
+#     Removals are surfaced in the PR body as advisory candidates;
+#     they are NEVER auto-applied (a regex miss or a one-version-wide
+#     doc edit could falsely propose dropping a real tool).
+#   * Hard-fail on any fetch error, table-shape change, or
+#     parse error — silent green is the worst outcome for a drift
+#     sweep.
+#
+# Tracks the ``claude_code`` catalog only.  Adding a second harness
+# is not a YAML-only edit: ``run`` and ``parse_catalog`` in the
+# helper currently process the single default harness, so a future
+# extension requires helper changes (and may need workflow updates
+# for per-harness PR titles or reporting).  See the design comment
+# on #118.
+
+on:
+  schedule:
+    # Mondays at 12:00 UTC.  Single source-of-truth; do not duplicate
+    # this expression in code reviews — change here only.
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A queued ``workflow_dispatch`` must not race the cron — drift PRs
+# are force-pushed to a single rolling branch and concurrent runs
+# would clobber each other.  ``cancel-in-progress: false`` so an
+# in-flight run finishes before the queued one starts.
+concurrency:
+  group: tool-catalog-drift
+  cancel-in-progress: false
+
+jobs:
+  detect-and-pr:
+    runs-on: ubuntu-latest
+    # Needs ``contents: write`` to push the rolling branch and
+    # ``pull-requests: write`` to open / edit / close the rolling PR.
+    # ``issues: write`` is also required because ``gh pr close
+    # --comment`` posts the closing comment via the issues API
+    # (PR comments are issue comments in GitHub's permission
+    # model) — without it the no-drift cleanup path would fail
+    # exactly when a stale rolling PR needs to be closed.
+    # The default workflow-wide ``contents: read`` stays so any future
+    # job that does not need write does not get it implicitly.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: main
+          # Fetch full history so a force-push to the rolling branch
+          # cleanly supersedes whatever was there before.
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # @v5 as 5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Run drift helper
+        id: helper
+        env:
+          SUMMARY_PATH: ${{ runner.temp }}/drift-summary.md
+          STATE_PATH: ${{ runner.temp }}/drift-state.json
+        run: |
+          python .github/scripts/tool-catalog-drift.py \
+            --json --summary-out "$SUMMARY_PATH" > "$STATE_PATH"
+          echo "summary_path=$SUMMARY_PATH" >> "$GITHUB_OUTPUT"
+          echo "state_path=$STATE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Detect drift from helper output
+        id: detect
+        env:
+          STATE_PATH: ${{ steps.helper.outputs.state_path }}
+        # Read the helper's authoritative drift signal from its JSON
+        # payload rather than inferring from the YAML diff.  A
+        # removals-only run on a day when ``last_checked`` already
+        # equals today produces a byte-identical YAML, so a diff-based
+        # detection would miss that drift case.
+        run: |
+          drift=$(python -c "import json,sys; print(str(json.load(open(sys.argv[1], encoding='utf-8'))['drift']).lower())" "$STATE_PATH")
+          echo "drift=$drift" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve stale drift PR (no drift this run)
+        if: steps.detect.outputs.drift == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: chore/tool-catalog-drift
+        run: |
+          # If a previous run opened a PR but the drift was resolved
+          # manually (or upstream recovered), close the PR and delete
+          # the branch so the next genuine drift opens a fresh PR.
+          # The branch may also exist without an open PR (e.g. someone
+          # closed the PR manually without ticking "Delete branch") —
+          # delete it here so the rolling-branch lifecycle stays tidy.
+          # Filter to PRs whose head repo owner matches this repo's
+          # owner so a PR opened from a fork using the same branch
+          # name cannot be mistakenly matched, closed, or edited.
+          # ``gh pr list --head`` accepts only a bare branch name (the
+          # ``OWNER:BRANCH`` form is unsupported), so the cross-repo
+          # filter has to come from the JSON output via ``--jq``.
+          pr_number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,headRepositoryOwner --jq "[.[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number][0] // empty")
+          if [ -n "$pr_number" ]; then
+            gh pr close "$pr_number" \
+              --comment "Drift resolved upstream or manually; closing rolling PR." \
+              --delete-branch
+            echo "Closed rolling PR #$pr_number."
+          elif git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git push origin --delete "$BRANCH"
+            echo "Deleted stale rolling branch $BRANCH (no open PR)."
+          else
+            echo "No stale drift PR or rolling branch to clean up."
+          fi
+
+      - name: Configure git identity
+        if: steps.detect.outputs.drift == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and force-push to rolling branch
+        if: steps.detect.outputs.drift == 'true'
+        env:
+          BRANCH: chore/tool-catalog-drift
+          CATALOG_PATH: skill-system-foundry/scripts/lib/configuration.yaml
+        run: |
+          git switch -C "$BRANCH"
+          git add "$CATALOG_PATH"
+          # Removals are advisory and never auto-applied, so a
+          # removals-only drift run leaves the YAML untouched.  Use
+          # --allow-empty so the commit + force-push + PR-open steps
+          # still run; the PR body's "Candidate removals" section
+          # carries the advisory.
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "Report claude_code tool catalog drift (removals-only advisory)"
+          else
+            git commit -m "Sync claude_code tool catalog with upstream tools-reference"
+          fi
+          git push --force origin "$BRANCH"
+
+      - name: Compose PR body
+        if: steps.detect.outputs.drift == 'true'
+        env:
+          SUMMARY_PATH: ${{ steps.helper.outputs.summary_path }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "Auto-generated by [tool-catalog-drift run]($RUN_URL)."
+            echo
+            cat "$SUMMARY_PATH"
+            echo
+            echo "## How to handle removals"
+            echo
+            echo "Any \"Candidate removals\" listed above are advisory only — they are NOT applied to the catalog by this workflow. Verify each name against the upstream tools reference before deleting; possible false positives include upstream renames, table-format changes, or extraction misses."
+            echo
+            echo "## CI on this PR"
+            echo
+            echo "PRs opened by the default \`GITHUB_TOKEN\` do not trigger downstream workflow runs. To run the full CI matrix against this branch, close and reopen this PR (a human action) so \`python-tests.yaml\` and the other path-filtered checks fire against the head."
+          } > "$RUNNER_TEMP/pr-body.md"
+
+      - name: Open or update rolling PR
+        if: steps.detect.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: chore/tool-catalog-drift
+        run: |
+          # Same fork-scoping rationale as in the no-drift cleanup
+          # step: match only PRs whose head repo owner is this repo's
+          # owner so a fork PR cannot be mistakenly edited.
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,headRepositoryOwner --jq "[.[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number][0] // empty")
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" \
+              --title "Sync claude_code tool catalog with upstream" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+            echo "Updated rolling PR #$existing."
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Sync claude_code tool catalog with upstream" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+          fi
