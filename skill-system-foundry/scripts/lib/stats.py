@@ -181,10 +181,19 @@ def _compute_capability_discovery(
       raises a finding in *errors*.
     * ``errors`` is the list of new finding strings the caller should
       append to the run-level error list.  Two finding shapes are
-      possible: an I/O-failure WARN when ``discovery_bytes_of`` raises
-      and a parse-error WARN when the YAML frontmatter is present but
-      malformed.  A capability silent on frontmatter produces no
-      finding.
+      possible: an I/O-failure WARN when ``discovery_bytes_of``
+      raises, and a parse-error WARN when ``load_frontmatter``
+      returns a ``_parse_error`` dict.  The parse-error case covers
+      *both* the unclosed-fence shape (``---`` opener with no
+      closing fence — ``discovery_bytes_of`` reports this as 0
+      bytes because the boundary is undetectable) *and* the
+      valid-fences-with-invalid-YAML-body shape.  A capability
+      silent on frontmatter (no ``---`` opener at all) produces no
+      finding.  ``cap_discovery == 0`` therefore is not a reliable
+      "silent capability" predicate — the byte scan returns 0 for
+      both legitimate silent and malformed unclosed-fence shapes,
+      so the parse probe must run unconditionally to distinguish
+      them.
     """
     discovery_by_filepath: dict[str, int] = {}
     errors: list[str] = []
