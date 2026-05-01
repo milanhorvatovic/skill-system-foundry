@@ -12,12 +12,14 @@ Two byte-based proxies are reported:
 * ``discovery_bytes`` — the sum of every YAML frontmatter block the
   harness reads at discovery time: ``SKILL.md`` plus each
   ``capabilities/<name>/capability.md`` (when present).  Every
-  discovery-relevant entry in ``files[]`` (``SKILL.md`` and each
-  visited capability entry) carries a per-row ``discovery_bytes``
-  so consumers can reconstruct the breakdown without re-reading any
-  files; rows that do not contribute carry ``0``.  The
-  human-readable report shows the breakdown directly when at least
-  one capability declares frontmatter.
+  discovery-relevant entry in ``files[]`` — ``SKILL.md`` and each
+  visited capability entry — carries a per-row ``discovery_bytes``
+  (``0`` when the file is silent on frontmatter) so consumers can
+  reconstruct the breakdown without re-reading any files;
+  non-discovery rows (capability-local references and shared
+  references) omit the key entirely.  The human-readable report
+  shows the breakdown directly when at least one capability
+  declares frontmatter.
 
 * ``load_bytes`` — SKILL.md plus every transitively reachable file
   under ``capabilities/`` or ``references/``, excluding ``scripts/``
