@@ -204,16 +204,20 @@ def _compute_capability_discovery(
             )
             discovery_by_filepath[filepath] = 0
             continue
+        discovery_by_filepath[filepath] = cap_discovery
+        # Skip the parse-error probe for capabilities silent on
+        # frontmatter — there is no fence-bracketed block to parse,
+        # so a second open would only waste I/O.  The byte-scan
+        # already succeeded, so any decode failure now would be a
+        # mid-read divergence (race, antivirus, NFS): recover
+        # silently rather than emitting a duplicate WARN — the
+        # validator surfaces it on its own pass if it matters.
+        if cap_discovery == 0:
+            continue
         try:
             cap_frontmatter, _body, _findings = load_frontmatter(filepath)
         except (OSError, UnicodeError):
-            # Already-recoverable: the byte scan above succeeded so we
-            # have a usable count.  A decode failure between the byte
-            # scan and the frontmatter parse is rare enough on a file
-            # we just opened that suppressing a duplicate WARN is the
-            # saner default — the validator surfaces it on its own
-            # pass if it matters.
-            cap_frontmatter = None
+            continue
         if cap_frontmatter and "_parse_error" in cap_frontmatter:
             errors.append(
                 f"{LEVEL_WARN}: [foundry] '{state['path']}' "
@@ -222,7 +226,6 @@ def _compute_capability_discovery(
                 f"capability is not discoverable as-is — fix the "
                 f"frontmatter before trusting these numbers"
             )
-        discovery_by_filepath[filepath] = cap_discovery
     return discovery_by_filepath, errors
 
 
@@ -263,12 +266,17 @@ def compute_stats(skill_path: str) -> dict:
     The optional ``discovery_bytes`` key is populated on rows the
     harness reads at discovery time: ``SKILL.md`` and every
     ``capabilities/<name>/capability.md``.  The value is the byte
-    count of that file's frontmatter block (``0`` when the file has
-    no parseable frontmatter).  It is omitted on every other row —
-    capability-local references and shared references are not parsed
-    at discovery time, so attaching the key would falsely imply they
-    contribute to discovery cost.  The top-level ``discovery_bytes``
-    is the sum across rows that carry the key.
+    count of that file's fence-bracketed YAML frontmatter block —
+    ``0`` only when no ``---`` opener/closer pair is present.  A
+    block whose YAML body is malformed still contributes its
+    fence-bracketed bytes (those bytes are paid at discovery
+    regardless of parse success) and surfaces a parallel
+    parse-error WARN in ``errors``.  The key is omitted on every
+    other row — capability-local references and shared references
+    are not parsed at discovery time, so attaching the key would
+    falsely imply they contribute to discovery cost.  The
+    top-level ``discovery_bytes`` is the sum across rows that
+    carry the key.
 
     The traversal:
 
