@@ -845,6 +845,27 @@ class MainTests(unittest.TestCase):
             self.assertEqual(payload["additions"], [])
             self.assertEqual(payload["removals"], [])
 
+    def test_summary_out_unwritable_path_exits_four(self) -> None:
+        # An unwritable summary-out path must surface as the helper's
+        # documented hard-fail (exit 4 + stderr message), not a bare
+        # traceback.  The workflow relies on --summary-out for the PR
+        # body, so a clean failure mode matters when the temp path is
+        # somehow unavailable.
+        markdown = _load_fixture_markdown()
+        unwritable = os.path.join(
+            os.sep, "nonexistent-dir", "no-permission", "summary.md"
+        )
+        with _CatalogTempFile(_HAPPY_CATALOG) as path, _patched_fetch(markdown):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+                code = mod.main([
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                    "--summary-out", unwritable,
+                ])
+            self.assertEqual(code, 4)
+            self.assertIn("I/O error", stderr.getvalue())
+
     def test_today_default_uses_system_date(self) -> None:
         # Smoke-test: run without --today and confirm today's date
         # appears in the rewritten YAML.

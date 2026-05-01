@@ -376,6 +376,22 @@ class AllowedToolsCatalogTests(unittest.TestCase):
             | constants.CLI_TOOLS_CLAUDE_CODE,
         )
 
+    def test_provenance_metadata_does_not_pollute_catalog_sets(self) -> None:
+        # Defensive regression: ``provenance`` is a sibling mapping
+        # under ``catalogs.claude_code`` (added in #118 to give the
+        # drift helper a single source of truth for the upstream URL
+        # and last-checked date).  The constants loader subscripts
+        # ``harness_tools`` and ``cli_tools`` explicitly rather than
+        # iterating bucket children, but if a future code edit ever
+        # iterates and pollutes these sets, this test catches it.
+        polluters = {
+            "provenance", "source_url", "last_checked",
+        }
+        for polluter in polluters:
+            self.assertNotIn(polluter, constants.HARNESS_TOOLS_CLAUDE_CODE)
+            self.assertNotIn(polluter, constants.CLI_TOOLS_CLAUDE_CODE)
+            self.assertNotIn(polluter, constants.KNOWN_TOOLS)
+
     def test_known_tools_recognises_lowercase_bash(self) -> None:
         # Backwards-compat: existing skills may list lowercase ``bash``.
         # Recognition INFO must continue to treat it as known.

@@ -769,8 +769,17 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(summary)
 
     if args.summary_out:
-        with open(args.summary_out, "w", encoding="utf-8") as fh:
-            fh.write(summary)
+        # Match the helper's documented hard-fail contract: an I/O
+        # error here (missing parent dir, unwritable path, full disk)
+        # surfaces as exit 4 with a stderr message, not a bare
+        # traceback.  The summary-out write is the workflow's only
+        # path to the PR body, so a clean failure mode matters.
+        try:
+            with open(args.summary_out, "w", encoding="utf-8") as fh:
+                fh.write(summary)
+        except OSError as exc:
+            print(f"FAIL: I/O error writing summary: {exc}", file=sys.stderr)
+            return 4
 
     if args.dry_run:
         return 1 if drift_detected else 0
