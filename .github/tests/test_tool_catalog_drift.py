@@ -319,6 +319,20 @@ class ParseCatalogTests(unittest.TestCase):
             mod.parse_catalog(text)
         self.assertIn("source_url", str(ctx.exception))
 
+    def test_empty_source_url_value_raises(self) -> None:
+        # Empty value (``source_url:`` with no scalar after it) must
+        # also hard-fail — silent fallback to a default would mask
+        # misconfigurations and contradict the helper's hard-fail
+        # contract.
+        text = _HAPPY_CATALOG.replace(
+            "          source_url: https://example.test/tools.md\n",
+            "          source_url:\n",
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        self.assertIn("empty", str(ctx.exception).lower())
+        self.assertIn("source_url", str(ctx.exception))
+
     def test_missing_harness_bucket_raises(self) -> None:
         text = _HAPPY_CATALOG.replace("claude_code", "fake_harness")
         with self.assertRaises(mod.ParseError) as ctx:

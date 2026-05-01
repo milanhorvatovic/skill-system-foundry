@@ -3,8 +3,11 @@ name: Tool catalog drift
 # Weekly sweep that compares the hand-maintained Claude Code tool
 # catalog at ``skill-system-foundry/scripts/lib/configuration.yaml``
 # (under ``allowed_tools.catalogs.claude_code``) against the canonical
-# upstream tools reference at
-# https://code.claude.com/docs/en/tools-reference.md.
+# upstream source URL.  The URL itself is read from
+# ``allowed_tools.catalogs.claude_code.provenance.source_url`` in
+# the catalog YAML — that field is the single source of truth, so
+# updating it is a YAML-only change and does not require editing
+# this workflow.
 #
 # Behavior:
 #   * No drift detected — no PR opened.  If a stale drift PR exists on
@@ -106,7 +109,10 @@ jobs:
           # The branch may also exist without an open PR (e.g. someone
           # closed the PR manually without ticking "Delete branch") —
           # delete it here so the rolling-branch lifecycle stays tidy.
-          pr_number=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          # Scope the head ref to the current repo's owner so a PR
+          # opened from a fork using the same branch name cannot be
+          # mistakenly matched, closed, or edited.
+          pr_number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REPOSITORY_OWNER:$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$pr_number" ]; then
             gh pr close "$pr_number" \
               --comment "Drift resolved upstream or manually; closing rolling PR." \
@@ -171,7 +177,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: chore/tool-catalog-drift
         run: |
-          existing=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          # Same fork-scoping rationale as in the no-drift cleanup step:
+          # match only PRs opened from this repo's rolling branch.
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REPOSITORY_OWNER:$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
             gh pr edit "$existing" \
               --title "Sync claude_code tool catalog with upstream" \

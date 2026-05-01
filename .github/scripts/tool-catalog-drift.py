@@ -78,11 +78,6 @@ RE_TABLE_HEADER = re.compile(
 )
 RE_TABLE_SEPARATOR = re.compile(r"^\|\s*[: -]+\s*\|")
 
-# Default URL when ``provenance.source_url`` is missing from the YAML.
-# Used only as a backstop — normal operation reads the URL from the
-# catalog's own provenance block.
-DEFAULT_SOURCE_URL = "https://code.claude.com/docs/en/tools-reference.md"
-
 # HTTP timeouts.  Generous enough for slow CDNs, tight enough that a
 # hung connection does not stall the workflow indefinitely.
 FETCH_TIMEOUT_SECONDS = 30
@@ -165,7 +160,10 @@ def extract_tools(markdown_text: str) -> set[str]:
 
     Hard-fails (raises :class:`ParseError`) when:
       * No header row matching ``Tool | Description | ...`` is found.
-      * Zero tools are extracted.
+      * The header row has no following body line (truncated table).
+      * The header row is not followed by a ``| :--- | :--- | ...``
+        separator (table format may have changed).
+      * Zero tools are extracted from the body rows.
     """
     lines = markdown_text.splitlines()
     header_index = -1
@@ -288,6 +286,13 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
 
     source_url = _scalar_value(lines[source_url_line], "source_url:")
     last_checked = _scalar_value(lines[last_checked_line], "last_checked:")
+    if not source_url:
+        raise ParseError(
+            f"configuration.yaml has an empty `source_url` value under "
+            f"`{harness}.provenance` — provide an explicit URL rather "
+            "than falling back to a default (silent fallback would "
+            "mask misconfigurations)"
+        )
 
     harness_tools_index = _find_child_key(
         lines, harness_index, "harness_tools:"
@@ -463,10 +468,11 @@ def apply_additions(
     lines = yaml_text.splitlines(keepends=True)
     indent = " " * parsed["harness_tools_indent"]
 
+    existing = set(parsed["harness_tools"])
     new_items = [
         f"{indent}- {tool}\n"
         for tool in sorted(additions)
-        if tool not in set(parsed["harness_tools"])
+        if tool not in existing
     ]
 
     insert_at = parsed["harness_tools_end_line"]
@@ -492,9 +498,14 @@ def _replace_scalar(line: str, key: str, value: str) -> str:
 
     Preserves leading whitespace, the key, the gap between key and
     value (a single space), and the trailing newline.  Always
-    double-quotes the value so dates like ``2026-05-01`` survive YAML
-    type coercion (the foundry's parser would otherwise treat an
-    unquoted ISO-8601 date as a plain scalar).
+    double-quotes the value for stylistic consistency with the
+    existing ``last_checked: "YYYY-MM-DD"`` form in the catalog and
+    to keep the rewritten value safe under stricter YAML 1.1 readers
+    (PyYAML and friends), which DO coerce unquoted ISO-8601 dates
+    to ``datetime.date``.  The foundry's own subset parser returns
+    every scalar as a string, so for foundry consumers the quoting
+    is purely cosmetic; the defensive form helps third-party tooling
+    that may load this file.
     """
     leading_ws = line[: len(line) - len(line.lstrip(" "))]
     eol = "\n" if line.endswith("\n") else ""
@@ -600,7 +611,7 @@ def run(
         yaml_text = fh.read()
 
     parsed = parse_catalog(yaml_text)
-    source_url = parsed["source_url"] or DEFAULT_SOURCE_URL
+    source_url = parsed["source_url"]
 
     markdown = fetch(source_url)
     extracted = extract_tools(markdown)
