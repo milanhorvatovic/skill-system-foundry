@@ -14,10 +14,15 @@ Outcomes:
     summary as advisory; never auto-applied.  A regex miss or a
     one-version-wide doc edit could falsely propose dropping a real
     tool, so removals always require a human edit.
-  * No drift — no file is rewritten.  ``last_checked`` records the
-    date of the most recent drift-detected reconciliation; quiet
-    runs leave it untouched.  The GitHub Actions run history is the
-    "did the sweep run today" signal.
+  * Removals-only drift — the catalog is left untouched (removals
+    are advisory only, never applied) and the workflow's
+    empty-commit fallback carries the advisory PR.  ``last_checked``
+    records the date of the last *additions-applied* reconciliation,
+    not the date of every drift event, so a removals-only run does
+    not bump it.
+  * No drift — no file is rewritten.  Quiet runs leave
+    ``last_checked`` untouched; the GitHub Actions run history is
+    the "did the sweep run today" signal.
 
 The helper hard-fails on fetch errors, decoding errors, table-shape
 mismatches, and zero tokens extracted.  Silent green is the worst
@@ -628,11 +633,13 @@ def run(
     """Run the drift sweep against the catalog at *catalog_path*.
 
     Returns ``(drift_detected, summary, json_payload)``.  In default
-    (non-dry-run) mode the catalog file is rewritten only when drift
-    is detected — additions are applied and ``last_checked`` is
-    bumped to *today_iso* in the same write.  Quiet (no-drift) runs
-    leave the file untouched.  In dry-run mode no file edits happen
-    regardless.
+    (non-dry-run) mode the catalog file is rewritten only when there
+    are additions to apply — additions are inserted and
+    ``last_checked`` is bumped to *today_iso* in the same write.
+    Removals-only drift leaves the file untouched (removals are
+    advisory and never applied); the workflow surfaces those via the
+    PR body.  Quiet (no-drift) runs also leave the file untouched.
+    In dry-run mode no file edits happen regardless.
 
     Raises :class:`FetchError` or :class:`ParseError` on hard-fail
     conditions; the caller maps those to non-zero exit codes.
@@ -662,12 +669,17 @@ def run(
         "upstream_size": len(extracted),
     }
 
-    # Only rewrite the file when drift is detected.  ``last_checked``
-    # tracks "date the catalog was last changed to reflect upstream",
-    # not "date the workflow last ran" — the GitHub Actions run
-    # history already provides the latter signal, and bumping the
-    # date on every quiet run would produce a noisy commit cadence.
-    if not dry_run and drift_detected:
+    # Rewrite the catalog only when there are additions to apply.
+    # ``last_checked`` records "date the catalog was last changed to
+    # reflect upstream", which means the date of the last
+    # auto-applied additions — not the date of any drift-detection
+    # run.  Removals are advisory only; bumping ``last_checked`` for
+    # a removals-only run would mutate the catalog despite nothing
+    # being applied, producing date-only churn that contradicts the
+    # advisory-only contract.  Quiet runs (no drift) and removals-only
+    # drift therefore both leave the file untouched; the workflow's
+    # empty-commit fallback carries the advisory PR for removals.
+    if not dry_run and additions:
         new_yaml = apply_additions(yaml_text, additions, today_iso)
         if new_yaml != yaml_text:
             with open(catalog_path, "w", encoding="utf-8") as fh:
