@@ -158,10 +158,13 @@ def extract_tools(markdown_text: str) -> set[str]:
     Strategy: locate the header row whose first two columns are
     ``Tool`` and ``Description``, skip the separator row, then read
     the first column of every following row until the table ends (a
-    blank line or a non-table line).  The first cell is expected to
-    be a backticked identifier; rows without one are skipped silently
-    (footers, prose, or row separators).  Identifiers must match the
-    PascalCase shape regex.
+    blank line or a non-table line).  Each body row inside the table
+    is expected to start with a backticked identifier in the first
+    cell; rows that fail this check are treated as table-shape drift
+    and raise :class:`ParseError`.  Identifiers must match the
+    PascalCase shape regex; well-formed rows whose identifier does
+    not (e.g. ``mcp__server__tool``) are skipped silently and do not
+    contribute to the extracted set.
 
     Hard-fails (raises :class:`ParseError`) when:
       * No header row matching ``Tool | Description | ...`` is found.

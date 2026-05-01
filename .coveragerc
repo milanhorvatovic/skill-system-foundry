@@ -12,14 +12,16 @@ exclude_lines =
     if __name__ == .__main__
     raise NotImplementedError
 
+# tool-catalog-drift.py is exercised by its own suite under
+# .github/tests/ via the dedicated ci-helper-tests.yaml workflow,
+# not the meta-skill matrix.  Excluded here so
+# check-per-file-coverage.py does not flag it as 0.0% covered in
+# the python-tests.yaml run.  Comments must live OUTSIDE the
+# indented continuation block under ``omit =`` because configparser
+# treats indented lines as additional pattern values, not comments.
 omit =
     tests/test_*.py
     tests/helpers.py
     */__pycache__/*
     .git/*
-    # tool-catalog-drift is exercised by its own suite under
-    # .github/tests/ via the dedicated ci-helper-tests.yaml
-    # workflow, not the meta-skill matrix.  Excluding it here so
-    # check-per-file-coverage.py does not flag it as 0.0% covered
-    # in the python-tests.yaml run.
     .github/scripts/tool-catalog-drift.py
