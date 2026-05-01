@@ -329,8 +329,10 @@ class StatsCLIInProcessTests(unittest.TestCase):
             write_capability_md(tmpdir, "silent", allowed_tools=None)
             code, out, _err = _run_main(["stats.py", tmpdir])
         self.assertEqual(code, 0)
-        self.assertNotIn("Discovery: ", out.replace("Discovery:", "", 1))
-        # The header line carries no `total` suffix in the legacy
+        # Exactly one ``Discovery:`` header — the legacy single
+        # line, not the multi-line ``... total`` + breakdown form.
+        self.assertEqual(out.count("Discovery:"), 1)
+        # The header line carries no ``total`` suffix in the legacy
         # form; the indented breakdown rows are absent.
         self.assertNotIn(" total", out.splitlines()[2])
         self.assertNotIn(
