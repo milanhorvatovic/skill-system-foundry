@@ -12,7 +12,11 @@ name: CI helper tests
 # The path filter includes ``configuration.yaml`` because the helper
 # test suite has a real-configuration canary that reads the live
 # catalog schema; a PR that edits the catalog without touching the
-# helper or its tests must still run this suite.
+# helper or its tests must still run this suite.  It also includes
+# ``tool-catalog-drift.yaml`` because that workflow is the only
+# production caller of the helper — it owns the CLI-flag, output
+# file, and JSON-parsing contract — so a change there is part of
+# the integration surface this suite covers.
 
 on:
   pull_request:
@@ -20,6 +24,7 @@ on:
       - ".github/scripts/**"
       - ".github/tests/**"
       - ".github/workflows/ci-helper-tests.yaml"
+      - ".github/workflows/tool-catalog-drift.yaml"
       - "skill-system-foundry/scripts/lib/configuration.yaml"
   push:
     branches: [main]
@@ -27,6 +32,7 @@ on:
       - ".github/scripts/**"
       - ".github/tests/**"
       - ".github/workflows/ci-helper-tests.yaml"
+      - ".github/workflows/tool-catalog-drift.yaml"
       - "skill-system-foundry/scripts/lib/configuration.yaml"
 
 permissions:
