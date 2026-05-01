@@ -91,7 +91,7 @@ jobs:
         # equals today produces a byte-identical YAML, so a diff-based
         # detection would miss that drift case.
         run: |
-          drift=$(python -c "import json,sys; print(str(json.load(open(sys.argv[1]))['drift']).lower())" "$STATE_PATH")
+          drift=$(python -c "import json,sys; print(str(json.load(open(sys.argv[1], encoding='utf-8'))['drift']).lower())" "$STATE_PATH")
           echo "drift=$drift" >> "$GITHUB_OUTPUT"
 
       - name: Resolve stale drift PR (no drift this run)
@@ -133,7 +133,16 @@ jobs:
         run: |
           git switch -C "$BRANCH"
           git add "$CATALOG_PATH"
-          git commit -m "Sync claude_code tool catalog with upstream tools-reference"
+          # Removals-only drift on a day when ``last_checked`` already
+          # equals today produces a byte-identical YAML — the helper
+          # detected drift but had nothing to write.  Use --allow-empty
+          # so the commit + force-push + PR-open steps still run; the
+          # PR body's "Candidate removals" section carries the advisory.
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "Report claude_code tool catalog drift (removals-only advisory)"
+          else
+            git commit -m "Sync claude_code tool catalog with upstream tools-reference"
+          fi
           git push --force origin "$BRANCH"
 
       - name: Compose PR body
