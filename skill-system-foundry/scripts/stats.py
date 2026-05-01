@@ -72,6 +72,14 @@ def _print_human(result: dict, verbose: bool) -> None:
     breakdown listing each contributor in alphabetical order.  This
     keeps legacy output unchanged for skills that have not adopted
     capability frontmatter.
+
+    The breakdown always includes the ``SKILL.md`` row even when
+    its own ``discovery_bytes`` is ``0`` (i.e. SKILL.md has no
+    parseable frontmatter): the row is informative — it pairs with
+    the standalone "no parseable frontmatter" WARN in
+    ``result["errors"]`` to make the asymmetry explicit, and it
+    keeps the breakdown's contributor set in sync with the rows
+    that carry the ``discovery_bytes`` JSON key.
     """
     print(f"Skill: {result['skill']}")
     print(f"Metric: {result['metric']}")
