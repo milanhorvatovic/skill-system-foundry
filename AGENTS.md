@@ -188,7 +188,7 @@ A missing or unreadable `SKILL.md` is a FAIL — that includes the file not exis
 
 ### Detecting Tool Catalog Drift
 
-The hand-maintained Claude Code tool catalog at `allowed_tools.catalogs.claude_code` in `skill-system-foundry/scripts/lib/configuration.yaml` drifts as Claude Code adds, renames, or retires tools. A weekly scheduled workflow (`.github/workflows/tool-catalog-drift.yaml`, helper at `.github/scripts/tool-catalog-drift.py`) compares the catalog against the canonical upstream tools reference at the URL recorded in `skill.allowed_tools.catalogs.claude_code.provenance.source_url` and force-pushes a single rolling PR (`chore/tool-catalog-drift`) when drift is detected. Additions are auto-applied; removals are surfaced in the PR body as advisory candidates only — verify each name before deleting.
+The hand-maintained Claude Code tool catalog at `skill.allowed_tools.catalogs.claude_code` in `skill-system-foundry/scripts/lib/configuration.yaml` drifts as Claude Code adds, renames, or retires tools. A weekly scheduled workflow (`.github/workflows/tool-catalog-drift.yaml`, helper at `.github/scripts/tool-catalog-drift.py`) compares the catalog against the canonical upstream tools reference at the URL recorded in `skill.allowed_tools.catalogs.claude_code.provenance.source_url` and force-pushes a single rolling PR (`chore/tool-catalog-drift`) when drift is detected. Additions are auto-applied; removals are surfaced in the PR body as advisory candidates only — verify each name before deleting.
 
 To run the sweep locally:
 

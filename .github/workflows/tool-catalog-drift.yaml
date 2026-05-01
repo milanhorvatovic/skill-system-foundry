@@ -2,11 +2,11 @@ name: Tool catalog drift
 
 # Weekly sweep that compares the hand-maintained Claude Code tool
 # catalog at ``skill-system-foundry/scripts/lib/configuration.yaml``
-# (under ``allowed_tools.catalogs.claude_code``) against the canonical
-# upstream source URL.  The URL itself is read from
-# ``allowed_tools.catalogs.claude_code.provenance.source_url`` in
-# the catalog YAML — that field is the single source of truth, so
-# updating it is a YAML-only change and does not require editing
+# (under ``skill.allowed_tools.catalogs.claude_code``) against the
+# canonical upstream source URL.  The URL itself is read from
+# ``skill.allowed_tools.catalogs.claude_code.provenance.source_url``
+# in the catalog YAML — that field is the single source of truth,
+# so updating it is a YAML-only change and does not require editing
 # this workflow.
 #
 # Behavior:

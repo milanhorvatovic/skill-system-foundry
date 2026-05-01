@@ -2,10 +2,10 @@
 and the canonical upstream tools reference.
 
 Reads the catalog at ``skill-system-foundry/scripts/lib/configuration.yaml``
-under ``allowed_tools.catalogs.claude_code``, fetches the upstream
-markdown table at ``provenance.source_url`` (default
-``https://code.claude.com/docs/en/tools-reference.md``), and compares
-the two sets of tool names.
+under ``skill.allowed_tools.catalogs.claude_code``, fetches the
+upstream markdown table at the URL recorded in
+``skill.allowed_tools.catalogs.claude_code.provenance.source_url``,
+and compares the two sets of tool names.
 
 Outcomes:
   * Additions (upstream has, catalog lacks) — auto-applied to the YAML
@@ -33,10 +33,10 @@ Tracks ``claude_code`` only.  OpenAI Codex has no harness-level tool
 catalog by design (every tool is MCP-server-sourced and
 user-configured) and Cursor has no documented ``allowed-tools``
 dialect, so no second harness ships in this helper.  The
-``catalogs.<harness>`` YAML structure preserves room for a future
-bucket; adding one will require helper changes (``run`` and
-``parse_catalog`` would need to iterate harness names), not just a
-YAML edit.
+``skill.allowed_tools.catalogs.<harness>`` YAML structure preserves
+room for a future bucket; adding one will require helper changes
+(``run`` and ``parse_catalog`` would need to iterate harness
+names), not just a YAML edit.
 """
 
 import argparse
@@ -259,16 +259,16 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
     if harness_index < 0:
         raise ParseError(
             f"configuration.yaml has no `{harness}:` bucket under "
-            "`allowed_tools.catalogs` — add the bucket or update the "
-            "harness list in this helper"
+            "`skill.allowed_tools.catalogs` — add the bucket or "
+            "update the harness list in this helper"
         )
 
     provenance_index = _find_child_key(lines, harness_index, "provenance:")
     if provenance_index < 0:
         raise ParseError(
             f"configuration.yaml has no `provenance:` block under "
-            f"`allowed_tools.catalogs.{harness}` — schema migration "
-            "incomplete (see issue #118)"
+            f"`skill.allowed_tools.catalogs.{harness}` — schema "
+            "migration incomplete (see issue #118)"
         )
 
     source_url_line = _find_child_key(
