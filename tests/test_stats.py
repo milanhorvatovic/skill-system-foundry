@@ -1103,6 +1103,61 @@ class CapabilityDiscoveryBytesTests(unittest.TestCase):
             )
         self.assertEqual(result["discovery_bytes"], skill_md_disc)
 
+    def test_skill_md_silent_with_capability_frontmatter(self) -> None:
+        """The asymmetric case: SKILL.md has no parseable frontmatter
+        but a capability declares one.  The aggregate is non-zero
+        (the capability contributes), the SKILL.md row carries
+        ``discovery_bytes=0``, and the existing SKILL.md
+        no-frontmatter WARN still fires so the asymmetry is
+        explicit in both the JSON and human-readable outputs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # SKILL.md with a body but no frontmatter — directory
+            # basename is used for the skill name.
+            skill_dir = os.path.join(tmpdir, "asymmetric")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "# Skill without frontmatter\n\n"
+                "[feature](capabilities/feature/capability.md)\n",
+            )
+            write_capability_md(
+                skill_dir, "feature", allowed_tools="Bash Read",
+            )
+            result = compute_stats(skill_dir)
+            cap_disc = discovery_bytes_of(
+                os.path.join(
+                    skill_dir, "capabilities", "feature",
+                    "capability.md",
+                ),
+            )
+        # Top-level aggregate equals the capability's contribution
+        # alone — SKILL.md contributes 0.
+        self.assertGreater(cap_disc, 0)
+        self.assertEqual(result["discovery_bytes"], cap_disc)
+        # SKILL.md row carries the key with value 0.
+        skill_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "SKILL.md"
+        )
+        self.assertEqual(skill_row["discovery_bytes"], 0)
+        # Capability row carries the full contribution.
+        cap_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/feature/capability.md"
+        )
+        self.assertEqual(cap_row["discovery_bytes"], cap_disc)
+        # SKILL.md no-frontmatter WARN still fires — the asymmetry is
+        # not silently masked by the non-zero aggregate.
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any(
+                "SKILL.md" in w
+                and "no parseable" in w
+                and "frontmatter" in w
+                for w in warns
+            ),
+            f"expected SKILL.md no-frontmatter WARN, got: {warns}",
+        )
+
     def test_reference_files_omit_discovery_bytes_key(self) -> None:
         """Capability-local and shared reference files are not
         discovery-relevant — their rows must not carry the
