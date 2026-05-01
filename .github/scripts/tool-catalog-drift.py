@@ -72,12 +72,23 @@ RE_HARNESS_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 # look like ``| `Bash` | Executes shell commands ... |``.  The pattern
 # is anchored against the leading pipe and trailing pipe so prose-only
 # rows do not false-positive.
+#
+# The leading-``|`` requirement is intentional and matches the
+# canonical upstream format at
+# https://code.claude.com/docs/en/tools-reference.md.  GitHub-Flavored
+# Markdown also permits a pipe-less form (``Tool | Description | ...``
+# with no leading or trailing ``|``), but the helper does NOT accept
+# that form: per the documented hard-fail-on-shape-change contract, an
+# upstream switch to pipe-less rendering should surface as a loud
+# ``ParseError`` (and a CI-visible workflow failure) so a maintainer
+# can update the parser deliberately, rather than being silently
+# absorbed at the risk of hiding other simultaneous shape changes.
 RE_TABLE_ROW_FIRST_CELL = re.compile(r"^\|\s*`([^`]+)`\s*\|")
 
 # Header row sanity check.  The tools-reference table has a "Tool"
 # column (first) and a "Description" column (second).  If the header
 # changes shape, hard-fail rather than silently scanning the wrong
-# table.
+# table.  See the leading-pipe rationale above ``RE_TABLE_ROW_FIRST_CELL``.
 RE_TABLE_HEADER = re.compile(
     r"^\|\s*Tool\s*\|\s*Description\s*\|", re.IGNORECASE
 )
