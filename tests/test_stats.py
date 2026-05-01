@@ -1242,6 +1242,53 @@ class CapabilityDiscoveryBytesTests(unittest.TestCase):
             f"got: {warns}",
         )
 
+    def test_unclosed_capability_frontmatter_emits_warn(self) -> None:
+        """A capability with a ``---`` opener but no closing fence
+        is malformed — ``discovery_bytes_of`` returns 0 because the
+        boundary is undetectable, but ``load_frontmatter`` still
+        reports a ``_parse_error``.  The walk must surface that as
+        a parse-error WARN: the capability is not discoverable
+        as-is.
+
+        Pins the boundary between the legitimate silent-capability
+        case (no ``---`` at all → no WARN) and the unclosed-fence
+        malformed case (opener without closer → parse-error WARN).
+        Both shapes report ``cap_discovery == 0``; only the parse
+        probe distinguishes them, so a regression that short-
+        circuits the probe on ``cap_discovery == 0`` would silence
+        this WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[broken](capabilities/broken/capability.md)\n"
+                ),
+            )
+            # Opener present, no closing ``---``.  Body content
+            # below is irrelevant — what matters is the missing
+            # closer.
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "broken", "capability.md",
+                ),
+                "---\n"
+                "allowed-tools: Bash Read\n"
+                "# missing closing fence\n"
+                "# Broken capability body\n",
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any(
+                "capabilities/broken/capability.md" in w
+                and "parse error" in w
+                and "closing" in w
+                for w in warns
+            ),
+            f"expected unclosed-fence parse-error WARN, got: {warns}",
+        )
+
     def test_multiple_capabilities_sum_and_sort_deterministically(
         self,
     ) -> None:

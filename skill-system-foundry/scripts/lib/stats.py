@@ -205,18 +205,22 @@ def _compute_capability_discovery(
             discovery_by_filepath[filepath] = 0
             continue
         discovery_by_filepath[filepath] = cap_discovery
-        # Skip the parse-error probe for capabilities silent on
-        # frontmatter — there is no fence-bracketed block to parse,
-        # so a second open would only waste I/O.  The byte-scan
-        # already succeeded, so any decode failure now would be a
-        # mid-read divergence (race, antivirus, NFS): recover
-        # silently rather than emitting a duplicate WARN — the
-        # validator surfaces it on its own pass if it matters.
-        if cap_discovery == 0:
-            continue
+        # Always probe the parse layer even when ``cap_discovery``
+        # is zero: ``discovery_bytes_of`` returns 0 both for silent
+        # capabilities (no ``---`` opener at all) and for malformed
+        # ones (opener with no closing fence).  Only
+        # ``load_frontmatter`` distinguishes the two — the silent
+        # case returns ``(None, ..., [])`` and short-circuits below;
+        # the unclosed-fence case returns a ``_parse_error`` dict
+        # that must surface as a WARN so the capability is flagged
+        # as not discoverable as-is.
         try:
             cap_frontmatter, _body, _findings = load_frontmatter(filepath)
         except (OSError, UnicodeError):
+            # Mid-read divergence (race, antivirus, NFS): the byte
+            # scan already produced a usable count; recover silently
+            # rather than emitting a duplicate WARN — the validator
+            # surfaces decode failures on its own pass if it matters.
             continue
         if cap_frontmatter and "_parse_error" in cap_frontmatter:
             errors.append(
