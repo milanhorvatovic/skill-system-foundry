@@ -438,6 +438,47 @@ class ApplyAdditionsTests(unittest.TestCase):
         second = mod.apply_additions(first, {"Glob"}, "2026-05-01")
         self.assertEqual(first, second)
 
+    def test_sibling_comment_block_does_not_split_from_next_key(self) -> None:
+        # Regression: a comment block at the same indent as
+        # ``harness_tools:`` (i.e. a sibling comment documenting the
+        # next sibling key, like ``# Generic CLI names...`` followed
+        # by ``cli_tools:`` in the real catalog) used to be silently
+        # skipped during the list scan, which advanced ``end_line``
+        # past the comment and let ``apply_additions`` insert new
+        # items BETWEEN the comment block and the key it documents.
+        # The fix terminates the list scan on dedent before the
+        # blank/comment fast-path, so new items insert right after
+        # the last existing list item — leaving the comment block
+        # attached to its sibling key.
+        catalog_with_comment = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        provenance:\n"
+            "          source_url: https://example.test/tools.md\n"
+            "          last_checked: \"2026-04-26\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "        # Generic CLI names sometimes written into allowed-tools.\n"
+            "        # NOT harness primitives — typo-detection only.\n"
+            "        cli_tools:\n"
+            "          - bash\n"
+        )
+        out = mod.apply_additions(
+            catalog_with_comment, {"NewTool"}, "2026-05-01"
+        )
+        # The new tool lands right after the last existing item,
+        # not after the comment block.
+        idx_read = out.index("- Read\n")
+        idx_new = out.index("- NewTool\n")
+        idx_comment = out.index("# Generic CLI names")
+        idx_cli_tools = out.index("cli_tools:")
+        self.assertLess(idx_read, idx_new)
+        self.assertLess(idx_new, idx_comment)
+        self.assertLess(idx_comment, idx_cli_tools)
+
     def test_eof_insertion_repairs_missing_trailing_newline(self) -> None:
         # Regression: when the catalog file ends with the harness_tools
         # list (no trailing sibling), splitlines(keepends=True) yields

@@ -321,12 +321,22 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
     for index in range(harness_tools_index + 1, len(lines)):
         line = lines[index]
         stripped = line.strip()
-        if stripped == "" or stripped.startswith("#"):
-            continue
+        # Check dedent BEFORE the blank/comment fast-path so a sibling
+        # comment at the same indent as ``harness_tools:`` terminates
+        # the list scan.  Without this, a comment block documenting the
+        # next sibling key (e.g. the ``# Generic CLI names...`` block
+        # in the foundry catalog) is silently skipped, ``end_line`` is
+        # advanced past the comment, and ``apply_additions`` then
+        # inserts new items between the comment and the key it
+        # documents — splitting the doc from its key in the diff.
+        # Blank lines (indent 0) terminate the same way: standard YAML
+        # lists do not contain blank lines between items.
         indent = _line_indent(line)
         if indent <= parent_indent:
             end_line = index
             break
+        if stripped == "" or stripped.startswith("#"):
+            continue
         if not stripped.startswith("- "):
             end_line = index
             break
