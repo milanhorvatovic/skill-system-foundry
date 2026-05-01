@@ -9,9 +9,13 @@ Usage:
 
 Two byte-based proxies are reported:
 
-* ``discovery_bytes`` — the SKILL.md YAML frontmatter block (between
-  and including the ``---`` fences).  This is what the harness reads
-  at startup to decide whether to surface the skill.
+* ``discovery_bytes`` — the sum of every YAML frontmatter block the
+  harness reads at discovery time: ``SKILL.md`` plus each
+  ``capabilities/<name>/capability.md`` (when present).  Each
+  contributing entry in ``files[]`` carries a per-row
+  ``discovery_bytes`` so consumers can reconstruct the breakdown.
+  The human-readable report shows the breakdown directly when at
+  least one capability declares frontmatter.
 
 * ``load_bytes`` — SKILL.md plus every transitively reachable file
   under ``capabilities/`` or ``references/``, excluding ``scripts/``
@@ -60,10 +64,37 @@ def _print_human(result: dict, verbose: bool) -> None:
     table in the same format the other entry points use.  ``verbose``
     expands the ``reachable_from`` column to show every parent rather
     than just the first one.
+
+    The discovery line collapses into a single ``Discovery: <N> B``
+    when ``SKILL.md`` is the only contributor; when at least one
+    capability declares frontmatter, the line becomes a
+    ``Discovery: <N> B total`` header followed by an indented
+    breakdown listing each contributor in alphabetical order.  This
+    keeps legacy output unchanged for skills that have not adopted
+    capability frontmatter.
     """
     print(f"Skill: {result['skill']}")
     print(f"Metric: {result['metric']}")
-    print(f"Discovery: {_format_bytes(result['discovery_bytes'])}")
+    discovery_rows = [
+        entry for entry in result["files"]
+        if "discovery_bytes" in entry
+    ]
+    capability_contributors = [
+        entry for entry in discovery_rows
+        if entry["path"] != "SKILL.md" and entry["discovery_bytes"] > 0
+    ]
+    if capability_contributors:
+        print(
+            f"Discovery: {_format_bytes(result['discovery_bytes'])} total"
+        )
+        path_width = max(len(entry["path"]) for entry in discovery_rows)
+        for entry in discovery_rows:
+            print(
+                f"  {entry['path']:<{path_width}}  "
+                f"{_format_bytes(entry['discovery_bytes']):>10}"
+            )
+    else:
+        print(f"Discovery: {_format_bytes(result['discovery_bytes'])}")
     print(
         f"Load:      {_format_bytes(result['load_bytes'])} "
         f"({len(result['files'])} files)"
