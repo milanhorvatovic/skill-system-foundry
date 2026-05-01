@@ -21,11 +21,12 @@ name: Tool catalog drift
 #     parse error — silent green is the worst outcome for a drift
 #     sweep.
 #
-# Adding a second tracked URL (e.g. a future Codex catalog) is a
-# YAML-only edit: add a new harness bucket under
-# ``allowed_tools.catalogs.<harness>`` with its own ``provenance``
-# block, then extend ``HARNESS_NAMES`` in the helper.  Workflow does
-# not need editing.
+# Tracks the ``claude_code`` catalog only.  Adding a second harness
+# is not a YAML-only edit: ``run`` and ``parse_catalog`` in the
+# helper currently process the single default harness, so a future
+# extension requires helper changes (and may need workflow updates
+# for per-harness PR titles or reporting).  See the design comment
+# on #118.
 
 on:
   schedule:
@@ -73,21 +74,25 @@ jobs:
         id: helper
         env:
           SUMMARY_PATH: ${{ runner.temp }}/drift-summary.md
+          STATE_PATH: ${{ runner.temp }}/drift-state.json
         run: |
           python .github/scripts/tool-catalog-drift.py \
-            --summary-out "$SUMMARY_PATH"
+            --json --summary-out "$SUMMARY_PATH" > "$STATE_PATH"
           echo "summary_path=$SUMMARY_PATH" >> "$GITHUB_OUTPUT"
+          echo "state_path=$STATE_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Detect catalog mutation
+      - name: Detect drift from helper output
         id: detect
         env:
-          CATALOG_PATH: skill-system-foundry/scripts/lib/configuration.yaml
+          STATE_PATH: ${{ steps.helper.outputs.state_path }}
+        # Read the helper's authoritative drift signal from its JSON
+        # payload rather than inferring from the YAML diff.  A
+        # removals-only run on a day when ``last_checked`` already
+        # equals today produces a byte-identical YAML, so a diff-based
+        # detection would miss that drift case.
         run: |
-          if git diff --quiet -- "$CATALOG_PATH"; then
-            echo "drift=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-          fi
+          drift=$(python -c "import json,sys; print(str(json.load(open(sys.argv[1]))['drift']).lower())" "$STATE_PATH")
+          echo "drift=$drift" >> "$GITHUB_OUTPUT"
 
       - name: Resolve stale drift PR (no drift this run)
         if: steps.detect.outputs.drift == 'false'
@@ -98,14 +103,20 @@ jobs:
           # If a previous run opened a PR but the drift was resolved
           # manually (or upstream recovered), close the PR and delete
           # the branch so the next genuine drift opens a fresh PR.
+          # The branch may also exist without an open PR (e.g. someone
+          # closed the PR manually without ticking "Delete branch") —
+          # delete it here so the rolling-branch lifecycle stays tidy.
           pr_number=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$pr_number" ]; then
             gh pr close "$pr_number" \
               --comment "Drift resolved upstream or manually; closing rolling PR." \
               --delete-branch
             echo "Closed rolling PR #$pr_number."
+          elif git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git push origin --delete "$BRANCH"
+            echo "Deleted stale rolling branch $BRANCH (no open PR)."
           else
-            echo "No stale drift PR to close."
+            echo "No stale drift PR or rolling branch to clean up."
           fi
 
       - name: Configure git identity

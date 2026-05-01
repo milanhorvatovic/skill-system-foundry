@@ -199,7 +199,7 @@ python .github/scripts/tool-catalog-drift.py --dry-run --json
 
 `--dry-run` exits 0 on no drift, 1 on drift detected; default mode mutates `configuration.yaml` and bumps `provenance.last_checked` only when drift is detected (the workflow then commits and opens the PR).
 
-To track an additional upstream catalog (e.g., a future Codex tool list), add a new harness bucket under `allowed_tools.catalogs.<harness>` with its own `provenance` block, then add the harness name to `HARNESS_NAMES` in the helper. The workflow itself does not need editing.
+The helper tracks the `claude_code` catalog only. The `catalogs.<harness>` YAML structure preserves room for a future second harness, but adding one is not a YAML-only edit — `run` and `parse_catalog` in `.github/scripts/tool-catalog-drift.py` currently process the single default harness, so a future extension requires helper changes (and may need workflow updates for per-harness PR titles or reporting).
 
 ### Linting Shell Scripts
 
