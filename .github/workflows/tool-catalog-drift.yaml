@@ -54,11 +54,17 @@ jobs:
     runs-on: ubuntu-latest
     # Needs ``contents: write`` to push the rolling branch and
     # ``pull-requests: write`` to open / edit / close the rolling PR.
+    # ``issues: write`` is also required because ``gh pr close
+    # --comment`` posts the closing comment via the issues API
+    # (PR comments are issue comments in GitHub's permission
+    # model) — without it the no-drift cleanup path would fail
+    # exactly when a stale rolling PR needs to be closed.
     # The default workflow-wide ``contents: read`` stays so any future
     # job that does not need write does not get it implicitly.
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     steps:
       - name: Checkout main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
