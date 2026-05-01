@@ -1242,6 +1242,86 @@ class CapabilityDiscoveryBytesTests(unittest.TestCase):
             f"got: {warns}",
         )
 
+    def test_multiple_capabilities_sum_and_sort_deterministically(
+        self,
+    ) -> None:
+        """A router with multiple capabilities — one carrying
+        ``allowed-tools``, one silent — sums correctly into the
+        aggregate and emits per-row contributions in
+        path-alphabetical order.
+
+        Pins the multi-entry behaviour of
+        ``_compute_capability_discovery``: the sort key, the sum
+        across N>1 contributors, and the per-row attachment for
+        every visited capability (including the silent one whose
+        contribution is 0)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[zeta](capabilities/zeta/capability.md) and "
+                    "[alpha](capabilities/alpha/capability.md)\n"
+                ),
+            )
+            # ``alpha`` declares allowed-tools; ``zeta`` is silent.
+            # Authoring order (zeta first in SKILL.md body) is
+            # different from path-alphabetical order so the sort key
+            # is exercised.
+            write_capability_md(
+                tmpdir, "alpha", allowed_tools="Bash Read",
+            )
+            write_capability_md(tmpdir, "zeta", allowed_tools=None)
+            result = compute_stats(tmpdir)
+            skill_md_disc = discovery_bytes_of(
+                os.path.join(tmpdir, "SKILL.md"),
+            )
+            alpha_disc = discovery_bytes_of(
+                os.path.join(
+                    tmpdir, "capabilities", "alpha", "capability.md",
+                ),
+            )
+            zeta_disc = discovery_bytes_of(
+                os.path.join(
+                    tmpdir, "capabilities", "zeta", "capability.md",
+                ),
+            )
+        self.assertGreater(alpha_disc, 0)
+        self.assertEqual(zeta_disc, 0)
+        # Aggregate equals the explicit sum across all three
+        # contributors — pins the summation logic.
+        self.assertEqual(
+            result["discovery_bytes"],
+            skill_md_disc + alpha_disc + zeta_disc,
+        )
+        # Both capability rows carry the key with their respective
+        # contributions; the silent capability still records 0.
+        alpha_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/alpha/capability.md"
+        )
+        zeta_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/zeta/capability.md"
+        )
+        self.assertEqual(alpha_row["discovery_bytes"], alpha_disc)
+        self.assertEqual(zeta_row["discovery_bytes"], 0)
+        # ``files[]`` is sorted alphabetically; alpha precedes zeta
+        # so the breakdown row order is deterministic regardless of
+        # which capability the load graph happened to visit first.
+        discovery_paths = [
+            entry["path"] for entry in result["files"]
+            if "discovery_bytes" in entry
+        ]
+        self.assertEqual(
+            discovery_paths,
+            [
+                "SKILL.md",
+                "capabilities/alpha/capability.md",
+                "capabilities/zeta/capability.md",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
