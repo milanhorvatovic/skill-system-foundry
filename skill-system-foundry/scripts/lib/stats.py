@@ -373,7 +373,17 @@ def compute_stats(skill_path: str) -> dict:
             f"frontmatter ({exc.__class__.__name__}: {exc})"
         )
         return result
-    if discovery_count == 0:
+    if discovery_count == 0 and frontmatter is None:
+        # Gate on ``frontmatter is None`` rather than on
+        # ``discovery_count == 0`` alone: ``discovery_bytes_of`` returns
+        # 0 for both the silent case (no ``---`` opener) and the
+        # unclosed-fence case (opener with no closer).  The unclosed-
+        # fence case already emits a parse-error WARN above
+        # (``load_frontmatter`` surfaces it via ``_parse_error``); only
+        # the silent case lacks any other diagnostic, so this is the
+        # only branch that deserves its own WARN.  Mirrors the
+        # capability handling in ``_compute_capability_discovery``,
+        # which similarly emits exactly one WARN per malformed shape.
         result["errors"].append(
             f"{LEVEL_WARN}: [foundry] {FILE_SKILL_MD} has no parseable "
             f"frontmatter block; its discovery_bytes contribution "

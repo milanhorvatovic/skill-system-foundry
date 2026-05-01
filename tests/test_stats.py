@@ -765,6 +765,42 @@ class ComputeStatsGraphTests(unittest.TestCase):
             f"expected frontmatter parse-error WARN, got: {warns}",
         )
 
+    def test_unclosed_skill_md_frontmatter_emits_single_warn(self) -> None:
+        """A SKILL.md with a ``---`` opener but no closing fence is
+        malformed — ``discovery_bytes_of`` returns 0 (the boundary is
+        undetectable) and ``load_frontmatter`` returns a
+        ``_parse_error`` dict.  The two paths used to fire a
+        parse-error WARN *and* a "no parseable frontmatter" WARN for
+        the same defect; only the parse-error WARN should fire so
+        SKILL.md handling stays symmetric with capability handling
+        (``_compute_capability_discovery``)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Opener present, no closing ``---``.  This is the same
+            # malformed shape pinned for capabilities by
+            # ``test_unclosed_capability_frontmatter_emits_warn``.
+            write_text(
+                os.path.join(tmpdir, "SKILL.md"),
+                "---\n"
+                "name: x\n"
+                "description: a description\n"
+                "# missing closing fence\n"
+                "# Body\n",
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        # Exactly one frontmatter WARN — the parse-error one, naming
+        # the missing-closer reason.  Pre-fix this test fails because
+        # the "no parseable frontmatter" WARN duplicates the
+        # parse-error finding for the same defect.
+        frontmatter_warns = [w for w in warns if "frontmatter" in w]
+        self.assertEqual(
+            len(frontmatter_warns), 1,
+            f"expected exactly one frontmatter WARN, got "
+            f"{len(frontmatter_warns)}: {frontmatter_warns}",
+        )
+        self.assertIn("parse error", frontmatter_warns[0])
+        self.assertIn("closing", frontmatter_warns[0])
+
     def test_unreadable_skill_md_emits_fail_not_traceback(self) -> None:
         """A SKILL.md that exists but cannot be decoded as UTF-8
         produces a structured FAIL finding, not a traceback."""
