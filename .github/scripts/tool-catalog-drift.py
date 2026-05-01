@@ -168,6 +168,8 @@ def extract_tools(markdown_text: str) -> set[str]:
       * The header row has no following body line (truncated table).
       * The header row is not followed by a ``| :--- | :--- | ...``
         separator (table format may have changed).
+      * A body row inside the tools table has no backticked
+        identifier in the first cell (table-shape drift).
       * Zero tools are extracted from the body rows.
     """
     lines = markdown_text.splitlines()
@@ -206,7 +208,18 @@ def extract_tools(markdown_text: str) -> set[str]:
             break
         match = RE_TABLE_ROW_FIRST_CELL.match(line)
         if match is None:
-            continue
+            # Row is inside the tools table (starts with ``|``) but
+            # its first cell is not a backticked identifier.  Per
+            # the helper's hard-fail-on-shape-change contract, this
+            # is a real format drift — silently skipping would let
+            # an upstream table-format change (e.g. ``| Bash |``
+            # without backticks, or an unbackticked separator row
+            # injected mid-table) drop tools from ``extracted`` and
+            # produce misleading no-drift / advisory-removal output.
+            raise ParseError(
+                "upstream markdown table row does not start with a "
+                f"backticked tool identifier: {line.rstrip()}"
+            )
         identifier = match.group(1).strip()
         if RE_HARNESS_SHAPE.match(identifier):
             tools.add(identifier)

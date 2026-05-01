@@ -201,11 +201,30 @@ class ExtractToolsTests(unittest.TestCase):
             mod.extract_tools(markdown)
         self.assertIn("separator", str(ctx.exception))
 
-    def test_zero_matches_raises(self) -> None:
+    def test_unbackticked_row_raises(self) -> None:
+        # An unbackticked first cell inside the tools table is a
+        # shape-drift signal, not silent noise — the helper now
+        # hard-fails on it.
         markdown = (
             "| Tool | Description | Permission |\n"
             "| :--- | :---------- | :--------- |\n"
             "| (deprecated) | Removed in v2 | No |\n"
+            "\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("backticked", str(ctx.exception).lower())
+
+    def test_zero_pascalcase_matches_raises(self) -> None:
+        # Backticked rows whose identifiers are all non-PascalCase
+        # (e.g. all lowercase or all MCP-shaped) still pass the
+        # row-shape guard but produce zero extracted tools, which is
+        # the older "zero matches" failure path.
+        markdown = (
+            "| Tool | Description | Permission |\n"
+            "| :--- | :---------- | :--------- |\n"
+            "| `lowercase` | not pascalcase | No |\n"
+            "| `mcp__server__tool` | mcp shape | No |\n"
             "\n"
         )
         with self.assertRaises(mod.ParseError) as ctx:
