@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from helpers import write_text, write_skill_md
+from helpers import write_capability_md, write_skill_md, write_text
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(
@@ -310,6 +310,86 @@ class StatsCLIInProcessTests(unittest.TestCase):
         self.assertEqual(code, 1)
         # argparse error goes to stderr in text mode
         self.assertIn("unrecognized", err.lower())
+
+    def test_legacy_single_line_when_no_capability_frontmatter(
+        self,
+    ) -> None:
+        """When no capability declares frontmatter, the discovery
+        line is the legacy single-line form (no ``total`` suffix
+        and no breakdown rows).  Pins backward-compatibility for
+        skills that have not adopted capability frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[silent](capabilities/silent/capability.md)\n"
+                ),
+            )
+            write_capability_md(tmpdir, "silent", allowed_tools=None)
+            code, out, _err = _run_main(["stats.py", tmpdir])
+        self.assertEqual(code, 0)
+        self.assertNotIn("Discovery: ", out.replace("Discovery:", "", 1))
+        # The header line carries no `total` suffix in the legacy
+        # form; the indented breakdown rows are absent.
+        self.assertNotIn(" total", out.splitlines()[2])
+        self.assertNotIn(
+            "  capabilities/silent/capability.md", out,
+        )
+
+    def test_breakdown_when_capability_declares_frontmatter(self) -> None:
+        """When at least one capability carries frontmatter, the
+        discovery line becomes ``Discovery: <N> B total`` followed
+        by an indented breakdown listing every contributor — the
+        SKILL.md row and each capability row, alphabetically.
+
+        This pins the new ``_print_human`` branch introduced for
+        per-capability discovery accounting."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[feature](capabilities/feature/capability.md)\n"
+                ),
+            )
+            write_capability_md(
+                tmpdir, "feature", allowed_tools="Bash Read",
+            )
+            code, out, _err = _run_main(["stats.py", tmpdir])
+        self.assertEqual(code, 0)
+        # Header form switches to the multi-line variant.
+        self.assertIn("Discovery: ", out)
+        self.assertIn(" total", out)
+        # Breakdown rows are indented by two spaces and list both
+        # the SKILL.md contributor and the capability.
+        self.assertIn("  SKILL.md", out)
+        self.assertIn("  capabilities/feature/capability.md", out)
+
+    def test_breakdown_includes_silent_skill_md_row(self) -> None:
+        """Asymmetric case — SKILL.md has no parseable frontmatter
+        but a capability declares one.  The breakdown header still
+        appears (because a capability contributes), and the
+        SKILL.md row is included with a 0-byte cell so consumers
+        see the asymmetry directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "asymmetric")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "# Skill without frontmatter\n\n"
+                "[feature](capabilities/feature/capability.md)\n",
+            )
+            write_capability_md(
+                skill_dir, "feature", allowed_tools="Bash Read",
+            )
+            code, out, _err = _run_main(["stats.py", skill_dir])
+        # FAIL is not raised — SKILL.md exists, just no frontmatter
+        # — so the run completes with a WARN exit (still 0).
+        self.assertEqual(code, 0)
+        self.assertIn(" total", out)
+        # SKILL.md row is present even though its contribution is 0.
+        self.assertIn("  SKILL.md", out)
+        self.assertIn("  capabilities/feature/capability.md", out)
 
 
 if __name__ == "__main__":
