@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import write_text, write_skill_md
+from helpers import write_capability_md, write_skill_md, write_text
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(
@@ -28,6 +28,7 @@ from lib.stats import (
     compute_stats,
     discovery_bytes_of,
     extract_body_references,
+    is_capability_entry,
     is_excluded_from_load,
     read_bytes_count,
 )
@@ -764,6 +765,42 @@ class ComputeStatsGraphTests(unittest.TestCase):
             f"expected frontmatter parse-error WARN, got: {warns}",
         )
 
+    def test_unclosed_skill_md_frontmatter_emits_single_warn(self) -> None:
+        """A SKILL.md with a ``---`` opener but no closing fence is
+        malformed — ``discovery_bytes_of`` returns 0 (the boundary is
+        undetectable) and ``load_frontmatter`` returns a
+        ``_parse_error`` dict.  The two paths used to fire a
+        parse-error WARN *and* a "no parseable frontmatter" WARN for
+        the same defect; only the parse-error WARN should fire so
+        SKILL.md handling stays symmetric with capability handling
+        (``_compute_capability_discovery``)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Opener present, no closing ``---``.  This is the same
+            # malformed shape pinned for capabilities by
+            # ``test_unclosed_capability_frontmatter_emits_warn``.
+            write_text(
+                os.path.join(tmpdir, "SKILL.md"),
+                "---\n"
+                "name: x\n"
+                "description: a description\n"
+                "# missing closing fence\n"
+                "# Body\n",
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        # Exactly one frontmatter WARN — the parse-error one, naming
+        # the missing-closer reason.  Pre-fix this test fails because
+        # the "no parseable frontmatter" WARN duplicates the
+        # parse-error finding for the same defect.
+        frontmatter_warns = [w for w in warns if "frontmatter" in w]
+        self.assertEqual(
+            len(frontmatter_warns), 1,
+            f"expected exactly one frontmatter WARN, got "
+            f"{len(frontmatter_warns)}: {frontmatter_warns}",
+        )
+        self.assertIn("parse error", frontmatter_warns[0])
+        self.assertIn("closing", frontmatter_warns[0])
+
     def test_unreadable_skill_md_emits_fail_not_traceback(self) -> None:
         """A SKILL.md that exists but cannot be decoded as UTF-8
         produces a structured FAIL finding, not a traceback."""
@@ -923,15 +960,450 @@ class ComputeStatsSchemaTests(unittest.TestCase):
         self.assertIsInstance(result["errors"], list)
 
     def test_file_entry_keys(self) -> None:
+        """Required keys are always present; ``discovery_bytes`` is
+        optional and only appears on discovery-relevant rows."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir)
             result = compute_stats(tmpdir)
+        required_keys = {"path", "bytes", "reachable_from"}
         for entry in result["files"]:
-            self.assertEqual(
-                set(entry.keys()), {"path", "bytes", "reachable_from"},
+            self.assertTrue(
+                required_keys.issubset(entry.keys()),
+                f"required keys missing on {entry['path']}: {entry.keys()}",
+            )
+            extra = set(entry.keys()) - required_keys
+            self.assertTrue(
+                extra <= {"discovery_bytes"},
+                f"unexpected keys on {entry['path']}: {extra}",
             )
             self.assertIsInstance(entry["bytes"], int)
             self.assertIsInstance(entry["reachable_from"], list)
+            if "discovery_bytes" in entry:
+                self.assertIsInstance(entry["discovery_bytes"], int)
+
+
+# ============================================================
+# Capability-entry discovery accounting
+# ============================================================
+
+
+class IsCapabilityEntryTests(unittest.TestCase):
+    """Tests for the ``is_capability_entry`` boundary helper."""
+
+    def test_capability_entry_path_matches(self) -> None:
+        self.assertTrue(
+            is_capability_entry("capabilities/foo/capability.md"),
+        )
+
+    def test_capability_local_reference_does_not_match(self) -> None:
+        self.assertFalse(
+            is_capability_entry(
+                "capabilities/foo/references/guide.md",
+            ),
+        )
+
+    def test_shared_reference_does_not_match(self) -> None:
+        self.assertFalse(is_capability_entry("references/guide.md"))
+
+    def test_skill_md_does_not_match(self) -> None:
+        self.assertFalse(is_capability_entry("SKILL.md"))
+
+    def test_windows_separator_normalized(self) -> None:
+        self.assertTrue(
+            is_capability_entry("capabilities\\foo\\capability.md"),
+        )
+
+
+class CapabilityDiscoveryBytesTests(unittest.TestCase):
+    """Tests for per-row ``discovery_bytes`` on capability entries
+    and the bottom-up aggregation into the top-level total."""
+
+    def _write_router_with_capability(
+        self,
+        tmpdir: str,
+        *,
+        cap_allowed_tools: str | None,
+        cap_extra_frontmatter: str = "",
+    ) -> None:
+        """Author a router skill with a single capability under
+        ``capabilities/feature/capability.md``.  Pass
+        ``cap_allowed_tools=None`` to omit the capability frontmatter
+        entirely (the legal silent case)."""
+        write_skill_md(
+            tmpdir,
+            body=(
+                "# Skill\n\n"
+                "[feature](capabilities/feature/capability.md)\n"
+            ),
+        )
+        write_capability_md(
+            tmpdir,
+            "feature",
+            allowed_tools=cap_allowed_tools,
+            extra_frontmatter=cap_extra_frontmatter,
+        )
+
+    def test_skill_md_row_carries_discovery_bytes(self) -> None:
+        """The SKILL.md row always reports its frontmatter byte
+        count under ``discovery_bytes`` so consumers don't have to
+        re-derive it from the top-level aggregate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir, body="# Skill\n")
+            result = compute_stats(tmpdir)
+            expected = discovery_bytes_of(
+                os.path.join(tmpdir, "SKILL.md"),
+            )
+        skill_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "SKILL.md"
+        )
+        self.assertEqual(skill_row["discovery_bytes"], expected)
+
+    def test_capability_with_frontmatter_populates_per_row(self) -> None:
+        """A capability that declares ``allowed-tools`` carries its
+        frontmatter byte count on the per-row entry."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_router_with_capability(
+                tmpdir, cap_allowed_tools="Bash Read",
+            )
+            result = compute_stats(tmpdir)
+            cap_path = os.path.join(
+                tmpdir, "capabilities", "feature", "capability.md",
+            )
+            expected = discovery_bytes_of(cap_path)
+        cap_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/feature/capability.md"
+        )
+        self.assertGreater(expected, 0)
+        self.assertEqual(cap_row["discovery_bytes"], expected)
+
+    def test_capability_silent_on_frontmatter_records_zero(self) -> None:
+        """A capability with no frontmatter is legal — the row still
+        carries ``discovery_bytes`` but the value is 0 and no finding
+        is emitted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_router_with_capability(
+                tmpdir, cap_allowed_tools=None,
+            )
+            result = compute_stats(tmpdir)
+        cap_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/feature/capability.md"
+        )
+        self.assertEqual(cap_row["discovery_bytes"], 0)
+        # No WARN about capability frontmatter
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertFalse(
+            any(
+                "capabilities/feature/capability.md" in w
+                and "frontmatter" in w
+                for w in warns
+            ),
+            f"unexpected capability frontmatter warning: {warns}",
+        )
+
+    def test_aggregate_sums_skill_md_and_capabilities(self) -> None:
+        """Top-level ``discovery_bytes`` = SKILL.md frontmatter +
+        Σ capability frontmatter bytes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_router_with_capability(
+                tmpdir, cap_allowed_tools="Bash Read",
+            )
+            result = compute_stats(tmpdir)
+            skill_md_disc = discovery_bytes_of(
+                os.path.join(tmpdir, "SKILL.md"),
+            )
+            cap_disc = discovery_bytes_of(
+                os.path.join(
+                    tmpdir, "capabilities", "feature", "capability.md",
+                ),
+            )
+        self.assertEqual(
+            result["discovery_bytes"], skill_md_disc + cap_disc,
+        )
+
+    def test_aggregate_unchanged_when_no_capability_frontmatter(
+        self,
+    ) -> None:
+        """A router whose capabilities are silent on frontmatter
+        reports ``discovery_bytes == frontmatter(SKILL.md)`` —
+        identical to the legacy behavior before this change."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_router_with_capability(
+                tmpdir, cap_allowed_tools=None,
+            )
+            result = compute_stats(tmpdir)
+            skill_md_disc = discovery_bytes_of(
+                os.path.join(tmpdir, "SKILL.md"),
+            )
+        self.assertEqual(result["discovery_bytes"], skill_md_disc)
+
+    def test_skill_md_silent_with_capability_frontmatter(self) -> None:
+        """The asymmetric case: SKILL.md has no parseable frontmatter
+        but a capability declares one.  The aggregate is non-zero
+        (the capability contributes), the SKILL.md row carries
+        ``discovery_bytes=0``, and the existing SKILL.md
+        no-frontmatter WARN still fires so the asymmetry is
+        explicit in both the JSON and human-readable outputs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # SKILL.md with a body but no frontmatter — directory
+            # basename is used for the skill name.
+            skill_dir = os.path.join(tmpdir, "asymmetric")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "# Skill without frontmatter\n\n"
+                "[feature](capabilities/feature/capability.md)\n",
+            )
+            write_capability_md(
+                skill_dir, "feature", allowed_tools="Bash Read",
+            )
+            result = compute_stats(skill_dir)
+            cap_disc = discovery_bytes_of(
+                os.path.join(
+                    skill_dir, "capabilities", "feature",
+                    "capability.md",
+                ),
+            )
+        # Top-level aggregate equals the capability's contribution
+        # alone — SKILL.md contributes 0.
+        self.assertGreater(cap_disc, 0)
+        self.assertEqual(result["discovery_bytes"], cap_disc)
+        # SKILL.md row carries the key with value 0.
+        skill_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "SKILL.md"
+        )
+        self.assertEqual(skill_row["discovery_bytes"], 0)
+        # Capability row carries the full contribution.
+        cap_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/feature/capability.md"
+        )
+        self.assertEqual(cap_row["discovery_bytes"], cap_disc)
+        # SKILL.md no-frontmatter WARN still fires — the asymmetry is
+        # not silently masked by the non-zero aggregate.
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any(
+                "SKILL.md" in w
+                and "no parseable" in w
+                and "frontmatter" in w
+                for w in warns
+            ),
+            f"expected SKILL.md no-frontmatter WARN, got: {warns}",
+        )
+
+    def test_reference_files_omit_discovery_bytes_key(self) -> None:
+        """Capability-local and shared reference files are not
+        discovery-relevant — their rows must not carry the
+        ``discovery_bytes`` key, even when the referenced markdown
+        happens to start with a YAML frontmatter block."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[guide](references/guide.md) and "
+                    "[feature](capabilities/feature/capability.md)\n"
+                ),
+            )
+            write_capability_md(
+                tmpdir,
+                "feature",
+                allowed_tools="Read",
+                body=(
+                    "# Feature\n\n"
+                    "See [local](references/local.md).\n"
+                ),
+            )
+            # A shared reference that itself starts with a frontmatter
+            # block — the key still must not be attached.
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "---\nname: guide\n---\n# Guide\n",
+            )
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "feature",
+                    "references", "local.md",
+                ),
+                "---\nname: local\n---\n# Local\n",
+            )
+            result = compute_stats(tmpdir)
+        for entry in result["files"]:
+            if entry["path"] in (
+                "references/guide.md",
+                "capabilities/feature/references/local.md",
+            ):
+                self.assertNotIn(
+                    "discovery_bytes", entry,
+                    f"{entry['path']} must not carry discovery_bytes",
+                )
+
+    def test_malformed_capability_frontmatter_emits_warn(self) -> None:
+        """A capability whose frontmatter fails to parse surfaces a
+        WARN parallel to the SKILL.md parse-error WARN.  The
+        capability is not discoverable as-is, so the metric should
+        not be read as a clean signal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[broken](capabilities/broken/capability.md)\n"
+                ),
+            )
+            # Indent-indicator block-scalar header — same trigger the
+            # SKILL.md parse-error test pins.
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "broken", "capability.md",
+                ),
+                "---\n"
+                "allowed-tools: |2\n"
+                "  Bash Read\n"
+                "---\n"
+                "# Broken\n",
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any(
+                "capabilities/broken/capability.md" in w
+                and "parse error" in w
+                for w in warns
+            ),
+            f"expected capability frontmatter parse-error WARN, "
+            f"got: {warns}",
+        )
+
+    def test_unclosed_capability_frontmatter_emits_warn(self) -> None:
+        """A capability with a ``---`` opener but no closing fence
+        is malformed — ``discovery_bytes_of`` returns 0 because the
+        boundary is undetectable, but ``load_frontmatter`` still
+        reports a ``_parse_error``.  The walk must surface that as
+        a parse-error WARN: the capability is not discoverable
+        as-is.
+
+        Pins the boundary between the legitimate silent-capability
+        case (no ``---`` at all → no WARN) and the unclosed-fence
+        malformed case (opener without closer → parse-error WARN).
+        Both shapes report ``cap_discovery == 0``; only the parse
+        probe distinguishes them, so a regression that short-
+        circuits the probe on ``cap_discovery == 0`` would silence
+        this WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[broken](capabilities/broken/capability.md)\n"
+                ),
+            )
+            # Opener present, no closing ``---``.  Body content
+            # below is irrelevant — what matters is the missing
+            # closer.
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "broken", "capability.md",
+                ),
+                "---\n"
+                "allowed-tools: Bash Read\n"
+                "# missing closing fence\n"
+                "# Broken capability body\n",
+            )
+            result = compute_stats(tmpdir)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertTrue(
+            any(
+                "capabilities/broken/capability.md" in w
+                and "parse error" in w
+                and "closing" in w
+                for w in warns
+            ),
+            f"expected unclosed-fence parse-error WARN, got: {warns}",
+        )
+
+    def test_multiple_capabilities_sum_and_sort_deterministically(
+        self,
+    ) -> None:
+        """A router with multiple capabilities — one carrying
+        ``allowed-tools``, one silent — sums correctly into the
+        aggregate and emits per-row contributions in
+        path-alphabetical order.
+
+        Pins the multi-entry behaviour of
+        ``_compute_capability_discovery``: the sort key, the sum
+        across N>1 contributors, and the per-row attachment for
+        every visited capability (including the silent one whose
+        contribution is 0)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "[zeta](capabilities/zeta/capability.md) and "
+                    "[alpha](capabilities/alpha/capability.md)\n"
+                ),
+            )
+            # ``alpha`` declares allowed-tools; ``zeta`` is silent.
+            # Authoring order (zeta first in SKILL.md body) is
+            # different from path-alphabetical order so the sort key
+            # is exercised.
+            write_capability_md(
+                tmpdir, "alpha", allowed_tools="Bash Read",
+            )
+            write_capability_md(tmpdir, "zeta", allowed_tools=None)
+            result = compute_stats(tmpdir)
+            skill_md_disc = discovery_bytes_of(
+                os.path.join(tmpdir, "SKILL.md"),
+            )
+            alpha_disc = discovery_bytes_of(
+                os.path.join(
+                    tmpdir, "capabilities", "alpha", "capability.md",
+                ),
+            )
+            zeta_disc = discovery_bytes_of(
+                os.path.join(
+                    tmpdir, "capabilities", "zeta", "capability.md",
+                ),
+            )
+        self.assertGreater(alpha_disc, 0)
+        self.assertEqual(zeta_disc, 0)
+        # Aggregate equals the explicit sum across all three
+        # contributors — pins the summation logic.
+        self.assertEqual(
+            result["discovery_bytes"],
+            skill_md_disc + alpha_disc + zeta_disc,
+        )
+        # Both capability rows carry the key with their respective
+        # contributions; the silent capability still records 0.
+        alpha_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/alpha/capability.md"
+        )
+        zeta_row = next(
+            entry for entry in result["files"]
+            if entry["path"] == "capabilities/zeta/capability.md"
+        )
+        self.assertEqual(alpha_row["discovery_bytes"], alpha_disc)
+        self.assertEqual(zeta_row["discovery_bytes"], 0)
+        # ``files[]`` is sorted alphabetically; alpha precedes zeta
+        # so the breakdown row order is deterministic regardless of
+        # which capability the load graph happened to visit first.
+        discovery_paths = [
+            entry["path"] for entry in result["files"]
+            if "discovery_bytes" in entry
+        ]
+        self.assertEqual(
+            discovery_paths,
+            [
+                "SKILL.md",
+                "capabilities/alpha/capability.md",
+                "capabilities/zeta/capability.md",
+            ],
+        )
 
 
 if __name__ == "__main__":

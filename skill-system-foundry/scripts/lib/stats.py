@@ -2,9 +2,13 @@
 
 Computes two byte-based proxies for a skill's context cost:
 
-* ``discovery_bytes`` — the raw bytes of the ``SKILL.md`` YAML
-  frontmatter block, inclusive of the two ``---`` fences.  This is what
-  the harness reads at startup to decide whether the skill is relevant.
+* ``discovery_bytes`` — the raw bytes of every YAML frontmatter block
+  the harness reads at discovery time, summed across the entry point
+  and every capability entry.  That is, ``SKILL.md`` plus each
+  ``capabilities/<name>/capability.md`` (when present).  The per-row
+  contribution is also reported on each discovery-relevant entry in
+  ``files[]`` under the optional ``discovery_bytes`` key so consumers
+  can reconstruct the breakdown without re-reading any files.
 
 * ``load_bytes`` — the raw bytes of ``SKILL.md`` plus every in-scope
   referenced file reachable transitively from the entry point through
@@ -28,7 +32,9 @@ import os
 
 from .constants import (
     DIR_ASSETS,
+    DIR_CAPABILITIES,
     DIR_SCRIPTS,
+    FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -139,6 +145,103 @@ def is_excluded_from_load(rel_path: str) -> bool:
     return category_of(rel_path) in _EXCLUDED_LOAD_CATEGORIES
 
 
+def is_capability_entry(rel_path: str) -> bool:
+    """Return True when a path is a capability entry point.
+
+    A capability entry is exactly ``capabilities/<name>/capability.md``
+    (two segments below the ``capabilities`` root).  Capability-local
+    resources under ``capabilities/<name>/references/<doc>.md`` are
+    *not* discovery-relevant — the harness does not parse their
+    frontmatter at startup — and therefore do not match.
+    """
+    parts = rel_path.replace("\\", "/").split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == DIR_CAPABILITIES
+        and parts[2] == FILE_CAPABILITY_MD
+    )
+
+
+def _compute_capability_discovery(
+    visited: dict[str, dict],
+) -> tuple[dict[str, int], list[str]]:
+    """Walk capability entries and compute their discovery contributions.
+
+    Iterates *visited* in path-alphabetical order so the emitted
+    findings (and the resulting JSON output) are deterministic across
+    structurally-equivalent skills, regardless of the order in which
+    the load-graph traversal happened to discover each capability.
+
+    Returns ``(discovery_by_filepath, errors)``:
+
+    * ``discovery_by_filepath`` maps the absolute path of every
+      capability entry to its frontmatter byte count.  A capability
+      that is silent on frontmatter contributes ``0``; a capability
+      whose frontmatter could not be read also contributes ``0`` but
+      raises a finding in *errors*.
+    * ``errors`` is the list of new finding strings the caller should
+      append to the run-level error list.  Two finding shapes are
+      possible: an I/O-failure WARN when ``discovery_bytes_of``
+      raises, and a parse-error WARN when ``load_frontmatter``
+      returns a ``_parse_error`` dict.  The parse-error case covers
+      *both* the unclosed-fence shape (``---`` opener with no
+      closing fence — ``discovery_bytes_of`` reports this as 0
+      bytes because the boundary is undetectable) *and* the
+      valid-fences-with-invalid-YAML-body shape.  A capability
+      silent on frontmatter (no ``---`` opener at all) produces no
+      finding.  ``cap_discovery == 0`` therefore is not a reliable
+      "silent capability" predicate — the byte scan returns 0 for
+      both legitimate silent and malformed unclosed-fence shapes,
+      so the parse probe must run unconditionally to distinguish
+      them.
+    """
+    discovery_by_filepath: dict[str, int] = {}
+    errors: list[str] = []
+    sorted_items = sorted(
+        visited.items(), key=lambda item: item[1]["path"],
+    )
+    for filepath, state in sorted_items:
+        if not is_capability_entry(state["path"]):
+            continue
+        try:
+            cap_discovery = discovery_bytes_of(filepath)
+        except (OSError, UnicodeError) as exc:
+            errors.append(
+                f"{LEVEL_WARN}: [foundry] cannot scan '{state['path']}' "
+                f"frontmatter ({exc.__class__.__name__}: {exc}) — "
+                f"discovery_bytes recorded as 0"
+            )
+            discovery_by_filepath[filepath] = 0
+            continue
+        discovery_by_filepath[filepath] = cap_discovery
+        # Always probe the parse layer even when ``cap_discovery``
+        # is zero: ``discovery_bytes_of`` returns 0 both for silent
+        # capabilities (no ``---`` opener at all) and for malformed
+        # ones (opener with no closing fence).  Only
+        # ``load_frontmatter`` distinguishes the two — the silent
+        # case returns ``(None, ..., [])`` and short-circuits below;
+        # the unclosed-fence case returns a ``_parse_error`` dict
+        # that must surface as a WARN so the capability is flagged
+        # as not discoverable as-is.
+        try:
+            cap_frontmatter, _body, _findings = load_frontmatter(filepath)
+        except (OSError, UnicodeError):
+            # Mid-read divergence (race, antivirus, NFS): the byte
+            # scan already produced a usable count; recover silently
+            # rather than emitting a duplicate WARN — the validator
+            # surfaces decode failures on its own pass if it matters.
+            continue
+        if cap_frontmatter and "_parse_error" in cap_frontmatter:
+            errors.append(
+                f"{LEVEL_WARN}: [foundry] '{state['path']}' "
+                f"frontmatter has a parse error "
+                f"({cap_frontmatter['_parse_error']}); the "
+                f"capability is not discoverable as-is — fix the "
+                f"frontmatter before trusting these numbers"
+            )
+    return discovery_by_filepath, errors
+
+
 # ===================================================================
 # Stats computation
 # ===================================================================
@@ -170,7 +273,23 @@ def compute_stats(skill_path: str) -> dict:
             "path":            str,                 # relative to skill root, POSIX
             "bytes":           int,
             "reachable_from":  list[str],           # parents, sorted alphabetically
+            "discovery_bytes": int,                 # only on discovery-relevant rows
         }
+
+    The optional ``discovery_bytes`` key is populated on rows the
+    harness reads at discovery time: ``SKILL.md`` and every
+    ``capabilities/<name>/capability.md``.  The value is the byte
+    count of that file's fence-bracketed YAML frontmatter block —
+    ``0`` only when no ``---`` opener/closer pair is present.  A
+    block whose YAML body is malformed still contributes its
+    fence-bracketed bytes (those bytes are paid at discovery
+    regardless of parse success) and surfaces a parallel
+    parse-error WARN in ``errors``.  The key is omitted on every
+    other row — capability-local references and shared references
+    are not parsed at discovery time, so attaching the key would
+    falsely imply they contribute to discovery cost.  The
+    top-level ``discovery_bytes`` is the sum across rows that
+    carry the key.
 
     The traversal:
 
@@ -186,6 +305,16 @@ def compute_stats(skill_path: str) -> dict:
     * Produces an INFO when a reference resolves outside the skill
       directory (cross-skill or shared-system reference) — those files
       are not counted toward ``load_bytes``.
+    * Produces a WARN when a capability entry's frontmatter is
+      present but malformed — same severity and shape as the
+      ``SKILL.md`` parse-error WARN.  A capability that is silent on
+      frontmatter is legal and produces no finding.
+    * Produces a WARN when a capability entry's frontmatter cannot
+      be read for I/O or decode reasons; the capability still
+      contributes ``0`` to the discovery aggregate so the run
+      remains useful.  The corresponding SKILL.md case is a FAIL
+      because SKILL.md is required at discovery; capability entries
+      are not.
 
     A FAIL is returned only when ``SKILL.md`` itself is missing; the
     caller treats that as an early exit via the ``errors`` list (no
@@ -244,12 +373,22 @@ def compute_stats(skill_path: str) -> dict:
             f"frontmatter ({exc.__class__.__name__}: {exc})"
         )
         return result
-    if discovery_count == 0:
+    if discovery_count == 0 and frontmatter is None:
+        # Gate on ``frontmatter is None`` rather than on
+        # ``discovery_count == 0`` alone: ``discovery_bytes_of`` returns
+        # 0 for both the silent case (no ``---`` opener) and the
+        # unclosed-fence case (opener with no closer).  The unclosed-
+        # fence case already emits a parse-error WARN above
+        # (``load_frontmatter`` surfaces it via ``_parse_error``); only
+        # the silent case lacks any other diagnostic, so this is the
+        # only branch that deserves its own WARN.  Mirrors the
+        # capability handling in ``_compute_capability_discovery``,
+        # which similarly emits exactly one WARN per malformed shape.
         result["errors"].append(
             f"{LEVEL_WARN}: [foundry] {FILE_SKILL_MD} has no parseable "
-            f"frontmatter block; discovery_bytes recorded as 0"
+            f"frontmatter block; its discovery_bytes contribution "
+            f"recorded as 0"
         )
-    result["discovery_bytes"] = discovery_count
 
     # ``visited`` keys are absolute paths; values capture per-file
     # state (relative path, byte count, parent set).  Reading happens
@@ -378,20 +517,41 @@ def compute_stats(skill_path: str) -> dict:
 
     _visit(skill_md, None)
 
+    # Per-row discovery_bytes for capability entries.  The helper
+    # walks every capability.md the load graph reached, counts its
+    # frontmatter block, and emits findings (parse-error or I/O
+    # WARN) in path-alphabetical order so output is deterministic
+    # across structurally-equivalent skills.
+    capability_discovery, capability_errors = _compute_capability_discovery(
+        visited,
+    )
+    result["errors"].extend(capability_errors)
+
     # Build the sorted file list and total load_bytes.  ``visited``
     # already excludes scripts/assets thanks to the early-return in
-    # ``_visit``, so this loop is an unconditional aggregator.
+    # ``_visit``, so this loop is an unconditional aggregator.  The
+    # discovery aggregate folds in SKILL.md (already in
+    # ``discovery_count``) plus every capability entry's contribution.
     entries: list[dict] = []
     load_total = 0
-    for state in visited.values():
-        entries.append({
+    skill_md_abs = os.path.abspath(skill_md)
+    for filepath, state in visited.items():
+        entry: dict = {
             "path": state["path"],
             "bytes": state["bytes"],
             "reachable_from": sorted(state["parents"]),
-        })
+        }
+        if filepath == skill_md_abs:
+            entry["discovery_bytes"] = discovery_count
+        elif filepath in capability_discovery:
+            entry["discovery_bytes"] = capability_discovery[filepath]
+        entries.append(entry)
         load_total += state["bytes"]
 
     entries.sort(key=lambda entry: entry["path"])
     result["files"] = entries
     result["load_bytes"] = load_total
+    result["discovery_bytes"] = discovery_count + sum(
+        capability_discovery.values()
+    )
     return result
