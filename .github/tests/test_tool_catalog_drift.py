@@ -544,6 +544,23 @@ class RenderSummaryTests(unittest.TestCase):
         self.assertIn("Additions auto-applied (1)", out)
         self.assertIn("Candidate removals — review before deleting (1)", out)
 
+    def test_applied_false_uses_subjunctive_wording(self) -> None:
+        # Dry-run / preview rendering must not falsely claim mutation.
+        out = mod.render_summary(
+            {"Glob"}, set(), "https://x", "2026-05-01", applied=False,
+        )
+        self.assertIn("Additions that would be applied (1)", out)
+        self.assertIn("Dry run", out)
+        self.assertNotIn("auto-applied", out)
+        self.assertNotIn("Already added", out)
+
+    def test_applied_true_default_keeps_auto_applied(self) -> None:
+        # Confirm the default keeps the existing wording so the
+        # workflow's PR body and post-mutation runs read correctly.
+        out = mod.render_summary({"Glob"}, set(), "https://x", "2026-05-01")
+        self.assertIn("auto-applied", out)
+        self.assertNotIn("would be applied", out)
+
 
 # ---------------------------------------------------------------------------
 # Main / CLI

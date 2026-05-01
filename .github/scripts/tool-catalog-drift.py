@@ -189,9 +189,15 @@ def extract_tools(markdown_text: str) -> set[str]:
 
     tools: set[str] = set()
     for line in lines[header_index + 2:]:
-        if not line.startswith("|"):
-            break
+        # Two distinct table-end signals.  Check blank-line first so
+        # the ``not line.startswith("|")`` branch handles only the
+        # narrower "non-blank, not a table row" case (e.g. a heading
+        # or paragraph immediately after the table); blank lines are
+        # the more common terminator and reading the strip() check
+        # first makes that intent explicit.
         if line.strip() == "":
+            break
+        if not line.startswith("|"):
             break
         match = RE_TABLE_ROW_FIRST_CELL.match(line)
         if match is None:
@@ -528,12 +534,19 @@ def render_summary(
     removals: set[str],
     source_url: str,
     today_iso: str,
+    applied: bool = True,
 ) -> str:
     """Return a human- and PR-body-friendly markdown summary.
 
     Output is markdown so the same string works for stdout
     (``--dry-run``) and the GitHub PR body.  Sections are omitted
     when empty.
+
+    *applied* controls the verb tense in the additions section:
+    ``True`` (default, for non-dry-run runs and the workflow's
+    PR-body output) renders "auto-applied" / "Already added"; ``False``
+    (for ``--dry-run``) renders "would be applied" / "Would be added"
+    so the output does not falsely claim file mutation.
     """
     lines: list[str] = []
     if additions or removals:
@@ -546,14 +559,25 @@ def render_summary(
     lines.append("")
 
     if additions:
-        lines.append(
-            f"## Additions auto-applied ({len(additions)})"
-        )
-        lines.append("")
-        lines.append(
-            "Tools present in upstream but missing from the catalog. "
-            "Already added to the YAML in this PR."
-        )
+        if applied:
+            lines.append(
+                f"## Additions auto-applied ({len(additions)})"
+            )
+            lines.append("")
+            lines.append(
+                "Tools present in upstream but missing from the "
+                "catalog. Already added to the YAML in this PR."
+            )
+        else:
+            lines.append(
+                f"## Additions that would be applied ({len(additions)})"
+            )
+            lines.append("")
+            lines.append(
+                "Tools present in upstream but missing from the "
+                "catalog. Dry run — no file mutation; running "
+                "without `--dry-run` would add these to the YAML."
+            )
         lines.append("")
         for tool in sorted(additions):
             lines.append(f"- `{tool}`")
@@ -624,7 +648,9 @@ def run(
     catalog = set(parsed["harness_tools"])
     additions, removals = diff(catalog, extracted)
 
-    summary = render_summary(additions, removals, source_url, today_iso)
+    summary = render_summary(
+        additions, removals, source_url, today_iso, applied=not dry_run,
+    )
     drift_detected = bool(additions or removals)
     json_payload = {
         "drift": drift_detected,
@@ -663,9 +689,10 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         help=(
-            "Print the planned diff to stdout without modifying the "
-            "catalog file. Exits 0 when no drift, 1 when drift "
-            "detected, non-zero on errors."
+            "Print the planned summary to stdout (or JSON with "
+            "--json) without modifying the catalog file. Exits 0 "
+            "when no drift, 1 when drift detected, non-zero on "
+            "errors."
         ),
     )
     parser.add_argument(
