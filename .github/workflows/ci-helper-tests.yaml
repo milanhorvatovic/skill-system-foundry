@@ -2,9 +2,17 @@ name: CI helper tests
 
 # Runs the unittest suite under ``.github/tests/`` against the helper
 # scripts under ``.github/scripts/``.  Kept separate from
-# ``python-tests.yaml`` (which covers the meta-skill itself) so the
-# meta-skill matrix stays focused and a helper-only change does not
-# trigger the full test suite.
+# ``python-tests.yaml`` (which covers the meta-skill itself) so
+# helper checks stay isolated from the meta-skill matrix and helper
+# failures surface as their own clear signal in PR checks.  Note
+# that ``python-tests.yaml`` runs on every PR with no path filter,
+# so the meta-skill matrix still exercises any change that touches
+# its tree — the isolation here is about scope/clarity, not skipping.
+#
+# The path filter includes ``configuration.yaml`` because the helper
+# test suite has a real-configuration canary that reads the live
+# catalog schema; a PR that edits the catalog without touching the
+# helper or its tests must still run this suite.
 
 on:
   pull_request:
@@ -12,12 +20,14 @@ on:
       - ".github/scripts/**"
       - ".github/tests/**"
       - ".github/workflows/ci-helper-tests.yaml"
+      - "skill-system-foundry/scripts/lib/configuration.yaml"
   push:
     branches: [main]
     paths:
       - ".github/scripts/**"
       - ".github/tests/**"
       - ".github/workflows/ci-helper-tests.yaml"
+      - "skill-system-foundry/scripts/lib/configuration.yaml"
 
 permissions:
   contents: read
