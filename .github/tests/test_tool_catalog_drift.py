@@ -338,6 +338,33 @@ class ParseCatalogTests(unittest.TestCase):
             mod.parse_catalog(text)
         self.assertIn("source_url", str(ctx.exception))
 
+    def test_empty_last_checked_value_raises(self) -> None:
+        # Mirror the empty-source_url contract for last_checked: an
+        # explicitly empty value would let a no-drift / removals-only
+        # run leave the catalog in an unprovenanced state, since those
+        # paths never rewrite the file.
+        text = _HAPPY_CATALOG.replace(
+            'last_checked: "2026-04-26"',
+            "last_checked:",
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        self.assertIn("empty", str(ctx.exception).lower())
+        self.assertIn("last_checked", str(ctx.exception))
+
+    def test_invalid_last_checked_value_raises(self) -> None:
+        # A non-ISO-8601 last_checked is also rejected so a typo or
+        # accidental free-text edit cannot quietly land in provenance.
+        text = _HAPPY_CATALOG.replace(
+            'last_checked: "2026-04-26"',
+            'last_checked: "yesterday"',
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        self.assertIn("invalid", str(ctx.exception).lower())
+        self.assertIn("last_checked", str(ctx.exception))
+        self.assertIn("ISO-8601", str(ctx.exception))
+
     def test_empty_source_url_value_raises(self) -> None:
         # Empty value (``source_url:`` with no scalar after it) must
         # also hard-fail — silent fallback to a default would mask
@@ -926,19 +953,20 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 4)
             self.assertIn("I/O error", stderr.getvalue())
 
-    def test_today_default_uses_system_date(self) -> None:
-        # Smoke-test: run without --today and confirm today's date
-        # appears in the rewritten YAML.
+    def test_today_default_uses_module_date_source(self) -> None:
+        # Smoke-test: run without --today and confirm the helper uses
+        # its module-level date source for the rewritten YAML.  The
+        # date source (``mod._today_iso``) is patched to a fixed value
+        # so the test does not race the system clock at midnight.
         markdown = _load_fixture_markdown()
-        today = datetime.date.today().isoformat()
+        fixed_today = "2026-05-01"
         with _CatalogTempFile(_HAPPY_CATALOG) as path, _patched_fetch(markdown):
-            with redirect_stdout(io.StringIO()):
-                mod.main([
-                    "--catalog-path", path,
-                ])
+            with mock.patch.object(mod, "_today_iso", return_value=fixed_today):
+                with redirect_stdout(io.StringIO()):
+                    mod.main(["--catalog-path", path])
             with open(path, "r", encoding="utf-8") as fh:
                 rewritten = fh.read()
-            self.assertIn(f'last_checked: "{today}"', rewritten)
+            self.assertIn(f'last_checked: "{fixed_today}"', rewritten)
 
 
 if __name__ == "__main__":

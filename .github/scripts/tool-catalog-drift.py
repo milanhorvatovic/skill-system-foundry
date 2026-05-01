@@ -331,6 +331,21 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             "than falling back to a default (silent fallback would "
             "mask misconfigurations)"
         )
+    if not last_checked:
+        raise ParseError(
+            f"configuration.yaml has an empty `last_checked` value "
+            f"under `{harness}.provenance` — provide an explicit "
+            "ISO-8601 `YYYY-MM-DD` date so a no-drift / removals-only "
+            "run cannot leave the catalog in an unprovenanced state"
+        )
+    try:
+        datetime.date.fromisoformat(last_checked)
+    except ValueError as exc:
+        raise ParseError(
+            f"configuration.yaml has an invalid `last_checked` value "
+            f"under `{harness}.provenance`: {last_checked!r} — expected "
+            "ISO-8601 `YYYY-MM-DD`"
+        ) from exc
 
     harness_tools_index = _find_child_key(
         lines, harness_index, "harness_tools:"
