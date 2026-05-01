@@ -14,9 +14,10 @@ Outcomes:
     summary as advisory; never auto-applied.  A regex miss or a
     one-version-wide doc edit could falsely propose dropping a real
     tool, so removals always require a human edit.
-  * No drift — ``last_checked`` is rewritten on every successful run
-    so the YAML diff alone signals when the catalog was last
-    reconciled with upstream.
+  * No drift — no file is rewritten.  ``last_checked`` records the
+    date of the most recent drift-detected reconciliation; quiet
+    runs leave it untouched.  The GitHub Actions run history is the
+    "did the sweep run today" signal.
 
 The helper hard-fails on fetch errors, decoding errors, table-shape
 mismatches, and zero tokens extracted.  Silent green is the worst
@@ -28,10 +29,14 @@ the meta-skill: the helper is repo infrastructure under
 ``.github/scripts/`` and stays isolated from
 ``skill-system-foundry/scripts/lib/``.
 
-Adding another tracked harness later (e.g. a future Codex catalog
-that publishes a canonical tool list) is a YAML edit and a one-line
-addition to ``HARNESS_NAMES`` below — the parser, fetcher, and writer
-keep their shape.
+Tracks ``claude_code`` only.  OpenAI Codex has no harness-level tool
+catalog by design (every tool is MCP-server-sourced and
+user-configured) and Cursor has no documented ``allowed-tools``
+dialect, so no second harness ships in this helper.  The
+``catalogs.<harness>`` YAML structure preserves room for a future
+bucket; adding one will require helper changes (``run`` and
+``parse_catalog`` would need to iterate harness names), not just a
+YAML edit.
 """
 
 import argparse
@@ -53,12 +58,6 @@ REPO_ROOT = os.path.abspath(
 CATALOG_PATH = os.path.join(
     REPO_ROOT, "skill-system-foundry", "scripts", "lib", "configuration.yaml"
 )
-
-# Harness names tracked by this sweep.  Today only ``claude_code`` has
-# a canonical upstream catalog; the YAML structure preserves room for
-# future harness buckets but no second harness ships in this PR.  See
-# the design comment on issue #118.
-HARNESS_NAMES: tuple[str, ...] = ("claude_code",)
 
 # PascalCase token shape.  Matches ``Bash``, ``WebFetch``, ``LSP``, and
 # any future PascalCase or all-caps acronym tool name.  Anchored.
@@ -563,7 +562,8 @@ def render_summary(
     if not additions and not removals:
         lines.append(
             "All catalog tools match the upstream tools reference. "
-            "`last_checked` updated."
+            "No catalog changes written — quiet runs leave "
+            "`last_checked` untouched."
         )
         lines.append("")
 
@@ -587,9 +587,11 @@ def run(
     """Run the drift sweep against the catalog at *catalog_path*.
 
     Returns ``(drift_detected, summary, json_payload)``.  In default
-    (non-dry-run) mode, additions are applied to the catalog file and
-    ``last_checked`` is updated when drift is detected.  In dry-run
-    mode, no file edits happen.
+    (non-dry-run) mode the catalog file is rewritten only when drift
+    is detected — additions are applied and ``last_checked`` is
+    bumped to *today_iso* in the same write.  Quiet (no-drift) runs
+    leave the file untouched.  In dry-run mode no file edits happen
+    regardless.
 
     Raises :class:`FetchError` or :class:`ParseError` on hard-fail
     conditions; the caller maps those to non-zero exit codes.
