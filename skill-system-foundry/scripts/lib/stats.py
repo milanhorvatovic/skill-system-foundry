@@ -162,6 +162,70 @@ def is_capability_entry(rel_path: str) -> bool:
     )
 
 
+def _compute_capability_discovery(
+    visited: dict[str, dict],
+) -> tuple[dict[str, int], list[str]]:
+    """Walk capability entries and compute their discovery contributions.
+
+    Iterates *visited* in path-alphabetical order so the emitted
+    findings (and the resulting JSON output) are deterministic across
+    structurally-equivalent skills, regardless of the order in which
+    the load-graph traversal happened to discover each capability.
+
+    Returns ``(discovery_by_filepath, errors)``:
+
+    * ``discovery_by_filepath`` maps the absolute path of every
+      capability entry to its frontmatter byte count.  A capability
+      that is silent on frontmatter contributes ``0``; a capability
+      whose frontmatter could not be read also contributes ``0`` but
+      raises a finding in *errors*.
+    * ``errors`` is the list of new finding strings the caller should
+      append to the run-level error list.  Two finding shapes are
+      possible: an I/O-failure WARN when ``discovery_bytes_of`` raises
+      and a parse-error WARN when the YAML frontmatter is present but
+      malformed.  A capability silent on frontmatter produces no
+      finding.
+    """
+    discovery_by_filepath: dict[str, int] = {}
+    errors: list[str] = []
+    sorted_items = sorted(
+        visited.items(), key=lambda item: item[1]["path"],
+    )
+    for filepath, state in sorted_items:
+        if not is_capability_entry(state["path"]):
+            continue
+        try:
+            cap_discovery = discovery_bytes_of(filepath)
+        except (OSError, UnicodeError) as exc:
+            errors.append(
+                f"{LEVEL_WARN}: [foundry] cannot scan '{state['path']}' "
+                f"frontmatter ({exc.__class__.__name__}: {exc}) — "
+                f"discovery_bytes recorded as 0"
+            )
+            discovery_by_filepath[filepath] = 0
+            continue
+        try:
+            cap_frontmatter, _body, _findings = load_frontmatter(filepath)
+        except (OSError, UnicodeError):
+            # Already-recoverable: the byte scan above succeeded so we
+            # have a usable count.  A decode failure between the byte
+            # scan and the frontmatter parse is rare enough on a file
+            # we just opened that suppressing a duplicate WARN is the
+            # saner default — the validator surfaces it on its own
+            # pass if it matters.
+            cap_frontmatter = None
+        if cap_frontmatter and "_parse_error" in cap_frontmatter:
+            errors.append(
+                f"{LEVEL_WARN}: [foundry] '{state['path']}' "
+                f"frontmatter has a parse error "
+                f"({cap_frontmatter['_parse_error']}); the "
+                f"capability is not discoverable as-is — fix the "
+                f"frontmatter before trusting these numbers"
+            )
+        discovery_by_filepath[filepath] = cap_discovery
+    return discovery_by_filepath, errors
+
+
 # ===================================================================
 # Stats computation
 # ===================================================================
@@ -224,6 +288,12 @@ def compute_stats(skill_path: str) -> dict:
       present but malformed — same severity and shape as the
       ``SKILL.md`` parse-error WARN.  A capability that is silent on
       frontmatter is legal and produces no finding.
+    * Produces a WARN when a capability entry's frontmatter cannot
+      be read for I/O or decode reasons; the capability still
+      contributes ``0`` to the discovery aggregate so the run
+      remains useful.  The corresponding SKILL.md case is a FAIL
+      because SKILL.md is required at discovery; capability entries
+      are not.
 
     A FAIL is returned only when ``SKILL.md`` itself is missing; the
     caller treats that as an early exit via the ``errors`` list (no
@@ -288,7 +358,6 @@ def compute_stats(skill_path: str) -> dict:
             f"frontmatter block; its discovery_bytes contribution "
             f"recorded as 0"
         )
-    result["discovery_bytes"] = discovery_count
 
     # ``visited`` keys are absolute paths; values capture per-file
     # state (relative path, byte count, parent set).  Reading happens
@@ -417,45 +486,15 @@ def compute_stats(skill_path: str) -> dict:
 
     _visit(skill_md, None)
 
-    # Per-row discovery_bytes for capability entries.  Walk every
-    # capability.md the load graph reached, count its frontmatter
-    # block, and surface a WARN parallel to SKILL.md when its
-    # frontmatter is present-but-malformed.  A capability silent on
-    # frontmatter is legal: ``discovery_bytes_of`` returns 0 and no
-    # finding fires.
-    capability_discovery: dict[str, int] = {}
-    for filepath, state in visited.items():
-        if not is_capability_entry(state["path"]):
-            continue
-        try:
-            cap_discovery = discovery_bytes_of(filepath)
-        except (OSError, UnicodeError) as exc:
-            result["errors"].append(
-                f"{LEVEL_WARN}: [foundry] cannot scan '{state['path']}' "
-                f"frontmatter ({exc.__class__.__name__}: {exc}) — "
-                f"discovery_bytes recorded as 0"
-            )
-            cap_discovery = 0
-        else:
-            try:
-                cap_frontmatter, _body, _findings = load_frontmatter(filepath)
-            except (OSError, UnicodeError):
-                # Already-recoverable; the byte scan above succeeded
-                # so we still have a usable count.  The decode-failure
-                # case is rare enough on a file we just byte-scanned
-                # that suppressing a duplicate WARN is the saner
-                # default — the validator will surface it on its own
-                # pass if it matters.
-                cap_frontmatter = None
-            if cap_frontmatter and "_parse_error" in cap_frontmatter:
-                result["errors"].append(
-                    f"{LEVEL_WARN}: [foundry] '{state['path']}' "
-                    f"frontmatter has a parse error "
-                    f"({cap_frontmatter['_parse_error']}); the "
-                    f"capability is not discoverable as-is — fix the "
-                    f"frontmatter before trusting these numbers"
-                )
-        capability_discovery[filepath] = cap_discovery
+    # Per-row discovery_bytes for capability entries.  The helper
+    # walks every capability.md the load graph reached, counts its
+    # frontmatter block, and emits findings (parse-error or I/O
+    # WARN) in path-alphabetical order so output is deterministic
+    # across structurally-equivalent skills.
+    capability_discovery, capability_errors = _compute_capability_discovery(
+        visited,
+    )
+    result["errors"].extend(capability_errors)
 
     # Build the sorted file list and total load_bytes.  ``visited``
     # already excludes scripts/assets thanks to the early-return in
