@@ -274,13 +274,76 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
         immediately after the last existing harness-tool item.  The
         writer inserts new items there.
       * ``last_checked_line`` — int, the line index of
-        ``provenance.last_checked``.
+        ``catalog_provenance.<harness>.last_checked``.
 
-    Hard-fails (:class:`ParseError`) when the harness bucket, the
-    provenance block, or the harness_tools list is missing or
-    malformed.
+    Hard-fails (:class:`ParseError`) when the catalog_provenance
+    block, the harness bucket, or the harness_tools list is missing
+    or malformed.
     """
     lines = yaml_text.splitlines()
+
+    # Provenance lives under a sibling top-level key
+    # ``skill.allowed_tools.catalog_provenance.<harness>`` so
+    # ``catalogs.<harness>`` stays a pure tool-name source (every
+    # direct child is a list of tool names).
+    catalog_prov_index = _find_key_line(
+        lines, "catalog_provenance:", parents=("skill:", "allowed_tools:")
+    )
+    if catalog_prov_index < 0:
+        raise ParseError(
+            "configuration.yaml has no `catalog_provenance:` block "
+            "under `skill.allowed_tools` — schema mismatch"
+        )
+
+    harness_prov_index = _find_child_key(
+        lines, catalog_prov_index, f"{harness}:"
+    )
+    if harness_prov_index < 0:
+        raise ParseError(
+            f"configuration.yaml has no `{harness}:` bucket under "
+            "`skill.allowed_tools.catalog_provenance` — add the "
+            "bucket or update the harness list in this helper"
+        )
+
+    source_url_line = _find_child_key(
+        lines, harness_prov_index, "source_url:"
+    )
+    last_checked_line = _find_child_key(
+        lines, harness_prov_index, "last_checked:"
+    )
+    if source_url_line < 0 or last_checked_line < 0:
+        raise ParseError(
+            "configuration.yaml is missing `source_url` and/or "
+            f"`last_checked` under "
+            f"`skill.allowed_tools.catalog_provenance.{harness}` — "
+            "schema migration incomplete"
+        )
+
+    source_url = _scalar_value(lines[source_url_line], "source_url:")
+    last_checked = _scalar_value(lines[last_checked_line], "last_checked:")
+    if not source_url:
+        raise ParseError(
+            f"configuration.yaml has an empty `source_url` value under "
+            f"`skill.allowed_tools.catalog_provenance.{harness}` — "
+            "provide an explicit URL rather than falling back to a "
+            "default (silent fallback would mask misconfigurations)"
+        )
+    if not last_checked:
+        raise ParseError(
+            f"configuration.yaml has an empty `last_checked` value "
+            f"under `skill.allowed_tools.catalog_provenance.{harness}` — "
+            "provide an explicit ISO-8601 `YYYY-MM-DD` date so a "
+            "no-drift / removals-only run cannot leave the catalog "
+            "in an unprovenanced state"
+        )
+    try:
+        datetime.date.fromisoformat(last_checked)
+    except ValueError as exc:
+        raise ParseError(
+            f"configuration.yaml has an invalid `last_checked` value "
+            f"under `skill.allowed_tools.catalog_provenance.{harness}`: "
+            f"{last_checked!r} — expected ISO-8601 `YYYY-MM-DD`"
+        ) from exc
 
     catalogs_index = _find_key_line(
         lines, "catalogs:", parents=("skill:", "allowed_tools:")
@@ -300,52 +363,6 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             "`skill.allowed_tools.catalogs` — add the bucket or "
             "update the harness list in this helper"
         )
-
-    provenance_index = _find_child_key(lines, harness_index, "provenance:")
-    if provenance_index < 0:
-        raise ParseError(
-            f"configuration.yaml has no `provenance:` block under "
-            f"`skill.allowed_tools.catalogs.{harness}` — schema "
-            "migration incomplete (see issue #118)"
-        )
-
-    source_url_line = _find_child_key(
-        lines, provenance_index, "source_url:"
-    )
-    last_checked_line = _find_child_key(
-        lines, provenance_index, "last_checked:"
-    )
-    if source_url_line < 0 or last_checked_line < 0:
-        raise ParseError(
-            "configuration.yaml is missing `source_url` and/or "
-            f"`last_checked` under `{harness}.provenance` — schema "
-            "migration incomplete"
-        )
-
-    source_url = _scalar_value(lines[source_url_line], "source_url:")
-    last_checked = _scalar_value(lines[last_checked_line], "last_checked:")
-    if not source_url:
-        raise ParseError(
-            f"configuration.yaml has an empty `source_url` value under "
-            f"`{harness}.provenance` — provide an explicit URL rather "
-            "than falling back to a default (silent fallback would "
-            "mask misconfigurations)"
-        )
-    if not last_checked:
-        raise ParseError(
-            f"configuration.yaml has an empty `last_checked` value "
-            f"under `{harness}.provenance` — provide an explicit "
-            "ISO-8601 `YYYY-MM-DD` date so a no-drift / removals-only "
-            "run cannot leave the catalog in an unprovenanced state"
-        )
-    try:
-        datetime.date.fromisoformat(last_checked)
-    except ValueError as exc:
-        raise ParseError(
-            f"configuration.yaml has an invalid `last_checked` value "
-            f"under `{harness}.provenance`: {last_checked!r} — expected "
-            "ISO-8601 `YYYY-MM-DD`"
-        ) from exc
 
     harness_tools_index = _find_child_key(
         lines, harness_index, "harness_tools:"

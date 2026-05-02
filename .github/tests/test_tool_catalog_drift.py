@@ -268,15 +268,16 @@ skill:
   allowed_tools:
     catalogs:
       claude_code:
-        provenance:
-          source_url: https://example.test/tools.md
-          last_checked: "2026-04-26"
         harness_tools:
           - Bash
           - Read
           - Edit
         cli_tools:
           - bash
+    catalog_provenance:
+      claude_code:
+        source_url: https://example.test/tools.md
+        last_checked: "2026-04-26"
 """
 
 
@@ -309,9 +310,10 @@ class ParseCatalogTests(unittest.TestCase):
 
     def test_missing_provenance_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
-            "        provenance:\n"
-            "          source_url: https://example.test/tools.md\n"
-            "          last_checked: \"2026-04-26\"\n",
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n",
             "",
         )
         with self.assertRaises(mod.ParseError) as ctx:
@@ -332,7 +334,7 @@ class ParseCatalogTests(unittest.TestCase):
 
     def test_missing_source_url_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
-            "          source_url: https://example.test/tools.md\n", ""
+            "        source_url: https://example.test/tools.md\n", ""
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
@@ -371,16 +373,34 @@ class ParseCatalogTests(unittest.TestCase):
         # misconfigurations and contradict the helper's hard-fail
         # contract.
         text = _HAPPY_CATALOG.replace(
-            "          source_url: https://example.test/tools.md\n",
-            "          source_url:\n",
+            "        source_url: https://example.test/tools.md\n",
+            "        source_url:\n",
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
         self.assertIn("empty", str(ctx.exception).lower())
         self.assertIn("source_url", str(ctx.exception))
 
-    def test_missing_harness_bucket_raises(self) -> None:
-        text = _HAPPY_CATALOG.replace("claude_code", "fake_harness")
+    def test_missing_harness_bucket_in_catalogs_raises(self) -> None:
+        # Rename only the ``catalogs.<harness>`` occurrence; leave
+        # ``catalog_provenance.<harness>`` intact so the failure is
+        # localized to the harness_tools lookup.
+        text = _HAPPY_CATALOG.replace(
+            "      claude_code:\n        harness_tools:",
+            "      fake_harness:\n        harness_tools:",
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        self.assertIn("claude_code", str(ctx.exception))
+
+    def test_missing_harness_bucket_in_catalog_provenance_raises(self) -> None:
+        # Rename only the ``catalog_provenance.<harness>`` occurrence;
+        # leave ``catalogs.<harness>`` intact so the failure is
+        # localized to the provenance lookup.
+        text = _HAPPY_CATALOG.replace(
+            "      claude_code:\n        source_url:",
+            "      fake_harness:\n        source_url:",
+        )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
         self.assertIn("claude_code", str(ctx.exception))
@@ -391,12 +411,13 @@ class ParseCatalogTests(unittest.TestCase):
             "  allowed_tools:\n"
             "    catalogs:\n"
             "      claude_code:\n"
-            "        provenance:\n"
-            "          source_url: x\n"
-            "          last_checked: \"2026-01-01\"\n"
             "        harness_tools:\n"
             "          - Bash\n"
             "            - Read\n"  # extra indent on second item
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: x\n"
+            "        last_checked: \"2026-01-01\"\n"
         )
         with self.assertRaises(mod.ParseError):
             mod.parse_catalog(text)
@@ -501,9 +522,6 @@ class ApplyAdditionsTests(unittest.TestCase):
             "  allowed_tools:\n"
             "    catalogs:\n"
             "      claude_code:\n"
-            "        provenance:\n"
-            "          source_url: https://example.test/tools.md\n"
-            "          last_checked: \"2026-04-26\"\n"
             "        harness_tools:\n"
             "          - Bash\n"
             "          - Read\n"
@@ -511,6 +529,10 @@ class ApplyAdditionsTests(unittest.TestCase):
             "        # NOT harness primitives — typo-detection only.\n"
             "        cli_tools:\n"
             "          - bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n"
         )
         out = mod.apply_additions(
             catalog_with_comment, {"NewTool"}, "2026-05-01"
@@ -534,11 +556,12 @@ class ApplyAdditionsTests(unittest.TestCase):
         eof_catalog = (
             "skill:\n"
             "  allowed_tools:\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n"
             "    catalogs:\n"
             "      claude_code:\n"
-            "        provenance:\n"
-            "          source_url: https://example.test/tools.md\n"
-            "          last_checked: \"2026-04-26\"\n"
             "        harness_tools:\n"
             "          - Bash\n"
             "          - Read"  # NOTE: no trailing newline
@@ -841,7 +864,7 @@ class MainTests(unittest.TestCase):
                 self.assertIn("HTTP 500", stderr.getvalue())
 
     def test_parse_error_exits_three(self) -> None:
-        broken = _HAPPY_CATALOG.replace("provenance:", "wrong_key:")
+        broken = _HAPPY_CATALOG.replace("catalog_provenance:", "wrong_key:")
         with _CatalogTempFile(broken) as path, _patched_fetch("ignored"):
             stderr = io.StringIO()
             with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
