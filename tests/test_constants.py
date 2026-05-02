@@ -9,6 +9,7 @@ re-importing ``lib.constants`` against a synthetic config file with
 the section removed.
 """
 
+import datetime
 import importlib
 import os
 import sys
@@ -504,6 +505,19 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                         f"catalog_provenance.{harness_name}.{key} "
                         "must be non-empty"
                     ),
+                )
+            # ``last_checked`` must parse as ISO-8601 ``YYYY-MM-DD`` —
+            # the same contract ``parse_catalog`` enforces at runtime.
+            # Without this pin a future harness bucket could ship
+            # ``last_checked: yesterday`` and pass the canary even
+            # though the drift helper would reject it.
+            try:
+                datetime.date.fromisoformat(bucket["last_checked"])
+            except ValueError as exc:
+                self.fail(
+                    f"catalog_provenance.{harness_name}.last_checked "
+                    f"must be ISO-8601 YYYY-MM-DD; got "
+                    f"{bucket['last_checked']!r} ({exc})"
                 )
 
 
