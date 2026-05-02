@@ -435,6 +435,55 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                     ),
                 )
 
+    def test_catalog_provenance_harness_shape_is_uniform(self) -> None:
+        # Symmetric canary to ``test_catalogs_harness_children_are_tool_lists``:
+        # that one protects the catalog half of the schema, this one
+        # protects the provenance half.  Schema invariant: every direct
+        # child of ``skill.allowed_tools.catalog_provenance`` is a
+        # mapping with exactly ``source_url`` and ``last_checked``
+        # non-empty scalar children.  Without this canary, a typo or
+        # extra key under a future second harness would only be caught
+        # at drift-run time (the helper iterates harness names but
+        # only ``claude_code`` is exercised in unit tests today).
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            loaded = yaml_parser.parse_yaml_subset(fh.read())
+        catalog_provenance = (
+            loaded["skill"]["allowed_tools"]["catalog_provenance"]
+        )
+        expected_keys = {"source_url", "last_checked"}
+        for harness_name, bucket in catalog_provenance.items():
+            self.assertIsInstance(
+                bucket, dict,
+                msg=(
+                    f"catalog_provenance.{harness_name} must be a "
+                    f"mapping; got {type(bucket).__name__}"
+                ),
+            )
+            self.assertEqual(
+                set(bucket.keys()), expected_keys,
+                msg=(
+                    f"catalog_provenance.{harness_name} must have "
+                    f"exactly {sorted(expected_keys)} as children; "
+                    f"got {sorted(bucket.keys())}"
+                ),
+            )
+            for key, value in bucket.items():
+                self.assertIsInstance(
+                    value, str,
+                    msg=(
+                        f"catalog_provenance.{harness_name}.{key} "
+                        f"must be a scalar string; got "
+                        f"{type(value).__name__}"
+                    ),
+                )
+                self.assertNotEqual(
+                    value.strip(), "",
+                    msg=(
+                        f"catalog_provenance.{harness_name}.{key} "
+                        "must be non-empty"
+                    ),
+                )
+
 
 class ToolShapeRegexTests(unittest.TestCase):
     """Token-shape regexes used by pattern-fallback recognition."""
