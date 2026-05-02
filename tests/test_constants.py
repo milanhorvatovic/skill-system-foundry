@@ -21,7 +21,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib import constants
+from lib import constants, yaml_parser
 
 
 class ConfigPathTests(unittest.TestCase):
@@ -399,6 +399,37 @@ class AllowedToolsCatalogTests(unittest.TestCase):
 
     def test_known_tools_recognises_pascalcase_bash(self) -> None:
         self.assertIn("Bash", constants.KNOWN_TOOLS)
+
+    def test_catalogs_harness_children_are_tool_lists(self) -> None:
+        # Schema invariant: every direct child of
+        # ``skill.allowed_tools.catalogs.<harness>`` is a list of
+        # tool names.  ``provenance`` lives under a sibling top-level
+        # key ``catalog_provenance.<harness>`` so a future reader
+        # can iterate the catalog bucket's children without
+        # special-casing a non-list child.  This canary fails loudly
+        # if a future YAML edit re-introduces a non-list child or a
+        # ``provenance`` key under any harness bucket.
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            loaded = yaml_parser.parse_yaml_subset(fh.read())
+        catalogs = loaded["skill"]["allowed_tools"]["catalogs"]
+        for harness_name, bucket in catalogs.items():
+            for child_key, child_value in bucket.items():
+                self.assertIsInstance(
+                    child_value, list,
+                    msg=(
+                        f"catalogs.{harness_name}.{child_key} must be "
+                        f"a tool-name list under the schema; "
+                        f"got {type(child_value).__name__}"
+                    ),
+                )
+                self.assertNotEqual(
+                    child_key, "provenance",
+                    msg=(
+                        f"`provenance` must not be a child of "
+                        f"catalogs.{harness_name}; use top-level "
+                        "`catalog_provenance.<harness>` instead"
+                    ),
+                )
 
 
 class ToolShapeRegexTests(unittest.TestCase):
