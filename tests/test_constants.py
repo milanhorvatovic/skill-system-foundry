@@ -407,27 +407,31 @@ class AllowedToolsCatalogTests(unittest.TestCase):
         # key ``catalog_provenance.<harness>`` so a future reader
         # can iterate the catalog bucket's children without
         # special-casing a non-list child.  This canary fails loudly
-        # if a future YAML edit re-introduces a non-list child or a
-        # ``provenance`` key under any harness bucket.
+        # if a future YAML edit re-introduces a ``provenance`` key
+        # under any harness bucket or any other non-list child.
+        # The provenance-specific check runs first so the most-likely
+        # regression (re-introducing ``provenance``) produces the
+        # most-informative error message; an unrelated non-list
+        # field trips the second check.
         with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
             loaded = yaml_parser.parse_yaml_subset(fh.read())
         catalogs = loaded["skill"]["allowed_tools"]["catalogs"]
         for harness_name, bucket in catalogs.items():
             for child_key, child_value in bucket.items():
-                self.assertIsInstance(
-                    child_value, list,
-                    msg=(
-                        f"catalogs.{harness_name}.{child_key} must be "
-                        f"a tool-name list under the schema; "
-                        f"got {type(child_value).__name__}"
-                    ),
-                )
                 self.assertNotEqual(
                     child_key, "provenance",
                     msg=(
                         f"`provenance` must not be a child of "
                         f"catalogs.{harness_name}; use top-level "
                         "`catalog_provenance.<harness>` instead"
+                    ),
+                )
+                self.assertIsInstance(
+                    child_value, list,
+                    msg=(
+                        f"catalogs.{harness_name}.{child_key} must be "
+                        f"a tool-name list under the schema; "
+                        f"got {type(child_value).__name__}"
                     ),
                 )
 
