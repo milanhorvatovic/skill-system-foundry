@@ -341,6 +341,35 @@ class ParseCatalogTests(unittest.TestCase):
             mod.parse_catalog(old_shape)
         self.assertIn("catalog_provenance", str(ctx.exception))
 
+    def test_partial_migration_both_shapes_raises(self) -> None:
+        # A YAML carrying BOTH the legacy ``catalogs.<harness>.provenance``
+        # child AND the new top-level ``catalog_provenance.<harness>`` key
+        # must fail.  Without this guard ``parse_catalog`` would happily
+        # read the new path and ignore the legacy child, silently
+        # re-introducing the non-list catalog child this schema move is
+        # meant to make impossible.  The error names the legacy path so
+        # the maintainer knows exactly which line to delete.
+        partial = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        provenance:\n"
+            "          source_url: https://example.test/old.md\n"
+            "          last_checked: \"2026-04-01\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(partial)
+        message = str(ctx.exception)
+        self.assertIn("legacy", message.lower())
+        self.assertIn("catalogs.claude_code", message)
+
     def test_missing_harness_tools_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
             "        harness_tools:\n"

@@ -364,6 +364,22 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             "update the harness list in this helper"
         )
 
+    # Reject a leftover legacy ``provenance:`` child even when the new
+    # ``catalog_provenance.<harness>`` key is also present.  A
+    # partial-migration YAML carrying both shapes would otherwise parse
+    # cleanly and silently re-introduce the non-list child this schema
+    # move is meant to make impossible under ``catalogs.<harness>``.
+    legacy_provenance_index = _find_child_key(
+        lines, harness_index, "provenance:"
+    )
+    if legacy_provenance_index >= 0:
+        raise ParseError(
+            f"configuration.yaml still has a legacy `provenance:` child "
+            f"under `skill.allowed_tools.catalogs.{harness}` — remove "
+            "it; provenance now lives at "
+            f"`skill.allowed_tools.catalog_provenance.{harness}`"
+        )
+
     harness_tools_index = _find_child_key(
         lines, harness_index, "harness_tools:"
     )
