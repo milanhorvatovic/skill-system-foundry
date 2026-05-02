@@ -6,10 +6,9 @@ Covers:
   * ``extract_tools`` — real upstream fixture, header-row missing,
     no body, no separator row, zero matches, all-caps acronym,
     non-PascalCase row ignored.
-  * ``parse_catalog`` — happy path, missing catalog_provenance,
-    missing harness_tools, missing source_url/last_checked, empty
-    list, inconsistent indent, missing harness bucket under both
-    ``catalogs`` and ``catalog_provenance``.
+  * ``parse_catalog`` — happy path, missing provenance, missing
+    harness_tools, missing source_url/last_checked, empty list,
+    inconsistent indent, missing harness bucket.
   * ``diff`` — set arithmetic.
   * ``apply_additions`` — append at end, alphabetical insert,
     last_checked rewrite, no-op when no additions, idempotent on

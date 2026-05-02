@@ -274,11 +274,11 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
         immediately after the last existing harness-tool item.  The
         writer inserts new items there.
       * ``last_checked_line`` — int, the line index of
-        ``catalog_provenance.<harness>.last_checked``.
+        ``provenance.last_checked``.
 
-    Hard-fails (:class:`ParseError`) when the catalog_provenance
-    block, the harness bucket, or the harness_tools list is missing
-    or malformed.
+    Hard-fails (:class:`ParseError`) when the harness bucket, the
+    provenance block, or the harness_tools list is missing or
+    malformed.
     """
     lines = yaml_text.splitlines()
 
