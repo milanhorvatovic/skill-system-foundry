@@ -6,9 +6,10 @@ Covers:
   * ``extract_tools`` — real upstream fixture, header-row missing,
     no body, no separator row, zero matches, all-caps acronym,
     non-PascalCase row ignored.
-  * ``parse_catalog`` — happy path, missing provenance, missing
-    harness_tools, missing source_url/last_checked, empty list,
-    inconsistent indent, missing harness bucket.
+  * ``parse_catalog`` — happy path, missing catalog_provenance,
+    missing harness_tools, missing source_url/last_checked, empty
+    list, inconsistent indent, missing harness bucket under both
+    ``catalogs`` and ``catalog_provenance``.
   * ``diff`` — set arithmetic.
   * ``apply_additions`` — append at end, alphabetical insert,
     last_checked rewrite, no-op when no additions, idempotent on
@@ -308,7 +309,7 @@ class ParseCatalogTests(unittest.TestCase):
         self.assertRegex(parsed["last_checked"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertIn("Bash", parsed["harness_tools"])
 
-    def test_missing_provenance_raises(self) -> None:
+    def test_missing_catalog_provenance_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
             "    catalog_provenance:\n"
             "      claude_code:\n"
@@ -318,7 +319,7 @@ class ParseCatalogTests(unittest.TestCase):
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
-        self.assertIn("provenance", str(ctx.exception))
+        self.assertIn("catalog_provenance", str(ctx.exception))
 
     def test_missing_harness_tools_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
@@ -874,7 +875,7 @@ class MainTests(unittest.TestCase):
                     "--today", "2026-05-01",
                 ])
             self.assertEqual(code, 3)
-            self.assertIn("provenance", stderr.getvalue())
+            self.assertIn("catalog_provenance", stderr.getvalue())
 
     def test_summary_out_writes_file(self) -> None:
         markdown = _load_fixture_markdown()
