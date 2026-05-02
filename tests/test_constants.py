@@ -434,6 +434,28 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                         f"got {type(child_value).__name__}"
                     ),
                 )
+                # Each item must be a non-empty string.  Without this
+                # check a malformed edit (a stray ``-`` producing a
+                # ``None`` item, an empty quoted string, or a non-string
+                # scalar like a bare integer) would still satisfy the
+                # is-a-list guard above and only fail later in
+                # downstream consumers.
+                for item_index, item in enumerate(child_value):
+                    self.assertIsInstance(
+                        item, str,
+                        msg=(
+                            f"catalogs.{harness_name}.{child_key}"
+                            f"[{item_index}] must be a string; "
+                            f"got {type(item).__name__}"
+                        ),
+                    )
+                    self.assertNotEqual(
+                        item.strip(), "",
+                        msg=(
+                            f"catalogs.{harness_name}.{child_key}"
+                            f"[{item_index}] must be non-empty"
+                        ),
+                    )
 
     def test_catalog_provenance_harness_shape_is_uniform(self) -> None:
         # Symmetric canary to ``test_catalogs_harness_children_are_tool_lists``:
