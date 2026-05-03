@@ -186,45 +186,28 @@ def walk_reachable(
       during the walk.  The walk continues past every recoverable
       condition so the caller always receives a complete visited set.
 
-    Refs are resolved against ``skill_root`` only.  Markdown links
-    in skill files follow the foundry's documented convention
-    (see the *Path Convention* section of
-    ``references/directory-structure.md``): paths are written
-    relative to the directory that contains ``SKILL.md`` regardless
-    of which file contains the link.  The walker therefore does not
-    reinterpret refs relative to the source file's directory — a
-    capability body that wants to link its own local references must
-    use the explicit ``capabilities/<name>/references/foo.md`` form,
-    matching how :func:`validate_skill._check_references` validates
-    the same body.  Keeping the walker's resolution aligned with the
-    validator's keeps audit and validation findings consistent.
+    Refs are resolved **file-relative** — every link is interpreted
+    from the directory containing the file the link lives in, using
+    standard markdown semantics.  See ``references/path-resolution.md``
+    for the canonical rule, the per-scope behavior (skill root vs
+    capability root), and the external-reference syntax
+    (``../../<dir>/<file>``).
 
-    This intentionally diverges from
-    :func:`lib.references.resolve_reference`, which tries source-dir
-    first and then falls back to ``system_root``.  That resolver is
-    used only by the bundle / cross-skill graph (where the same path
-    string can target different files depending on the source skill),
-    so source-dir-first is the right default *there*.  Inside a
-    single skill the convention is fixed by
-    ``directory-structure.md``, so adopting source-dir-first here
-    would (a) silently mask the broken-link findings
-    :func:`validate_skill._check_references` already emits against
-    the same body, and (b) let an author write
-    ``references/foo.md`` from a capability and have the walker
-    silently route it to ``capabilities/<name>/references/foo.md`` —
-    a divergence that would compound across files and gradually
-    erode the convention.
+    Parent-traversal segments (``..``) are legal — they are how a
+    capability body reaches into the shared skill root.  The walker
+    follows the resolved path unchanged; the ``is_within_directory``
+    check below is the only boundary that matters.
 
-    Refs that resolve outside *skill_root* are recorded as ``INFO`` and
-    skipped — they are by definition out of scope for an intra-skill
-    orphan check.  Refs that do not resolve to a regular file are
-    recorded as ``WARN``.  Absolute paths and parent-traversal refs
-    are recorded as ``WARN`` (tagged ``[foundry reachability]``) and
-    skipped — ``audit_skill_system`` does not otherwise validate
-    intra-skill reference syntax, so silent skip would let those
-    invalid forms go entirely unreported when the audit runs without
-    ``validate_skill``.  Callers that already run ``validate_skill``
-    on the same tree (e.g. ``validate_skill`` itself, which invokes
+    Refs that resolve outside *skill_root* are recorded as ``INFO``
+    and skipped — they are by definition out of scope for an
+    intra-skill orphan check.  Refs that do not resolve to a regular
+    file are recorded as ``WARN``.  Absolute paths are recorded as
+    ``WARN`` (tagged ``[foundry reachability]``) and skipped —
+    ``audit_skill_system`` does not otherwise validate intra-skill
+    reference syntax, so silent skip would let absolute forms go
+    entirely unreported when the audit runs without ``validate_skill``.
+    Callers that already run ``validate_skill`` on the same tree
+    (e.g. ``validate_skill`` itself, which invokes
     ``find_orphan_references`` after its own reference check) suppress
     these via ``surface_walk_warnings=False`` to avoid double counting.
     """
@@ -263,6 +246,7 @@ def walk_reachable(
         body_only = strip_frontmatter_for_scan(content)
         is_entry = filepath == os.path.abspath(skill_md)
         rel = _to_rel(filepath)
+        source_dir = os.path.dirname(filepath)
 
         for ref in extract_body_references(
             body_only, include_router_table=is_entry,
@@ -275,18 +259,14 @@ def walk_reachable(
                 )
                 continue
             ref_norm = ref.replace("\\", "/")
-            if ".." in ref_norm.split("/"):
-                warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference "
-                    f"'{ref}' in '{rel}' uses parent traversal "
-                    f"('..') — reachability walk skipped it"
-                )
-                continue
 
-            # Skill-root-only resolution.  See the docstring above
-            # and ``references/directory-structure.md`` for the
-            # convention rationale.
-            ref_abs = os.path.normpath(os.path.join(skill_root, ref_norm))
+            # File-relative resolution per ``path-resolution.md``.
+            # Parent-traversal segments are legal — they are the
+            # canonical way for a capability body to reach into the
+            # shared skill root (``../../references/foo.md``).  The
+            # ``is_within_directory`` check below catches paths that
+            # escape the skill root entirely.
+            ref_abs = os.path.normpath(os.path.join(source_dir, ref_norm))
 
             if not is_within_directory(ref_abs, skill_root):
                 warnings.append(
