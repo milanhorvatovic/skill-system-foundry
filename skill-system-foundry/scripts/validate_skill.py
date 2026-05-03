@@ -972,22 +972,17 @@ def main() -> None:
             skill_path, is_capability, allow_nested_refs,
         )
         # Drop findings that the rewriter already handles — they are
-        # represented in ``rows`` and would otherwise double-count.  A
-        # finding is considered covered when both the source file and
-        # the original ref string match one of the rewrite rows.
-        fixable_keys: set[tuple[str, str]] = {
-            (row["file_rel"], row["original"]) for row in rows
-        }
-
+        # represented in ``rows`` and would otherwise double-count.
+        # The match uses the position-bounded ``referenced in <file>
+        # (scope:`` shape produced by ``_check_references`` so a row
+        # whose ``file_rel`` happens to be a substring of another
+        # file's path (e.g. ``references/guide.md`` is a substring of
+        # ``capabilities/demo/references/guide.md``) does not falsely
+        # cover the longer file's finding.
         def _is_covered_by_rewriter(err: str) -> bool:
             for row in rows:
-                # Finding text shape from ``_check_references``:
-                # "[path-resolution] '<ref>' referenced in <file> ..."
-                if (
-                    f"'{row['original']}'" in err
-                    and row["file_rel"] in err
-                    and (row["file_rel"], row["original"]) in fixable_keys
-                ):
+                marker = f" referenced in {row['file_rel']} (scope:"
+                if f"'{row['original']}'" in err and marker in err:
                     return True
             return False
 

@@ -2183,6 +2183,76 @@ class FixModeTests(unittest.TestCase):
             payload["path_resolution"]["documentation_path"],
         )
 
+    def test_fix_does_not_drop_unfixable_when_file_rel_collides_with_substring(self) -> None:
+        """A fixable rewrite for a short-pathed file must not mask an
+        unfixable finding for a file whose path *contains* the fixable
+        file's path as a substring.
+
+        Concrete shape pinned: a fixable rewrite originates from
+        ``references/sibling.md`` (a sibling links ``references/peer.md``
+        which under file-relative semantics resolves broken but is
+        rewriteable to ``peer.md``).  Independently a capability-local
+        reference at ``capabilities/demo/references/sibling.md`` links
+        the same broken intra-scope path; that one is *not* rewriteable
+        because the rewriter refuses to invent a target.  The capability
+        finding must surface as unfixable even though the row's
+        ``file_rel`` (``references/sibling.md``) is a substring of the
+        capability file's path
+        (``capabilities/demo/references/sibling.md``).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            # Fixable: shared-root ``references/sibling.md`` carries a
+            # link to ``references/peer.md``; the legacy form resolves
+            # to ``<skill>/references/peer.md`` (which exists), so the
+            # rewriter offers ``peer.md``.
+            write_text(
+                os.path.join(skill_dir, "references", "peer.md"),
+                "# Peer\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "sibling.md"),
+                "# Sibling\n\nSee [p](references/peer.md).\n",
+            )
+            # Unfixable: capability-local file with a broken intra-scope
+            # link the rewriter cannot resolve (no target exists under
+            # the legacy skill-root form either).
+            cap_local = os.path.join(
+                skill_dir, "capabilities", "demo", "references", "sibling.md",
+            )
+            write_text(
+                cap_local,
+                "# Cap-local Sibling\n\nSee [m](references/missing.md).\n",
+            )
+            # Capability entry — required for the audit walker to enter
+            # the capability scope.
+            write_text(
+                os.path.join(
+                    skill_dir, "capabilities", "demo", "capability.md",
+                ),
+                "# Demo\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        # The fixable rewrite is reported.
+        fixable_originals = {f["original"] for f in payload["fixes"]}
+        self.assertIn("references/peer.md", fixable_originals)
+        # The capability-local unfixable finding survives the filter.
+        self.assertTrue(
+            any(
+                "references/missing.md" in f
+                and "capabilities/demo/references/sibling.md" in f
+                for f in payload["unfixable_findings"]
+            ),
+            msg=(
+                "Unfixable finding for the longer-pathed capability-local "
+                "file was wrongly filtered as covered by the rewriter "
+                f"row whose file_rel is a substring. Payload: {payload}"
+            ),
+        )
+
 
 # ===================================================================
 # _check_references tail branches
