@@ -974,11 +974,17 @@ def main() -> None:
         # Drop findings that the rewriter already handles — they are
         # represented in ``rows`` and would otherwise double-count.
         # The match uses the position-bounded ``referenced in <file>
-        # (scope:`` shape produced by ``_check_references`` so a row
-        # whose ``file_rel`` happens to be a substring of another
-        # file's path (e.g. ``references/guide.md`` is a substring of
-        # ``capabilities/demo/references/guide.md``) does not falsely
-        # cover the longer file's finding.
+        # (scope:`` shape produced by ``_check_references``.  The
+        # bounded form is defensive: in practice the rewriter and
+        # validator behave symmetrically across source files for the
+        # same ref (the legacy resolution is anchored at
+        # ``skill_root``), so constructing a real-world false-cover
+        # case is hard.  Using the marker rather than an unbounded
+        # ``row["file_rel"] in err`` future-proofs the filter against
+        # changes elsewhere that might introduce asymmetry.  See
+        # ``test_fix_filter_marker_matches_check_references_output``
+        # for the contract test that pins the marker against the
+        # actual emitter shape.
         def _is_covered_by_rewriter(err: str) -> bool:
             for row in rows:
                 marker = f" referenced in {row['file_rel']} (scope:"

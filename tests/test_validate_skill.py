@@ -2198,10 +2198,11 @@ class FixModeTests(unittest.TestCase):
         rewriteable to ``peer.md``).  Independently a capability-local
         file at ``capabilities/demo/references/sibling.md`` links a
         broken intra-scope path the rewriter cannot resolve.  Note:
-        the unfixable finding's ``original`` ref differs from the
-        rewriter row's, so the coverage predicate short-circuits on
-        the original-ref check and never reaches the position-bounded
-        source-path branch — that branch is exercised separately by
+        this exercises the *integration* — the unfixable finding's
+        ``original`` ref differs from the rewriter row's, so the
+        coverage predicate short-circuits on the original-ref check
+        and never reaches the position-bounded source-path branch.
+        That branch is exercised separately by
         ``test_fix_filter_marker_matches_check_references_output``.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2254,6 +2255,53 @@ class FixModeTests(unittest.TestCase):
                 "Unfixable finding for the longer-pathed capability-local "
                 "file was wrongly filtered as covered by the rewriter "
                 f"row whose file_rel is a substring. Payload: {payload}"
+            ),
+        )
+
+    def test_fix_filter_marker_matches_check_references_output(self) -> None:
+        """The ``--fix`` coverage filter constructs a position-bounded
+        marker (``" referenced in <file_rel> (scope:"``) that must
+        match the actual finding text emitted by ``_check_references``.
+        Pin the contract: emit a real broken-reference finding, then
+        assert the marker substring appears in it.
+
+        Without this contract test, a future rephrase of the
+        ``_check_references`` finding text (e.g. changing "referenced
+        in" to "referenced by", or dropping the parenthetical scope
+        tag) would silently break ``--fix`` coverage — every finding
+        would leak to ``unfixable_findings`` and the run would exit 1
+        on conformant skills.
+        """
+        from validate_skill import _check_references  # noqa: E402
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            cap_md = os.path.join(
+                skill_dir, "capabilities", "demo", "capability.md",
+            )
+            body = "# Demo\n\nSee [m](references/missing.md).\n"
+            write_text(cap_md, body)
+            errors, _passes = _check_references(
+                body, cap_md, skill_dir, allow_nested_refs=True,
+                source_label="capabilities/demo/capability.md",
+            )
+        warn_errors = [
+            e for e in errors
+            if e.startswith("WARN") and "[path-resolution]" in e
+            and "does not exist" in e
+        ]
+        self.assertEqual(len(warn_errors), 1, msg=str(errors))
+        # The marker the --fix filter constructs from a rewriter row
+        # must appear verbatim in the emitted finding text.
+        marker = " referenced in capabilities/demo/capability.md (scope:"
+        self.assertIn(
+            marker,
+            warn_errors[0],
+            msg=(
+                "validate_skill --fix's _is_covered_by_rewriter "
+                "constructs this marker; if _check_references rephrases "
+                "its output, the filter silently stops covering "
+                "rewriter rows. Update both call sites in lockstep."
             ),
         )
 
