@@ -1770,6 +1770,16 @@ class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
                 "path_resolution",
             },
         )
+        # Block contents must be populated — guards against silently
+        # degrading to ``{}`` if a future loader stops threading the
+        # constants into the JSON shape.
+        self.assertEqual(
+            data["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            data["path_resolution"]["documentation_path"],
+        )
         manifest_fails = [
             entry for entry in data["errors"].get("failures", [])
             if "[spec] manifest.yaml" in entry and "': '" in entry
