@@ -370,23 +370,46 @@ class AllowedToolsCatalogTests(unittest.TestCase):
     def _load_allowed_tools_section(self, key: str) -> dict:
         """Load ``configuration.yaml`` and return ``allowed_tools.<key>``.
 
-        Asserts presence of every level above ``key`` so a missing or
-        misspelled top-level mapping produces a targeted assertion
-        message instead of a raw ``KeyError`` traceback.  Used by the
-        schema canaries so future regressions stay actionable.
+        Asserts each level (``skill``, ``allowed_tools``) is a mapping
+        before subscripting and asserts presence of every level above
+        ``key`` so a missing, misspelled, or wrong-typed top-level
+        node produces a targeted assertion message instead of a raw
+        ``KeyError`` or ``TypeError`` traceback.  Used by the schema
+        canaries so future regressions stay actionable.
         """
         with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
             loaded = yaml_parser.parse_yaml_subset(fh.read())
+        self.assertIsInstance(
+            loaded, dict,
+            msg=(
+                "configuration.yaml must parse to a top-level mapping; "
+                f"got {type(loaded).__name__}"
+            ),
+        )
         self.assertIn(
             "skill", loaded,
             msg="configuration.yaml must define top-level `skill`",
         )
         skill = loaded["skill"]
+        self.assertIsInstance(
+            skill, dict,
+            msg=(
+                "configuration.yaml `skill` must be a mapping; "
+                f"got {type(skill).__name__}"
+            ),
+        )
         self.assertIn(
             "allowed_tools", skill,
             msg="configuration.yaml must define `skill.allowed_tools`",
         )
         allowed_tools = skill["allowed_tools"]
+        self.assertIsInstance(
+            allowed_tools, dict,
+            msg=(
+                "configuration.yaml `skill.allowed_tools` must be a "
+                f"mapping; got {type(allowed_tools).__name__}"
+            ),
+        )
         self.assertIn(
             key, allowed_tools,
             msg=(
