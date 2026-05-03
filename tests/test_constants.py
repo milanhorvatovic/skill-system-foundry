@@ -417,7 +417,22 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                 f"`skill.allowed_tools.{key}`"
             ),
         )
-        return allowed_tools[key]
+        section = allowed_tools[key]
+        # Validate the returned section is itself a mapping — the two
+        # current callers (``catalogs`` and ``catalog_provenance``)
+        # both iterate ``.items()`` / ``.keys()`` on the result, so a
+        # scalar or list at this level would otherwise produce a raw
+        # ``TypeError`` / ``AttributeError`` in the canary instead of
+        # the targeted assertion message this helper is meant to
+        # provide.
+        self.assertIsInstance(
+            section, dict,
+            msg=(
+                f"configuration.yaml `skill.allowed_tools.{key}` "
+                f"must be a mapping; got {type(section).__name__}"
+            ),
+        )
+        return section
 
     def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
         # Names listed in the Claude Code skills documentation.
