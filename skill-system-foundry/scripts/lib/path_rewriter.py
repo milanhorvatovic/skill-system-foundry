@@ -60,9 +60,6 @@ def compute_recommended_replacement(
     skill_root = os.path.abspath(skill_root)
     source_abs_path = os.path.abspath(source_abs_path)
     source_dir = os.path.dirname(source_abs_path)
-    source_rel = os.path.relpath(source_abs_path, skill_root).replace(
-        os.sep, "/",
-    )
 
     ref_norm = ref.replace("\\", "/").strip()
     if not ref_norm or os.path.isabs(ref_norm):
