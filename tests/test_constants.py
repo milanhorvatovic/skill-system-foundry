@@ -605,6 +605,34 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                     f"{bucket['last_checked']!r} ({exc})"
                 )
 
+    def test_drift_managed_set_matches_catalog_provenance_keys(self) -> None:
+        # ``_DRIFT_MANAGED_HARNESSES`` is a duplicated source of truth
+        # next to the live YAML.  Without this guard, a future edit
+        # that adds a harness bucket to ``catalog_provenance`` (the
+        # natural signal that a harness is drift-managed) without
+        # also adding it to the constant would silently lose strict
+        # canary coverage for that harness, and the per-half canaries
+        # below would still pass.  Asserting equality here surfaces
+        # the drift as a single targeted failure that names the
+        # missing-on-each-side delta, so adding a new harness has to
+        # touch both places (or neither).
+        provenance_keys = frozenset(
+            self._load_allowed_tools_section("catalog_provenance").keys()
+        )
+        self.assertEqual(
+            self._DRIFT_MANAGED_HARNESSES, provenance_keys,
+            msg=(
+                "_DRIFT_MANAGED_HARNESSES must match the set of harness "
+                "names declared under `skill.allowed_tools."
+                "catalog_provenance` in configuration.yaml; constant "
+                f"has {sorted(self._DRIFT_MANAGED_HARNESSES)}, YAML has "
+                f"{sorted(provenance_keys)} (missing from constant: "
+                f"{sorted(provenance_keys - self._DRIFT_MANAGED_HARNESSES)}; "
+                f"missing from YAML: "
+                f"{sorted(self._DRIFT_MANAGED_HARNESSES - provenance_keys)})"
+            ),
+        )
+
     def test_drift_managed_harnesses_present_in_both_maps(self) -> None:
         # Cross-canary check: every drift-managed harness must have a
         # bucket under both ``catalogs`` and ``catalog_provenance``.
