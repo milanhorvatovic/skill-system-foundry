@@ -25,7 +25,7 @@ Three constructs raise `ValueError` at parse time, with the message shape:
 unsupported YAML 1.2.2 construct: <construct-id> (spec §<n.n>)
 ```
 
-Construct IDs (mirrored in `scripts/lib/configuration.yaml#yaml_conformance.construct_ids`):
+Construct IDs (mirrored in `../scripts/lib/configuration.yaml#yaml_conformance.construct_ids`):
 
 - `anchor-with-trailing-in-key` — `&name key:` (spec §6.9).
 - `indent-indicator-block-scalar` — `key: |2`, `key: >-3`, etc. (spec §8.1.1).
@@ -39,7 +39,7 @@ Plain-scalar usage of anchor / tag indicators in **value** position remains a `W
 
 ## Conformance scope
 
-These guarantees describe **the meta-skill's own YAML surface**. Third-party tools that consume skill bundles use their own YAML parsers; their behaviour is not part of this contract. The `tests/fixtures/yaml-conformance/` corpus exercises this surface end to end via `tests/test_yaml_conformance.py` and the `--json` slot emitted by `scripts/yaml_conformance_report.py`.
+These guarantees describe **the meta-skill's own YAML surface**. Third-party tools that consume skill bundles use their own YAML parsers; their behaviour is not part of this contract. The `tests/fixtures/yaml-conformance/` corpus exercises this surface end to end via `tests/test_yaml_conformance.py` and the `--json` slot emitted by `../scripts/yaml_conformance_report.py`.
 
 ## Out of scope
 
