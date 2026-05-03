@@ -265,8 +265,12 @@ def resolve_reference(ref_path: str, source_file: str, system_root: str | None =
     """Resolve a reference path to an absolute filesystem path.
 
     Tries in order:
-      1. Relative to the source file's directory
-      2. Relative to the system root (if provided)
+      1. Relative to the source file's directory (the canonical
+         file-relative form per ``references/path-resolution.md``)
+      2. Relative to the system root (transitional fallback for
+         skills that have not yet migrated to file-relative paths;
+         documented as ``--fix``-eligible so the validator can
+         rewrite them to the canonical form)
 
     Rejects absolute references and any resolved path that escapes
     the system root (when provided) to prevent accidentally bundling
@@ -293,6 +297,13 @@ def resolve_reference_with_reason(
       - ``"escapes_system_root"``
       - ``"is_directory"``
       - ``"not_found"``
+
+    Resolution order is source-relative first, then system-root-relative
+    as a transitional fallback.  The two coincide under the redefined
+    path-resolution rule for any file that uses the canonical form;
+    the fallback only exercises for legacy skill-root-relative paths
+    that the bundle should still handle gracefully during integrator
+    migration.
     """
     # Reject absolute and drive-qualified paths — references must be
     # relative.  On Windows, ``C:foo/bar`` is drive-relative and passes
