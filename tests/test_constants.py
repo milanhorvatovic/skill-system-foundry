@@ -367,6 +367,35 @@ class AllowedToolsCatalogTests(unittest.TestCase):
     # in lockstep with teaching the drift helper a new harness.
     _DRIFT_MANAGED_HARNESSES = frozenset({"claude_code"})
 
+    def _load_allowed_tools_section(self, key: str) -> dict:
+        """Load ``configuration.yaml`` and return ``allowed_tools.<key>``.
+
+        Asserts presence of every level above ``key`` so a missing or
+        misspelled top-level mapping produces a targeted assertion
+        message instead of a raw ``KeyError`` traceback.  Used by the
+        schema canaries so future regressions stay actionable.
+        """
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            loaded = yaml_parser.parse_yaml_subset(fh.read())
+        self.assertIn(
+            "skill", loaded,
+            msg="configuration.yaml must define top-level `skill`",
+        )
+        skill = loaded["skill"]
+        self.assertIn(
+            "allowed_tools", skill,
+            msg="configuration.yaml must define `skill.allowed_tools`",
+        )
+        allowed_tools = skill["allowed_tools"]
+        self.assertIn(
+            key, allowed_tools,
+            msg=(
+                f"configuration.yaml must define "
+                f"`skill.allowed_tools.{key}`"
+            ),
+        )
+        return allowed_tools[key]
+
     def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
         # Names listed in the Claude Code skills documentation.
         for tool in ("Bash", "Read", "Edit", "Write", "Grep", "Glob",
@@ -429,9 +458,7 @@ class AllowedToolsCatalogTests(unittest.TestCase):
         # regression (re-introducing ``provenance``) produces the
         # most-informative error message; an unrelated non-list
         # field trips the second check.
-        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
-            loaded = yaml_parser.parse_yaml_subset(fh.read())
-        catalogs = loaded["skill"]["allowed_tools"]["catalogs"]
+        catalogs = self._load_allowed_tools_section("catalogs")
         for harness_name in self._DRIFT_MANAGED_HARNESSES:
             self.assertIn(
                 harness_name, catalogs,
@@ -506,10 +533,8 @@ class AllowedToolsCatalogTests(unittest.TestCase):
         # key, or wrong date format under a drift-managed harness
         # bucket would only be caught at drift-run time when the
         # helper hardcodes the harness lookup and parses the bucket.
-        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
-            loaded = yaml_parser.parse_yaml_subset(fh.read())
-        catalog_provenance = (
-            loaded["skill"]["allowed_tools"]["catalog_provenance"]
+        catalog_provenance = self._load_allowed_tools_section(
+            "catalog_provenance"
         )
         expected_keys = {"source_url", "last_checked"}
         for harness_name in self._DRIFT_MANAGED_HARNESSES:
@@ -593,13 +618,11 @@ class AllowedToolsCatalogTests(unittest.TestCase):
         # the ``configuration.yaml`` comment under ``catalogs:`` to
         # use their own bucket shape) are not required to appear in
         # both maps.
-        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
-            loaded = yaml_parser.parse_yaml_subset(fh.read())
         catalog_keys = set(
-            loaded["skill"]["allowed_tools"]["catalogs"].keys()
+            self._load_allowed_tools_section("catalogs").keys()
         )
         provenance_keys = set(
-            loaded["skill"]["allowed_tools"]["catalog_provenance"].keys()
+            self._load_allowed_tools_section("catalog_provenance").keys()
         )
         missing_in_catalogs = self._DRIFT_MANAGED_HARNESSES - catalog_keys
         missing_in_provenance = (
