@@ -393,6 +393,24 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             f"`skill.allowed_tools.catalog_provenance.{harness}`"
         )
 
+    # Also reject a misplaced ``catalog_provenance:`` *under* the
+    # harness bucket — the new schema requires it to live as a sibling
+    # of ``catalogs:`` at ``skill.allowed_tools.catalog_provenance``,
+    # not nested under any ``catalogs.<harness>``.  Without this guard
+    # a misapplied migration would still satisfy the legacy-rejection
+    # check above and silently leave a non-list child in the catalog
+    # bucket, defeating the schema move's invariant.
+    misplaced_provenance_index = _find_child_key(
+        lines, harness_index, "catalog_provenance:"
+    )
+    if misplaced_provenance_index >= 0:
+        raise ParseError(
+            f"configuration.yaml has a misplaced `catalog_provenance:` "
+            f"child under `skill.allowed_tools.catalogs.{harness}` — "
+            "move it to the sibling top-level key "
+            f"`skill.allowed_tools.catalog_provenance.{harness}`"
+        )
+
     harness_tools_index = _find_child_key(
         lines, harness_index, "harness_tools:"
     )

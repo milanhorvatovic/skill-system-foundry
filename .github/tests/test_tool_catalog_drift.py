@@ -407,16 +407,17 @@ class ParseCatalogTests(unittest.TestCase):
         )
         self.assertEqual(parsed["last_checked"], "2026-04-26")
 
-    def test_nested_catalog_provenance_does_not_bind(self) -> None:
-        # The schema move makes ``catalog_provenance`` a sibling
-        # top-level key under ``skill.allowed_tools``.  The lookup must
-        # therefore enforce direct-child semantics — a future YAML
-        # that nests a same-named key deeper in the subtree must NOT
-        # bind to the nested copy and read its values.  This test
-        # constructs a YAML where a nested ``catalog_provenance:``
-        # under ``catalogs.<harness>`` carries deliberately wrong
-        # values; the helper must read the top-level (correct) bucket
-        # instead, proving the lookup is direct-child-only.
+    def test_misplaced_catalog_provenance_under_harness_raises(self) -> None:
+        # The schema move requires ``catalog_provenance`` to live as a
+        # sibling of ``catalogs:`` at ``skill.allowed_tools``, not
+        # nested under any ``catalogs.<harness>``.  A misapplied
+        # migration that placed it under the harness bucket would
+        # silently leave a non-list child in the catalog bucket — the
+        # exact shape this PR is meant to make impossible — and the
+        # helper would still read provenance from the (correct)
+        # top-level key.  The parser must hard-fail instead, naming
+        # both the wrong location and the right one so the maintainer
+        # can move the block in a single edit.
         yaml_text = (
             "skill:\n"
             "  allowed_tools:\n"
@@ -432,11 +433,12 @@ class ParseCatalogTests(unittest.TestCase):
             "        source_url: https://example.test/correct.md\n"
             "        last_checked: \"2026-04-26\"\n"
         )
-        parsed = mod.parse_catalog(yaml_text)
-        self.assertEqual(
-            parsed["source_url"], "https://example.test/correct.md"
-        )
-        self.assertEqual(parsed["last_checked"], "2026-04-26")
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(yaml_text)
+        message = str(ctx.exception)
+        self.assertIn("misplaced", message.lower())
+        self.assertIn("catalogs.claude_code", message)
+        self.assertIn("catalog_provenance.claude_code", message)
 
     def test_missing_harness_tools_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
