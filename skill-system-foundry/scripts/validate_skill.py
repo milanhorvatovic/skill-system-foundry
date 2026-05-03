@@ -53,6 +53,7 @@ from lib.constants import (
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    PATH_RESOLUTION_RULE_NAME,
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references
@@ -142,30 +143,71 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
     return errors, passes
 
 
+def _detect_scope(source_rel_path: str) -> tuple[str, str]:
+    """Return ``(scope_kind, scope_name)`` for a source file.
+
+    ``("skill", "")`` for files at the skill root or under shared
+    skill-root directories (``references/``, ``assets/``, ``scripts/``,
+    ``shared/``).  ``("capability", "<name>")`` for any file under
+    ``capabilities/<name>/``.  The scope determines how cross-file
+    references emitted from the file resolve (file-relative under
+    standard markdown semantics — see ``references/path-resolution.md``).
+    """
+    parts = source_rel_path.replace("\\", "/").split("/")
+    if len(parts) >= 2 and parts[0] == DIR_CAPABILITIES:
+        return ("capability", parts[1])
+    return ("skill", "")
+
+
+def _scope_tag(scope_kind: str, scope_name: str) -> str:
+    """Format a scope tuple as the suffix shown in finding text."""
+    if scope_kind == "capability":
+        return f"capability:{scope_name}"
+    return scope_kind
+
+
 def _check_references(
-    body: str, source_label: str, skill_root: str,
+    body: str, source_abs_path: str, skill_root: str,
     allow_nested_refs: bool = False,
     include_router_table: bool = False,
+    source_label: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Check markdown references in *body* against the skill root.
+    """Check markdown references in *body* using file-relative resolution.
 
-    *source_label* identifies the file in error messages (e.g.
-    ``"SKILL.md"`` or ``"references/guide.md"``).  All intra-skill
-    references are resolved relative to *skill_root*.
+    Every reference resolves from the directory containing the source
+    file (standard markdown semantics) per the redefined path-resolution
+    rule documented in ``references/path-resolution.md``.  Two scopes
+    own their own subgraphs: the skill root and each capability root.
+    A capability reaching the shared skill root uses the explicit
+    ``../../<dir>/<file>`` form; the validator allows ``..`` segments
+    and only flags paths that escape the skill root entirely.
 
-    *include_router_table* (default False) augments the body
-    reference set with capability paths recovered from a router
-    table.  Only the SKILL.md entry legitimately carries one, so
-    callers pass ``True`` only for that file — the validator then
-    catches misspelled router-table cells (e.g.
-    ``capabilities/typo/capability.md``) that the body regexes
-    alone would miss because router-table cells are bare paths,
-    not markdown links.  Without this, a misspelled cell would
-    only be caught by the reachability walker, forcing the orphan
-    rule to surface walk warnings to remain trustworthy.
+    *source_abs_path* is the absolute path of the file being validated,
+    used as the resolution base.  *source_label* (defaults to the
+    relative path from *skill_root*) is the display label that appears
+    in finding text.
+
+    *include_router_table* (default False) augments the body reference
+    set with capability paths recovered from a router table.  Only the
+    SKILL.md entry legitimately carries one, so callers pass ``True``
+    only for that file — the validator then catches misspelled
+    router-table cells (e.g.  ``capabilities/typo/capability.md``)
+    that the body regexes alone would miss because router-table cells
+    are bare paths, not markdown links.  Without this, a misspelled
+    cell would only be caught by the reachability walker, forcing the
+    orphan rule to surface walk warnings to remain trustworthy.
     """
     errors: list[str] = []
     passes: list[str] = []
+
+    source_dir = os.path.dirname(os.path.abspath(source_abs_path))
+    source_rel = os.path.relpath(source_abs_path, skill_root).replace(
+        os.sep, "/",
+    )
+    if source_label is None:
+        source_label = source_rel
+    scope_kind, scope_name = _detect_scope(source_rel)
+    scope_tag = _scope_tag(scope_kind, scope_name)
 
     # Single source of truth for body reference extraction lives in
     # lib.reachability.extract_body_references — applies the same
@@ -194,8 +236,13 @@ def _check_references(
         normalized_ref = strip_fragment(ref)
         if not normalized_ref:
             continue  # Nothing to check (pure fragment reference)
+
+        # File-relative resolution per the redefined rule
+        # (references/path-resolution.md).  Parent-traversal segments
+        # are legal — they are how a capability reaches the shared
+        # skill root (``../../references/foo.md``).
         ref_path = os.path.normpath(
-            os.path.join(skill_root, normalized_ref)
+            os.path.join(source_dir, normalized_ref)
         )
 
         # Skip refs that resolve to the same file (e.g., guide.md#one vs guide.md#two)
@@ -203,40 +250,58 @@ def _check_references(
             continue
         seen_paths.add(ref_path)
 
-        # Note: references escaping the skill directory are allowed by the
-        # spec and used by the foundry's shared-resource architecture
-        # (e.g., ../../shared/references/).  Report as INFO for awareness.
-        # All filesystem checks (existence, readability, nesting) are
-        # skipped for external refs to avoid acting as an existence oracle.
+        # Out-of-skill paths: a ``..`` chain that lands outside
+        # ``skill_root`` is by definition out of scope for intra-skill
+        # validation.  Surfaced as INFO and skipped — acceptable for
+        # genuine shared resources outside the skill, but the path
+        # should be deliberate.
         is_external = not is_within_directory(ref_path, skill_root)
 
-        # Reject parent traversals (../) for intra-skill references.
-        # Check raw path segments before normalization to catch patterns
-        # like references/../references/guide.md that normpath would collapse.
-        # The WARN is emitted but validation continues so broken-link and
-        # nesting checks still run for the resolved path.
-        if not is_external and ".." in normalized_ref.replace("\\", "/").split("/"):
-            errors.append(
-                f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {source_label} "
-                "uses parent traversal — use skill-root-relative paths instead"
-            )
         if is_external:
             external_found = True
             errors.append(
-                f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {source_label} "
-                "resolves outside skill directory — acceptable for shared "
-                "resources but verify the path is intentional"
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "resolves outside the skill directory — acceptable for "
+                "shared resources but verify the path is intentional"
             )
             # Skip all filesystem checks for external refs to avoid acting
             # as a filesystem existence oracle in CI environments.
             continue
+
+        # Cross-scope reference from a capability — the canonical
+        # external-reference form for capability liftability.  Surfaced
+        # as INFO so the future capability-lift tool can find them, but
+        # treated as a real reference for existence checking.
+        # Skill → capability references (the router-table pattern) are
+        # NOT flagged: they are entry-point edges, not lift-relevant
+        # external resources.
+        ref_rel_to_root = os.path.relpath(ref_path, skill_root).replace(
+            os.sep, "/",
+        )
+        ref_scope_kind, ref_scope_name = _detect_scope(ref_rel_to_root)
+        is_cross_scope_from_capability = (
+            scope_kind == "capability"
+            and (
+                ref_scope_kind != "capability"
+                or ref_scope_name != scope_name
+            )
+        )
+        if is_cross_scope_from_capability:
+            errors.append(
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) is "
+                "an external reference — recorded for the capability-lift "
+                "tool"
+            )
 
         internal_checked += 1
 
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} does not exist"
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
+                f"(scope: {scope_tag}) does not exist"
             )
             continue
 
@@ -244,7 +309,8 @@ def _check_references(
         if not os.path.isfile(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} resolves to a non-file path"
+                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
+                f"(scope: {scope_tag}) resolves to a non-file path"
             )
             continue
 
@@ -256,7 +322,8 @@ def _check_references(
             broken_found = True
             errors.append(
                 f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
-                f"cannot be read ({exc.__class__.__name__}: {exc})"
+                f"(scope: {scope_tag}) cannot be read "
+                f"({exc.__class__.__name__}: {exc})"
             )
             continue
 
@@ -345,8 +412,9 @@ def validate_body(
     # the reachability walker, forcing the orphan rule to surface
     # walk warnings.
     ref_errors, ref_passes = _check_references(
-        body, entry_filename, skill_root, allow_nested_refs,
+        body, skill_md_path, skill_root, allow_nested_refs,
         include_router_table=(entry_filename == FILE_SKILL_MD),
+        source_label=entry_filename,
     )
     errors.extend(ref_errors)
     passes.extend(ref_passes)
@@ -420,7 +488,8 @@ def validate_skill_references(
                 allow_nested_refs if is_capability_entry else True
             )
             file_errors, _file_passes = _check_references(
-                content, rel_label, skill_root, file_allow_nested,
+                content, filepath, skill_root, file_allow_nested,
+                source_label=rel_label,
             )
 
             files_checked += 1
@@ -800,6 +869,27 @@ def _build_parser() -> argparse.ArgumentParser:
             "stack already includes the underlying check."
         ),
     )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        dest="fix",
+        help=(
+            "Preview mechanical rewrites that bring legacy "
+            "skill-root-form references into canonical file-relative "
+            "form (per references/path-resolution.md).  Dry-run by "
+            "default — no files are modified.  Use --fix --apply to "
+            "write the changes."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        dest="apply",
+        help=(
+            "Apply the rewrites previewed by --fix.  No-op without "
+            "--fix.  Modifies source files in place."
+        ),
+    )
     return parser
 
 
@@ -855,6 +945,47 @@ def main() -> None:
         else:
             print(f"Error: '{skill_path}' is not a directory")
         sys.exit(1)
+
+    # --fix mode: surface mechanical rewrites and exit before the rest
+    # of the validation pipeline runs.  The rewriter is independent of
+    # the per-rule findings — it operates on the captured ref strings
+    # directly and only suggests replacements where the legacy and new
+    # forms agree on the target file.
+    if args.fix:
+        from lib.path_rewriter import find_fixable_references, apply_fixes
+
+        rows = find_fixable_references(os.path.abspath(skill_path))
+        if json_output:
+            print(to_json_output({
+                "tool": "validate_skill",
+                "mode": "fix",
+                "applied": bool(args.apply),
+                "fixes": [
+                    {
+                        "file": r["file_rel"],
+                        "line": r["line"],
+                        "original": r["original"],
+                        "replacement": r["replacement"],
+                    }
+                    for r in rows
+                ],
+            }))
+        else:
+            if not rows:
+                print("No mechanical rewrites needed — skill conforms.")
+            else:
+                action = "Applying" if args.apply else "Would apply"
+                print(f"{action} {len(rows)} rewrites:")
+                for r in rows:
+                    print(
+                        f"  {r['file_rel']}:{r['line']} "
+                        f"'{r['original']}' → '{r['replacement']}'"
+                    )
+        if args.apply and rows:
+            modified = apply_fixes(rows)
+            if not json_output:
+                print(f"Modified {modified} file(s).")
+        sys.exit(0)
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 

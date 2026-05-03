@@ -424,26 +424,29 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(broken_warns, [])
 
     def test_capability_chain_warns_when_capability_refs_have_nested_refs(self) -> None:
-        """SKILL.md → capability.md → references/a.md → references/b.md
-        must produce a nested-ref WARN attributed to the capability.
+        """SKILL.md → capability.md → references/a.md → b.md must
+        produce a nested-ref WARN attributed to the capability.
         capability.md is treated as its own entry-point boundary, so
         its referenced files are checked for nesting just as SKILL.md's
         are.  Pins the gap that opened when we exempted capability
-        targets from the parent's own check."""
+        targets from the parent's own check.
+
+        Under the redefined path-resolution rule, the capability
+        reaches the shared skill root via ``../../`` and references
+        within shared ``references/`` use bare-sibling form.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
-            # capability.md links to references/a.md
             write_text(
                 os.path.join(
                     tmpdir, "capabilities", "design", "capability.md"
                 ),
                 "# Design\n\n"
-                "See [primer](references/a.md) for details.\n",
+                "See [primer](../../references/a.md) for details.\n",
             )
-            # references/a.md links to references/b.md (nested)
             write_text(
                 os.path.join(tmpdir, "references", "a.md"),
                 "# A\n\n"
-                "Then see [more](references/b.md) for follow-up.\n",
+                "Then see [more](b.md) for follow-up.\n",
             )
             write_text(
                 os.path.join(tmpdir, "references", "b.md"),
@@ -878,16 +881,18 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(fail_errors, [])
 
     def test_path_traversal_returns_info(self) -> None:
-        """A reference escaping the skill directory produces an INFO."""
+        """A reference escaping the skill directory produces an INFO
+        tagged with the path-resolution rule (per
+        ``references/path-resolution.md``)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [escape](references/../../somewhere) for details.\n"
+            body = "# Skill\n\nSee [escape](../../shared/file.md) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        escape_infos = [e for e in info_errors if "outside skill directory" in e]
+        escape_infos = [e for e in info_errors if "outside the skill directory" in e]
         self.assertEqual(len(escape_infos), 1)
-        self.assertIn("[foundry]", escape_infos[0])
+        self.assertIn("[path-resolution]", escape_infos[0])
         # No FAIL errors
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
@@ -896,21 +901,17 @@ class ValidateBodyTests(unittest.TestCase):
         """When all refs are external, 'one level deep' pass does not fire."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            # Use references/../../ paths so the regex matches but they escape the dir
             body = (
                 "# Skill\n\n"
-                "See [a](references/../../shared/a.md) and "
-                "[b](references/../../shared/b.md) for details.\n"
+                "See [a](../../shared/a.md) and "
+                "[b](../../shared/b.md) for details.\n"
             )
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
-        # Should NOT have the "one level deep" pass since no internal refs were checked
         nesting_passes = [p for p in passes if "one level deep" in p]
         self.assertEqual(nesting_passes, [])
-        # Should have the external-only pass instead
         external_passes = [p for p in passes if "external" in p.lower()]
         self.assertEqual(len(external_passes), 1)
-        # External refs skip all filesystem checks (no existence oracle)
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e
@@ -921,18 +922,14 @@ class ValidateBodyTests(unittest.TestCase):
         """External refs skip all filesystem checks to avoid existence oracle."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            # External ref to a nonexistent path — should NOT produce
-            # any broken-ref warning (no filesystem oracle)
             body = (
                 "# Skill\n\n"
-                "See [a](references/../../shared/a.md) for details.\n"
+                "See [a](../../shared/a.md) for details.\n"
             )
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
-        # Should have the INFO for external ref
-        info_errors = [e for e in errors if "outside skill directory" in e]
+        info_errors = [e for e in errors if "outside the skill directory" in e]
         self.assertEqual(len(info_errors), 1)
-        # Should NOT have any broken-ref warning
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e
@@ -1068,14 +1065,15 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(fail_errors, [])
 
     def test_path_traversal_via_references_dotdot_returns_info(self) -> None:
-        """A reference using references/../.. to escape the skill dir produces an INFO."""
+        """A reference whose ``..`` chain escapes the skill dir
+        produces an INFO under the redefined path-resolution rule."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [escape](references/../../../etc/passwd) for details.\n"
+            body = "# Skill\n\nSee [escape](../../../assets/elsewhere.md) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        escape_infos = [e for e in info_errors if "outside skill directory" in e]
+        escape_infos = [e for e in info_errors if "outside the skill directory" in e]
         self.assertEqual(len(escape_infos), 1)
 
     def test_directory_ref_with_allow_nested_refs_returns_warn(self) -> None:
@@ -1146,51 +1144,75 @@ class FindSkillRootTests(unittest.TestCase):
 
 
 class ValidateBodySkillRootTests(unittest.TestCase):
-    """Tests for skill-root-relative reference resolution in validate_body."""
+    """Tests for file-relative reference resolution in validate_body
+    under the redefined path-resolution rule
+    (``references/path-resolution.md``).  Two scopes own their own
+    subgraphs (skill root, capability root); refs resolve from the
+    source file's directory using standard markdown semantics."""
 
-    def test_capability_ref_resolves_from_skill_root(self) -> None:
-        """A capability entry referencing references/guide.md resolves from
-        the skill root, not the capability directory."""
+    def test_capability_link_to_capability_local_reference_resolves(self) -> None:
+        """A capability writing ``references/guide.md`` resolves to its
+        own capability-local reference (file-relative under the
+        capability scope)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Set up skill root with SKILL.md and a reference file
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             write_text(
-                os.path.join(tmpdir, "references", "guide.md"),
+                os.path.join(cap_dir, "references", "guide.md"),
                 "# Guide\n\nContent.\n",
             )
-            # Capability lives in a subdirectory
-            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             cap_md = os.path.join(cap_dir, "capability.md")
             body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
             write_text(cap_md, body)
-            # skill_root is the skill root, not the capability dir
             errors, passes = validate_body(body, cap_md, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
         ref_pass = [p for p in passes if "one level deep" in p]
         self.assertEqual(len(ref_pass), 1)
 
-    def test_capability_ref_without_skill_root_fails(self) -> None:
-        """When skill_root is the capability dir (no SKILL.md found),
-        a skill-root-relative reference is reported as broken."""
+    def test_capability_link_to_shared_root_via_external_form(self) -> None:
+        """A capability reaches the shared skill root via ``../../`` —
+        the canonical external-reference form per
+        ``references/path-resolution.md``."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             write_text(
-                os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nContent.\n",
+                os.path.join(tmpdir, "references", "shared.md"),
+                "# Shared\n",
             )
             cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             cap_md = os.path.join(cap_dir, "capability.md")
-            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            body = (
+                "# Validation\n\n"
+                "See [shared](../../references/shared.md).\n"
+            )
             write_text(cap_md, body)
-            # Pass cap_dir as skill_root (fallback when no SKILL.md found)
-            errors, passes = validate_body(body, cap_md, cap_dir)
+            errors, passes = validate_body(body, cap_md, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        broken = [e for e in warn_errors if "does not exist" in e]
-        self.assertEqual(len(broken), 1)
+        self.assertEqual(warn_errors, [])
 
-    def test_parent_traversal_leading_intra_skill_produces_warn(self) -> None:
-        """A references/../.. style path that still resolves inside the skill
-        root produces a WARN for using parent traversal."""
+    def test_capability_link_to_missing_local_reference_fails(self) -> None:
+        """A capability link to a non-existent local reference fails —
+        the broken-link finding names the (capability:<n>) scope."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
+            cap_md = os.path.join(cap_dir, "capability.md")
+            body = "# Validation\n\nSee [missing](references/missing.md).\n"
+            write_text(cap_md, body)
+            errors, passes = validate_body(body, cap_md, tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        self.assertEqual(len(broken), 1)
+        self.assertIn("scope: capability:validation", broken[0])
+
+    def test_parent_traversal_inside_skill_root_is_legal(self) -> None:
+        """Under the redefined rule, ``..`` segments are legal — they
+        are how a capability reaches the shared skill root.  A ref
+        that uses ``..`` and lands on an existing file inside the
+        skill root produces no findings."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             write_text(
@@ -1202,76 +1224,57 @@ class ValidateBodySkillRootTests(unittest.TestCase):
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal_warns), 1)
+        self.assertEqual(warn_errors, [])
 
-    def test_parent_traversal_midpath_intra_skill_produces_warn(self) -> None:
-        """A mid-path ../ in a reference produces WARN even though normpath
-        would collapse it."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
-            write_text(
-                os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n",
-            )
-            skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [guide](references/../references/guide.md) for info.\n"
-            write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md, tmpdir)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal_warns), 1)
-
-    def test_parent_traversal_missing_file_produces_both_warns(self) -> None:
-        """A ../ traversal to a missing file produces both the traversal WARN
-        and the broken-link WARN."""
+    def test_parent_traversal_missing_file_produces_broken_warn(self) -> None:
+        """A ``..`` traversal to a missing file inside the skill root
+        produces a broken-link WARN — ``..`` itself is no longer
+        flagged, but the resolved path still must exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [t](references/../assets/missing.md) for info.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, tmpdir)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal_warns), 1)
-        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        broken_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
         self.assertEqual(len(broken_warns), 1)
 
-    def test_reference_file_body_resolves_from_skill_root(self) -> None:
-        """When validate_body() is called with a reference file's body and
-        the correct skill_root, root-relative links resolve from the skill
-        root — the same resolution logic applies regardless of file origin."""
+    def test_reference_file_sibling_link_resolves_file_relative(self) -> None:
+        """A reference file linking a sibling uses bare-filename form
+        under the redefined rule — file-relative resolution from the
+        file's directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Skill root with another reference file
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             write_text(
                 os.path.join(tmpdir, "references", "other.md"),
                 "# Other\n\nContent.\n",
             )
-            # A reference file that links to a sibling via root-relative path
             ref_file = os.path.join(tmpdir, "references", "guide.md")
-            body = "# Guide\n\nSee also [other](references/other.md).\n"
+            body = "# Guide\n\nSee also [other](other.md).\n"
             write_text(ref_file, body)
             errors, passes = validate_body(body, ref_file, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
-        ref_pass = [p for p in passes if "one level deep" in p]
-        self.assertEqual(len(ref_pass), 1)
 
-    def test_external_parent_traversal_stays_info(self) -> None:
-        """A references/../../ reference escaping the skill root produces
-        INFO (external), not a parent-traversal WARN."""
+    def test_external_path_escaping_skill_root_stays_info(self) -> None:
+        """A reference whose ``..`` chain lands outside the skill root
+        is by definition out of scope — surfaced as INFO, no broken-
+        link WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [shared](references/../../shared/guide.md) for info.\n"
+            body = "# Skill\n\nSee [shared](../../shared/guide.md) for info.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, tmpdir)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        external_infos = [e for e in info_errors if "outside skill directory" in e]
+        external_infos = [
+            e for e in info_errors if "outside the skill directory" in e
+        ]
         self.assertEqual(len(external_infos), 1)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(traversal_warns, [])
+        self.assertEqual(warn_errors, [])
 
 
 # ===================================================================
@@ -1284,17 +1287,19 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
 
     def test_capability_auto_detects_skill_root(self) -> None:
         """validate_skill with is_capability=True walks up to find SKILL.md
-        and resolves references from that root."""
+        and resolves references file-relative.  A capability reaching
+        a shared skill-root resource uses the ``../../`` external form."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Skill root
             write_skill_md(tmpdir, body="# Router Skill\n")
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
                 "# Guide\n\nContent.\n",
             )
-            # Capability references a file at the skill root
             cap_dir = os.path.join(tmpdir, "capabilities", "validation")
-            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            body = (
+                "# Validation\n\n"
+                "See [guide](../../references/guide.md) for details.\n"
+            )
             write_text(os.path.join(cap_dir, "capability.md"), body)
             errors, passes = validate_skill(cap_dir, is_capability=True)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
@@ -1306,10 +1311,13 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
         not just the capability subtree, catching broken refs elsewhere."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir, body="# Router Skill\n")
-            # Broken ref in a reference file at the skill root (outside capability dir)
+            # Broken sibling ref in a reference file at the skill root
+            # (outside capability dir).  Under the redefined rule,
+            # ``[missing](missing.md)`` from a file in references/
+            # resolves to references/missing.md (file-relative sibling).
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nSee [missing](references/missing.md).\n",
+                "# Guide\n\nSee [missing](missing.md).\n",
             )
             cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             write_text(
@@ -1320,7 +1328,7 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken), 1)
-        self.assertIn("references/missing.md", broken[0])
+        self.assertIn("missing.md", broken[0])
 
 
 # ===================================================================
@@ -1332,7 +1340,12 @@ class ValidateSkillReferencesTests(unittest.TestCase):
     """Tests for validate_skill_references — skill-wide .md file scanning."""
 
     def test_valid_refs_in_reference_file_passes(self) -> None:
-        """A reference file with valid root-relative links produces no warns."""
+        """A reference file with valid file-relative links produces no warns.
+
+        Under the redefined path-resolution rule
+        (``references/path-resolution.md``), a sibling reference uses
+        bare-filename form (``[other](other.md)``), not the redundant
+        ``references/other.md`` form that the old skill-root rule used."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, "---\nname: test\n---\n# Skill\n")
@@ -1342,7 +1355,7 @@ class ValidateSkillReferencesTests(unittest.TestCase):
             )
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nSee also [other](references/other.md).\n",
+                "# Guide\n\nSee also [other](other.md).\n",
             )
             errors, passes = validate_skill_references(
                 tmpdir, tmpdir, skill_md,
@@ -1369,14 +1382,17 @@ class ValidateSkillReferencesTests(unittest.TestCase):
         self.assertEqual(len(broken), 1)
         self.assertIn("references/missing.md", broken[0])
 
-    def test_parent_traversal_in_reference_file_returns_warn(self) -> None:
-        """A reference file using ../ produces a parent-traversal WARN."""
+    def test_parent_traversal_in_reference_file_resolves_legally(self) -> None:
+        """Under the redefined rule (``references/path-resolution.md``),
+        ``..`` segments are legal — a reference file linking
+        ``../assets/other.md`` resolves to a sibling-of-references
+        directory and produces no findings when the target exists."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, "---\nname: test\n---\n# Skill\n")
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nSee [t](references/../assets/other.md).\n",
+                "# Guide\n\nSee [t](../assets/other.md).\n",
             )
             write_text(
                 os.path.join(tmpdir, "assets", "other.md"),
@@ -1386,8 +1402,8 @@ class ValidateSkillReferencesTests(unittest.TestCase):
                 tmpdir, tmpdir, skill_md,
             )
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal), 1)
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken, [])
 
     def test_skips_entry_file(self) -> None:
         """The entry file is skipped (already validated by validate_body)."""
