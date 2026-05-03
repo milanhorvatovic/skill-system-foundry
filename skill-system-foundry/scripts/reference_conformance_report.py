@@ -104,6 +104,14 @@ def _read(filepath: str) -> str | None:
         return None
 
 
+def _scope_label(scope_kind: str, scope_name: str) -> str:
+    """Return the per-scope label used in the conformance report's
+    ``broken_under_standard_semantics_by_scope`` map."""
+    if scope_kind == "capability":
+        return f"capability:{scope_name}"
+    return scope_kind
+
+
 def _build_graph(
     skill_root: str, md_files: list[str],
 ) -> tuple[
@@ -112,6 +120,7 @@ def _build_graph(
     int,
     int,
     list[tuple[str, str]],
+    dict[str, int],
     dict[str, int],
 ]:
     """Build the link graph and tally per-link conformance.
@@ -131,6 +140,10 @@ def _build_graph(
                        to a file under the skill root (the canonical
                        external-reference form per
                        references/path-resolution.md).
+        broken_by_scope — ``scope_label → count`` of broken links,
+                       grouped by the *source* scope (``"skill"`` or
+                       ``"capability:<name>"``).  Missing scopes have
+                       no entry.
     """
     edges: dict[str, list[str]] = {f: [] for f in md_files}
     total_links = 0
@@ -138,6 +151,7 @@ def _build_graph(
     broken = 0
     broken_rows: list[tuple[str, str]] = []
     external_per_capability: dict[str, int] = {}
+    broken_by_scope: dict[str, int] = {}
 
     skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
 
@@ -148,6 +162,7 @@ def _build_graph(
         body = strip_frontmatter_for_scan(content)
         rel = os.path.relpath(filepath, skill_root).replace(os.sep, "/")
         scope_kind, scope_name = _file_scope(rel)
+        scope_label = _scope_label(scope_kind, scope_name)
         is_entry = filepath == skill_md_abs
         source_dir = os.path.dirname(filepath)
 
@@ -171,6 +186,9 @@ def _build_graph(
             else:
                 broken += 1
                 broken_rows.append((rel, ref))
+                broken_by_scope[scope_label] = (
+                    broken_by_scope.get(scope_label, 0) + 1
+                )
 
             # Track external edges (the lift tool's rewrite candidates).
             ref_norm = normalized.replace("\\", "/")
@@ -179,7 +197,15 @@ def _build_graph(
                     external_per_capability.get(scope_name, 0) + 1
                 )
 
-    return edges, total_links, resolved, broken, broken_rows, external_per_capability
+    return (
+        edges,
+        total_links,
+        resolved,
+        broken,
+        broken_rows,
+        external_per_capability,
+        broken_by_scope,
+    )
 
 
 # ===================================================================
@@ -256,9 +282,15 @@ def compute_report(skill_root: str) -> dict:
     """
     skill_root = os.path.abspath(skill_root)
     md_files = _enumerate_markdown_files(skill_root)
-    edges, total_links, resolved, broken, broken_rows, ext_per_cap = (
-        _build_graph(skill_root, md_files)
-    )
+    (
+        edges,
+        total_links,
+        resolved,
+        broken,
+        broken_rows,
+        ext_per_cap,
+        broken_by_scope,
+    ) = _build_graph(skill_root, md_files)
     roots = _list_roots(skill_root)
     component_count, unreachable_count = _connected_components(edges, roots)
 
@@ -267,6 +299,9 @@ def compute_report(skill_root: str) -> dict:
         "total_links": total_links,
         "resolves_under_standard_semantics": resolved,
         "broken_under_standard_semantics": broken,
+        "broken_under_standard_semantics_by_scope": dict(
+            sorted(broken_by_scope.items())
+        ),
         "broken_links": [
             {"source": src, "target": tgt} for src, tgt in broken_rows
         ],
@@ -298,6 +333,11 @@ def print_human(report: dict, verbose: bool) -> None:
         f"  Broken (standard markdown):      "
         f"{report['broken_under_standard_semantics']}"
     )
+    by_scope = report.get("broken_under_standard_semantics_by_scope", {})
+    if by_scope:
+        print("    by source scope:")
+        for scope, count in by_scope.items():
+            print(f"      {scope:30s} {count:>4d}")
     print(f"  Connected components:            {report['connected_components']}")
     print(
         f"  Files unreachable from root:     "

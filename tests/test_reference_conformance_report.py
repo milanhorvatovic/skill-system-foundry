@@ -98,6 +98,25 @@ class ComputeReportBrokenLinkTests(unittest.TestCase):
             report["broken_links"][0]["target"], "references/missing.md",
         )
 
+    def test_broken_links_are_grouped_by_source_scope(self) -> None:
+        # The per-scope breakdown lets a triage user see at a glance
+        # whether the work is concentrated in the skill root or a
+        # specific capability.  Pin both buckets are tracked
+        # independently and only the scopes with broken links appear.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [m](references/missing.md).\n")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\n"
+                "See [a](references/a.md) and [b](references/b.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(
+            report["broken_under_standard_semantics_by_scope"],
+            {"capability:demo": 2, "skill": 1},
+        )
+
 
 class ComputeReportExternalEdgeTests(unittest.TestCase):
     """Edges from a capability into the shared skill root are counted
