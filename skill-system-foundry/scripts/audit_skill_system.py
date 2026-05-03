@@ -86,6 +86,8 @@ from lib.constants import (
     RE_SKILL_REF, RE_CAPABILITY_REF, MIN_ROLE_SKILLS,
     SEPARATOR_WIDTH,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    PATH_RESOLUTION_DOC_PATH,
+    PATH_RESOLUTION_RULE_NAME,
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
@@ -1187,6 +1189,10 @@ def main() -> None:
             },
             "errors": categorize_errors_for_json(errors),
             "yaml_conformance": yaml_conformance_slot,
+            "path_resolution": {
+                "rule_name": PATH_RESOLUTION_RULE_NAME,
+                "documentation_path": PATH_RESOLUTION_DOC_PATH,
+            },
         }
         print(to_json_output(result))
         sys.exit(1 if fails else 0)

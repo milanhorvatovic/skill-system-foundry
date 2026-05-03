@@ -437,8 +437,11 @@ path_resolution:
   # consumers can filter or group findings by rule.
   rule_name: path-resolution
   # Skill-root-relative path to the canonical reference doc.
-  # Findings cite this path so an integrator can navigate to
-  # the rule from any output stream.
+  # ``validate_skill`` and ``audit_skill_system`` emit a top-level
+  # ``path_resolution`` block (``rule_name`` + ``documentation_path``)
+  # in their ``--json`` payloads, and ``validate_skill --fix`` cites
+  # this path in the unfixable-findings header, so an integrator can
+  # navigate to the rule from any output stream.
   documentation_path: references/path-resolution.md
 
 # ============================================================

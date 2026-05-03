@@ -3205,12 +3205,14 @@ class CodexFindingsJsonSchemaTests(unittest.TestCase):
         self.assertIn("errors", data)
         # Schema preserved: known top-level keys plus the additive
         # ``yaml_conformance`` slot (always present, zero sentinel when
-        # checks did not run).
+        # checks did not run) and ``path_resolution`` block (rule_name
+        # + documentation_path so consumers can navigate to the rule).
         self.assertEqual(
             set(data.keys()),
             {
                 "tool", "path", "type", "success", "summary",
                 "errors", "version", "yaml_conformance",
+                "path_resolution",
             },
         )
         codex_fails = [

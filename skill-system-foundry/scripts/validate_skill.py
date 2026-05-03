@@ -53,6 +53,7 @@ from lib.constants import (
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    PATH_RESOLUTION_DOC_PATH,
     PATH_RESOLUTION_RULE_NAME,
     collect_foundry_config_findings,
 )
@@ -1045,6 +1046,10 @@ def main() -> None:
             },
             "errors": categorize_errors_for_json(errors),
             "yaml_conformance": yaml_conformance_slot,
+            "path_resolution": {
+                "rule_name": PATH_RESOLUTION_RULE_NAME,
+                "documentation_path": PATH_RESOLUTION_DOC_PATH,
+            },
         }
         if verbose:
             result["passes"] = passes
