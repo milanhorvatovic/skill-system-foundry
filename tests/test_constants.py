@@ -534,6 +534,38 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                     f"{bucket['last_checked']!r} ({exc})"
                 )
 
+    def test_catalogs_and_provenance_harness_sets_match(self) -> None:
+        # Cross-canary check: ``catalogs`` and ``catalog_provenance``
+        # must declare the same set of harness names.  The two earlier
+        # canaries validate each half independently, so a future edit
+        # could add ``catalogs.<harness>`` without the matching
+        # ``catalog_provenance.<harness>`` bucket (or vice versa) and
+        # both per-half canaries would still pass; the mismatch would
+        # only surface at drift-run time when the helper looks up
+        # provenance for the orphaned harness and hard-fails.  This
+        # check pulls that failure forward to the test suite.
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            loaded = yaml_parser.parse_yaml_subset(fh.read())
+        catalog_harnesses = set(
+            loaded["skill"]["allowed_tools"]["catalogs"].keys()
+        )
+        provenance_harnesses = set(
+            loaded["skill"]["allowed_tools"]["catalog_provenance"].keys()
+        )
+        self.assertEqual(
+            catalog_harnesses, provenance_harnesses,
+            msg=(
+                f"`catalogs` and `catalog_provenance` must declare the "
+                f"same harness names; catalogs has "
+                f"{sorted(catalog_harnesses)}, catalog_provenance has "
+                f"{sorted(provenance_harnesses)} (missing under "
+                f"catalog_provenance: "
+                f"{sorted(catalog_harnesses - provenance_harnesses)}; "
+                f"missing under catalogs: "
+                f"{sorted(provenance_harnesses - catalog_harnesses)})"
+            ),
+        )
+
 
 class ToolShapeRegexTests(unittest.TestCase):
     """Token-shape regexes used by pattern-fallback recognition."""
