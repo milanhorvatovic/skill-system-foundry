@@ -9,6 +9,7 @@ re-importing ``lib.constants`` against a synthetic config file with
 the section removed.
 """
 
+import datetime
 import importlib
 import os
 import sys
@@ -21,7 +22,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib import constants
+from lib import constants, yaml_parser
 
 
 class ConfigPathTests(unittest.TestCase):
@@ -355,6 +356,84 @@ class DescriptionTriggerExamplePhrasesTests(unittest.TestCase):
 class AllowedToolsCatalogTests(unittest.TestCase):
     """Per-harness catalog constants exposed by ``allowed_tools.catalogs``."""
 
+    # The schema canaries below derive their drift-managed scope from
+    # ``catalog_provenance.keys()`` in the live YAML rather than from a
+    # hardcoded constant.  A harness's presence under
+    # ``catalog_provenance`` is the natural declaration that it is
+    # drift-managed (the drift helper reads provenance to operate);
+    # ``configuration.yaml`` independently documents that future
+    # harnesses may use their own bucket shape under
+    # ``catalogs.<harness>``.  Deriving from YAML means adding a new
+    # ``catalog_provenance`` entry automatically extends canary
+    # coverage, without coupling YAML edits to a separate constant.
+
+    def _load_allowed_tools_section(self, key: str) -> dict:
+        """Load ``configuration.yaml`` and return ``allowed_tools.<key>``.
+
+        Asserts each level (``skill``, ``allowed_tools``) is a mapping
+        before subscripting and asserts presence of every level above
+        ``key`` so a missing, misspelled, or wrong-typed top-level
+        node produces a targeted assertion message instead of a raw
+        ``KeyError`` or ``TypeError`` traceback.  Used by the schema
+        canaries so future regressions stay actionable.
+        """
+        with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
+            loaded = yaml_parser.parse_yaml_subset(fh.read())
+        self.assertIsInstance(
+            loaded, dict,
+            msg=(
+                "configuration.yaml must parse to a top-level mapping; "
+                f"got {type(loaded).__name__}"
+            ),
+        )
+        self.assertIn(
+            "skill", loaded,
+            msg="configuration.yaml must define top-level `skill`",
+        )
+        skill = loaded["skill"]
+        self.assertIsInstance(
+            skill, dict,
+            msg=(
+                "configuration.yaml `skill` must be a mapping; "
+                f"got {type(skill).__name__}"
+            ),
+        )
+        self.assertIn(
+            "allowed_tools", skill,
+            msg="configuration.yaml must define `skill.allowed_tools`",
+        )
+        allowed_tools = skill["allowed_tools"]
+        self.assertIsInstance(
+            allowed_tools, dict,
+            msg=(
+                "configuration.yaml `skill.allowed_tools` must be a "
+                f"mapping; got {type(allowed_tools).__name__}"
+            ),
+        )
+        self.assertIn(
+            key, allowed_tools,
+            msg=(
+                f"configuration.yaml must define "
+                f"`skill.allowed_tools.{key}`"
+            ),
+        )
+        section = allowed_tools[key]
+        # Validate the returned section is itself a mapping — the two
+        # current callers (``catalogs`` and ``catalog_provenance``)
+        # both iterate ``.items()`` / ``.keys()`` on the result, so a
+        # scalar or list at this level would otherwise produce a raw
+        # ``TypeError`` / ``AttributeError`` in the canary instead of
+        # the targeted assertion message this helper is meant to
+        # provide.
+        self.assertIsInstance(
+            section, dict,
+            msg=(
+                f"configuration.yaml `skill.allowed_tools.{key}` "
+                f"must be a mapping; got {type(section).__name__}"
+            ),
+        )
+        return section
+
     def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
         # Names listed in the Claude Code skills documentation.
         for tool in ("Bash", "Read", "Edit", "Write", "Grep", "Glob",
@@ -399,6 +478,214 @@ class AllowedToolsCatalogTests(unittest.TestCase):
 
     def test_known_tools_recognises_pascalcase_bash(self) -> None:
         self.assertIn("Bash", constants.KNOWN_TOOLS)
+
+    def test_catalogs_harness_children_are_tool_lists(self) -> None:
+        # Schema invariant for drift-managed harnesses: every direct
+        # child of ``skill.allowed_tools.catalogs.<harness>`` is a
+        # list of tool names.  ``provenance`` lives under a sibling
+        # top-level key ``catalog_provenance.<harness>`` so a reader
+        # iterating the catalog bucket does not need to special-case
+        # a non-list child.  Drift-managed scope is derived from the
+        # set of harnesses declared under ``catalog_provenance`` in
+        # the live YAML — non-drift-managed harnesses (allowed by the
+        # ``configuration.yaml`` comment under ``catalogs:`` to use
+        # their own bucket shape) are not validated here.  The canary
+        # fails loudly if a YAML edit re-introduces a ``provenance``
+        # key under any drift-managed harness bucket or any other
+        # non-list child.  The provenance-specific check runs first
+        # so the most-likely regression (re-introducing
+        # ``provenance``) produces the most-informative error
+        # message; an unrelated non-list field trips the second check.
+        catalogs = self._load_allowed_tools_section("catalogs")
+        catalog_provenance = self._load_allowed_tools_section(
+            "catalog_provenance"
+        )
+        self.assertNotEqual(
+            catalog_provenance, {},
+            msg=(
+                "configuration.yaml `catalog_provenance` must declare "
+                "at least one harness — otherwise this canary "
+                "silently validates nothing"
+            ),
+        )
+        for harness_name in catalog_provenance:
+            self.assertIn(
+                harness_name, catalogs,
+                msg=(
+                    f"drift-managed harness {harness_name!r} (declared "
+                    "under `catalog_provenance`) must have a matching "
+                    "`catalogs` bucket"
+                ),
+            )
+            bucket = catalogs[harness_name]
+            # Defensive: a future YAML edit that turns the harness
+            # bucket itself into a scalar or list would otherwise
+            # raise ``AttributeError`` at ``bucket.items()`` below
+            # and produce an opaque traceback instead of an
+            # actionable assertion failure.  Mirrors the
+            # provenance canary's upfront ``dict`` check.
+            self.assertIsInstance(
+                bucket, dict,
+                msg=(
+                    f"catalogs.{harness_name} must be a mapping; "
+                    f"got {type(bucket).__name__}"
+                ),
+            )
+            for child_key, child_value in bucket.items():
+                self.assertNotEqual(
+                    child_key, "provenance",
+                    msg=(
+                        f"`provenance` must not be a child of "
+                        f"catalogs.{harness_name}; use top-level "
+                        "`catalog_provenance.<harness>` instead"
+                    ),
+                )
+                self.assertIsInstance(
+                    child_value, list,
+                    msg=(
+                        f"catalogs.{harness_name}.{child_key} must be "
+                        f"a tool-name list under the schema; "
+                        f"got {type(child_value).__name__}"
+                    ),
+                )
+                # Each item must be a non-empty string.  Without this
+                # check a malformed edit (a stray ``-`` producing a
+                # ``None`` item, an empty quoted string, or a non-string
+                # scalar like a bare integer) would still satisfy the
+                # is-a-list guard above and only fail later in
+                # downstream consumers.
+                for item_index, item in enumerate(child_value):
+                    self.assertIsInstance(
+                        item, str,
+                        msg=(
+                            f"catalogs.{harness_name}.{child_key}"
+                            f"[{item_index}] must be a string; "
+                            f"got {type(item).__name__}"
+                        ),
+                    )
+                    self.assertNotEqual(
+                        item.strip(), "",
+                        msg=(
+                            f"catalogs.{harness_name}.{child_key}"
+                            f"[{item_index}] must be non-empty"
+                        ),
+                    )
+
+    def test_catalog_provenance_harness_shape_is_uniform(self) -> None:
+        # Symmetric canary to ``test_catalogs_harness_children_are_tool_lists``:
+        # that one protects the catalog half of the schema, this one
+        # protects the provenance half.  Schema invariant: every
+        # direct child of ``skill.allowed_tools.catalog_provenance``
+        # is a mapping with exactly ``source_url`` and ``last_checked``
+        # non-empty scalar children, with ``last_checked`` in the
+        # canonical ``YYYY-MM-DD`` form.  Iterates every harness
+        # present under ``catalog_provenance`` — that mapping is the
+        # natural source of truth for which harnesses are
+        # drift-managed.  Without this canary, a typo, extra key, or
+        # wrong date format under a harness bucket would only be
+        # caught at drift-run time when the helper looks the bucket
+        # up and parses it.
+        catalog_provenance = self._load_allowed_tools_section(
+            "catalog_provenance"
+        )
+        self.assertNotEqual(
+            catalog_provenance, {},
+            msg=(
+                "configuration.yaml `catalog_provenance` must declare "
+                "at least one harness — otherwise this canary "
+                "silently validates nothing"
+            ),
+        )
+        expected_keys = {"source_url", "last_checked"}
+        for harness_name, bucket in catalog_provenance.items():
+            self.assertIsInstance(
+                bucket, dict,
+                msg=(
+                    f"catalog_provenance.{harness_name} must be a "
+                    f"mapping; got {type(bucket).__name__}"
+                ),
+            )
+            self.assertEqual(
+                set(bucket.keys()), expected_keys,
+                msg=(
+                    f"catalog_provenance.{harness_name} must have "
+                    f"exactly {sorted(expected_keys)} as children; "
+                    f"got {sorted(bucket.keys())}"
+                ),
+            )
+            for key, value in bucket.items():
+                self.assertIsInstance(
+                    value, str,
+                    msg=(
+                        f"catalog_provenance.{harness_name}.{key} "
+                        f"must be a scalar string; got "
+                        f"{type(value).__name__}"
+                    ),
+                )
+                self.assertNotEqual(
+                    value.strip(), "",
+                    msg=(
+                        f"catalog_provenance.{harness_name}.{key} "
+                        "must be non-empty"
+                    ),
+                )
+            # ``last_checked`` must parse as ISO-8601 ``YYYY-MM-DD`` —
+            # the same contract ``parse_catalog`` enforces at runtime.
+            # Without this pin a future harness bucket could ship
+            # ``last_checked: yesterday`` and pass the canary even
+            # though the drift helper would reject it.  The explicit
+            # shape pre-check matters because
+            # ``datetime.date.fromisoformat`` alone accepts the compact
+            # ISO form (e.g. ``20260501``) since Python 3.11; the
+            # helper documents and writes only the extended form, so
+            # the canary pins that form here too.
+            self.assertRegex(
+                bucket["last_checked"], r"^\d{4}-\d{2}-\d{2}$",
+                msg=(
+                    f"catalog_provenance.{harness_name}.last_checked "
+                    f"must be ISO-8601 YYYY-MM-DD (extended form with "
+                    f"hyphen separators); got "
+                    f"{bucket['last_checked']!r}"
+                ),
+            )
+            try:
+                datetime.date.fromisoformat(bucket["last_checked"])
+            except ValueError as exc:
+                self.fail(
+                    f"catalog_provenance.{harness_name}.last_checked "
+                    f"must be a valid date; got "
+                    f"{bucket['last_checked']!r} ({exc})"
+                )
+
+    def test_provenance_harnesses_have_matching_catalogs_entry(self) -> None:
+        # Cross-canary check: every harness declared under
+        # ``catalog_provenance`` must have a matching ``catalogs``
+        # bucket.  ``catalog_provenance`` is the source of truth for
+        # which harnesses are drift-managed, and the drift helper
+        # needs the catalogs bucket to read tool names — so a
+        # ``catalog_provenance`` entry without the matching catalogs
+        # bucket would only fail at drift-run time when the helper
+        # tries the lookup and hard-fails.  The reverse direction
+        # (a catalogs bucket without provenance) is intentionally
+        # NOT enforced — ``configuration.yaml`` documents that
+        # future non-drift-managed harnesses may use their own bucket
+        # shape under ``catalogs.<harness>`` without provenance
+        # metadata.
+        catalog_keys = set(
+            self._load_allowed_tools_section("catalogs").keys()
+        )
+        provenance_keys = set(
+            self._load_allowed_tools_section("catalog_provenance").keys()
+        )
+        missing_in_catalogs = provenance_keys - catalog_keys
+        self.assertFalse(
+            missing_in_catalogs,
+            msg=(
+                f"every harness declared under `catalog_provenance` "
+                f"must have a matching `catalogs` bucket; missing "
+                f"from catalogs: {sorted(missing_in_catalogs)}"
+            ),
+        )
 
 
 class ToolShapeRegexTests(unittest.TestCase):

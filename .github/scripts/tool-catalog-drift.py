@@ -4,7 +4,7 @@ and the canonical upstream tools reference.
 Reads the catalog at ``skill-system-foundry/scripts/lib/configuration.yaml``
 under ``skill.allowed_tools.catalogs.claude_code``, fetches the
 upstream markdown table at the URL recorded in
-``skill.allowed_tools.catalogs.claude_code.provenance.source_url``,
+``skill.allowed_tools.catalog_provenance.claude_code.source_url``,
 and compares the two sets of tool names.
 
 Outcomes:
@@ -274,14 +274,23 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
         immediately after the last existing harness-tool item.  The
         writer inserts new items there.
       * ``last_checked_line`` — int, the line index of
-        ``provenance.last_checked``.
+        ``catalog_provenance.<harness>.last_checked``.
 
-    Hard-fails (:class:`ParseError`) when the harness bucket, the
-    provenance block, or the harness_tools list is missing or
-    malformed.
+    Hard-fails (:class:`ParseError`) when the catalog harness bucket,
+    the catalog_provenance harness bucket, or the harness_tools list
+    is missing or malformed; also rejects a leftover legacy
+    ``provenance:`` child or a misplaced ``catalog_provenance:`` child
+    under ``catalogs.<harness>``.
     """
     lines = yaml_text.splitlines()
 
+    # Locate ``catalogs.<harness>`` first so the migration-mistake
+    # checks (legacy ``provenance:`` and misplaced
+    # ``catalog_provenance:`` directly under the harness bucket) can
+    # fire BEFORE the top-level ``catalog_provenance`` lookup.  A user
+    # who put the new key in the wrong place would otherwise hit the
+    # generic "missing top-level catalog_provenance" message and miss
+    # the actionable wrong-path/right-path guidance below.
     catalogs_index = _find_key_line(
         lines, "catalogs:", parents=("skill:", "allowed_tools:")
     )
@@ -301,25 +310,76 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             "update the harness list in this helper"
         )
 
-    provenance_index = _find_child_key(lines, harness_index, "provenance:")
-    if provenance_index < 0:
+    # Reject a leftover legacy ``provenance:`` child even when the new
+    # ``catalog_provenance.<harness>`` key is also present.  A
+    # partial-migration YAML carrying both shapes would otherwise parse
+    # cleanly and silently re-introduce the non-list child this schema
+    # move is meant to make impossible under ``catalogs.<harness>``.
+    legacy_provenance_index = _find_child_key(
+        lines, harness_index, "provenance:"
+    )
+    if legacy_provenance_index >= 0:
         raise ParseError(
-            f"configuration.yaml has no `provenance:` block under "
-            f"`skill.allowed_tools.catalogs.{harness}` — schema "
-            "migration incomplete (see issue #118)"
+            f"configuration.yaml still has a legacy `provenance:` child "
+            f"under `skill.allowed_tools.catalogs.{harness}` — remove "
+            "it; provenance now lives at "
+            f"`skill.allowed_tools.catalog_provenance.{harness}`"
+        )
+
+    # Also reject a misplaced ``catalog_provenance:`` *under* the
+    # harness bucket — the new schema requires it to live as a sibling
+    # of ``catalogs:`` at ``skill.allowed_tools.catalog_provenance``,
+    # not nested under any ``catalogs.<harness>``.  This check runs
+    # before the top-level lookup below so a single-mistake migration
+    # (only the misplaced version, no top-level one) still produces
+    # the actionable wrong-path/right-path guidance instead of the
+    # generic "missing top-level catalog_provenance" error.
+    misplaced_provenance_index = _find_child_key(
+        lines, harness_index, "catalog_provenance:"
+    )
+    if misplaced_provenance_index >= 0:
+        raise ParseError(
+            f"configuration.yaml has a misplaced `catalog_provenance:` "
+            f"child under `skill.allowed_tools.catalogs.{harness}` — "
+            "move it to the sibling top-level key "
+            f"`skill.allowed_tools.catalog_provenance.{harness}`"
+        )
+
+    # Provenance lives under a sibling top-level key
+    # ``skill.allowed_tools.catalog_provenance.<harness>`` so
+    # ``catalogs.<harness>`` stays a pure tool-name source (every
+    # direct child is a list of tool names).
+    catalog_prov_index = _find_key_line(
+        lines, "catalog_provenance:", parents=("skill:", "allowed_tools:")
+    )
+    if catalog_prov_index < 0:
+        raise ParseError(
+            "configuration.yaml has no `catalog_provenance:` block "
+            "under `skill.allowed_tools` — schema mismatch"
+        )
+
+    harness_prov_index = _find_child_key(
+        lines, catalog_prov_index, f"{harness}:"
+    )
+    if harness_prov_index < 0:
+        raise ParseError(
+            f"configuration.yaml has no `{harness}:` bucket under "
+            "`skill.allowed_tools.catalog_provenance` — add the "
+            "bucket or update the harness list in this helper"
         )
 
     source_url_line = _find_child_key(
-        lines, provenance_index, "source_url:"
+        lines, harness_prov_index, "source_url:"
     )
     last_checked_line = _find_child_key(
-        lines, provenance_index, "last_checked:"
+        lines, harness_prov_index, "last_checked:"
     )
     if source_url_line < 0 or last_checked_line < 0:
         raise ParseError(
             "configuration.yaml is missing `source_url` and/or "
-            f"`last_checked` under `{harness}.provenance` — schema "
-            "migration incomplete"
+            f"`last_checked` under "
+            f"`skill.allowed_tools.catalog_provenance.{harness}` — "
+            "schema migration incomplete"
         )
 
     source_url = _scalar_value(lines[source_url_line], "source_url:")
@@ -327,24 +387,38 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
     if not source_url:
         raise ParseError(
             f"configuration.yaml has an empty `source_url` value under "
-            f"`{harness}.provenance` — provide an explicit URL rather "
-            "than falling back to a default (silent fallback would "
-            "mask misconfigurations)"
+            f"`skill.allowed_tools.catalog_provenance.{harness}` — "
+            "provide an explicit URL rather than falling back to a "
+            "default (silent fallback would mask misconfigurations)"
         )
     if not last_checked:
         raise ParseError(
             f"configuration.yaml has an empty `last_checked` value "
-            f"under `{harness}.provenance` — provide an explicit "
-            "ISO-8601 `YYYY-MM-DD` date so a no-drift / removals-only "
-            "run cannot leave the catalog in an unprovenanced state"
+            f"under `skill.allowed_tools.catalog_provenance.{harness}` — "
+            "provide an explicit ISO-8601 `YYYY-MM-DD` date so a "
+            "no-drift / removals-only run cannot leave the catalog "
+            "in an unprovenanced state"
+        )
+    # ``datetime.date.fromisoformat`` alone accepts the compact ISO
+    # form (e.g. ``20260501``) since Python 3.11.  Pre-check the
+    # exact ``YYYY-MM-DD`` shape so the helper enforces the format it
+    # documents — otherwise a hyphen-less value would round-trip into
+    # ``configuration.yaml`` even though the canary and the workflow
+    # both assume canonical extended-form dates.
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", last_checked):
+        raise ParseError(
+            f"configuration.yaml has an invalid `last_checked` value "
+            f"under `skill.allowed_tools.catalog_provenance.{harness}`: "
+            f"{last_checked!r} — expected ISO-8601 `YYYY-MM-DD` "
+            "(extended form with hyphen separators)"
         )
     try:
         datetime.date.fromisoformat(last_checked)
     except ValueError as exc:
         raise ParseError(
             f"configuration.yaml has an invalid `last_checked` value "
-            f"under `{harness}.provenance`: {last_checked!r} — expected "
-            "ISO-8601 `YYYY-MM-DD`"
+            f"under `skill.allowed_tools.catalog_provenance.{harness}`: "
+            f"{last_checked!r} — expected ISO-8601 `YYYY-MM-DD`"
         ) from exc
 
     harness_tools_index = _find_child_key(
@@ -417,30 +491,43 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
 def _find_key_line(
     lines: list[str], key: str, parents: tuple[str, ...]
 ) -> int:
-    """Find *key* under the chain of *parents*.
+    """Find *key* as a direct child of the chain of *parents*.
 
-    Walks forward, descending into each parent in order.  Returns the
-    index of the matching line or -1.
+    Walks forward, descending into each parent in order, then looks
+    for *key* at the direct-child indent of the deepest parent.  Both
+    the parent descent and the final lookup enforce direct-child
+    semantics — a same-named key nested deeper in the subtree (or
+    embedded in a block scalar that happens to look like YAML) cannot
+    bind by accident.  Returns the line index or -1.
     """
     cursor = 0
     parent_indent = -1
     for parent in parents:
-        cursor = _find_key_at_or_after(lines, parent, cursor, parent_indent)
+        cursor = _find_direct_child_at_or_after(
+            lines, parent, cursor, parent_indent
+        )
         if cursor < 0:
             return -1
         parent_indent = _line_indent(lines[cursor])
         cursor += 1
-    return _find_key_at_or_after(lines, key, cursor, parent_indent)
+    return _find_direct_child_at_or_after(lines, key, cursor, parent_indent)
 
 
-def _find_key_at_or_after(
+def _find_direct_child_at_or_after(
     lines: list[str], key: str, start: int, parent_indent: int
 ) -> int:
-    """Find *key* starting at line *start*, deeper than *parent_indent*.
+    """Find *key* as a direct child starting at line *start*.
 
-    A negative *parent_indent* means "any indent" (used at the
-    top-level scan).
+    A direct child is a key at the first non-blank/non-comment indent
+    encountered deeper than *parent_indent*.  Lines at greater depth
+    (descendants) are skipped so a future nested key with the same
+    name cannot bind by accident.  Returns the line index or -1 if
+    the parent block ends before finding *key*.
+
+    A negative *parent_indent* means "no parent" — the first key
+    encountered sets the direct-child indent (matches top-level keys).
     """
+    direct_child_indent: int | None = None
     for index in range(start, len(lines)):
         line = lines[index]
         stripped = line.strip()
@@ -448,8 +535,11 @@ def _find_key_at_or_after(
             continue
         indent = _line_indent(line)
         if parent_indent >= 0 and indent <= parent_indent:
-            # Left the parent block — key not found inside it.
             return -1
+        if direct_child_indent is None:
+            direct_child_indent = indent
+        elif indent != direct_child_indent:
+            continue
         if stripped.startswith(key):
             return index
     return -1
@@ -460,12 +550,15 @@ def _find_child_key(
 ) -> int:
     """Find *key* as a direct child of the mapping declared at *parent_line*.
 
-    A direct child is the first key found at indent strictly greater
-    than the parent's indent, before any line at indent <= parent's.
+    A direct child is a key at the first non-blank/non-comment indent
+    deeper than the parent's indent.  Descendants at greater depth are
+    skipped so a same-named nested key cannot bind by accident.
     Returns the line index or -1.
     """
     parent_indent = _line_indent(lines[parent_line])
-    return _find_key_at_or_after(lines, key, parent_line + 1, parent_indent)
+    return _find_direct_child_at_or_after(
+        lines, key, parent_line + 1, parent_indent
+    )
 
 
 def _scalar_value(line: str, key: str) -> str:

@@ -268,15 +268,16 @@ skill:
   allowed_tools:
     catalogs:
       claude_code:
-        provenance:
-          source_url: https://example.test/tools.md
-          last_checked: "2026-04-26"
         harness_tools:
           - Bash
           - Read
           - Edit
         cli_tools:
           - bash
+    catalog_provenance:
+      claude_code:
+        source_url: https://example.test/tools.md
+        last_checked: "2026-04-26"
 """
 
 
@@ -307,16 +308,166 @@ class ParseCatalogTests(unittest.TestCase):
         self.assertRegex(parsed["last_checked"], r"^\d{4}-\d{2}-\d{2}$")
         self.assertIn("Bash", parsed["harness_tools"])
 
-    def test_missing_provenance_raises(self) -> None:
+    def test_missing_catalog_provenance_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
-            "        provenance:\n"
-            "          source_url: https://example.test/tools.md\n"
-            "          last_checked: \"2026-04-26\"\n",
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n",
             "",
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
-        self.assertIn("provenance", str(ctx.exception))
+        self.assertIn("catalog_provenance", str(ctx.exception))
+
+    def test_old_flat_provenance_shape_raises(self) -> None:
+        # A YAML in the legacy shape (``catalogs.<harness>.provenance:``)
+        # must fail loudly so a future revert to the old layout is
+        # caught at parse time rather than silently absorbed.  The
+        # error message names ``catalog_provenance`` so the failure
+        # mode is greppable to the new key.
+        old_shape = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        provenance:\n"
+            "          source_url: https://example.test/tools.md\n"
+            "          last_checked: \"2026-04-26\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(old_shape)
+        self.assertIn("catalog_provenance", str(ctx.exception))
+
+    def test_partial_migration_both_shapes_raises(self) -> None:
+        # A YAML carrying BOTH the legacy ``catalogs.<harness>.provenance``
+        # child AND the new top-level ``catalog_provenance.<harness>`` key
+        # must fail.  Without this guard ``parse_catalog`` would happily
+        # read the new path and ignore the legacy child, silently
+        # re-introducing the non-list catalog child this schema move is
+        # meant to make impossible.  The error names the legacy path so
+        # the maintainer knows exactly which line to delete.
+        partial = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        provenance:\n"
+            "          source_url: https://example.test/old.md\n"
+            "          last_checked: \"2026-04-01\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(partial)
+        message = str(ctx.exception)
+        self.assertIn("legacy", message.lower())
+        self.assertIn("catalogs.claude_code", message)
+
+    def test_nested_allowed_tools_in_parent_descent_does_not_bind(self) -> None:
+        # The parent descent in ``_find_key_line`` must enforce the
+        # same direct-child semantics as the final lookup, so a
+        # nested ``allowed_tools:`` appearing earlier in the file
+        # (e.g. embedded in a block scalar describing the schema, or
+        # as a key under an unrelated top-level mapping) cannot bind
+        # ahead of the real ``skill.allowed_tools`` block.  This
+        # test constructs a YAML where a deeper-nested
+        # ``allowed_tools:`` carries deliberately wrong values; the
+        # helper must descend through the real ``skill.allowed_tools``
+        # and return the correct top-level provenance.
+        yaml_text = (
+            "decoy:\n"
+            "  description: |\n"
+            "    Embedded YAML excerpt — must not bind:\n"
+            "      allowed_tools:\n"
+            "        catalog_provenance:\n"
+            "          claude_code:\n"
+            "            source_url: https://example.test/WRONG.md\n"
+            "            last_checked: \"1999-01-01\"\n"
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/correct.md\n"
+            "        last_checked: \"2026-04-26\"\n"
+        )
+        parsed = mod.parse_catalog(yaml_text)
+        self.assertEqual(
+            parsed["source_url"], "https://example.test/correct.md"
+        )
+        self.assertEqual(parsed["last_checked"], "2026-04-26")
+
+    def test_misplaced_catalog_provenance_under_harness_raises(self) -> None:
+        # The schema move requires ``catalog_provenance`` to live as a
+        # sibling of ``catalogs:`` at ``skill.allowed_tools``, not
+        # nested under any ``catalogs.<harness>``.  A misapplied
+        # migration that placed it under the harness bucket would
+        # silently leave a non-list child in the catalog bucket — the
+        # exact shape this PR is meant to make impossible — and the
+        # helper would still read provenance from the (correct)
+        # top-level key.  The parser must hard-fail instead, naming
+        # both the wrong location and the right one so the maintainer
+        # can move the block in a single edit.  This test covers the
+        # duplicate case (both shapes present); the only-misplaced
+        # case is in the test below.
+        yaml_text = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        catalog_provenance:\n"
+            "          source_url: https://example.test/WRONG.md\n"
+            "          last_checked: \"1999-01-01\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/correct.md\n"
+            "        last_checked: \"2026-04-26\"\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(yaml_text)
+        message = str(ctx.exception)
+        self.assertIn("misplaced", message.lower())
+        self.assertIn("catalogs.claude_code", message)
+        self.assertIn("catalog_provenance.claude_code", message)
+
+    def test_only_misplaced_catalog_provenance_raises_actionable_error(self) -> None:
+        # The more realistic single-mistake migration: the user moved
+        # the block but to the wrong location (under
+        # ``catalogs.<harness>``) and there is no top-level
+        # ``catalog_provenance`` at all.  The misplaced check must run
+        # BEFORE the top-level lookup so the maintainer gets the
+        # actionable wrong-path/right-path guidance instead of the
+        # generic "missing top-level catalog_provenance" message that
+        # they would otherwise hit first.
+        yaml_text = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        catalog_provenance:\n"
+            "          source_url: https://example.test/wherever.md\n"
+            "          last_checked: \"2026-04-26\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(yaml_text)
+        message = str(ctx.exception)
+        self.assertIn("misplaced", message.lower())
+        self.assertIn("catalogs.claude_code", message)
+        self.assertIn("catalog_provenance.claude_code", message)
 
     def test_missing_harness_tools_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
@@ -332,7 +483,7 @@ class ParseCatalogTests(unittest.TestCase):
 
     def test_missing_source_url_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
-            "          source_url: https://example.test/tools.md\n", ""
+            "        source_url: https://example.test/tools.md\n", ""
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
@@ -365,22 +516,59 @@ class ParseCatalogTests(unittest.TestCase):
         self.assertIn("last_checked", str(ctx.exception))
         self.assertIn("ISO-8601", str(ctx.exception))
 
+    def test_compact_iso_last_checked_value_raises(self) -> None:
+        # ``datetime.date.fromisoformat`` alone accepts the compact ISO
+        # form (no hyphens) since Python 3.11, so the format check has
+        # to pre-validate the canonical ``YYYY-MM-DD`` shape before
+        # parsing.  Without that pre-check, a hyphen-less value would
+        # round-trip into ``configuration.yaml`` and then trip the
+        # canary on the next CI run rather than failing at the helper's
+        # own boundary.
+        text = _HAPPY_CATALOG.replace(
+            'last_checked: "2026-04-26"',
+            'last_checked: "20260426"',
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        message = str(ctx.exception)
+        self.assertIn("last_checked", message)
+        self.assertIn("YYYY-MM-DD", message)
+        self.assertIn("20260426", message)
+
     def test_empty_source_url_value_raises(self) -> None:
         # Empty value (``source_url:`` with no scalar after it) must
         # also hard-fail — silent fallback to a default would mask
         # misconfigurations and contradict the helper's hard-fail
         # contract.
         text = _HAPPY_CATALOG.replace(
-            "          source_url: https://example.test/tools.md\n",
-            "          source_url:\n",
+            "        source_url: https://example.test/tools.md\n",
+            "        source_url:\n",
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
         self.assertIn("empty", str(ctx.exception).lower())
         self.assertIn("source_url", str(ctx.exception))
 
-    def test_missing_harness_bucket_raises(self) -> None:
-        text = _HAPPY_CATALOG.replace("claude_code", "fake_harness")
+    def test_missing_harness_bucket_in_catalogs_raises(self) -> None:
+        # Rename only the ``catalogs.<harness>`` occurrence; leave
+        # ``catalog_provenance.<harness>`` intact so the failure is
+        # localized to the harness_tools lookup.
+        text = _HAPPY_CATALOG.replace(
+            "      claude_code:\n        harness_tools:",
+            "      fake_harness:\n        harness_tools:",
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        self.assertIn("claude_code", str(ctx.exception))
+
+    def test_missing_harness_bucket_in_catalog_provenance_raises(self) -> None:
+        # Rename only the ``catalog_provenance.<harness>`` occurrence;
+        # leave ``catalogs.<harness>`` intact so the failure is
+        # localized to the provenance lookup.
+        text = _HAPPY_CATALOG.replace(
+            "      claude_code:\n        source_url:",
+            "      fake_harness:\n        source_url:",
+        )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(text)
         self.assertIn("claude_code", str(ctx.exception))
@@ -391,12 +579,13 @@ class ParseCatalogTests(unittest.TestCase):
             "  allowed_tools:\n"
             "    catalogs:\n"
             "      claude_code:\n"
-            "        provenance:\n"
-            "          source_url: x\n"
-            "          last_checked: \"2026-01-01\"\n"
             "        harness_tools:\n"
             "          - Bash\n"
             "            - Read\n"  # extra indent on second item
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: x\n"
+            "        last_checked: \"2026-01-01\"\n"
         )
         with self.assertRaises(mod.ParseError):
             mod.parse_catalog(text)
@@ -501,9 +690,6 @@ class ApplyAdditionsTests(unittest.TestCase):
             "  allowed_tools:\n"
             "    catalogs:\n"
             "      claude_code:\n"
-            "        provenance:\n"
-            "          source_url: https://example.test/tools.md\n"
-            "          last_checked: \"2026-04-26\"\n"
             "        harness_tools:\n"
             "          - Bash\n"
             "          - Read\n"
@@ -511,6 +697,10 @@ class ApplyAdditionsTests(unittest.TestCase):
             "        # NOT harness primitives — typo-detection only.\n"
             "        cli_tools:\n"
             "          - bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n"
         )
         out = mod.apply_additions(
             catalog_with_comment, {"NewTool"}, "2026-05-01"
@@ -534,11 +724,12 @@ class ApplyAdditionsTests(unittest.TestCase):
         eof_catalog = (
             "skill:\n"
             "  allowed_tools:\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/tools.md\n"
+            "        last_checked: \"2026-04-26\"\n"
             "    catalogs:\n"
             "      claude_code:\n"
-            "        provenance:\n"
-            "          source_url: https://example.test/tools.md\n"
-            "          last_checked: \"2026-04-26\"\n"
             "        harness_tools:\n"
             "          - Bash\n"
             "          - Read"  # NOTE: no trailing newline
@@ -841,7 +1032,7 @@ class MainTests(unittest.TestCase):
                 self.assertIn("HTTP 500", stderr.getvalue())
 
     def test_parse_error_exits_three(self) -> None:
-        broken = _HAPPY_CATALOG.replace("provenance:", "wrong_key:")
+        broken = _HAPPY_CATALOG.replace("catalog_provenance:", "wrong_key:")
         with _CatalogTempFile(broken) as path, _patched_fetch("ignored"):
             stderr = io.StringIO()
             with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
@@ -851,7 +1042,7 @@ class MainTests(unittest.TestCase):
                     "--today", "2026-05-01",
                 ])
             self.assertEqual(code, 3)
-            self.assertIn("provenance", stderr.getvalue())
+            self.assertIn("catalog_provenance", stderr.getvalue())
 
     def test_summary_out_writes_file(self) -> None:
         markdown = _load_fixture_markdown()
