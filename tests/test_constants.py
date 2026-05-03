@@ -418,6 +418,19 @@ class AllowedToolsCatalogTests(unittest.TestCase):
             loaded = yaml_parser.parse_yaml_subset(fh.read())
         catalogs = loaded["skill"]["allowed_tools"]["catalogs"]
         for harness_name, bucket in catalogs.items():
+            # Defensive: a future YAML edit that turns the harness
+            # bucket itself into a scalar or list would otherwise
+            # raise ``AttributeError`` at ``bucket.items()`` below
+            # and produce an opaque traceback instead of an
+            # actionable assertion failure.  Mirrors the
+            # provenance canary's upfront ``dict`` check.
+            self.assertIsInstance(
+                bucket, dict,
+                msg=(
+                    f"catalogs.{harness_name} must be a mapping; "
+                    f"got {type(bucket).__name__}"
+                ),
+            )
             for child_key, child_value in bucket.items():
                 self.assertNotEqual(
                     child_key, "provenance",
