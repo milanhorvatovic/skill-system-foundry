@@ -136,9 +136,9 @@ Finding levels:
 - **WARN** — the link resolves but uses a non-canonical form for its scope (e.g. a capability uses skill-root-relative form when file-relative would also work; the validator can rewrite this mechanically with `--fix`).
 - **INFO** — the link is an external reference and is recorded for the conformance report and the future capability-lift tool. Existence is still checked.
 
-The same information is exposed under `--json` with the keys `rule`, `scope`, `file`, `path`, `recommended_replacement`, `level`. Agent-driven tooling consumes that shape directly.
+The same information is exposed under `--json` with the keys `rule`, `scope`, `file`, `path`, `recommended_replacement`, `level`. Agent-driven tooling consumes that shape directly. Both `validate_skill.py` and `audit_skill_system.py` also emit a top-level `path_resolution` block (`rule_name`, `documentation_path`) so consumers can navigate to this document from any output stream.
 
-The `--fix` mode applies the mechanical class of conversions to the source files. By default `--fix` is dry-run and prints a unified diff; `--fix --apply` writes the changes. Conversions that are not mechanical (a path that no longer resolves to anything under the new rule) are reported as FAIL findings only — `--fix` never invents a target.
+The `--fix` mode previews mechanical conversions for the source files. By default `--fix` is dry-run and prints each rewrite; `--fix --apply` writes the changes. Path-resolution findings that the rewriter cannot resolve mechanically (a broken intra-skill link with no clear legacy target to rewrite to) are surfaced alongside the rewrites under `unfixable_findings` (JSON) or printed below the rewrite list (text); the run exits non-zero whenever any unfixable finding remains so CI / scripts can gate on a clean run. `--fix` never invents a target.
 
 ## What the Conformance Report Measures
 

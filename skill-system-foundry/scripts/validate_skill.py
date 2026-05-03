@@ -952,15 +952,51 @@ def main() -> None:
             print(f"Error: '{skill_path}' is not a directory")
         sys.exit(1)
 
-    # --fix mode: surface mechanical rewrites and exit before the rest
-    # of the validation pipeline runs.  The rewriter is independent of
-    # the per-rule findings — it operates on the captured ref strings
-    # directly and only suggests replacements where the legacy and new
-    # forms agree on the target file.
+    # --fix mode: surface mechanical rewrites alongside any
+    # path-resolution findings the regular validation pass would
+    # report (so a clean ``fixes: []`` is not mistaken for "skill
+    # conforms").  The rewriter is independent of the per-rule
+    # findings — it operates on the captured ref strings directly
+    # and only suggests replacements where the legacy and new forms
+    # agree on the target file.  Broken references that cannot be
+    # mechanically rewritten still appear here as
+    # ``unfixable_findings`` so the user has a complete picture of
+    # work remaining before the skill is conformant; per
+    # ``references/path-resolution.md`` the rewriter never invents
+    # a target.
     if args.fix:
         from lib.path_rewriter import find_fixable_references, apply_fixes
 
         rows = find_fixable_references(os.path.abspath(skill_path))
+        validation_errors, _passes = validate_skill(
+            skill_path, is_capability, allow_nested_refs,
+        )
+        # Drop findings that the rewriter already handles — they are
+        # represented in ``rows`` and would otherwise double-count.  A
+        # finding is considered covered when both the source file and
+        # the original ref string match one of the rewrite rows.
+        fixable_keys: set[tuple[str, str]] = {
+            (row["file_rel"], row["original"]) for row in rows
+        }
+
+        def _is_covered_by_rewriter(err: str) -> bool:
+            for row in rows:
+                # Finding text shape from ``_check_references``:
+                # "[path-resolution] '<ref>' referenced in <file> ..."
+                if (
+                    f"'{row['original']}'" in err
+                    and row["file_rel"] in err
+                    and (row["file_rel"], row["original"]) in fixable_keys
+                ):
+                    return True
+            return False
+
+        path_resolution_findings = [
+            err for err in validation_errors
+            if f"[{PATH_RESOLUTION_RULE_NAME}]" in err
+            and (err.startswith(LEVEL_FAIL) or err.startswith(LEVEL_WARN))
+            and not _is_covered_by_rewriter(err)
+        ]
         if json_output:
             print(to_json_output({
                 "tool": "validate_skill",
@@ -975,11 +1011,16 @@ def main() -> None:
                     }
                     for r in rows
                 ],
+                "unfixable_findings": path_resolution_findings,
+                "path_resolution": {
+                    "rule_name": PATH_RESOLUTION_RULE_NAME,
+                    "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                },
             }))
         else:
-            if not rows:
+            if not rows and not path_resolution_findings:
                 print("No mechanical rewrites needed — skill conforms.")
-            else:
+            elif rows:
                 action = "Applying" if args.apply else "Would apply"
                 print(f"{action} {len(rows)} rewrites:")
                 for r in rows:
@@ -987,11 +1028,21 @@ def main() -> None:
                         f"  {r['file_rel']}:{r['line']} "
                         f"'{r['original']}' → '{r['replacement']}'"
                     )
+            if path_resolution_findings:
+                print(
+                    f"\n{len(path_resolution_findings)} path-resolution "
+                    f"finding(s) the rewriter cannot resolve mechanically "
+                    f"(see {PATH_RESOLUTION_DOC_PATH}):"
+                )
+                for finding in path_resolution_findings:
+                    print_error_line(finding)
         if args.apply and rows:
             modified = apply_fixes(rows)
             if not json_output:
                 print(f"Modified {modified} file(s).")
-        sys.exit(0)
+        # Exit non-zero when any unfixable path-resolution issue
+        # remains so CI / scripts can gate on a clean run.
+        sys.exit(1 if path_resolution_findings else 0)
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 

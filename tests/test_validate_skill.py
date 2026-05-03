@@ -2092,6 +2092,99 @@ class MainCLITests(unittest.TestCase):
 
 
 # ===================================================================
+# --fix mode (mechanical rewrites + unfixable findings)
+# ===================================================================
+
+
+class FixModeTests(unittest.TestCase):
+    """``--fix`` surfaces both mechanical rewrites and unfixable
+    path-resolution findings, per ``references/path-resolution.md``."""
+
+    def test_fix_dry_run_lists_rewrites_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run([skill_dir, "--fix"], cwd=REPO_ROOT)
+            with open(cap_md, "r", encoding="utf-8") as f:
+                contents_after = f.read()
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertIn("Would apply", proc.stdout)
+        self.assertIn("references/guide.md", proc.stdout)
+        # Dry-run must not modify the source.
+        self.assertIn("[g](references/guide.md)", contents_after)
+
+    def test_fix_apply_writes_rewrites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--apply"], cwd=REPO_ROOT)
+            with open(cap_md, "r", encoding="utf-8") as f:
+                contents_after = f.read()
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertIn("Applying", proc.stdout)
+        self.assertIn("[g](../../references/guide.md)", contents_after)
+
+    def test_fix_surfaces_unfixable_broken_ref_and_exits_one(self) -> None:
+        """A broken intra-skill ref the rewriter cannot resolve must
+        appear in the ``--fix`` output and force a non-zero exit so
+        CI / scripts gate on it.  Pins the contract documented in
+        ``references/path-resolution.md`` (lines describing
+        ``--fix``: non-mechanical broken paths surface as findings).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [m](references/missing.md).\n",
+            )
+            proc = _run([skill_dir, "--fix"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertIn("references/missing.md", proc.stdout)
+        self.assertIn("path-resolution", proc.stdout)
+
+    def test_fix_json_payload_includes_unfixable_and_doc_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [m](references/missing.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertEqual(payload["mode"], "fix")
+        self.assertEqual(payload["fixes"], [])
+        self.assertTrue(any(
+            "references/missing.md" in f for f in payload["unfixable_findings"]
+        ))
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            payload["path_resolution"]["documentation_path"],
+        )
+
+
+# ===================================================================
 # _check_references tail branches
 # ===================================================================
 
