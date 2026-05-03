@@ -981,10 +981,10 @@ def main() -> None:
         # ``skill_root``), so constructing a real-world false-cover
         # case is hard.  Using the marker rather than an unbounded
         # ``row["file_rel"] in err`` future-proofs the filter against
-        # changes elsewhere that might introduce asymmetry.  See
-        # ``test_fix_filter_marker_matches_check_references_output``
-        # for the contract test that pins the marker against the
-        # actual emitter shape.
+        # changes elsewhere that might introduce asymmetry.  The
+        # ``FixModeTests`` class in ``tests/test_validate_skill.py``
+        # carries the contract test that pins this marker against the
+        # actual ``_check_references`` output shape.
         def _is_covered_by_rewriter(err: str) -> bool:
             for row in rows:
                 marker = f" referenced in {row['file_rel']} (scope:"
