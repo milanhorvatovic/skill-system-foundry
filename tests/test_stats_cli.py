@@ -181,7 +181,9 @@ class StatsCLIHappyPathTests(unittest.TestCase):
                     "[b](capabilities/b/capability.md)\n"
                 ),
             )
-            shared_body = "see [s](references/shared.md)\n"
+            # File-relative resolution: a capability reaches the shared
+            # skill root via the canonical ``../../`` external form.
+            shared_body = "see [s](../../references/shared.md)\n"
             write_text(
                 os.path.join(tmpdir, "capabilities", "a", "capability.md"),
                 shared_body,
@@ -285,7 +287,9 @@ class StatsCLIInProcessTests(unittest.TestCase):
                     "[b](capabilities/b/capability.md)\n"
                 ),
             )
-            shared = "[s](references/shared.md)\n"
+            # Capabilities reach the shared skill root via the canonical
+            # ``../../`` external-reference form (file-relative rule).
+            shared = "[s](../../references/shared.md)\n"
             write_text(
                 os.path.join(tmpdir, "capabilities", "a", "capability.md"),
                 shared,
