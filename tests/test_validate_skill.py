@@ -2183,22 +2183,26 @@ class FixModeTests(unittest.TestCase):
             payload["path_resolution"]["documentation_path"],
         )
 
-    def test_fix_does_not_drop_unfixable_when_file_rel_collides_with_substring(self) -> None:
-        """A fixable rewrite for a short-pathed file must not mask an
-        unfixable finding for a file whose path *contains* the fixable
-        file's path as a substring.
+    def test_fix_lists_fixable_and_unfixable_independently(self) -> None:
+        """Fixable rewrites and unfixable findings surface in their
+        own respective output slots without interfering.
 
-        Concrete shape pinned: a fixable rewrite originates from
-        ``references/sibling.md`` (a sibling links ``references/peer.md``
-        which under file-relative semantics resolves broken but is
+        Pins the contract that a rewriter row covering its own source's
+        finding does not leak into the unfixable bucket, and that an
+        unrelated unfixable broken ref survives the filter even when
+        the two source paths share a substring (one path is a prefix
+        of the other under POSIX form).
+
+        Concrete setup: a fixable rewrite originates from
+        ``references/sibling.md`` (links ``references/peer.md``,
         rewriteable to ``peer.md``).  Independently a capability-local
-        reference at ``capabilities/demo/references/sibling.md`` links
-        the same broken intra-scope path; that one is *not* rewriteable
-        because the rewriter refuses to invent a target.  The capability
-        finding must surface as unfixable even though the row's
-        ``file_rel`` (``references/sibling.md``) is a substring of the
-        capability file's path
-        (``capabilities/demo/references/sibling.md``).
+        file at ``capabilities/demo/references/sibling.md`` links a
+        broken intra-scope path the rewriter cannot resolve.  Note:
+        the unfixable finding's ``original`` ref differs from the
+        rewriter row's, so the coverage predicate short-circuits on
+        the original-ref check and never reaches the position-bounded
+        source-path branch — that branch is exercised separately by
+        ``test_fix_filter_marker_matches_check_references_output``.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "demo-skill")
