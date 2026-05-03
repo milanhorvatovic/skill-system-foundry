@@ -149,7 +149,7 @@ Metrics:
 - `total_links` — total internal cross-file links across all `.md` files in the skill.
 - `resolves_under_standard_semantics` — count of links that resolve to an existing file when interpreted file-relative.
 - `broken_under_standard_semantics` — count of links that fail to resolve under standard semantics.
-- `connected_components` — number of weakly-connected components in the link graph reachable from `SKILL.md` and every `capability.md`. A healthy skill has one component per scope (the skill root sub-graph, plus one per capability).
+- `connected_components` — number of weakly-connected components in the link graph reachable from `SKILL.md` and every `capability.md`. A router skill in which `SKILL.md` links every capability typically reports `1` because the router edges merge each per-scope sub-graph into a single component; a larger value signals capability scopes that no router edge reaches (a useful drift signal for accidentally unrouted capabilities).
 - `files_unreachable_from_root` — count of `.md` files under the skill that no root reaches.
 - `external_edges_per_capability` — for each capability, the number of `../../` edges into the shared skill root. The lift tool's per-capability rewrite cost.
 

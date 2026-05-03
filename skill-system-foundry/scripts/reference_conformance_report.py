@@ -17,10 +17,13 @@ Metrics:
 * ``resolves_under_standard_semantics`` — count of links that resolve
   to an existing file under file-relative resolution.
 * ``broken_under_standard_semantics`` — count of links that do not.
-* ``connected_components`` — count of connected components in the
-  link graph reachable from ``SKILL.md`` and every ``capability.md``.
-  A healthy skill has one component per scope (skill root, plus one
-  per capability).
+* ``connected_components`` — count of weakly-connected components in
+  the link graph reachable from ``SKILL.md`` and every ``capability.md``.
+  A router skill in which ``SKILL.md`` links every capability typically
+  reports ``1`` because the router edges merge all per-scope sub-graphs
+  into a single component.  A larger value signals capability scopes
+  that no router edge reaches — useful for detecting accidentally
+  unrouted capabilities.
 * ``files_unreachable_from_root`` — count of ``.md`` files under the
   skill that no root reaches.
 * ``external_edges_per_capability`` — for each capability, the number
@@ -385,6 +388,24 @@ def main() -> int:
         msg = f"error: '{args.skill_path}' is not a directory"
         if args.json:
             print(to_json_output({"tool": "reference_conformance_report", "error": msg}))
+        else:
+            print(msg, file=sys.stderr)
+        return 2
+
+    # Refuse to run on a directory that is not a skill root.  Without
+    # this guard the walker scans whatever markdown the directory
+    # happens to contain (top-level docs, .github/, examples/) and
+    # reports broken links for paths that are simply outside any
+    # skill — noise that masks real conformance issues.
+    if not os.path.isfile(os.path.join(skill_path, FILE_SKILL_MD)):
+        msg = (
+            f"error: '{args.skill_path}' does not contain {FILE_SKILL_MD} "
+            "— pass a skill directory (the directory containing SKILL.md)"
+        )
+        if args.json:
+            print(to_json_output({
+                "tool": "reference_conformance_report", "error": msg,
+            }))
         else:
             print(msg, file=sys.stderr)
         return 2

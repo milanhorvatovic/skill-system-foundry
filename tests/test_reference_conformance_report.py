@@ -216,6 +216,28 @@ class CliInvocationTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("error", err.lower())
 
+    def test_directory_without_skill_md_exits_two(self) -> None:
+        # Refuses to scan an arbitrary directory — without the guard the
+        # walker would enumerate whatever markdown the directory contains
+        # (e.g. the repo root's top-level docs, .github/, examples/) and
+        # report broken links for paths that are simply outside any skill.
+        with tempfile.TemporaryDirectory() as tmp:
+            # Add a markdown file but no SKILL.md so the directory is
+            # non-empty but still not a skill root.
+            write_text(os.path.join(tmp, "README.md"), "# Readme\n")
+            rc, _out, err = self._invoke([tmp])
+        self.assertEqual(rc, 2)
+        self.assertIn("SKILL.md", err)
+
+    def test_directory_without_skill_md_json_exits_two(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "README.md"), "# Readme\n")
+            rc, out, _err = self._invoke([tmp, "--json"])
+        self.assertEqual(rc, 2)
+        payload = json.loads(out)
+        self.assertEqual(payload["tool"], "reference_conformance_report")
+        self.assertIn("error", payload)
+
     def test_json_output_is_valid_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp)
