@@ -370,6 +370,37 @@ class ParseCatalogTests(unittest.TestCase):
         self.assertIn("legacy", message.lower())
         self.assertIn("catalogs.claude_code", message)
 
+    def test_nested_catalog_provenance_does_not_bind(self) -> None:
+        # The schema move makes ``catalog_provenance`` a sibling
+        # top-level key under ``skill.allowed_tools``.  The lookup must
+        # therefore enforce direct-child semantics — a future YAML
+        # that nests a same-named key deeper in the subtree must NOT
+        # bind to the nested copy and read its values.  This test
+        # constructs a YAML where a nested ``catalog_provenance:``
+        # under ``catalogs.<harness>`` carries deliberately wrong
+        # values; the helper must read the top-level (correct) bucket
+        # instead, proving the lookup is direct-child-only.
+        yaml_text = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        catalog_provenance:\n"
+            "          source_url: https://example.test/WRONG.md\n"
+            "          last_checked: \"1999-01-01\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/correct.md\n"
+            "        last_checked: \"2026-04-26\"\n"
+        )
+        parsed = mod.parse_catalog(yaml_text)
+        self.assertEqual(
+            parsed["source_url"], "https://example.test/correct.md"
+        )
+        self.assertEqual(parsed["last_checked"], "2026-04-26")
+
     def test_missing_harness_tools_raises(self) -> None:
         text = _HAPPY_CATALOG.replace(
             "        harness_tools:\n"

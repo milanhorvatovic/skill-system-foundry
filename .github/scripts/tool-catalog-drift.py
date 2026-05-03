@@ -463,10 +463,14 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
 def _find_key_line(
     lines: list[str], key: str, parents: tuple[str, ...]
 ) -> int:
-    """Find *key* under the chain of *parents*.
+    """Find *key* as a direct child of the chain of *parents*.
 
-    Walks forward, descending into each parent in order.  Returns the
-    index of the matching line or -1.
+    Walks forward, descending into each parent in order, then looks
+    for *key* at the direct-child indent of the deepest parent.  A
+    future nested key with the same name deeper in the subtree is
+    skipped — the schema move is specifically about a sibling
+    top-level key, so the lookup must not bind to a same-named
+    descendant by accident.  Returns the line index or -1.
     """
     cursor = 0
     parent_indent = -1
@@ -476,7 +480,7 @@ def _find_key_line(
             return -1
         parent_indent = _line_indent(lines[cursor])
         cursor += 1
-    return _find_key_at_or_after(lines, key, cursor, parent_indent)
+    return _find_direct_child_at_or_after(lines, key, cursor, parent_indent)
 
 
 def _find_key_at_or_after(
@@ -485,7 +489,11 @@ def _find_key_at_or_after(
     """Find *key* starting at line *start*, deeper than *parent_indent*.
 
     A negative *parent_indent* means "any indent" (used at the
-    top-level scan).
+    top-level scan).  This helper does not enforce direct-child
+    semantics — it returns the first match at any depth deeper than
+    the parent.  Use :func:`_find_direct_child_at_or_after` (or
+    :func:`_find_child_key`) when the lookup must reject same-named
+    descendants.
     """
     for index in range(start, len(lines)):
         line = lines[index]
@@ -501,17 +509,52 @@ def _find_key_at_or_after(
     return -1
 
 
+def _find_direct_child_at_or_after(
+    lines: list[str], key: str, start: int, parent_indent: int
+) -> int:
+    """Find *key* as a direct child starting at line *start*.
+
+    A direct child is a key at the first non-blank/non-comment indent
+    encountered deeper than *parent_indent*.  Lines at greater depth
+    (descendants) are skipped so a future nested key with the same
+    name cannot bind by accident.  Returns the line index or -1 if
+    the parent block ends before finding *key*.
+
+    A negative *parent_indent* means "no parent" — the first key
+    encountered sets the direct-child indent (matches top-level keys).
+    """
+    direct_child_indent: int | None = None
+    for index in range(start, len(lines)):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#"):
+            continue
+        indent = _line_indent(line)
+        if parent_indent >= 0 and indent <= parent_indent:
+            return -1
+        if direct_child_indent is None:
+            direct_child_indent = indent
+        elif indent != direct_child_indent:
+            continue
+        if stripped.startswith(key):
+            return index
+    return -1
+
+
 def _find_child_key(
     lines: list[str], parent_line: int, key: str
 ) -> int:
     """Find *key* as a direct child of the mapping declared at *parent_line*.
 
-    A direct child is the first key found at indent strictly greater
-    than the parent's indent, before any line at indent <= parent's.
+    A direct child is a key at the first non-blank/non-comment indent
+    deeper than the parent's indent.  Descendants at greater depth are
+    skipped so a same-named nested key cannot bind by accident.
     Returns the line index or -1.
     """
     parent_indent = _line_indent(lines[parent_line])
-    return _find_key_at_or_after(lines, key, parent_line + 1, parent_indent)
+    return _find_direct_child_at_or_after(
+        lines, key, parent_line + 1, parent_indent
+    )
 
 
 def _scalar_value(line: str, key: str) -> str:
