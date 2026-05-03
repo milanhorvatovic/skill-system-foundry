@@ -466,47 +466,23 @@ def _find_key_line(
     """Find *key* as a direct child of the chain of *parents*.
 
     Walks forward, descending into each parent in order, then looks
-    for *key* at the direct-child indent of the deepest parent.  A
-    future nested key with the same name deeper in the subtree is
-    skipped — the schema move is specifically about a sibling
-    top-level key, so the lookup must not bind to a same-named
-    descendant by accident.  Returns the line index or -1.
+    for *key* at the direct-child indent of the deepest parent.  Both
+    the parent descent and the final lookup enforce direct-child
+    semantics — a same-named key nested deeper in the subtree (or
+    embedded in a block scalar that happens to look like YAML) cannot
+    bind by accident.  Returns the line index or -1.
     """
     cursor = 0
     parent_indent = -1
     for parent in parents:
-        cursor = _find_key_at_or_after(lines, parent, cursor, parent_indent)
+        cursor = _find_direct_child_at_or_after(
+            lines, parent, cursor, parent_indent
+        )
         if cursor < 0:
             return -1
         parent_indent = _line_indent(lines[cursor])
         cursor += 1
     return _find_direct_child_at_or_after(lines, key, cursor, parent_indent)
-
-
-def _find_key_at_or_after(
-    lines: list[str], key: str, start: int, parent_indent: int
-) -> int:
-    """Find *key* starting at line *start*, deeper than *parent_indent*.
-
-    A negative *parent_indent* means "any indent" (used at the
-    top-level scan).  This helper does not enforce direct-child
-    semantics — it returns the first match at any depth deeper than
-    the parent.  Use :func:`_find_direct_child_at_or_after` (or
-    :func:`_find_child_key`) when the lookup must reject same-named
-    descendants.
-    """
-    for index in range(start, len(lines)):
-        line = lines[index]
-        stripped = line.strip()
-        if stripped == "" or stripped.startswith("#"):
-            continue
-        indent = _line_indent(line)
-        if parent_indent >= 0 and indent <= parent_indent:
-            # Left the parent block — key not found inside it.
-            return -1
-        if stripped.startswith(key):
-            return index
-    return -1
 
 
 def _find_direct_child_at_or_after(

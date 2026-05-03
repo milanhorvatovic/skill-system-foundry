@@ -370,6 +370,43 @@ class ParseCatalogTests(unittest.TestCase):
         self.assertIn("legacy", message.lower())
         self.assertIn("catalogs.claude_code", message)
 
+    def test_nested_allowed_tools_in_parent_descent_does_not_bind(self) -> None:
+        # The parent descent in ``_find_key_line`` must enforce the
+        # same direct-child semantics as the final lookup, so a
+        # nested ``allowed_tools:`` appearing earlier in the file
+        # (e.g. embedded in a block scalar describing the schema, or
+        # as a key under an unrelated top-level mapping) cannot bind
+        # ahead of the real ``skill.allowed_tools`` block.  This
+        # test constructs a YAML where a deeper-nested
+        # ``allowed_tools:`` carries deliberately wrong values; the
+        # helper must descend through the real ``skill.allowed_tools``
+        # and return the correct top-level provenance.
+        yaml_text = (
+            "decoy:\n"
+            "  description: |\n"
+            "    Embedded YAML excerpt — must not bind:\n"
+            "      allowed_tools:\n"
+            "        catalog_provenance:\n"
+            "          claude_code:\n"
+            "            source_url: https://example.test/WRONG.md\n"
+            "            last_checked: \"1999-01-01\"\n"
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "    catalog_provenance:\n"
+            "      claude_code:\n"
+            "        source_url: https://example.test/correct.md\n"
+            "        last_checked: \"2026-04-26\"\n"
+        )
+        parsed = mod.parse_catalog(yaml_text)
+        self.assertEqual(
+            parsed["source_url"], "https://example.test/correct.md"
+        )
+        self.assertEqual(parsed["last_checked"], "2026-04-26")
+
     def test_nested_catalog_provenance_does_not_bind(self) -> None:
         # The schema move makes ``catalog_provenance`` a sibling
         # top-level key under ``skill.allowed_tools``.  The lookup must
