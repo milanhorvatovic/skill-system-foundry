@@ -369,33 +369,48 @@ class DocsSafetyTests(unittest.TestCase):
                 + "\n  ".join(failures)
             )
 
-    def test_no_parent_traversal_in_markdown_links(self) -> None:
-        """Markdown link targets must not use ../ parent traversals per
-        agentskills.io spec — paths should be skill-root-relative."""
+    def test_parent_traversal_links_resolve_within_skill(self) -> None:
+        """Under the redefined path-resolution rule
+        (``references/path-resolution.md``), ``../`` segments are legal
+        — they are how a capability reaches the shared skill root.
+        Every ``../``-using link must still resolve to an existing
+        file inside the skill directory; links that escape the skill
+        root entirely are flagged elsewhere as INFO (out of scope)."""
+        skill_root = os.path.dirname(os.path.dirname(DOCS["SKILL.md"]))
         failures = []
 
         for doc_label, doc_path in DOCS.items():
             if not os.path.isfile(doc_path):
                 continue
             content = _read(doc_path)
-            # Strip fenced code blocks so symlink command examples
-            # (e.g., ln -s ../../.agents/...) are not flagged.
             content_no_code = RE_FENCED_CODE_BLOCK.sub("", content)
             for match in RE_MD_LINK.finditer(content_no_code):
                 target = match.group(1).strip()
                 if re.match(r"https?://|mailto:|file:///|<|#", target):
                     continue
-                if "../" in target:
+                if "../" not in target:
+                    continue
+                # Strip optional title and fragment.
+                clean = target.split(" ", 1)[0].split("#", 1)[0]
+                if not clean:
+                    continue
+                resolved = os.path.normpath(
+                    os.path.join(os.path.dirname(doc_path), clean)
+                )
+                # Out-of-skill links are recorded as INFO elsewhere; this
+                # test only complains about ../ links that don't resolve.
+                if not resolved.startswith(skill_root):
+                    continue
+                if not os.path.exists(resolved):
                     failures.append(
-                        f"  {doc_label}: link target '{target}' uses ../ "
-                        "traversal (should be skill-root-relative)"
+                        f"  {doc_label}: link target '{target}' "
+                        f"resolved to {resolved} which does not exist"
                     )
 
         if failures:
             self.fail(
-                "Markdown links with ../ parent traversal violate "
-                "skill-root-relative path convention:\n"
-                + "\n".join(failures)
+                "Markdown links using ../ traversal must resolve to "
+                "existing files inside the skill:\n" + "\n".join(failures)
             )
 
     def test_no_dot_slash_prefix_in_file_references(self) -> None:

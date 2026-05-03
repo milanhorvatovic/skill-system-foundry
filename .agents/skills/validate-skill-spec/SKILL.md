@@ -29,7 +29,7 @@ This skill provides a manual validation workflow that complements automated vali
 
 ## Step 1: Identify the Skill Directory
 
-Determine the skill directory to validate. The skill root is the directory containing `SKILL.md`. All file references are resolved relative to this root.
+Determine the skill directory to validate. The skill root is the directory containing `SKILL.md`. Cross-file references resolve file-relative (standard markdown semantics) under the redefined path-resolution rule — every link resolves from the directory containing the file the link lives in. The skill root and each capability root own their own subgraph; capability bodies reach the shared skill root via the explicit `../../<dir>/<file>` form. The full rule lives in `references/path-resolution.md`.
 
 If validation scripts are available (e.g., `validate_skill.py` from this repository), run them from within the `skill-system-foundry/` directory:
 
@@ -73,7 +73,7 @@ Filter out:
 
 ### 3b: Check that every referenced file exists
 
-For each extracted reference, resolve it relative to the skill root (the directory containing `SKILL.md`). Strip any fragment (`#section`), query string, or title annotation before resolving.
+For each extracted reference, resolve it file-relative (from the directory containing the file the link lives in) per the redefined path-resolution rule. Strip any fragment (`#section`), query string, or title annotation before resolving.
 
 Verify that each resolved path:
 - Points to an existing file (not a directory)
@@ -93,9 +93,9 @@ Report any file that exists in the skill directory but is not referenced from `S
 
 All file references must comply with these rules:
 
-- **Relative to skill root** — paths must be relative, resolved from the directory containing `SKILL.md`
+- **File-relative resolution** — paths must be relative, resolved from the directory containing the file the link lives in (standard markdown semantics)
 - **No absolute paths** — any path starting with `/` or a drive letter (e.g., `C:\`) is a violation
-- **No parent traversals** — paths containing `../` that escape the skill root are invalid as internal references
+- **`..` segments are legal** — they are how a capability reaches the shared skill root (`../../<dir>/<file>`). Paths whose `..` chain escapes the skill root entirely are out of scope and surfaced as INFO, not failures
 - **Forward slashes only** — all paths must use `/`, not `\`. This is a cross-platform portability requirement
 
 ### 3e: Verify reference depth
