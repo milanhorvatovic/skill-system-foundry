@@ -3710,9 +3710,9 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 len(broken), 1,
                 "misspelled router-table cell must produce a "
-                f"[spec] broken-link WARN; got: {errors!r}",
+                f"[path-resolution] broken-link WARN; got: {errors!r}",
             )
-            self.assertIn("[spec]", broken[0])
+            self.assertIn("[path-resolution]", broken[0])
 
     def test_broken_link_is_not_double_reported(self) -> None:
         # validate_skill_references already emits broken-reference
@@ -3720,8 +3720,8 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
         # walks the same graph, so without gating it would re-emit
         # equivalent diagnostics and double the WARN count.  Pin the
         # gating: a single broken intra-skill link produces exactly
-        # one "does not exist" finding from the spec rule, and zero
-        # from the orphan rule's reachability walk.
+        # one "does not exist" finding from the path-resolution rule,
+        # and zero from the orphan rule's reachability walk.
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "demo-skill")
             write_skill_md(
@@ -3734,7 +3734,7 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
                 len(broken), 1,
                 f"expected exactly one broken-link finding, got {broken!r}",
             )
-            self.assertIn("[spec]", broken[0])
+            self.assertIn("[path-resolution]", broken[0])
 
 
 class CapabilityAggregationIntegrationTests(unittest.TestCase):

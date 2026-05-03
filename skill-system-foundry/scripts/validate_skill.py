@@ -272,9 +272,11 @@ def _check_references(
         # Cross-scope reference from a capability — the canonical
         # external-reference form for capability liftability.  Surfaced
         # as INFO so the future capability-lift tool can find them, but
-        # treated as a real reference for existence checking.
-        # Skill → capability references (the router-table pattern) are
-        # NOT flagged: they are entry-point edges, not lift-relevant
+        # only when the target actually exists; a broken external ref
+        # gets a single broken-link WARN below (avoids the
+        # noise of double-reporting the same offender).  Skill →
+        # capability references (the router-table pattern) are NOT
+        # flagged: they are entry-point edges, not lift-relevant
         # external resources.
         ref_rel_to_root = os.path.relpath(ref_path, skill_root).replace(
             os.sep, "/",
@@ -287,6 +289,18 @@ def _check_references(
                 or ref_scope_name != scope_name
             )
         )
+
+        internal_checked += 1
+
+        if not os.path.exists(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "does not exist"
+            )
+            continue
+
         if is_cross_scope_from_capability:
             errors.append(
                 f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
@@ -295,22 +309,13 @@ def _check_references(
                 "tool"
             )
 
-        internal_checked += 1
-
-        if not os.path.exists(ref_path):
-            broken_found = True
-            errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
-                f"(scope: {scope_tag}) does not exist"
-            )
-            continue
-
         # Handle directory references gracefully
         if not os.path.isfile(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
-                f"(scope: {scope_tag}) resolves to a non-file path"
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "resolves to a non-file path"
             )
             continue
 
@@ -321,9 +326,9 @@ def _check_references(
         except (OSError, UnicodeError) as exc:
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
-                f"(scope: {scope_tag}) cannot be read "
-                f"({exc.__class__.__name__}: {exc})"
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"cannot be read ({exc.__class__.__name__}: {exc})"
             )
             continue
 

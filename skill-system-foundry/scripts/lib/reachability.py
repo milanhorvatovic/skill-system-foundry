@@ -29,6 +29,7 @@ from .constants import (
     FILE_SKILL_MD,
     LEVEL_INFO,
     LEVEL_WARN,
+    PATH_RESOLUTION_RULE_NAME,
     RE_BACKTICK_REF,
     RE_MARKDOWN_LINK_REF,
 )
@@ -202,14 +203,17 @@ def walk_reachable(
     and skipped — they are by definition out of scope for an
     intra-skill orphan check.  Refs that do not resolve to a regular
     file are recorded as ``WARN``.  Absolute paths are recorded as
-    ``WARN`` (tagged ``[foundry reachability]``) and skipped —
+    ``WARN`` (tagged ``[path-resolution]``) and skipped —
     ``audit_skill_system`` does not otherwise validate intra-skill
     reference syntax, so silent skip would let absolute forms go
     entirely unreported when the audit runs without ``validate_skill``.
-    Callers that already run ``validate_skill`` on the same tree
-    (e.g. ``validate_skill`` itself, which invokes
-    ``find_orphan_references`` after its own reference check) suppress
-    these via ``surface_walk_warnings=False`` to avoid double counting.
+    File-read failures during the walk are tagged
+    ``[foundry reachability]`` (an operational concern, not a
+    path-resolution rule violation).  Callers that already run
+    ``validate_skill`` on the same tree (e.g. ``validate_skill``
+    itself, which invokes ``find_orphan_references`` after its own
+    reference check) suppress these via
+    ``surface_walk_warnings=False`` to avoid double counting.
     """
     skill_root = os.path.abspath(skill_root)
     visited: set[str] = set()
@@ -253,9 +257,9 @@ def walk_reachable(
         ):
             if os.path.isabs(ref):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference "
-                    f"'{ref}' in '{rel}' is absolute — reachability "
-                    f"walk skipped it"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' is absolute — "
+                    f"reachability walk skipped it"
                 )
                 continue
             ref_norm = ref.replace("\\", "/")
@@ -270,24 +274,24 @@ def walk_reachable(
 
             if not is_within_directory(ref_abs, skill_root):
                 warnings.append(
-                    f"{LEVEL_INFO}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' resolves outside the skill directory — "
-                    f"excluded from reachability"
+                    f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' resolves outside the "
+                    f"skill directory — excluded from reachability"
                 )
                 continue
 
             if not os.path.exists(ref_abs):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' does not exist — reachability walk "
-                    f"skipped it"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' does not exist — "
+                    f"reachability walk skipped it"
                 )
                 continue
             if not os.path.isfile(ref_abs):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' is not a regular file — reachability walk "
-                    f"skipped it"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' is not a regular "
+                    f"file — reachability walk skipped it"
                 )
                 continue
 

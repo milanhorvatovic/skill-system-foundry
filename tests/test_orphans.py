@@ -520,7 +520,7 @@ class WalkWarningSurfacingTests(unittest.TestCase):
             outside = [
                 f for f in findings
                 if "outside the skill directory" in f
-                and "[foundry reachability]" in f
+                and "[path-resolution]" in f
             ]
             self.assertEqual(
                 len(outside), 1,
