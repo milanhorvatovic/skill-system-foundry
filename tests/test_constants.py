@@ -356,6 +356,17 @@ class DescriptionTriggerExamplePhrasesTests(unittest.TestCase):
 class AllowedToolsCatalogTests(unittest.TestCase):
     """Per-harness catalog constants exposed by ``allowed_tools.catalogs``."""
 
+    # Harnesses currently tracked by the tool-catalog drift helper.
+    # ``configuration.yaml`` documents that future harnesses may use
+    # their own bucket shape under ``catalogs.<harness>``, so the
+    # strict schema canaries below scope to this set rather than
+    # iterating every harness in the loaded YAML.  Today only
+    # ``claude_code`` is drift-managed (the helper at
+    # ``.github/scripts/tool-catalog-drift.py`` hardcodes the harness
+    # rather than iterating ``HARNESS_NAMES``); add new entries here
+    # in lockstep with teaching the drift helper a new harness.
+    _DRIFT_MANAGED_HARNESSES = frozenset({"claude_code"})
+
     def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
         # Names listed in the Claude Code skills documentation.
         for tool in ("Bash", "Read", "Edit", "Write", "Grep", "Glob",
@@ -402,22 +413,34 @@ class AllowedToolsCatalogTests(unittest.TestCase):
         self.assertIn("Bash", constants.KNOWN_TOOLS)
 
     def test_catalogs_harness_children_are_tool_lists(self) -> None:
-        # Schema invariant: every direct child of
-        # ``skill.allowed_tools.catalogs.<harness>`` is a list of
-        # tool names.  ``provenance`` lives under a sibling top-level
-        # key ``catalog_provenance.<harness>`` so a future reader
-        # can iterate the catalog bucket's children without
-        # special-casing a non-list child.  This canary fails loudly
-        # if a future YAML edit re-introduces a ``provenance`` key
-        # under any harness bucket or any other non-list child.
-        # The provenance-specific check runs first so the most-likely
+        # Schema invariant for drift-managed harnesses: every direct
+        # child of ``skill.allowed_tools.catalogs.<harness>`` is a
+        # list of tool names.  ``provenance`` lives under a sibling
+        # top-level key ``catalog_provenance.<harness>`` so a reader
+        # iterating the catalog bucket does not need to special-case
+        # a non-list child.  This canary scopes to
+        # ``_DRIFT_MANAGED_HARNESSES`` so a future non-drift-managed
+        # harness with its own bucket shape (allowed by the
+        # ``configuration.yaml`` comment under ``catalogs:``) does
+        # not trip the test.  The canary fails loudly if a YAML edit
+        # re-introduces a ``provenance`` key under any drift-managed
+        # harness bucket or any other non-list child.  The
+        # provenance-specific check runs first so the most-likely
         # regression (re-introducing ``provenance``) produces the
         # most-informative error message; an unrelated non-list
         # field trips the second check.
         with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
             loaded = yaml_parser.parse_yaml_subset(fh.read())
         catalogs = loaded["skill"]["allowed_tools"]["catalogs"]
-        for harness_name, bucket in catalogs.items():
+        for harness_name in self._DRIFT_MANAGED_HARNESSES:
+            self.assertIn(
+                harness_name, catalogs,
+                msg=(
+                    f"drift-managed harness {harness_name!r} must "
+                    "have a `catalogs` bucket"
+                ),
+            )
+            bucket = catalogs[harness_name]
             # Defensive: a future YAML edit that turns the harness
             # bucket itself into a scalar or list would otherwise
             # raise ``AttributeError`` at ``bucket.items()`` below
@@ -474,20 +497,30 @@ class AllowedToolsCatalogTests(unittest.TestCase):
     def test_catalog_provenance_harness_shape_is_uniform(self) -> None:
         # Symmetric canary to ``test_catalogs_harness_children_are_tool_lists``:
         # that one protects the catalog half of the schema, this one
-        # protects the provenance half.  Schema invariant: every direct
-        # child of ``skill.allowed_tools.catalog_provenance`` is a
-        # mapping with exactly ``source_url`` and ``last_checked``
-        # non-empty scalar children.  Without this canary, a typo or
-        # extra key under a future second harness would only be caught
-        # at drift-run time (the helper iterates harness names but
-        # only ``claude_code`` is exercised in unit tests today).
+        # protects the provenance half.  Schema invariant for
+        # drift-managed harnesses: every direct child of
+        # ``skill.allowed_tools.catalog_provenance`` is a mapping with
+        # exactly ``source_url`` and ``last_checked`` non-empty scalar
+        # children, with ``last_checked`` in the canonical
+        # ``YYYY-MM-DD`` form.  Without this canary, a typo, extra
+        # key, or wrong date format under a drift-managed harness
+        # bucket would only be caught at drift-run time when the
+        # helper hardcodes the harness lookup and parses the bucket.
         with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
             loaded = yaml_parser.parse_yaml_subset(fh.read())
         catalog_provenance = (
             loaded["skill"]["allowed_tools"]["catalog_provenance"]
         )
         expected_keys = {"source_url", "last_checked"}
-        for harness_name, bucket in catalog_provenance.items():
+        for harness_name in self._DRIFT_MANAGED_HARNESSES:
+            self.assertIn(
+                harness_name, catalog_provenance,
+                msg=(
+                    f"drift-managed harness {harness_name!r} must "
+                    "have a `catalog_provenance` bucket"
+                ),
+            )
+            bucket = catalog_provenance[harness_name]
             self.assertIsInstance(
                 bucket, dict,
                 msg=(
@@ -547,35 +580,39 @@ class AllowedToolsCatalogTests(unittest.TestCase):
                     f"{bucket['last_checked']!r} ({exc})"
                 )
 
-    def test_catalogs_and_provenance_harness_sets_match(self) -> None:
-        # Cross-canary check: ``catalogs`` and ``catalog_provenance``
-        # must declare the same set of harness names.  The two earlier
-        # canaries validate each half independently, so a future edit
-        # could add ``catalogs.<harness>`` without the matching
-        # ``catalog_provenance.<harness>`` bucket (or vice versa) and
-        # both per-half canaries would still pass; the mismatch would
-        # only surface at drift-run time when the helper looks up
-        # provenance for the orphaned harness and hard-fails.  This
-        # check pulls that failure forward to the test suite.
+    def test_drift_managed_harnesses_present_in_both_maps(self) -> None:
+        # Cross-canary check: every drift-managed harness must have a
+        # bucket under both ``catalogs`` and ``catalog_provenance``.
+        # The two earlier canaries validate each half independently,
+        # so a future edit could land a new drift-managed harness in
+        # one map without the matching bucket in the other and both
+        # per-half canaries would still pass; the mismatch would only
+        # surface at drift-run time when the helper hard-fails on the
+        # missing lookup.  Scope is the same drift-managed set as the
+        # per-half canaries — non-drift-managed harnesses (allowed by
+        # the ``configuration.yaml`` comment under ``catalogs:`` to
+        # use their own bucket shape) are not required to appear in
+        # both maps.
         with open(constants.CONFIG_PATH, "r", encoding="utf-8") as fh:
             loaded = yaml_parser.parse_yaml_subset(fh.read())
-        catalog_harnesses = set(
+        catalog_keys = set(
             loaded["skill"]["allowed_tools"]["catalogs"].keys()
         )
-        provenance_harnesses = set(
+        provenance_keys = set(
             loaded["skill"]["allowed_tools"]["catalog_provenance"].keys()
         )
-        self.assertEqual(
-            catalog_harnesses, provenance_harnesses,
+        missing_in_catalogs = self._DRIFT_MANAGED_HARNESSES - catalog_keys
+        missing_in_provenance = (
+            self._DRIFT_MANAGED_HARNESSES - provenance_keys
+        )
+        self.assertFalse(
+            missing_in_catalogs or missing_in_provenance,
             msg=(
-                f"`catalogs` and `catalog_provenance` must declare the "
-                f"same harness names; catalogs has "
-                f"{sorted(catalog_harnesses)}, catalog_provenance has "
-                f"{sorted(provenance_harnesses)} (missing under "
-                f"catalog_provenance: "
-                f"{sorted(catalog_harnesses - provenance_harnesses)}; "
-                f"missing under catalogs: "
-                f"{sorted(provenance_harnesses - catalog_harnesses)})"
+                f"every drift-managed harness must appear in both "
+                f"`catalogs` and `catalog_provenance`; missing from "
+                f"catalogs: {sorted(missing_in_catalogs)}; missing "
+                f"from catalog_provenance: "
+                f"{sorted(missing_in_provenance)}"
             ),
         )
 
