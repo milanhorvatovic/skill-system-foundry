@@ -417,6 +417,25 @@ class ParseCatalogTests(unittest.TestCase):
         self.assertIn("last_checked", str(ctx.exception))
         self.assertIn("ISO-8601", str(ctx.exception))
 
+    def test_compact_iso_last_checked_value_raises(self) -> None:
+        # ``datetime.date.fromisoformat`` alone accepts the compact ISO
+        # form (no hyphens) since Python 3.11, so the format check has
+        # to pre-validate the canonical ``YYYY-MM-DD`` shape before
+        # parsing.  Without that pre-check, a hyphen-less value would
+        # round-trip into ``configuration.yaml`` and then trip the
+        # canary on the next CI run rather than failing at the helper's
+        # own boundary.
+        text = _HAPPY_CATALOG.replace(
+            'last_checked: "2026-04-26"',
+            'last_checked: "20260426"',
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(text)
+        message = str(ctx.exception)
+        self.assertIn("last_checked", message)
+        self.assertIn("YYYY-MM-DD", message)
+        self.assertIn("20260426", message)
+
     def test_empty_source_url_value_raises(self) -> None:
         # Empty value (``source_url:`` with no scalar after it) must
         # also hard-fail — silent fallback to a default would mask

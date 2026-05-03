@@ -336,6 +336,19 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             "no-drift / removals-only run cannot leave the catalog "
             "in an unprovenanced state"
         )
+    # ``datetime.date.fromisoformat`` alone accepts the compact ISO
+    # form (e.g. ``20260501``) since Python 3.11.  Pre-check the
+    # exact ``YYYY-MM-DD`` shape so the helper enforces the format it
+    # documents — otherwise a hyphen-less value would round-trip into
+    # ``configuration.yaml`` even though the canary and the workflow
+    # both assume canonical extended-form dates.
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", last_checked):
+        raise ParseError(
+            f"configuration.yaml has an invalid `last_checked` value "
+            f"under `skill.allowed_tools.catalog_provenance.{harness}`: "
+            f"{last_checked!r} — expected ISO-8601 `YYYY-MM-DD` "
+            "(extended form with hyphen separators)"
+        )
     try:
         datetime.date.fromisoformat(last_checked)
     except ValueError as exc:
