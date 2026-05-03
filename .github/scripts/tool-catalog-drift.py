@@ -4,7 +4,7 @@ and the canonical upstream tools reference.
 Reads the catalog at ``skill-system-foundry/scripts/lib/configuration.yaml``
 under ``skill.allowed_tools.catalogs.claude_code``, fetches the
 upstream markdown table at the URL recorded in
-``skill.allowed_tools.catalogs.claude_code.provenance.source_url``,
+``skill.allowed_tools.catalog_provenance.claude_code.source_url``,
 and compares the two sets of tool names.
 
 Outcomes:
@@ -274,11 +274,13 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
         immediately after the last existing harness-tool item.  The
         writer inserts new items there.
       * ``last_checked_line`` — int, the line index of
-        ``provenance.last_checked``.
+        ``catalog_provenance.<harness>.last_checked``.
 
-    Hard-fails (:class:`ParseError`) when the harness bucket, the
-    provenance block, or the harness_tools list is missing or
-    malformed.
+    Hard-fails (:class:`ParseError`) when the catalog harness bucket,
+    the catalog_provenance harness bucket, or the harness_tools list
+    is missing or malformed; also rejects a leftover legacy
+    ``provenance:`` child or a misplaced ``catalog_provenance:`` child
+    under ``catalogs.<harness>``.
     """
     lines = yaml_text.splitlines()
 

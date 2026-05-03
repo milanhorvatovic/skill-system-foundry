@@ -188,7 +188,7 @@ A missing or unreadable `SKILL.md` is a FAIL — that includes the file not exis
 
 ### Detecting Tool Catalog Drift
 
-The hand-maintained Claude Code tool catalog at `skill.allowed_tools.catalogs.claude_code` in `skill-system-foundry/scripts/lib/configuration.yaml` drifts as Claude Code adds, renames, or retires tools. A weekly scheduled workflow (`.github/workflows/tool-catalog-drift.yaml`, helper at `.github/scripts/tool-catalog-drift.py`) compares the catalog against the canonical upstream tools reference at the URL recorded in `skill.allowed_tools.catalogs.claude_code.provenance.source_url` and force-pushes a single rolling PR (`chore/tool-catalog-drift`) when drift is detected. Additions are auto-applied; removals are surfaced in the PR body as advisory candidates only — verify each name before deleting.
+The hand-maintained Claude Code tool catalog at `skill.allowed_tools.catalogs.claude_code` in `skill-system-foundry/scripts/lib/configuration.yaml` drifts as Claude Code adds, renames, or retires tools. A weekly scheduled workflow (`.github/workflows/tool-catalog-drift.yaml`, helper at `.github/scripts/tool-catalog-drift.py`) compares the catalog against the canonical upstream tools reference at the URL recorded in `skill.allowed_tools.catalog_provenance.claude_code.source_url` and force-pushes a single rolling PR (`chore/tool-catalog-drift`) when drift is detected. Additions are auto-applied; removals are surfaced in the PR body as advisory candidates only — verify each name before deleting.
 
 To run the sweep locally:
 
@@ -197,7 +197,7 @@ python .github/scripts/tool-catalog-drift.py --dry-run
 python .github/scripts/tool-catalog-drift.py --dry-run --json
 ```
 
-`--dry-run` exits 0 on no drift, 1 on drift detected; default mode mutates `configuration.yaml` and bumps `skill.allowed_tools.catalogs.claude_code.provenance.last_checked` only when there are additions to apply. Removals-only drift leaves the YAML untouched (removals are advisory and never auto-applied); the workflow surfaces them through the PR body via an empty commit.
+`--dry-run` exits 0 on no drift, 1 on drift detected; default mode mutates `configuration.yaml` and bumps `skill.allowed_tools.catalog_provenance.claude_code.last_checked` only when there are additions to apply. Removals-only drift leaves the YAML untouched (removals are advisory and never auto-applied); the workflow surfaces them through the PR body via an empty commit.
 
 The helper tracks the `claude_code` catalog only. The `catalogs.<harness>` YAML structure preserves room for a future second harness, but adding one is not a YAML-only edit — `run` and `parse_catalog` in `.github/scripts/tool-catalog-drift.py` currently process the single default harness, so a future extension requires helper changes (and may need workflow updates for per-harness PR titles or reporting).
 
