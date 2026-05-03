@@ -23,8 +23,15 @@ broken link as a FAIL/WARN with no suggestion in that case.
 """
 
 import os
+import re
 
-from .constants import DIR_CAPABILITIES
+from .constants import (
+    DIR_CAPABILITIES,
+    EXT_MARKDOWN,
+    RE_BACKTICK_REF,
+    RE_MARKDOWN_LINK_REF,
+)
+from .frontmatter import strip_frontmatter_for_scan
 
 
 # ===================================================================
@@ -129,16 +136,6 @@ def find_fixable_references(skill_root: str) -> list[dict]:
     Files under ``scripts/`` and ``assets/`` are excluded — those
     trees are not part of the prose link graph.
     """
-    import re
-
-    from .constants import (
-        EXT_MARKDOWN,
-        FILE_SKILL_MD,
-        RE_BACKTICK_REF,
-        RE_MARKDOWN_LINK_REF,
-    )
-    from .frontmatter import strip_frontmatter_for_scan
-
     fence_re = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
     skill_root = os.path.abspath(skill_root)
     rows: list[dict] = []
@@ -203,10 +200,18 @@ def find_fixable_references(skill_root: str) -> list[dict]:
 def apply_fixes(rows: list[dict]) -> int:
     """Write the proposed replacements to disk.
 
-    Returns the number of files modified.  Each row's ``original``
-    string is replaced by its ``replacement`` everywhere it appears in
-    the row's ``file``.  Multiple rows targeting the same file are
-    coalesced — the file is read and rewritten once per unique path.
+    Rewrites are link-aware: each row's ``original`` string is replaced
+    by its ``replacement`` only when it appears inside a recognized
+    reference span — a markdown link target ``[...](path)`` or an
+    inline-code span ```path```.  Prose mentions of the same
+    string elsewhere in the document are left alone.  This is the
+    behavior an author expects from a "fix references" command — raw
+    string replacement would silently mutate explanatory text that
+    happens to quote the legacy path.
+
+    Multiple rows targeting the same file are coalesced — the file is
+    read and rewritten once per unique path.  Returns the number of
+    files modified.
     """
     by_file: dict[str, list[dict]] = {}
     for row in rows:
@@ -216,11 +221,28 @@ def apply_fixes(rows: list[dict]) -> int:
     for filepath, file_rows in by_file.items():
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
-        new_content = content
-        for row in file_rows:
-            new_content = new_content.replace(
-                row["original"], row["replacement"],
-            )
+
+        # Build a per-file mapping from original → replacement so a
+        # single regex pass can substitute every legacy path inside a
+        # link span.  A missing mapping means "leave the captured
+        # span unchanged".
+        mapping = {row["original"]: row["replacement"] for row in file_rows}
+
+        def _md_sub(m: re.Match) -> str:
+            label, path = m.group(1), m.group(2)
+            return f"{label}({mapping.get(path, path)})"
+
+        def _bt_sub(m: re.Match) -> str:
+            path = m.group(1)
+            return f"`{mapping.get(path, path)}`"
+
+        new_content = re.sub(
+            r"(\[[^\]]*\])\(([^)]+)\)", _md_sub, content,
+        )
+        new_content = re.sub(
+            r"`([^`\n]+)`", _bt_sub, new_content,
+        )
+
         if new_content != content:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(new_content)
