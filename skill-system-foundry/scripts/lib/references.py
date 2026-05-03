@@ -304,6 +304,12 @@ def resolve_reference_with_reason(
     the fallback only exercises for legacy skill-root-relative paths
     that the bundle should still handle gracefully during integrator
     migration.
+
+    TODO(post-migration): drop the system-root fallback once integrator
+    skills run ``validate_skill.py --fix`` and pass
+    ``reference_conformance_report.py``.  At that point bundle and
+    validator share a single resolution rule and the fallback below
+    becomes vestigial.
     """
     # Reject absolute and drive-qualified paths — references must be
     # relative.  On Windows, ``C:foo/bar`` is drive-relative and passes
