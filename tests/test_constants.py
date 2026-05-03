@@ -510,13 +510,27 @@ class AllowedToolsCatalogTests(unittest.TestCase):
             # the same contract ``parse_catalog`` enforces at runtime.
             # Without this pin a future harness bucket could ship
             # ``last_checked: yesterday`` and pass the canary even
-            # though the drift helper would reject it.
+            # though the drift helper would reject it.  The explicit
+            # shape pre-check matters because
+            # ``datetime.date.fromisoformat`` alone accepts the compact
+            # ISO form (e.g. ``20260501``) since Python 3.11; the
+            # helper documents and writes only the extended form, so
+            # the canary pins that form here too.
+            self.assertRegex(
+                bucket["last_checked"], r"^\d{4}-\d{2}-\d{2}$",
+                msg=(
+                    f"catalog_provenance.{harness_name}.last_checked "
+                    f"must be ISO-8601 YYYY-MM-DD (extended form with "
+                    f"hyphen separators); got "
+                    f"{bucket['last_checked']!r}"
+                ),
+            )
             try:
                 datetime.date.fromisoformat(bucket["last_checked"])
             except ValueError as exc:
                 self.fail(
                     f"catalog_provenance.{harness_name}.last_checked "
-                    f"must be ISO-8601 YYYY-MM-DD; got "
+                    f"must be a valid date; got "
                     f"{bucket['last_checked']!r} ({exc})"
                 )
 
