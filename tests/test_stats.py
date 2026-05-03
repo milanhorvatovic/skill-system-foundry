@@ -307,11 +307,20 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             ["references/a.md", "references/b.md"],
         )
 
-    def test_external_path_not_matched_by_patterns(self) -> None:
-        """README.md and similar top-level files are not in scope."""
+    def test_bare_filename_extraction_under_redefined_rule(self) -> None:
+        """Bare-filename links are extracted under the redefined rule.
+
+        The new path-resolution rule (see references/path-resolution.md)
+        uses standard file-relative markdown semantics, so a link like
+        ``[r](README.md)`` is an extraction candidate.  Whether the path
+        resolves to an existing file is a downstream decision made by
+        the resolver in ``lib/reachability.py`` and
+        ``validate_skill._check_references`` — extraction itself is
+        deliberately broad so the resolver sees every candidate.
+        """
         body = "[r](README.md) [g](references/guide.md)"
         refs = extract_body_references(body)
-        self.assertNotIn("README.md", refs)
+        self.assertIn("README.md", refs)
         self.assertIn("references/guide.md", refs)
 
     def test_router_table_capability_paths_extracted_when_entry(self) -> None:

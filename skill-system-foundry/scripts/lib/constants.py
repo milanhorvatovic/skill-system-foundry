@@ -541,6 +541,41 @@ for _entry in _raw_allowed_orphans:
     _normalized_orphans.append(_candidate)
 ALLOWED_ORPHANS = tuple(_normalized_orphans)
 
+# --- Path Resolution ---
+# Cross-file references inside a skill follow standard markdown
+# semantics (file-relative).  See references/path-resolution.md for
+# the canonical rule, the per-scope behavior (skill root vs
+# capability root), the external-reference syntax (../../<dir>/<file>),
+# and the liftability invariant.
+if "path_resolution" not in _config:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'path_resolution'; this foundry build is incomplete."
+    )
+_path_resolution = _config["path_resolution"]
+if "rule_name" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'path_resolution.rule_name'."
+    )
+if "documentation_path" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'path_resolution.documentation_path'."
+    )
+PATH_RESOLUTION_RULE_NAME = str(_path_resolution["rule_name"]).strip()
+PATH_RESOLUTION_DOC_PATH = str(_path_resolution["documentation_path"]).strip()
+if not PATH_RESOLUTION_RULE_NAME:
+    raise RuntimeError(
+        "configuration.yaml has an empty value for "
+        "'path_resolution.rule_name'."
+    )
+if not PATH_RESOLUTION_DOC_PATH:
+    raise RuntimeError(
+        "configuration.yaml has an empty value for "
+        "'path_resolution.documentation_path'."
+    )
+
 # --- Bundle Packaging ---
 _bundle = _config["bundle"]
 BUNDLE_MAX_REFERENCE_DEPTH = int(_bundle["max_reference_depth"])
@@ -599,5 +634,6 @@ del _normalized_skill_only_fields, _seen_skill_only_fields
 del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
 del _dep, _role, _bundle
 del _orphan_refs, _raw_allowed_orphans, _normalized_orphans
+del _path_resolution
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf

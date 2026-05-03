@@ -50,9 +50,37 @@ skill:
       imperative_start: (?i)^(Create|Design|Build|Run|Execute|Deploy|Generate|Manage|Configure|Set up|Install|Analyze|Process|Handle|Implement|Define|Write|Read|Update|Delete|Check|Validate|Test|Review|Fix|Debug|Monitor|Track|Scan|Parse|Fetch|Send|Transform|Convert|Extract|Load|Save|Export|Import|Migrate|Provision|Orchestrate|Wire|Scaffold|Audit)\b
   body:
     max_lines: 500
+    # Cross-file reference patterns.
+    #
+    # ``markdown_link`` is deliberately broad — markdown links are
+    # intentional, structured references that should always resolve.
+    # Match shapes:
+    # - skill-root-anchored paths: ``[x](references/foo.md)``
+    #   (recognized top-level dirs).
+    # - external references from a capability:
+    #   ``[x](../../references/foo.md)`` (any number of leading
+    #   ``../`` segments before a recognized top-level dir).
+    # - file-relative bare siblings and parent files:
+    #   ``[x](foo.md)``, ``[x](../capability.md)`` (any leading
+    #   ``../`` segments followed by a filename ending in a
+    #   recognized extension).
+    #
+    # ``backtick`` is intentionally narrow — inline-code path
+    # mentions in prose are common, and matching every bare filename
+    # produces false positives for prose discussions.  Restrict to
+    # paths that contain a recognized top-level directory segment so
+    # inline mentions of script names (``validate_skill.py``) are
+    # not treated as references.  Authors who want a backtick path
+    # treated as a real reference can use the directory-anchored
+    # form (``scripts/validate_skill.py``).
+    #
+    # The resolver in ``lib/reachability.py`` and
+    # ``validate_skill._check_references`` interprets every captured
+    # path file-relative under the redefined rule
+    # (see references/path-resolution.md).
     reference_patterns:
-      markdown_link: \[.*?\]\(((?:capabilities|references|scripts|assets)/[^)]+)\)
-      backtick: "`((?:capabilities|references|scripts|assets)/[^`]+)`"
+      markdown_link: \[.*?\]\(((?:\.\./)*(?:(?:capabilities|references|scripts|assets|shared)/[^)]+|[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)))\)
+      backtick: "`((?:\.\./)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
 
@@ -387,6 +415,31 @@ role_composition:
 #       - skills/foo/references/staged.md
 orphan_references:
   allowed_orphans:
+
+# ============================================================
+# Path Resolution (cross-file references)
+# ============================================================
+# Cross-file references inside a skill follow standard markdown
+# semantics: resolve file-relative from the file that contains
+# the link.  Two scopes own their own subgraphs — the skill root
+# (containing SKILL.md, references/, assets/, scripts/, optional
+# shared/) and each capability root (containing capability.md
+# and its own optional references/, assets/, scripts/).  External
+# references from a capability into the shared skill root use
+# the explicit ``../../<dir>/<file>`` form (parent-traversal
+# segments are how the validator recognizes external refs).
+#
+# See references/path-resolution.md for the canonical rule, the
+# liftability invariant, the migration cheat sheet, and the
+# spec-divergence note.
+path_resolution:
+  # Identifier surfaced in finding text and ``--json`` output so
+  # consumers can filter or group findings by rule.
+  rule_name: path-resolution
+  # Skill-root-relative path to the canonical reference doc.
+  # Findings cite this path so an integrator can navigate to
+  # the rule from any output stream.
+  documentation_path: references/path-resolution.md
 
 # ============================================================
 # Bundle Packaging
