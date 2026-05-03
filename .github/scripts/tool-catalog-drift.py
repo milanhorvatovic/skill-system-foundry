@@ -282,6 +282,67 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
     """
     lines = yaml_text.splitlines()
 
+    # Locate ``catalogs.<harness>`` first so the migration-mistake
+    # checks (legacy ``provenance:`` and misplaced
+    # ``catalog_provenance:`` directly under the harness bucket) can
+    # fire BEFORE the top-level ``catalog_provenance`` lookup.  A user
+    # who put the new key in the wrong place would otherwise hit the
+    # generic "missing top-level catalog_provenance" message and miss
+    # the actionable wrong-path/right-path guidance below.
+    catalogs_index = _find_key_line(
+        lines, "catalogs:", parents=("skill:", "allowed_tools:")
+    )
+    if catalogs_index < 0:
+        raise ParseError(
+            "configuration.yaml has no `catalogs:` block under "
+            "`skill.allowed_tools` — schema mismatch"
+        )
+
+    harness_index = _find_child_key(
+        lines, catalogs_index, f"{harness}:"
+    )
+    if harness_index < 0:
+        raise ParseError(
+            f"configuration.yaml has no `{harness}:` bucket under "
+            "`skill.allowed_tools.catalogs` — add the bucket or "
+            "update the harness list in this helper"
+        )
+
+    # Reject a leftover legacy ``provenance:`` child even when the new
+    # ``catalog_provenance.<harness>`` key is also present.  A
+    # partial-migration YAML carrying both shapes would otherwise parse
+    # cleanly and silently re-introduce the non-list child this schema
+    # move is meant to make impossible under ``catalogs.<harness>``.
+    legacy_provenance_index = _find_child_key(
+        lines, harness_index, "provenance:"
+    )
+    if legacy_provenance_index >= 0:
+        raise ParseError(
+            f"configuration.yaml still has a legacy `provenance:` child "
+            f"under `skill.allowed_tools.catalogs.{harness}` — remove "
+            "it; provenance now lives at "
+            f"`skill.allowed_tools.catalog_provenance.{harness}`"
+        )
+
+    # Also reject a misplaced ``catalog_provenance:`` *under* the
+    # harness bucket — the new schema requires it to live as a sibling
+    # of ``catalogs:`` at ``skill.allowed_tools.catalog_provenance``,
+    # not nested under any ``catalogs.<harness>``.  This check runs
+    # before the top-level lookup below so a single-mistake migration
+    # (only the misplaced version, no top-level one) still produces
+    # the actionable wrong-path/right-path guidance instead of the
+    # generic "missing top-level catalog_provenance" error.
+    misplaced_provenance_index = _find_child_key(
+        lines, harness_index, "catalog_provenance:"
+    )
+    if misplaced_provenance_index >= 0:
+        raise ParseError(
+            f"configuration.yaml has a misplaced `catalog_provenance:` "
+            f"child under `skill.allowed_tools.catalogs.{harness}` — "
+            "move it to the sibling top-level key "
+            f"`skill.allowed_tools.catalog_provenance.{harness}`"
+        )
+
     # Provenance lives under a sibling top-level key
     # ``skill.allowed_tools.catalog_provenance.<harness>`` so
     # ``catalogs.<harness>`` stays a pure tool-name source (every
@@ -357,59 +418,6 @@ def parse_catalog(yaml_text: str, harness: str = "claude_code") -> dict:
             f"under `skill.allowed_tools.catalog_provenance.{harness}`: "
             f"{last_checked!r} — expected ISO-8601 `YYYY-MM-DD`"
         ) from exc
-
-    catalogs_index = _find_key_line(
-        lines, "catalogs:", parents=("skill:", "allowed_tools:")
-    )
-    if catalogs_index < 0:
-        raise ParseError(
-            "configuration.yaml has no `catalogs:` block under "
-            "`skill.allowed_tools` — schema mismatch"
-        )
-
-    harness_index = _find_child_key(
-        lines, catalogs_index, f"{harness}:"
-    )
-    if harness_index < 0:
-        raise ParseError(
-            f"configuration.yaml has no `{harness}:` bucket under "
-            "`skill.allowed_tools.catalogs` — add the bucket or "
-            "update the harness list in this helper"
-        )
-
-    # Reject a leftover legacy ``provenance:`` child even when the new
-    # ``catalog_provenance.<harness>`` key is also present.  A
-    # partial-migration YAML carrying both shapes would otherwise parse
-    # cleanly and silently re-introduce the non-list child this schema
-    # move is meant to make impossible under ``catalogs.<harness>``.
-    legacy_provenance_index = _find_child_key(
-        lines, harness_index, "provenance:"
-    )
-    if legacy_provenance_index >= 0:
-        raise ParseError(
-            f"configuration.yaml still has a legacy `provenance:` child "
-            f"under `skill.allowed_tools.catalogs.{harness}` — remove "
-            "it; provenance now lives at "
-            f"`skill.allowed_tools.catalog_provenance.{harness}`"
-        )
-
-    # Also reject a misplaced ``catalog_provenance:`` *under* the
-    # harness bucket — the new schema requires it to live as a sibling
-    # of ``catalogs:`` at ``skill.allowed_tools.catalog_provenance``,
-    # not nested under any ``catalogs.<harness>``.  Without this guard
-    # a misapplied migration would still satisfy the legacy-rejection
-    # check above and silently leave a non-list child in the catalog
-    # bucket, defeating the schema move's invariant.
-    misplaced_provenance_index = _find_child_key(
-        lines, harness_index, "catalog_provenance:"
-    )
-    if misplaced_provenance_index >= 0:
-        raise ParseError(
-            f"configuration.yaml has a misplaced `catalog_provenance:` "
-            f"child under `skill.allowed_tools.catalogs.{harness}` — "
-            "move it to the sibling top-level key "
-            f"`skill.allowed_tools.catalog_provenance.{harness}`"
-        )
 
     harness_tools_index = _find_child_key(
         lines, harness_index, "harness_tools:"

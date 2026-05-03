@@ -417,7 +417,9 @@ class ParseCatalogTests(unittest.TestCase):
         # helper would still read provenance from the (correct)
         # top-level key.  The parser must hard-fail instead, naming
         # both the wrong location and the right one so the maintainer
-        # can move the block in a single edit.
+        # can move the block in a single edit.  This test covers the
+        # duplicate case (both shapes present); the only-misplaced
+        # case is in the test below.
         yaml_text = (
             "skill:\n"
             "  allowed_tools:\n"
@@ -432,6 +434,33 @@ class ParseCatalogTests(unittest.TestCase):
             "      claude_code:\n"
             "        source_url: https://example.test/correct.md\n"
             "        last_checked: \"2026-04-26\"\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.parse_catalog(yaml_text)
+        message = str(ctx.exception)
+        self.assertIn("misplaced", message.lower())
+        self.assertIn("catalogs.claude_code", message)
+        self.assertIn("catalog_provenance.claude_code", message)
+
+    def test_only_misplaced_catalog_provenance_raises_actionable_error(self) -> None:
+        # The more realistic single-mistake migration: the user moved
+        # the block but to the wrong location (under
+        # ``catalogs.<harness>``) and there is no top-level
+        # ``catalog_provenance`` at all.  The misplaced check must run
+        # BEFORE the top-level lookup so the maintainer gets the
+        # actionable wrong-path/right-path guidance instead of the
+        # generic "missing top-level catalog_provenance" message that
+        # they would otherwise hit first.
+        yaml_text = (
+            "skill:\n"
+            "  allowed_tools:\n"
+            "    catalogs:\n"
+            "      claude_code:\n"
+            "        catalog_provenance:\n"
+            "          source_url: https://example.test/wherever.md\n"
+            "          last_checked: \"2026-04-26\"\n"
+            "        harness_tools:\n"
+            "          - Bash\n"
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.parse_catalog(yaml_text)
