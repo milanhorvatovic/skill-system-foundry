@@ -323,6 +323,26 @@ class ExtractBodyReferencesTests(unittest.TestCase):
         self.assertIn("README.md", refs)
         self.assertIn("references/guide.md", refs)
 
+    def test_hyphenated_bare_filename_extracted(self) -> None:
+        """Bare-sibling links with hyphenated filenames are extracted.
+
+        Pins the regex against the meta-skill's actual filename shapes
+        (``path-resolution.md``, ``anti-patterns.md``,
+        ``claude-code-extensions.md``).  A regression in the leading
+        character class would silently drop these, leaving the resolver
+        blind to references between sibling reference docs — which is
+        the canonical pattern under the new file-relative rule.
+        """
+        body = (
+            "[p](path-resolution.md) "
+            "[a](anti-patterns.md) "
+            "[c](claude-code-extensions.md)"
+        )
+        refs = extract_body_references(body)
+        self.assertIn("path-resolution.md", refs)
+        self.assertIn("anti-patterns.md", refs)
+        self.assertIn("claude-code-extensions.md", refs)
+
     def test_router_table_capability_paths_extracted_when_entry(self) -> None:
         """Bare capability paths in a router-table cell are picked up
         when ``include_router_table`` is True (entry SKILL.md only)."""
