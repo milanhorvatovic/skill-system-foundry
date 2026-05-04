@@ -399,7 +399,18 @@ class DocsSafetyTests(unittest.TestCase):
                 )
                 # Out-of-skill links are recorded as INFO elsewhere; this
                 # test only complains about ../ links that don't resolve.
-                if not resolved.startswith(skill_root):
+                # Use ``commonpath`` for containment instead of
+                # ``startswith`` — a sibling directory whose name shares
+                # a textual prefix (e.g. ``/tmp/skill-other`` vs
+                # ``/tmp/skill``) would slip through the prefix check
+                # and silently pass a broken cross-tree link.
+                try:
+                    common = os.path.commonpath([skill_root, resolved])
+                except ValueError:
+                    # Different drives on Windows — definitionally
+                    # outside the skill root.
+                    common = ""
+                if common != skill_root:
                     continue
                 if not os.path.exists(resolved):
                     failures.append(
