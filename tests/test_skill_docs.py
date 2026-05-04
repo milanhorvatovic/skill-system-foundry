@@ -397,8 +397,17 @@ class DocsSafetyTests(unittest.TestCase):
                     continue
                 if "../" not in target:
                     continue
-                # Strip optional title and fragment.
-                clean = target.split(" ", 1)[0].split("#", 1)[0]
+                # Strip optional title, fragment, and query suffix.
+                # The validator's path-resolution rule treats ``?v=2``
+                # and similar as query separators (preserved through
+                # rewrites) — the docs check must do the same so a
+                # valid in-skill ``../foo.md?raw`` link doesn't get
+                # resolved as a literal file named ``foo.md?raw``.
+                clean = (
+                    target.split(" ", 1)[0]
+                    .split("#", 1)[0]
+                    .split("?", 1)[0]
+                )
                 if not clean:
                     continue
                 resolved = os.path.normpath(
