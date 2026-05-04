@@ -132,7 +132,10 @@ def print_human(report: dict, verbose: bool) -> None:
         # ``--json``.
         if report.get("unrouted_capabilities"):
             print()
-            print("Unrouted capabilities (not reachable from SKILL.md):")
+            print(
+                "Unrouted capabilities "
+                "(not listed in SKILL.md router table):"
+            )
             for cap in report["unrouted_capabilities"]:
                 print(f"  {cap}")
         if verbose and report["broken_links"]:
