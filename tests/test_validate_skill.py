@@ -1191,6 +1191,32 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
 
+    def test_uri_scheme_links_are_not_captured(self) -> None:
+        """URI-scheme markdown links like ``mailto:guide.md`` end in
+        a recognized extension but are external destinations, not
+        internal file references.  The bare-sibling alternative used
+        to allow ``:`` in its body — ``mailto:guide.md`` slipped
+        through and the validator reported it as a broken file
+        reference.  The fix excludes ``:`` from the bare-sibling
+        character class (matching the multi-segment branch's
+        no-``:`` rule that already keeps ``https://`` URLs out).
+        Pin that the link is dropped and produces no broken-link
+        finding."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "Email: [contact](mailto:guide.md)\n"
+                "Custom: [proto](myproto:foo.md)\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [e for e in errors if e.startswith(LEVEL_WARN)]
+        targets = " ".join(broken)
+        self.assertNotIn("mailto:guide.md", targets)
+        self.assertNotIn("myproto:foo.md", targets)
+
     def test_dot_slash_prefixed_multi_segment_links_are_extracted(self) -> None:
         """Standard markdown allows the explicit-relative ``./``
         prefix on every form of relative link, including multi-
