@@ -42,7 +42,7 @@ A capability is structurally a sub-skill: it has its own optional `references/`,
 
 ## External-Reference Syntax
 
-The only legal form for a reference that crosses out of a capability scope into the shared skill root is an explicit parent-traversal path:
+A reference that crosses out of a capability scope into the shared skill root uses an explicit parent-traversal path. From `capabilities/<name>/capability.md` itself — the canonical case — the form is:
 
 ```markdown
 [foo](../../references/foo.md)
@@ -50,11 +50,11 @@ The only legal form for a reference that crosses out of a capability scope into 
 [baz](../../scripts/baz.py)
 ```
 
-`../../` is exact: `..` to leave `capabilities/<name>/`, `..` again to leave `capabilities/`, landing at the skill root. Any other depth (e.g. `../`, `../../../`) is incorrect and the validator flags it.
+`../../` is the exact depth from `capability.md`: `..` to leave `capabilities/<name>/`, `..` again to leave `capabilities/`, landing at the skill root. The number of `..` segments depends on the source file's depth — a deeper capability-local file under `capabilities/<name>/references/<f>.md` needs `../../../<dir>/<file>` to reach the skill root, and the validator computes that walk file-relative under standard markdown semantics. Whatever the depth, the link must resolve to a real file inside the skill root.
 
-The validator recognizes a path containing `..` segments as an external reference and treats it as such for finding-classification and `--json` reporting. Existence is still checked — the path must resolve to a real file inside the skill root — but the scope tag distinguishes external from intra-capability for downstream consumers (the future capability-lift tool, the conformance report, integrators triaging findings).
+The validator recognizes a path containing `..` segments as an external reference and treats it as such for finding-classification and `--json` reporting. Existence is still checked. The scope tag distinguishes external from intra-capability for downstream consumers (the future capability-lift tool, the conformance report, integrators triaging findings).
 
-References from `SKILL.md` or from any file under the shared skill-root tree (`references/`, `assets/`, `scripts/`) never need `../../`. They are at or under the skill root already, so file-relative resolution stays within scope. Writing `../../foo.md` from a skill-root file means "leave the skill" and the validator flags it.
+References from `SKILL.md` or from any file under the shared skill-root tree (`references/`, `assets/`, `scripts/`) never need `..` to reach skill-root resources. They are at or under the skill root already, so file-relative resolution stays within scope. A `..` chain that escapes the skill root entirely is surfaced by the validator as INFO (out of scope) rather than treated as an intra-skill external reference.
 
 There is no foundry-specific sigil (no `@skill/...`, no `<skill-root>/...`). The foundry follows standard markdown.
 
@@ -132,9 +132,10 @@ Bare sibling filenames. No `references/` prefix, because the file is *already* i
 
 Finding levels:
 
-- **FAIL** — the link does not resolve to an existing file under the rule's resolution semantics (intra-scope path missing, or external path lands outside the skill root).
-- **WARN** — the link resolves but uses a non-canonical form for its scope (e.g. a capability uses skill-root-relative form when file-relative would also work; the validator can rewrite this mechanically with `--fix`).
-- **INFO** — the link is an external reference and is recorded for the conformance report and the future capability-lift tool. Existence is still checked.
+- **WARN** — the link is broken under file-relative resolution: the resolved target does not exist, is not a regular file, or cannot be read. Some WARN findings are mechanically fixable — a legacy capability link to a shared resource resolves under the *previous* (skill-root) rule but not under the current one, and `--fix` rewrites it to the canonical `../../<dir>/<file>` form. Others are genuinely broken and need author attention; the rewriter never invents a target.
+- **INFO** — the link resolves but is informational: an *external reference* (a capability link into the shared skill root, recorded for the future capability-lift tool) or an *out-of-skill reference* (a path whose `..` chain escapes the skill root entirely; existence is not checked because the validator declines to act as a filesystem oracle for paths it does not own).
+
+The validator does not emit FAIL for path-resolution findings — a missing skill-internal target is a WARN. FAIL is reserved for spec-level violations elsewhere in the validator (missing `SKILL.md`, malformed frontmatter, etc.).
 
 Under `--json`, every finding text carries the rule tag, scope tag, source file, and offending path inline, and the level is the bucket the finding lands in (`errors.failures`, `errors.warnings`, `errors.info`). Both `validate_skill.py` and `audit_skill_system.py` also emit a top-level `path_resolution` block (`rule_name`, `documentation_path`) so consumers can navigate to this document from any output stream. The mechanical-recommendation surface is the structured `fixes[]` array under `--fix --json` — each row has `file`, `line`, `original`, and `replacement` keys, and unfixable path-resolution findings travel alongside it under `unfixable_findings`. Agent-driven tooling that needs the recommendation programmatically consumes the `--fix --json` shape; tooling that only needs the diagnostic stream parses the finding text.
 
