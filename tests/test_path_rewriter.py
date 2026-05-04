@@ -317,6 +317,37 @@ class FindFixableReferencesTests(unittest.TestCase):
         self.assertEqual(len(capture), 1)
         self.assertEqual(capture[0]["line"], 9)
 
+    def test_excludes_capability_local_scripts_and_assets_subtrees(self) -> None:
+        # Top-level pruning isn't enough: capability-local
+        # ``capabilities/<name>/scripts/`` and ``assets/`` markdown
+        # content is *also* outside the prose link graph and must
+        # not be rewritten by ``--fix --apply``.  Without component-
+        # based pruning, a markdown asset under
+        # ``capabilities/<name>/assets/`` could be mutated during a
+        # routine fix run, silently changing template fixtures the
+        # author did not expect to be touched.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            # Both of these would otherwise produce rewrite suggestions
+            # — they live under capability-local excluded subtrees, so
+            # the walker must skip them entirely.
+            write_text(
+                os.path.join(cap_dir, "scripts", "doc.md"),
+                "# Doc\nSee [g](references/guide.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "assets", "template.md"),
+                "# Template\nSee [g](references/guide.md).\n",
+            )
+            rows = find_fixable_references(tmp)
+        for r in rows:
+            self.assertNotIn("scripts/", r["file_rel"])
+            self.assertNotIn("assets/", r["file_rel"])
+
     def test_excludes_scripts_and_assets_subtrees(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")

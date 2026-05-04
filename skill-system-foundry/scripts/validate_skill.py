@@ -1031,7 +1031,11 @@ def main() -> None:
     # ``references/path-resolution.md`` the rewriter never invents
     # a target.
     if args.fix:
-        from lib.path_rewriter import find_fixable_references, apply_fixes
+        from lib.path_rewriter import (
+            apply_fixes,
+            find_ambiguous_legacy_refs,
+            find_fixable_references,
+        )
 
         # In capability mode the supplied path is a capability directory
         # — walking only that subtree would miss legacy refs in the
@@ -1066,6 +1070,14 @@ def main() -> None:
                 sys.exit(1)
             rewrite_root = detected
         rows = find_fixable_references(rewrite_root)
+        # Ambiguous-migration refs: legacy form and file-relative
+        # form both resolve to existing in-scope files but to
+        # *different* files.  The link's meaning silently changes
+        # during migration unless the author reviews it manually,
+        # so the rewriter never auto-fixes these — they appear as
+        # a separate finding bucket and gate exit code so CI cannot
+        # silently accept the retargeting.
+        ambiguous_rows = find_ambiguous_legacy_refs(rewrite_root)
         # Validate the same tree the rewriter operates on.  In
         # capability mode the rewriter walks the enclosing skill root,
         # so the validator must too — otherwise unfixable findings or
@@ -1170,6 +1182,16 @@ def main() -> None:
                     for r in rows
                 ],
                 "unfixable_findings": path_resolution_findings,
+                "ambiguous_findings": [
+                    {
+                        "file": a["file_rel"],
+                        "line": a["line"],
+                        "original": a["original"],
+                        "legacy_target": a["legacy_target"],
+                        "file_rel_target": a["file_rel_target"],
+                    }
+                    for a in ambiguous_rows
+                ],
                 "non_path_fails": non_path_fails,
                 "path_resolution": {
                     "rule_name": PATH_RESOLUTION_RULE_NAME,
@@ -1180,7 +1202,12 @@ def main() -> None:
                 payload["error"] = apply_error
             print(to_json_output(payload))
         else:
-            if not rows and not path_resolution_findings and not non_path_fails:
+            if (
+                not rows
+                and not path_resolution_findings
+                and not non_path_fails
+                and not ambiguous_rows
+            ):
                 print("No mechanical rewrites needed — skill conforms.")
             elif rows:
                 action = "Applied" if args.apply else "Would apply"
@@ -1198,6 +1225,21 @@ def main() -> None:
                 )
                 for finding in path_resolution_findings:
                     print_error_line(finding)
+            if ambiguous_rows:
+                print(
+                    f"\n{len(ambiguous_rows)} ambiguous-migration "
+                    f"finding(s) — both the legacy and file-relative "
+                    f"resolutions land on existing in-scope files; "
+                    f"the link silently changes target unless reviewed "
+                    f"manually:"
+                )
+                for a in ambiguous_rows:
+                    print(
+                        f"  {a['file_rel']}:{a['line']} "
+                        f"'{a['original']}' "
+                        f"legacy→{a['legacy_target']}  "
+                        f"file-rel→{a['file_rel_target']}"
+                    )
             if non_path_fails:
                 print(
                     f"\n{len(non_path_fails)} other FAIL finding(s) — "
@@ -1212,12 +1254,17 @@ def main() -> None:
                 else:
                     print(f"Error during apply: {apply_error}")
         # Exit non-zero when any unfixable path-resolution issue
-        # remains, when the skill has any other FAIL finding, or
-        # when an apply step failed mid-write.
+        # remains, when an ambiguous-migration finding needs manual
+        # review, when the skill has any other FAIL finding, or when
+        # an apply step failed mid-write.  The ambiguous bucket
+        # gates exit because a silent retargeting is exactly the
+        # class of migration hazard the rule's tooling exists to
+        # surface.
         sys.exit(
             1 if (
                 path_resolution_findings
                 or non_path_fails
+                or ambiguous_rows
                 or apply_error is not None
             ) else 0,
         )

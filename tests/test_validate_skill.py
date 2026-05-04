@@ -2329,6 +2329,54 @@ class FixModeTests(unittest.TestCase):
         self.assertIn("capabilities/demo/capability.md", files)
         self.assertIn("capabilities/other/capability.md", files)
 
+    def test_fix_surfaces_ambiguous_legacy_links(self) -> None:
+        """An ambiguous legacy link is one whose pre-migration form
+        and post-migration form both resolve to existing in-scope
+        files — but to *different* files.  The link's target
+        silently changes meaning during migration unless reviewed.
+        ``--fix`` must surface it under ``ambiguous_findings`` (not
+        silently treat it as already-valid) and gate the exit code
+        so CI cannot accept the retargeting without manual review.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            # Shared-root foo.md — what the legacy resolution would pick.
+            write_text(
+                os.path.join(skill_dir, "references", "foo.md"),
+                "# Shared-root foo\n",
+            )
+            # Capability-local foo.md — what file-relative picks now.
+            write_text(
+                os.path.join(cap_dir, "references", "foo.md"),
+                "# Capability-local foo\n",
+            )
+            # Capability links references/foo.md — resolves to the
+            # capability-local file under the new rule, but the
+            # legacy form would have selected the shared-root file.
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [f](references/foo.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        # Exit code: 1 — ambiguous findings gate the run.
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        # No rewrite proposed — the rewriter never auto-fixes
+        # ambiguous links.
+        self.assertEqual(payload["fixes"], [])
+        # The ambiguous bucket carries one row with both targets.
+        self.assertEqual(len(payload["ambiguous_findings"]), 1)
+        amb = payload["ambiguous_findings"][0]
+        self.assertEqual(amb["file"], "capabilities/demo/capability.md")
+        self.assertEqual(amb["original"], "references/foo.md")
+        self.assertEqual(amb["legacy_target"], "references/foo.md")
+        self.assertEqual(
+            amb["file_rel_target"],
+            "capabilities/demo/references/foo.md",
+        )
+
     def test_fix_anchored_legacy_link_is_not_double_reported(self) -> None:
         """An anchored legacy capability link such as
         ``[g](references/guide.md#section)`` is mechanically fixable —

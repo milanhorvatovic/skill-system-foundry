@@ -136,19 +136,25 @@ def compute_recommended_replacement(
         # there's no clear target to rewrite to.
         return None
 
-    # Resolution under the NEW file-relative rule.  If the link
-    # already resolves under file-relative semantics — even to a
-    # *different* file than the legacy resolution — the link is
-    # already valid as written and the rewriter must not mutate it.
-    # The classic trap: a capability-local
-    # ``capabilities/<n>/references/foo.md`` link resolves
-    # file-relative to its own ``references/foo.md``.  The skill root
-    # may also have a ``references/foo.md`` (a different file).
-    # Without this guard the rewriter would propose rewriting the
-    # working capability-local link into ``../../references/foo.md``
-    # — silently changing the link's target to the shared-root file.
-    # Skip the rewrite whenever the existing form already lands on
-    # an in-scope file under file-relative semantics.
+    # Resolution under the NEW file-relative rule.  Two sub-cases
+    # share the early-return:
+    #
+    # 1. Both legacy and file-relative resolve to the *same* file —
+    #    the link is already canonical, no rewrite needed.
+    # 2. File-relative resolves to a different in-scope file — the
+    #    link is *already valid* under the new rule; rewriting it
+    #    would silently re-target it.  The classic trap: a
+    #    capability-local ``references/foo.md`` resolves file-
+    #    relative to ``capabilities/<n>/references/foo.md``, but
+    #    the skill root may also have a ``references/foo.md`` (a
+    #    different file).
+    #
+    # Sub-case 2 is also the *ambiguous-migration* case the rewriter
+    # cannot resolve safely — see ``find_ambiguous_legacy_refs`` for
+    # the parallel scan that surfaces these as a separate finding.
+    # The rewrite path returns None either way: ``--fix`` reports the
+    # rewrite-eligible cases under ``fixes`` and the ambiguous cases
+    # under ``ambiguous_findings``, never both.
     file_rel_target = os.path.normpath(os.path.join(source_dir, ref_path_only))
     if (
         os.path.isfile(file_rel_target)
@@ -164,6 +170,59 @@ def compute_recommended_replacement(
     if new_path == ref_path_only:
         return None  # Identical — nothing to suggest.
     return new_path + suffix
+
+
+def detect_ambiguous_legacy_target(
+    ref: str,
+    source_abs_path: str,
+    skill_root: str,
+) -> tuple[str, str] | None:
+    """Return ``(legacy_target, file_rel_target)`` when *ref* is ambiguous.
+
+    A reference is *ambiguous* when both the legacy skill-root
+    resolution and the file-relative resolution land on existing
+    in-scope files that are **different**.  Pre-migration the
+    legacy form was authoritative; post-migration the file-relative
+    form is.  When both resolve, the link's target silently changes
+    meaning during migration without any tooling diagnostic — a
+    real hazard for skills that grow capability-local references
+    sharing names with shared-root files.
+
+    Returns ``None`` for every other case (no rewrite needed,
+    rewrite eligible, or no clear target).  Callers use this in
+    parallel with :func:`compute_recommended_replacement` to surface
+    the ambiguous bucket separately from the rewrite bucket.
+    """
+    skill_root = os.path.abspath(skill_root)
+    source_abs_path = os.path.abspath(source_abs_path)
+    source_dir = os.path.dirname(source_abs_path)
+
+    ref_norm = ref.replace("\\", "/").strip()
+    if (
+        not ref_norm
+        or os.path.isabs(ref_norm)
+        or is_drive_qualified(ref_norm)
+    ):
+        return None
+    ref_path_only, _suffix = _split_path_and_suffix(ref_norm)
+    if not ref_path_only or is_drive_qualified(ref_path_only):
+        return None
+    if ref_path_only.startswith("../") or ref_path_only.startswith("./"):
+        return None
+
+    legacy_target = os.path.normpath(os.path.join(skill_root, ref_path_only))
+    if not is_within_directory(legacy_target, skill_root):
+        return None
+    if not os.path.isfile(legacy_target):
+        return None
+    file_rel_target = os.path.normpath(os.path.join(source_dir, ref_path_only))
+    if not is_within_directory(file_rel_target, skill_root):
+        return None
+    if not os.path.isfile(file_rel_target):
+        return None
+    if os.path.samefile(legacy_target, file_rel_target):
+        return None
+    return (legacy_target, file_rel_target)
 
 
 # ===================================================================
@@ -201,8 +260,12 @@ def find_fixable_references(skill_root: str) -> list[dict]:
     * ``line`` — 1-based line number of the source line that contains
       the original ref (the first match per file is used).
 
-    Files under ``scripts/`` and ``assets/`` are excluded — those
-    trees are not part of the prose link graph.
+    Files under ``scripts/`` and ``assets/`` at *any* depth are
+    excluded — capability-local ``capabilities/<name>/scripts/`` and
+    ``capabilities/<name>/assets/`` count too.  Those trees are not
+    part of the prose link graph and ``--fix --apply`` would
+    otherwise mutate template/asset markdown content during a
+    routine rewrite run.
     """
     fence_re = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
     skill_root = os.path.abspath(skill_root)
@@ -210,8 +273,11 @@ def find_fixable_references(skill_root: str) -> list[dict]:
 
     for dirpath, dirs, names in os.walk(skill_root):
         rel = os.path.relpath(dirpath, skill_root).replace(os.sep, "/")
-        top = rel.split("/", 1)[0] if rel != "." else ""
-        if top in ("scripts", "assets"):
+        # Prune scripts/ and assets/ subtrees at any scope depth —
+        # check every component, not just the first, so capability-
+        # local trees are excluded too.
+        rel_parts = [] if rel == "." else rel.split("/")
+        if any(part in ("scripts", "assets") for part in rel_parts):
             dirs[:] = []
             continue
         for name in sorted(names):
@@ -277,6 +343,104 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                     "file_rel": file_rel,
                     "original": ref,
                     "replacement": replacement,
+                    "line": line_no,
+                })
+    return rows
+
+
+def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
+    """Walk *skill_root* and return ambiguous-migration references.
+
+    Each row is a dict with keys:
+
+    * ``file`` — absolute path to the source file.
+    * ``file_rel`` — skill-root-relative form for display.
+    * ``original`` — the ref string as written in the file.
+    * ``legacy_target`` — skill-root-relative path of the file the
+      legacy resolution would have selected.
+    * ``file_rel_target`` — skill-root-relative path of the file the
+      file-relative resolution selects under the new rule.
+    * ``line`` — 1-based line number of the source line that contains
+      the original ref.
+
+    A reference appears here when both the legacy skill-root
+    resolution and the file-relative resolution land on existing
+    in-scope files that are *different*.  See
+    :func:`detect_ambiguous_legacy_target` for the detection
+    semantics; ``--fix`` surfaces these under
+    ``ambiguous_findings`` so a migration cannot silently retarget a
+    link from the shared-root file to a capability-local one (or
+    vice versa) without explicit author review.
+
+    Walks the same tree as :func:`find_fixable_references`, with
+    the same scripts/assets pruning at any scope depth.
+    """
+    fence_re = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
+    skill_root = os.path.abspath(skill_root)
+    rows: list[dict] = []
+
+    for dirpath, dirs, names in os.walk(skill_root):
+        rel = os.path.relpath(dirpath, skill_root).replace(os.sep, "/")
+        rel_parts = [] if rel == "." else rel.split("/")
+        if any(part in ("scripts", "assets") for part in rel_parts):
+            dirs[:] = []
+            continue
+        for name in sorted(names):
+            if not name.endswith(EXT_MARKDOWN):
+                continue
+            filepath = os.path.abspath(os.path.join(dirpath, name))
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except (OSError, UnicodeError):
+                continue
+            file_rel = os.path.relpath(filepath, skill_root).replace(
+                os.sep, "/",
+            )
+            body = strip_frontmatter_for_scan(content)
+            stripped = fence_re.sub("", body)
+
+            captures: list[str] = []
+            captures.extend(RE_MARKDOWN_LINK_REF.findall(stripped))
+            captures.extend(RE_BACKTICK_REF.findall(stripped))
+
+            fenced_lines: set[int] = set()
+            for fm in fence_re.finditer(content):
+                start_line = content.count("\n", 0, fm.start()) + 1
+                end_line = content.count("\n", 0, fm.end()) + 1
+                for ln in range(start_line, end_line + 1):
+                    fenced_lines.add(ln)
+
+            seen: set[str] = set()
+            for ref in captures:
+                if ref in seen:
+                    continue
+                seen.add(ref)
+                if "<" in ref or ">" in ref:
+                    continue
+                ambiguous = detect_ambiguous_legacy_target(
+                    ref, filepath, skill_root,
+                )
+                if ambiguous is None:
+                    continue
+                legacy_target, file_rel_target = ambiguous
+                line_no = 0
+                for idx, line in enumerate(content.split("\n"), start=1):
+                    if idx in fenced_lines:
+                        continue
+                    if ref in line:
+                        line_no = idx
+                        break
+                rows.append({
+                    "file": filepath,
+                    "file_rel": file_rel,
+                    "original": ref,
+                    "legacy_target": os.path.relpath(
+                        legacy_target, skill_root,
+                    ).replace(os.sep, "/"),
+                    "file_rel_target": os.path.relpath(
+                        file_rel_target, skill_root,
+                    ).replace(os.sep, "/"),
                     "line": line_no,
                 })
     return rows
