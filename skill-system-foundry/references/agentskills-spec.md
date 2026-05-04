@@ -87,7 +87,7 @@ skill-name/
 **[spec]** When referencing other files in your skill, use relative paths from the skill root. Keep file references one level deep from `SKILL.md`. Avoid deeply nested reference chains.
 
 ```markdown
-See [the reference guide](REFERENCE.md) for details.
+See [the reference guide](references/REFERENCE.md) for details.
 ```
 
 **[foundry]** The foundry refines the spec's relative-path requirement into a **file-relative** rule (standard markdown semantics): every link resolves from the directory containing the file the link lives in, with no privileged base. Two scopes own their own subgraph — the skill root and each capability root. A capability reaches the shared skill root via the explicit `../../<dir>/<file>` form. This refinement diverges from the spec text only in framing: the spec's worked example is a `SKILL.md` link (where file-relative and skill-root-relative resolution coincide), and the spec is silent on capabilities (a foundry construct), so the foundry defines their resolution. The full rule, the liftability invariant, and the migration cheat sheet live in [path-resolution.md](path-resolution.md).
