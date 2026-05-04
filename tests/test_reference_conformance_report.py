@@ -308,6 +308,42 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         self.assertEqual(report["files_unreachable_from_root"], 0)
         self.assertTrue(report["conforms"])
 
+    def test_transitive_link_does_not_route_a_capability(self) -> None:
+        # The router-completeness check uses only DIRECT edges out
+        # of SKILL.md — not the transitive forward closure.  If
+        # capability alpha is routed and alpha links to capability
+        # beta (architecture violation, but still a forward edge in
+        # the link graph), beta is *not* routed.  The router table
+        # never names beta, so the conformance gate must surface
+        # beta in unrouted_capabilities.  A transitive-closure
+        # check would mask this case.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md routes only alpha.
+            _build_skill(
+                tmp,
+                "# Skill\n\n"
+                "See [a](capabilities/alpha/capability.md).\n",
+            )
+            cap_a = os.path.join(tmp, "capabilities", "alpha")
+            cap_b = os.path.join(tmp, "capabilities", "beta")
+            # Alpha has a forward link to beta (cross-capability —
+            # architecturally forbidden but still a forward edge).
+            write_text(
+                os.path.join(cap_a, "capability.md"),
+                "# Alpha\n\n"
+                "See [b](../../capabilities/beta/capability.md).\n",
+            )
+            write_text(
+                os.path.join(cap_b, "capability.md"), "# Beta\n",
+            )
+            report = rcr.compute_report(tmp)
+        # Beta is reachable from SKILL.md transitively via alpha,
+        # but NOT directly routed by the router table.  The gate
+        # must still flag it.
+        self.assertIn("beta", report["unrouted_capabilities"])
+        self.assertNotIn("alpha", report["unrouted_capabilities"])
+        self.assertFalse(report["conforms"])
+
     def test_unrouted_capability_through_shared_reference_still_fails(self) -> None:
         # The undirected component graph would falsely merge an
         # unrouted capability into the SKILL.md component whenever

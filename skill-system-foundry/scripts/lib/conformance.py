@@ -156,10 +156,13 @@ def _build_graph(
             normalized = strip_fragment(ref)
             # Skip absolute or drive-qualified paths — both are spec
             # violations, not in-scope conformance candidates.
-            # ``splitdrive`` catches the Windows ``C:foo.md`` form
-            # that ``os.path.isabs`` misses; without it ``os.path.join``
-            # would treat the path as drive-rooted and distort the
-            # broken/resolved tally on Windows.
+            # ``is_drive_qualified`` (lib/references) catches the
+            # Windows ``C:foo.md`` form that ``os.path.isabs`` misses
+            # on every platform; using ``os.path.splitdrive`` would
+            # only catch it on Windows because ``os.path`` is
+            # host-dependent.  Without the cross-platform check
+            # ``os.path.join`` would treat the path as drive-rooted
+            # and distort the broken/resolved tally on Windows.
             if (
                 not normalized
                 or os.path.isabs(normalized)
@@ -331,37 +334,6 @@ def _list_capability_entries(skill_root: str) -> list[tuple[str, str]]:
     return entries
 
 
-def _directed_reachable(
-    edges: dict[str, list[str]], root: str,
-) -> set[str]:
-    """Return every node reachable by following directed edges from *root*.
-
-    Used for the unrouted-capability check: a capability is *routed*
-    iff its ``capability.md`` is reachable from ``SKILL.md`` via the
-    forward edge chain (``SKILL.md`` → router-table cell →
-    ``capability.md``).  An undirected graph would let a capability
-    appear connected to ``SKILL.md`` whenever both touch the same
-    shared reference (e.g. ``../../references/foo.md``), masking an
-    incomplete router.  The directed walk avoids that false positive:
-    shared-resource edges only ever flow *from* a source *to* the
-    shared file, never back, so a shared reference cannot smuggle the
-    capability into ``SKILL.md``'s forward closure.
-    """
-    if root not in edges:
-        return set()
-    visited: set[str] = set()
-    stack = [root]
-    while stack:
-        node = stack.pop()
-        if node in visited:
-            continue
-        visited.add(node)
-        for tgt in edges.get(node, ()):
-            if tgt not in visited:
-                stack.append(tgt)
-    return visited
-
-
 # ===================================================================
 # Public entry point
 # ===================================================================
@@ -397,15 +369,25 @@ def compute_report(skill_root: str) -> dict:
     # walk from SKILL.md only follows edges *out* of each node, so a
     # shared-resource sink cannot smuggle the capability into the
     # closure.
+    # Routing check uses *direct* edges out of SKILL.md only — not
+    # the transitive forward closure.  A capability is "routed"
+    # exactly when SKILL.md links it directly through the router
+    # table: if capability A is routed and links to capability B,
+    # the transitive closure would include B even though SKILL.md
+    # never named it, masking the architecture violation that
+    # cross-capability references represent.  ``set(edges[skill_md])``
+    # is the set of router-table targets only; intersecting with the
+    # capability list gives the routed set, and the difference is
+    # the unrouted list.
     skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
-    directed_reachable = (
-        _directed_reachable(edges, skill_md_abs)
+    direct_router_targets = (
+        set(edges.get(skill_md_abs, ()))
         if os.path.isfile(skill_md_abs)
         else set()
     )
     unrouted_capabilities = sorted(
         name for name, cap_md in _list_capability_entries(skill_root)
-        if cap_md not in directed_reachable
+        if cap_md not in direct_router_targets
     )
 
     return {
