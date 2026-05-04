@@ -170,6 +170,21 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
             )
         self.assertIsNone(replacement)
 
+    def test_drive_qualified_path_returns_none(self) -> None:
+        # Windows drive-qualified refs like ``C:foo.md`` are not
+        # caught by ``os.path.isabs`` but ``os.path.join(skill_root,
+        # 'C:foo.md')`` drops the skill root entirely on Windows,
+        # which would let the rewriter probe an out-of-skill file
+        # and emit an out-of-skill replacement.  ``splitdrive``
+        # catches the form on every platform; the guard runs even
+        # on POSIX so the rejection is consistent.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            replacement = compute_recommended_replacement(
+                "C:foo.md", os.path.join(tmp, "SKILL.md"), tmp,
+            )
+        self.assertIsNone(replacement)
+
     def test_anchor_suffix_is_preserved(self) -> None:
         # A legacy capability link with an anchor (``#section``) is a
         # mechanically fixable path-resolution issue: the filesystem

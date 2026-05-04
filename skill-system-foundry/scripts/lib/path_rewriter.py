@@ -96,14 +96,24 @@ def compute_recommended_replacement(
     source_dir = os.path.dirname(source_abs_path)
 
     ref_norm = ref.replace("\\", "/").strip()
-    if not ref_norm or os.path.isabs(ref_norm):
+    # Reject absolute and drive-qualified refs.  ``splitdrive`` catches
+    # the Windows drive-relative form (``C:foo.md``) that
+    # ``os.path.isabs`` misses — without it, ``os.path.join(skill_root,
+    # 'C:foo.md')`` drops ``skill_root`` and the rewriter could probe
+    # an out-of-skill file and emit an out-of-skill replacement.  Same
+    # guard applies to the post-suffix-split path below.
+    if (
+        not ref_norm
+        or os.path.isabs(ref_norm)
+        or os.path.splitdrive(ref_norm)[0]
+    ):
         return None
 
     # Separate the filesystem-relevant path from any anchor/query/title
     # suffix so existence checks work on the path alone but the
     # replacement keeps the suffix the author wrote.
     ref_path_only, suffix = _split_path_and_suffix(ref_norm)
-    if not ref_path_only:
+    if not ref_path_only or os.path.splitdrive(ref_path_only)[0]:
         return None
     # Already file-relative if it starts with ../ or ./  — we trust
     # the author and don't second-guess the form.
