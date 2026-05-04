@@ -148,6 +148,42 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
             )
         self.assertIsNone(replacement)
 
+    def test_anchor_suffix_is_preserved(self) -> None:
+        # A legacy capability link with an anchor (``#section``) is a
+        # mechanically fixable path-resolution issue: the filesystem
+        # check must run on the path alone, but the anchor must
+        # survive the rewrite verbatim.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(tmp, "capabilities", "demo", "capability.md")
+            write_text(cap_md, "# Demo\n")
+            replacement = compute_recommended_replacement(
+                "references/guide.md#section", cap_md, tmp,
+            )
+        self.assertEqual(
+            replacement, "../../references/guide.md#section",
+        )
+
+    def test_query_and_title_suffixes_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(tmp, "capabilities", "demo", "capability.md")
+            write_text(cap_md, "# Demo\n")
+            replacement_q = compute_recommended_replacement(
+                "references/guide.md?v=2", cap_md, tmp,
+            )
+            replacement_t = compute_recommended_replacement(
+                'references/guide.md "Title"', cap_md, tmp,
+            )
+        self.assertEqual(replacement_q, "../../references/guide.md?v=2")
+        self.assertEqual(replacement_t, '../../references/guide.md "Title"')
+
 
 class FindFixableReferencesTests(unittest.TestCase):
     """``find_fixable_references`` walks the skill and aggregates
@@ -223,6 +259,39 @@ class ApplyFixesTests(unittest.TestCase):
                 content = f.read()
         self.assertEqual(modified, 1)
         self.assertEqual(content, "See [a](x.md) and [a](x.md).\n")
+
+    def test_does_not_rewrite_inside_fenced_blocks(self) -> None:
+        # ``find_fixable_references`` strips fenced blocks before
+        # scanning, so a path mentioned only inside a fence is never
+        # in *rows*.  When the same path *also* appears outside a
+        # fence (which is in *rows*), the rewrite must touch only the
+        # outside occurrence — example links in ```yaml/```markdown
+        # fences must survive untouched.
+        with tempfile.TemporaryDirectory() as tmp:
+            ref_a = os.path.join(tmp, "ref.md")
+            write_text(
+                ref_a,
+                "Real link: [a](references/x.md)\n"
+                "\n"
+                "```markdown\n"
+                "Example: [a](references/x.md)\n"
+                "```\n",
+            )
+            rows = [{
+                "file": ref_a,
+                "file_rel": "ref.md",
+                "original": "references/x.md",
+                "replacement": "x.md",
+                "line": 1,
+            }]
+            modified = apply_fixes(rows)
+            with open(ref_a, "r", encoding="utf-8") as f:
+                content = f.read()
+        self.assertEqual(modified, 1)
+        # Outside the fence: rewritten.
+        self.assertIn("Real link: [a](x.md)", content)
+        # Inside the fence: untouched.
+        self.assertIn("Example: [a](references/x.md)", content)
 
     def test_unchanged_file_not_counted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

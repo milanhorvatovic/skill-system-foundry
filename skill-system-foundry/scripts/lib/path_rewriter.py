@@ -39,6 +39,39 @@ from .frontmatter import strip_frontmatter_for_scan
 # ===================================================================
 
 
+def _split_path_and_suffix(ref: str) -> tuple[str, str]:
+    """Split *ref* into ``(filesystem_path, non_path_suffix)``.
+
+    Mirrors the validator's use of ``strip_fragment`` in
+    ``lib/references.py`` for resolution: anchors (``#section``),
+    query strings (``?key=value``), and markdown link title
+    annotations (``foo.md "Title"``) are not part of the resolved
+    filesystem path, but they must survive a mechanical rewrite
+    verbatim so the source link form is preserved end-to-end (e.g.
+    a legacy ``[guide](references/guide.md#section)`` rewrites to
+    ``[guide](../../references/guide.md#section)``, not
+    ``[guide](../../references/guide.md)``).
+    """
+    path = ref
+    suffix_parts: list[str] = []
+    # Title suffix at the end first: ``path "title"`` or ``path 'title'``.
+    title_match = re.search(r'''\s+["'][^"']*["']\s*$''', path)
+    if title_match:
+        suffix_parts.insert(0, path[title_match.start():])
+        path = path[:title_match.start()]
+    # Then the earliest of ?/# in the remaining path — strip_fragment
+    # takes the path up to the first occurrence of either separator.
+    earliest = -1
+    for sep in ("?", "#"):
+        idx = path.find(sep)
+        if idx != -1 and (earliest == -1 or idx < earliest):
+            earliest = idx
+    if earliest != -1:
+        suffix_parts.insert(0, path[earliest:])
+        path = path[:earliest]
+    return path, "".join(suffix_parts)
+
+
 def compute_recommended_replacement(
     ref: str,
     source_abs_path: str,
@@ -64,20 +97,27 @@ def compute_recommended_replacement(
     ref_norm = ref.replace("\\", "/").strip()
     if not ref_norm or os.path.isabs(ref_norm):
         return None
+
+    # Separate the filesystem-relevant path from any anchor/query/title
+    # suffix so existence checks work on the path alone but the
+    # replacement keeps the suffix the author wrote.
+    ref_path_only, suffix = _split_path_and_suffix(ref_norm)
+    if not ref_path_only:
+        return None
     # Already file-relative if it starts with ../ or ./  — we trust
     # the author and don't second-guess the form.
-    if ref_norm.startswith("../") or ref_norm.startswith("./"):
+    if ref_path_only.startswith("../") or ref_path_only.startswith("./"):
         return None
 
     # Resolution under the LEGACY skill-root rule.
-    legacy_target = os.path.normpath(os.path.join(skill_root, ref_norm))
+    legacy_target = os.path.normpath(os.path.join(skill_root, ref_path_only))
     if not os.path.isfile(legacy_target):
         # Legacy resolution doesn't land on a real file either —
         # there's no clear target to rewrite to.
         return None
 
     # Resolution under the NEW file-relative rule.
-    file_rel_target = os.path.normpath(os.path.join(source_dir, ref_norm))
+    file_rel_target = os.path.normpath(os.path.join(source_dir, ref_path_only))
     if (
         os.path.isfile(file_rel_target)
         and os.path.samefile(file_rel_target, legacy_target)
@@ -87,12 +127,12 @@ def compute_recommended_replacement(
 
     # Compute the canonical form: the relative path from source_dir
     # to legacy_target, in forward-slash POSIX form.
-    new_form = os.path.relpath(legacy_target, source_dir).replace(
+    new_path = os.path.relpath(legacy_target, source_dir).replace(
         os.sep, "/",
     )
-    if new_form == ref_norm:
+    if new_path == ref_path_only:
         return None  # Identical — nothing to suggest.
-    return new_form
+    return new_path + suffix
 
 
 # ===================================================================
@@ -194,6 +234,9 @@ def find_fixable_references(skill_root: str) -> list[dict]:
     return rows
 
 
+_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
+
+
 def apply_fixes(rows: list[dict]) -> int:
     """Write the proposed replacements to disk.
 
@@ -205,6 +248,13 @@ def apply_fixes(rows: list[dict]) -> int:
     behavior an author expects from a "fix references" command — raw
     string replacement would silently mutate explanatory text that
     happens to quote the legacy path.
+
+    Fenced code blocks are also left alone — ``find_fixable_references``
+    strips them before scanning, so a path that only appears inside a
+    fence is not in *rows* by definition.  Mirroring the strip during
+    rewrite preserves example links inside ```` ```yaml ```` /
+    ```` ```markdown ```` fences when the same legacy path also
+    appears as a real link elsewhere in the file.
 
     Multiple rows targeting the same file are coalesced — the file is
     read and rewritten once per unique path.  Returns the number of
@@ -233,12 +283,26 @@ def apply_fixes(rows: list[dict]) -> int:
             path = m.group(1)
             return f"`{mapping.get(path, path)}`"
 
-        new_content = re.sub(
-            r"(\[[^\]]*\])\(([^)]+)\)", _md_sub, content,
-        )
-        new_content = re.sub(
-            r"`([^`\n]+)`", _bt_sub, new_content,
-        )
+        def _rewrite(segment: str) -> str:
+            segment = re.sub(
+                r"(\[[^\]]*\])\(([^)]+)\)", _md_sub, segment,
+            )
+            segment = re.sub(
+                r"`([^`\n]+)`", _bt_sub, segment,
+            )
+            return segment
+
+        # Walk the document in alternating non-fence/fence segments
+        # so substitutions never enter a fenced block.  ``finditer``
+        # gives us span boundaries we can use as splice points.
+        parts: list[str] = []
+        cursor = 0
+        for fence_match in _FENCE_RE.finditer(content):
+            parts.append(_rewrite(content[cursor:fence_match.start()]))
+            parts.append(fence_match.group(0))
+            cursor = fence_match.end()
+        parts.append(_rewrite(content[cursor:]))
+        new_content = "".join(parts)
 
         if new_content != content:
             with open(filepath, "w", encoding="utf-8") as f:
