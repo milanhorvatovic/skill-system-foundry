@@ -1127,12 +1127,19 @@ def main() -> None:
             payload = {
                 "tool": "validate_skill",
                 "mode": "fix",
-                # ``applied`` reflects the actual outcome — true only
-                # when ``--apply`` ran and reached completion without
-                # raising.  An I/O error keeps it false so consumers
-                # do not mistake a partial / failed rewrite for a
-                # successful one.
-                "applied": bool(args.apply) and apply_error is None,
+                # ``applied`` reflects an actual successful write —
+                # true only when ``--apply`` ran, the rewriter found
+                # something to apply (``rows`` non-empty), and the
+                # write completed without raising.  An I/O error or
+                # an empty ``rows`` list keeps it false so consumers
+                # do not interpret ``applied: true`` as "files were
+                # touched" when the run was actually a no-op or a
+                # partial / failed rewrite.  ``apply_requested``
+                # carries the user's intent (whether ``--apply`` was
+                # passed) for consumers that need to disambiguate
+                # "no fixes needed" from "did not request apply".
+                "apply_requested": bool(args.apply),
+                "applied": bool(args.apply) and bool(rows) and apply_error is None,
                 "modified": modified,
                 "fixes": [
                     {
