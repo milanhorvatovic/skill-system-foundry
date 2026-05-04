@@ -23,7 +23,7 @@ from .constants import (
 )
 from .frontmatter import strip_frontmatter_for_scan
 from .reachability import extract_body_references
-from .references import is_within_directory, strip_fragment
+from .references import is_drive_qualified, is_within_directory, strip_fragment
 
 
 # ===================================================================
@@ -156,7 +156,7 @@ def _build_graph(
             if (
                 not normalized
                 or os.path.isabs(normalized)
-                or os.path.splitdrive(normalized)[0]
+                or is_drive_qualified(normalized)
             ):
                 continue
             ref_abs = os.path.normpath(os.path.join(source_dir, normalized))
@@ -312,6 +312,49 @@ def _list_roots(skill_root: str) -> list[str]:
     return roots
 
 
+def _list_capability_entries(skill_root: str) -> list[tuple[str, str]]:
+    """Return ``(name, abs_path)`` for every capability entry."""
+    entries: list[tuple[str, str]] = []
+    cap_dir = os.path.join(skill_root, DIR_CAPABILITIES)
+    if os.path.isdir(cap_dir):
+        for name in sorted(os.listdir(cap_dir)):
+            cap_md = os.path.join(cap_dir, name, FILE_CAPABILITY_MD)
+            if os.path.isfile(cap_md):
+                entries.append((name, os.path.abspath(cap_md)))
+    return entries
+
+
+def _directed_reachable(
+    edges: dict[str, list[str]], root: str,
+) -> set[str]:
+    """Return every node reachable by following directed edges from *root*.
+
+    Used for the unrouted-capability check: a capability is *routed*
+    iff its ``capability.md`` is reachable from ``SKILL.md`` via the
+    forward edge chain (``SKILL.md`` → router-table cell →
+    ``capability.md``).  An undirected graph would let a capability
+    appear connected to ``SKILL.md`` whenever both touch the same
+    shared reference (e.g. ``../../references/foo.md``), masking an
+    incomplete router.  The directed walk avoids that false positive:
+    shared-resource edges only ever flow *from* a source *to* the
+    shared file, never back, so a shared reference cannot smuggle the
+    capability into ``SKILL.md``'s forward closure.
+    """
+    if root not in edges:
+        return set()
+    visited: set[str] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        for tgt in edges.get(node, ()):
+            if tgt not in visited:
+                stack.append(tgt)
+    return visited
+
+
 # ===================================================================
 # Public entry point
 # ===================================================================
@@ -338,6 +381,26 @@ def compute_report(skill_root: str) -> dict:
     roots = _list_roots(skill_root)
     component_count, unreachable_count = _connected_components(edges, roots)
 
+    # Unrouted-capability check: every capability.md must be
+    # reachable from SKILL.md via the forward (directed) edge chain.
+    # The undirected component count alone misses the case where a
+    # capability and SKILL.md both link the same shared reference —
+    # the shared edge would merge them into one component even
+    # though the router table never names the capability.  A directed
+    # walk from SKILL.md only follows edges *out* of each node, so a
+    # shared-resource sink cannot smuggle the capability into the
+    # closure.
+    skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
+    directed_reachable = (
+        _directed_reachable(edges, skill_md_abs)
+        if os.path.isfile(skill_md_abs)
+        else set()
+    )
+    unrouted_capabilities = sorted(
+        name for name, cap_md in _list_capability_entries(skill_root)
+        if cap_md not in directed_reachable
+    )
+
     return {
         "skill_root": skill_root,
         "total_links": total_links,
@@ -354,29 +417,33 @@ def compute_report(skill_root: str) -> dict:
         "external_edges_per_capability": dict(
             sorted(ext_per_cap.items())
         ),
-        # Conforms requires three signals to be clean:
+        # Names of capabilities not directly reachable from SKILL.md
+        # via the router-table forward edge chain.  Distinct from
+        # ``files_unreachable_from_root`` (which uses an undirected
+        # walk that treats every capability.md as its own root) and
+        # from ``connected_components`` (which an undirected shared-
+        # reference edge can artificially merge).  This list is the
+        # authoritative router-completeness signal.
+        "unrouted_capabilities": unrouted_capabilities,
+        # Conforms requires three independent signals:
         #
         # - ``broken == 0`` — every captured link resolves to a real
         #   in-scope file under file-relative semantics.
         # - ``unreachable_count == 0`` — no in-scope ``.md`` file is
         #   stranded with no path from any entry root.
-        # - ``component_count == 1`` — every in-scope file lives in
-        #   one connected subgraph.  Without this, an unrouted
-        #   capability (a ``capability.md`` whose subgraph is
-        #   internally consistent but never linked from the parent
-        #   ``SKILL.md`` router) would still pass: ``capability.md``
-        #   acts as its own reachability root, so its subgraph is
-        #   "reachable", and ``unreachable_count`` stays 0 even
-        #   though the router is incomplete.  ``component_count``
-        #   captures that drift: every router-linked capability
-        #   merges into the SKILL.md component, so an unrouted
-        #   capability bumps the count to 2+.  An empty skill (no
-        #   markdown beyond SKILL.md, or just SKILL.md and orphan
-        #   entries — both of which are caught by the other two
-        #   signals) reports ``component_count == 1`` cleanly.
+        # - ``unrouted_capabilities == []`` — every capability is
+        #   directly reachable from SKILL.md.  This catches the
+        #   incomplete-router case the undirected component metric
+        #   misses (a shared-reference edge can artificially merge
+        #   an unrouted capability into the SKILL.md component).
+        #
+        # ``connected_components`` stays diagnostic — it is useful
+        # for distinguishing orphan clusters from missing-router
+        # cases when investigating a failure, but the gate proper
+        # reads the three boolean signals above.
         "conforms": (
             broken == 0
             and unreachable_count == 0
-            and component_count == 1
+            and not unrouted_capabilities
         ),
     }

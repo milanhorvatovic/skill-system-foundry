@@ -34,7 +34,7 @@ from .constants import (
     RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import strip_frontmatter_for_scan
-from .references import is_within_directory, strip_fragment
+from .references import is_drive_qualified, is_within_directory, strip_fragment
 from .router_table import extract_capability_paths
 
 
@@ -259,7 +259,7 @@ def walk_reachable(
             # catches the Windows drive-relative form (``C:foo.md``)
             # that ``os.path.isabs`` misses but ``os.path.join`` would
             # silently treat as drive-rooted, escaping the skill walk.
-            if os.path.isabs(ref) or os.path.splitdrive(ref)[0]:
+            if os.path.isabs(ref) or is_drive_qualified(ref):
                 warnings.append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
                     f"reference '{ref}' in '{rel}' is absolute or "

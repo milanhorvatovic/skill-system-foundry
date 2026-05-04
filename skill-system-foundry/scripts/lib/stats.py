@@ -43,7 +43,7 @@ from .constants import (
 )
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
-from .references import is_within_directory
+from .references import is_drive_qualified, is_within_directory
 
 
 # Directory categories whose bytes are excluded from ``load_bytes``.
@@ -475,7 +475,7 @@ def compute_stats(skill_path: str) -> dict:
             # ``os.path.join`` would treat the path as drive-rooted and
             # the byte-budget metric would include a file outside the
             # skill tree.
-            if os.path.isabs(ref) or os.path.splitdrive(ref)[0]:
+            if os.path.isabs(ref) or is_drive_qualified(ref):
                 result["errors"].append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
                     f"absolute or drive-qualified reference '{ref}' in "

@@ -208,9 +208,12 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
         # caught by ``os.path.isabs`` but ``os.path.join(skill_root,
         # 'C:foo.md')`` drops the skill root entirely on Windows,
         # which would let the rewriter probe an out-of-skill file
-        # and emit an out-of-skill replacement.  ``splitdrive``
-        # catches the form on every platform; the guard runs even
-        # on POSIX so the rejection is consistent.
+        # and emit an out-of-skill replacement.  The shared
+        # ``is_drive_qualified`` helper recognizes the form on every
+        # platform — using ``os.path.splitdrive`` here would silently
+        # pass on POSIX (it returns ``('', 'C:foo.md')``) and the
+        # rejection would be inconsistent between the OSes the
+        # foundry CI runs on.
         with tempfile.TemporaryDirectory() as tmp:
             write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
             replacement = compute_recommended_replacement(

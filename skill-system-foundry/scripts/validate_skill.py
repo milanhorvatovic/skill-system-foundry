@@ -20,7 +20,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from lib.frontmatter import load_frontmatter, count_body_lines
-from lib.references import is_within_directory, strip_fragment
+from lib.references import is_drive_qualified, is_within_directory, strip_fragment
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
@@ -246,7 +246,7 @@ def _check_references(
         # would treat ``C:foo.md`` as drive-rooted when ``os.path.join``
         # composed it with the skill root.  ``splitdrive`` catches the
         # Windows drive-relative form that ``os.path.isabs`` misses.
-        if os.path.isabs(normalized_ref) or os.path.splitdrive(normalized_ref)[0]:
+        if os.path.isabs(normalized_ref) or is_drive_qualified(normalized_ref):
             errors.append(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "
@@ -330,6 +330,24 @@ def _check_references(
             )
             continue
 
+        # Handle directory references gracefully — and short-circuit
+        # before the cross-scope INFO emission below.  A capability
+        # link that resolves to a *directory* (or anything that is not
+        # a regular file) is not a lift-rewrite candidate — the lift
+        # tool needs file content to inline.  Without the short-
+        # circuit, a cap → directory link would produce both a WARN
+        # ("non-file path") and an INFO ("recorded for the capability-
+        # lift tool" / "crosses into capability"), which is misleading
+        # for tooling consumers triaging findings.
+        if not os.path.isfile(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "resolves to a non-file path"
+            )
+            continue
+
         if capability_to_skill_root:
             errors.append(
                 f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
@@ -345,16 +363,6 @@ def _check_references(
                 "capabilities must stay independent (audit_skill_system "
                 "FAILs this under the capability-isolation rule)"
             )
-
-        # Handle directory references gracefully
-        if not os.path.isfile(ref_path):
-            broken_found = True
-            errors.append(
-                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
-                f"referenced in {source_label} (scope: {scope_tag}) "
-                "resolves to a non-file path"
-            )
-            continue
 
         # Check file is readable
         try:
@@ -1038,9 +1046,17 @@ def main() -> None:
                     f"but no SKILL.md was found above '{skill_path}'"
                 )
                 if json_output:
+                    # Include the ``path_resolution`` block in the
+                    # error payload too — consumers shouldn't have
+                    # to special-case the schema between success and
+                    # failure to find the canonical-rule pointer.
                     print(to_json_output({
                         "tool": "validate_skill", "mode": "fix",
                         "success": False, "error": msg,
+                        "path_resolution": {
+                            "rule_name": PATH_RESOLUTION_RULE_NAME,
+                            "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                        },
                     }))
                 else:
                     print(f"Error: {msg}")

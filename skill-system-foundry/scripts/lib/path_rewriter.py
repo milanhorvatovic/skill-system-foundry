@@ -32,7 +32,7 @@ from .constants import (
     RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import strip_frontmatter_for_scan
-from .references import is_within_directory
+from .references import is_drive_qualified, is_within_directory
 
 
 # ===================================================================
@@ -105,7 +105,7 @@ def compute_recommended_replacement(
     if (
         not ref_norm
         or os.path.isabs(ref_norm)
-        or os.path.splitdrive(ref_norm)[0]
+        or is_drive_qualified(ref_norm)
     ):
         return None
 
@@ -113,7 +113,7 @@ def compute_recommended_replacement(
     # suffix so existence checks work on the path alone but the
     # replacement keeps the suffix the author wrote.
     ref_path_only, suffix = _split_path_and_suffix(ref_norm)
-    if not ref_path_only or os.path.splitdrive(ref_path_only)[0]:
+    if not ref_path_only or is_drive_qualified(ref_path_only):
         return None
     # Already file-relative if it starts with ../ or ./  — we trust
     # the author and don't second-guess the form.
