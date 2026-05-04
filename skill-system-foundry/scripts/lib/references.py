@@ -182,7 +182,16 @@ def is_drive_qualified(path: str) -> bool:
     """
     if len(path) < 2:
         return False
-    return path[0].isalpha() and path[1] == ":"
+    # Restrict to ASCII ``[A-Za-z]`` to match the markdown-link
+    # extractor's drive-qualified alternative (``[A-Za-z]:...``) and
+    # the Windows drive-letter convention itself.  ``str.isalpha``
+    # accepts non-ASCII letters (``Ω``, ``Ä``, hundreds of Unicode
+    # code points), which would misclassify legitimate relative
+    # filenames like ``Ω:notes.md`` as drive-qualified and emit a
+    # spurious WARN / silent skip.  Drive letters are ASCII only.
+    first = path[0]
+    is_ascii_letter = ("A" <= first <= "Z") or ("a" <= first <= "z")
+    return is_ascii_letter and path[1] == ":"
 
 
 def strip_fragment(ref_path: str) -> str:

@@ -147,6 +147,15 @@ class IsDriveQualifiedTests(unittest.TestCase):
             ":colon-first.md",
             "1:digit-first.md",  # not a letter — ignore
             "/absolute/path.md",  # absolute, not drive-qualified
+            # Non-ASCII Unicode letters must NOT be treated as drive
+            # letters.  ``str.isalpha`` accepts hundreds of code
+            # points across world scripts, so a relative file named
+            # after a Greek/German/etc. letter would otherwise be
+            # misclassified as drive-qualified and silently dropped
+            # by the validator.  Drive letters are ASCII-only.
+            "Ω:notes.md",
+            "Ä:notes.md",
+            "ß:notes.md",
         ):
             with self.subTest(ref=ref):
                 self.assertFalse(is_drive_qualified(ref), msg=ref)
