@@ -110,3 +110,5 @@ jobs:
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           review-effort: ${{ vars.CODEX_REVIEW_EFFORT }}
           min-confidence: ${{ vars.CODEX_MIN_CONFIDENCE || '0' }}
+          retain-findings: ${{ vars.CODEX_RETAIN_FINDINGS }}
+          retain-findings-days: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
