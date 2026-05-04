@@ -108,6 +108,23 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 # Reference Extraction
 # ===================================================================
 
+def is_drive_qualified(path: str) -> bool:
+    """Return True when *path* is a Windows drive-qualified path.
+
+    Catches forms like ``C:foo.md``, ``C:/foo.md``, and ``C:\\foo.md``
+    on every platform — ``os.path.splitdrive`` is platform-dependent
+    (returns ``('', '...')`` on POSIX), so a check that relies on it
+    silently misclassifies these references as ordinary relative
+    filenames when validation runs on Linux CI.  The foundry runs on
+    both Ubuntu and Windows in CI, so the drive-qualified check must
+    be platform-independent to keep the validation surface
+    consistent.
+    """
+    if len(path) < 2:
+        return False
+    return path[0].isalpha() and path[1] == ":"
+
+
 def strip_fragment(ref_path: str) -> str:
     """Strip query/anchor/title wrappers from a reference path.
 
@@ -315,7 +332,7 @@ def resolve_reference_with_reason(
     # relative.  On Windows, ``C:foo/bar`` is drive-relative and passes
     # ``os.path.isabs()``, but ``os.path.join()`` treats it as rooted on
     # that drive, effectively bypassing the relative-only rule.
-    if os.path.isabs(ref_path) or os.path.splitdrive(ref_path)[0]:
+    if os.path.isabs(ref_path) or is_drive_qualified(ref_path):
         return None, "absolute_path"
 
     source_dir = os.path.dirname(os.path.abspath(source_file))

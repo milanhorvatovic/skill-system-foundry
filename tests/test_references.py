@@ -21,6 +21,7 @@ from lib.references import (
     extract_references,
     find_containing_skill,
     infer_system_root,
+    is_drive_qualified,
     is_within_directory,
     resolve_reference,
     resolve_reference_with_reason,
@@ -44,6 +45,41 @@ class StripFragmentTests(unittest.TestCase):
         for raw_ref, expected in cases.items():
             with self.subTest(raw_ref=raw_ref):
                 self.assertEqual(strip_fragment(raw_ref), expected)
+
+
+class IsDriveQualifiedTests(unittest.TestCase):
+    """``is_drive_qualified`` recognizes Windows ``C:`` -prefixed paths
+    on every platform.  ``os.path.splitdrive`` is platform-dependent
+    (returns empty drive on POSIX), so a check that relies on it
+    would silently pass these forms on Linux CI.  Pin a small matrix
+    of positive and negative cases to lock in the cross-platform
+    behavior.
+    """
+
+    def test_positive_cases(self) -> None:
+        for ref in (
+            "C:foo.md",
+            "c:foo.md",
+            "Z:references/guide.md",
+            "C:/foo.md",
+            "C:\\foo.md",
+        ):
+            with self.subTest(ref=ref):
+                self.assertTrue(is_drive_qualified(ref), msg=ref)
+
+    def test_negative_cases(self) -> None:
+        for ref in (
+            "",
+            "foo.md",
+            "references/foo.md",
+            "../foo.md",
+            "./foo.md",
+            ":colon-first.md",
+            "1:digit-first.md",  # not a letter — ignore
+            "/absolute/path.md",  # absolute, not drive-qualified
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_drive_qualified(ref), msg=ref)
 
 
 class ShouldSkipReferenceTests(unittest.TestCase):
