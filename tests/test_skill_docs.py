@@ -419,10 +419,18 @@ class DocsSafetyTests(unittest.TestCase):
                     common = ""
                 if common != skill_root:
                     continue
-                if not os.path.exists(resolved):
+                # ``isfile`` rather than ``exists``: the docstring
+                # promises every ``../`` link must resolve to an
+                # existing *file* under the skill root.  A link that
+                # resolves to a directory is also a documentation
+                # error — the validator's path-resolution rule
+                # surfaces non-file targets as WARN — and the test
+                # message names "files", so the check must agree.
+                if not os.path.isfile(resolved):
                     failures.append(
                         f"  {doc_label}: link target '{target}' "
-                        f"resolved to {resolved} which does not exist"
+                        f"resolved to {resolved} which is not an "
+                        f"existing file"
                     )
 
         if failures:
