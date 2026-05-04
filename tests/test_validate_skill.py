@@ -2287,7 +2287,7 @@ class FixModeTests(unittest.TestCase):
             )
         warn_errors = [
             e for e in errors
-            if e.startswith("WARN") and "[path-resolution]" in e
+            if e.startswith(LEVEL_WARN) and "[path-resolution]" in e
             and "does not exist" in e
         ]
         self.assertEqual(len(warn_errors), 1, msg=str(errors))
