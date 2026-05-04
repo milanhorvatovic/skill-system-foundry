@@ -40,13 +40,12 @@ jobs:
       skipped: ${{ steps.prepare.outputs.skipped }}
     steps:
       - name: Validate retain-findings configuration
-        if: ${{ vars.CODEX_RETAIN_FINDINGS != '' || vars.CODEX_RETAIN_FINDINGS_DAYS != '' }}
         env:
           RETAIN: ${{ vars.CODEX_RETAIN_FINDINGS }}
           DAYS: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
         run: |
           if [[ -z "$RETAIN" ]]; then
-            echo "::error::CODEX_RETAIN_FINDINGS_DAYS is set but CODEX_RETAIN_FINDINGS is not. Define CODEX_RETAIN_FINDINGS as 'true' or 'false'."
+            echo "::error::CODEX_RETAIN_FINDINGS is not defined. Set it to 'true' or 'false' as a repository variable."
             exit 1
           fi
           if [[ "$RETAIN" != "true" && "$RETAIN" != "false" ]]; then
@@ -54,7 +53,7 @@ jobs:
             exit 1
           fi
           if [[ "$RETAIN" == "true" ]]; then
-            if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || (( DAYS > 90 )); then
+            if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || (( 10#$DAYS > 90 )); then
               echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be an integer between 1 and 90. Got: '$DAYS'"
               exit 1
             fi
