@@ -79,16 +79,34 @@ skill:
     # path file-relative under the redefined rule
     # (see references/path-resolution.md).
     reference_patterns:
-      # Bare-sibling alternative also captures optional anchor / query
-      # suffixes (``#section``, ``?v=2``) and markdown title
-      # annotations (``foo.md "Title"``) so the resolver in
-      # ``lib/reachability.py`` and the conformance report see the
-      # full link before they hand it to ``strip_fragment``.  Without
-      # this, anchored sibling links (the canonical form inside
-      # ``references/``) would be invisible to validation, stats, and
-      # the conformance report — false negatives on a class of links
-      # the rest of the pipeline is designed to handle.
-      markdown_link: \[.*?\]\(((?:\.\./)*(?:(?:capabilities|references|scripts|assets|shared)/[^)]+|[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?))\)
+      # Three alternatives:
+      #
+      # - directory-anchored paths (``capabilities/foo.md``,
+      #   ``../../references/foo.md``) — recognized top-level dir
+      #   prefix with optional ``../`` traversal.
+      # - bare-sibling files (``foo.md``, ``../foo.md``) — relative
+      #   path with no internal slash, file extension at the end.
+      #   Captures optional anchor/query suffixes (``#section``,
+      #   ``?v=2``) and markdown link title annotations
+      #   (``foo.md "Title"``) so the resolver sees the full link
+      #   before it hands it to ``strip_fragment``.
+      # - relative paths through unrecognized directories
+      #   (``../beta/capability.md`` from one capability into another,
+      #   or any other multi-segment relative path).  This branch
+      #   *requires* at least one ``../`` prefix, which keeps URLs
+      #   (``https://example.com/foo.md``) and absolute paths from
+      #   matching, while still capturing the natural sibling-
+      #   capability link form that file-relative semantics enable.
+      #
+      # The third alternative is essential for catching cross-
+      # capability links like ``[other](../beta/capability.md)`` from
+      # ``capabilities/alpha/capability.md`` — ``beta`` is not a
+      # recognized top-level directory, so without this branch the
+      # link is invisible to validation, stats, reachability, and the
+      # conformance report, and the validator silently misses an
+      # architecture violation that audit_skill_system also catches
+      # via RE_SIBLING_CAP_REF.
+      markdown_link: \[.*?\]\(((?:\.\./)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.\./)*[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
       backtick: "`((?:\.\./)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
