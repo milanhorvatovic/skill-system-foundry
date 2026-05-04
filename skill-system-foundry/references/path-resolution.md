@@ -131,7 +131,7 @@ Bare sibling filenames. No `references/` prefix, because the file is *already* i
 - The **rule name** (`path-resolution`).
 - The **scope** (`skill` for the skill root, `capability:<name>` for a capability).
 - The **offending file** (skill-root-relative path).
-- The **offending path** (the link as written).
+- The **offending path** in `strip_fragment` form — anchors (`#section`), query suffixes (`?v=2`), and markdown link titles (`foo.md "Title"`) are stripped before the finding text is built. Authors who need the exact captured form, including suffixes, can read the `fixes[].original` field of `validate_skill --fix --json`, which preserves the original ref string verbatim.
 - A **recommended replacement** when the conversion is mechanical.
 
 Finding levels:
