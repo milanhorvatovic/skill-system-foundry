@@ -460,27 +460,31 @@ class DetectAmbiguousLegacyTargetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             skill = self._write_skill(tmp)
             # Shared-root foo.md
-            write_text(
-                os.path.join(skill, "references", "foo.md"),
-                "# Shared\n",
-            )
+            shared_root_foo = os.path.join(skill, "references", "foo.md")
+            write_text(shared_root_foo, "# Shared\n")
             # Capability-local foo.md (different file)
             cap_md = os.path.join(skill, "capabilities", "demo", "capability.md")
             write_text(cap_md, "# Demo\n")
-            write_text(
-                os.path.join(skill, "capabilities", "demo", "references", "foo.md"),
-                "# Local\n",
+            cap_local_foo = os.path.join(
+                skill, "capabilities", "demo", "references", "foo.md",
             )
+            write_text(cap_local_foo, "# Local\n")
             result = detect_ambiguous_legacy_target(
                 "references/foo.md", cap_md, skill,
             )
         self.assertIsNotNone(result)
         legacy_target, file_rel_target = result
-        self.assertTrue(legacy_target.endswith("references/foo.md"))
-        self.assertTrue(
-            file_rel_target.endswith(
-                "capabilities/demo/references/foo.md",
-            )
+        # ``detect_ambiguous_legacy_target`` returns native filesystem
+        # paths (``os.path.normpath`` output), which use backslashes
+        # on Windows.  Compare via ``samefile``-style normalization
+        # so the test runs identically on POSIX and Windows.
+        self.assertEqual(
+            os.path.normcase(os.path.realpath(legacy_target)),
+            os.path.normcase(os.path.realpath(shared_root_foo)),
+        )
+        self.assertEqual(
+            os.path.normcase(os.path.realpath(file_rel_target)),
+            os.path.normcase(os.path.realpath(cap_local_foo)),
         )
 
     def test_empty_ref_returns_none(self) -> None:
