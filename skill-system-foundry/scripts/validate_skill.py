@@ -414,13 +414,25 @@ def _check_references(
 
 
 def validate_body(
-    body: str, skill_md_path: str, skill_root: str,
+    body: str, entry_abs_path: str, skill_root: str,
     allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
-    """Validate skill or capability entry point body."""
+    """Validate skill or capability entry point body.
+
+    *entry_abs_path* is the absolute filesystem path to the entry file
+    being validated — ``SKILL.md`` for a registered skill, or
+    ``capability.md`` for a capability.  The previous parameter name
+    (``skill_md_path``) was misleading because this function is shared
+    between the two modes, and a future change might base resolution
+    on the assumption it is always the router skill entry.  The
+    file-relative resolution rule
+    (``references/path-resolution.md``) makes the source file's own
+    location the resolution base, so the parameter must name what
+    it actually points at.
+    """
     errors: list[str] = []
     passes: list[str] = []
-    entry_filename = os.path.basename(skill_md_path)
+    entry_filename = os.path.basename(entry_abs_path)
 
     line_count = count_body_lines(body)
     if line_count > MAX_BODY_LINES:
@@ -444,7 +456,7 @@ def validate_body(
     # (``file_rel``), so a basename-only label here would silently
     # break the ``_is_covered_by_rewriter`` check.
     ref_errors, ref_passes = _check_references(
-        body, skill_md_path, skill_root, allow_nested_refs,
+        body, entry_abs_path, skill_root, allow_nested_refs,
         include_router_table=(entry_filename == FILE_SKILL_MD),
     )
     errors.extend(ref_errors)
@@ -1017,8 +1029,15 @@ def main() -> None:
                 sys.exit(1)
             rewrite_root = detected
         rows = find_fixable_references(rewrite_root)
+        # Validate the same tree the rewriter operates on.  In
+        # capability mode the rewriter walks the enclosing skill root,
+        # so the validator must too — otherwise unfixable findings or
+        # FAILs in SKILL.md or sibling capabilities would not show up
+        # in ``unfixable_findings``/``non_path_fails`` and the command
+        # could exit 0 after applying whole-tree rewrites while
+        # leaving the skill non-conformant.
         validation_errors, _passes = validate_skill(
-            skill_path, is_capability, allow_nested_refs,
+            rewrite_root, False, allow_nested_refs,
         )
         # Drop findings that the rewriter already handles — they are
         # represented in ``rows`` and would otherwise double-count.

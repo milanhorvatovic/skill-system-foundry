@@ -1202,46 +1202,59 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         the architecture violation as a generic ``external reference
         — recorded for the capability-lift tool``.
 
-        The link uses the canonical ``../../capabilities/<other>/...``
-        form — that is the only cross-capability shape the body
-        reference regex captures (the shorter ``../<other>/...`` form
-        does not anchor on a recognized top-level directory and slips
-        past the extractor entirely; the audit's RE_SIBLING_CAP_REF
-        catches that case from the other direction).
+        Both the canonical ``../../capabilities/<other>/...`` and the
+        natural file-relative ``../<other>/...`` forms must be caught
+        — the body reference regex has a third alternative that
+        captures any ``(\\.\\./)+`` path ending in a recognized
+        extension, so neither shape can slip past validation.
         """
-        with tempfile.TemporaryDirectory() as tmpdir:
-            write_text(
-                os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n",
-            )
-            # Two capabilities; the first links into the second.
-            cap_a = os.path.join(tmpdir, "capabilities", "alpha")
-            cap_b = os.path.join(tmpdir, "capabilities", "beta")
-            write_text(
-                os.path.join(cap_b, "capability.md"), "# Beta\n",
-            )
-            cap_a_md = os.path.join(cap_a, "capability.md")
-            body = (
-                "# Alpha\n\n"
-                "See [beta](../../capabilities/beta/capability.md).\n"
-            )
-            write_text(cap_a_md, body)
-            errors, _passes = validate_body(body, cap_a_md, tmpdir)
-        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        # Must NOT carry the lift-tool external-reference message.
-        lift_external = [
-            e for e in info_errors
-            if "external reference — recorded for the capability-lift tool"
-            in e
-        ]
-        self.assertEqual(lift_external, [])
-        # Must surface a distinct INFO that names the target capability
-        # and points at the capability-isolation rule.
-        cross_cap = [
-            e for e in info_errors
-            if "crosses into capability 'beta'" in e
-            and "capability-isolation" in e
-        ]
-        self.assertEqual(len(cross_cap), 1)
+        for body_link, label in (
+            ("../../capabilities/beta/capability.md",
+             "directory-anchored"),
+            ("../beta/capability.md",
+             "natural file-relative sibling"),
+        ):
+            with self.subTest(form=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    write_text(
+                        os.path.join(tmpdir, "SKILL.md"),
+                        "---\nname: test\n---\n",
+                    )
+                    cap_a = os.path.join(tmpdir, "capabilities", "alpha")
+                    cap_b = os.path.join(tmpdir, "capabilities", "beta")
+                    write_text(
+                        os.path.join(cap_b, "capability.md"), "# Beta\n",
+                    )
+                    cap_a_md = os.path.join(cap_a, "capability.md")
+                    body = f"# Alpha\n\nSee [beta]({body_link}).\n"
+                    write_text(cap_a_md, body)
+                    errors, _passes = validate_body(body, cap_a_md, tmpdir)
+                info_errors = [
+                    e for e in errors if e.startswith(LEVEL_INFO)
+                ]
+                # Must NOT carry the lift-tool external-reference
+                # message.
+                lift_external = [
+                    e for e in info_errors
+                    if (
+                        "external reference — recorded for the "
+                        "capability-lift tool"
+                    ) in e
+                ]
+                self.assertEqual(lift_external, [])
+                # Must surface a distinct INFO that names the target
+                # capability and points at the capability-isolation
+                # rule.
+                cross_cap = [
+                    e for e in info_errors
+                    if "crosses into capability 'beta'" in e
+                    and "capability-isolation" in e
+                ]
+                self.assertEqual(
+                    len(cross_cap), 1,
+                    msg=f"{label}: expected one cross-cap INFO; got "
+                    f"{info_errors!r}",
+                )
 
     def test_capability_link_to_missing_local_reference_fails(self) -> None:
         """A capability link to a non-existent local reference fails —
@@ -2282,6 +2295,39 @@ class FixModeTests(unittest.TestCase):
         # subtree alone.
         self.assertIn("capabilities/demo/capability.md", files)
         self.assertIn("capabilities/other/capability.md", files)
+
+    def test_fix_capability_mode_validates_enclosing_skill_root(self) -> None:
+        """When ``--fix --capability`` rewrites the parent skill tree,
+        it must also *validate* that same tree.  Otherwise unfixable
+        findings or FAILs in SKILL.md or sibling capabilities would not
+        show up in ``unfixable_findings`` / ``non_path_fails`` and the
+        command could exit 0 after applying whole-tree rewrites while
+        the skill remains non-conformant."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            # Parent SKILL.md has a broken intra-skill ref the rewriter
+            # cannot resolve mechanically — the supplied --capability
+            # path is the *capability*, not the skill, so the previous
+            # behavior would never see this finding.
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [m](references/missing.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n",
+            )
+            proc = _run(
+                [cap_dir, "--capability", "--fix", "--json"],
+                cwd=REPO_ROOT,
+            )
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertTrue(any(
+            "references/missing.md" in f
+            for f in payload["unfixable_findings"]
+        ), msg=str(payload))
 
     def test_fix_capability_mode_without_skill_root_errors(self) -> None:
         """When ``--capability`` is given but no SKILL.md sits above
