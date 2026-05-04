@@ -446,6 +446,91 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         self.assertEqual(report["connected_components"], 2)
         self.assertEqual(report["files_unreachable_from_root"], 2)
 
+    def test_top_level_readme_is_not_in_scope(self) -> None:
+        """Top-level ``.md`` files at the skill root other than
+        ``SKILL.md`` (``README.md``, ``CHANGELOG.md``, etc.) are
+        package metadata, not load-graph nodes.  The conformance
+        report must exclude them so a README that links outward to
+        capabilities — but receives no inbound link from any entry
+        root — does not surface as ``unreachable`` under directed
+        reachability.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            write_text(
+                os.path.join(tmp, "README.md"),
+                "# Skill\n\nSee [cap](capabilities/foo/capability.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # README.md must not contribute to the unreachable count or
+        # be visible as an extra component.
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        self.assertTrue(report["conforms"])
+        # And the link from README.md must not be tallied either —
+        # if it were in scope, ``total_links`` would include the
+        # README → capability edge.  ``_build_skill`` produces a
+        # known link count; pin that the README contributes none.
+        baseline_total = report["total_links"]
+        # Re-run without the README and confirm total_links is identical.
+        with tempfile.TemporaryDirectory() as tmp2:
+            _build_skill(tmp2)
+            without_readme = rcr.compute_report(tmp2)
+        self.assertEqual(baseline_total, without_readme["total_links"])
+
+    def test_orphan_with_back_link_to_skill_md_is_still_unreachable(self) -> None:
+        """Reachability follows links *outward* from entry roots.
+
+        An otherwise orphan file that links *back* to ``SKILL.md``
+        (``[home](../SKILL.md)``) cannot be discovered by an agent
+        following links from ``SKILL.md`` outward — the back-edge is
+        only traversable in reverse.  The conformance gate must
+        treat it as unreachable so back-link tricks cannot silently
+        pass an orphan through CI.
+
+        ``connected_components`` uses an undirected view and so
+        legitimately merges the orphan with the rest of the graph
+        — the metric is weak connectivity by design.  This test
+        pins the directed/undirected split.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Orphan with a back-link to SKILL.md.  No outward link
+            # from SKILL.md or any other root reaches this file.
+            write_text(
+                os.path.join(tmp, "references", "orphan.md"),
+                "# Orphan\n\nSee [home](../SKILL.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The orphan must surface as unreachable despite the back-link.
+        self.assertEqual(report["files_unreachable_from_root"], 1)
+        self.assertFalse(report["conforms"])
+        # Component count: orphan's back-link to SKILL.md merges it
+        # into SKILL.md's component under the undirected view.
+        self.assertEqual(report["connected_components"], 1)
+
+    def test_total_links_counts_each_occurrence(self) -> None:
+        """``total_links`` and ``broken_under_standard_semantics``
+        report link *occurrences*, not unique-target counts.  A
+        single body that contains two anchored links to the same
+        broken target (``foo.md#a`` and ``foo.md#b``) must contribute
+        two to the broken tally — the conformance metrics quantify
+        authored links, and a reader following each anchor lands on
+        a different position in the (still missing) target.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            skill_md = os.path.join(tmp, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "See [a](references/missing.md#a) and "
+                "[b](references/missing.md#b) and "
+                "[plain](references/missing.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 3)
+        self.assertEqual(report["broken_under_standard_semantics"], 3)
+
     def test_unreached_md_file_is_unreachable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp)

@@ -73,6 +73,17 @@ def enumerate_markdown_files(skill_root: str) -> list[str]:
     its scope.  ``SKILL.md`` and every file under ``references/``,
     ``capabilities/<name>/``, ``capabilities/<name>/references/``,
     and ``shared/`` is included.
+
+    Top-level package metadata files at the skill root other than
+    ``SKILL.md`` (e.g., ``README.md``, ``CHANGELOG.md``,
+    ``LICENSE.md``) are package documentation, not link-graph
+    nodes — the agent harness never loads them as part of the
+    skill's context.  Excluding them keeps the directed-reachability
+    metric focused on the actual load graph: a README that links
+    outward to capabilities but receives no inbound link from any
+    entry root would otherwise surface as ``unreachable`` and fail
+    the conformance gate, even though it is genuinely external to
+    the load surface.
     """
     files: list[str] = []
     for root, dirs, names in os.walk(skill_root):
@@ -85,8 +96,13 @@ def enumerate_markdown_files(skill_root: str) -> list[str]:
             dirs[:] = []
             continue
         for name in names:
-            if name.endswith(EXT_MARKDOWN):
-                files.append(os.path.abspath(os.path.join(root, name)))
+            if not name.endswith(EXT_MARKDOWN):
+                continue
+            # At the skill root, only ``SKILL.md`` is in scope.
+            # Other top-level ``.md`` files are package metadata.
+            if rel_root == "." and name != FILE_SKILL_MD:
+                continue
+            files.append(os.path.abspath(os.path.join(root, name)))
     return sorted(files)
 
 
@@ -153,6 +169,14 @@ def _build_graph(
             body,
             include_router_table=is_entry,
             filter_capability_entries=False,
+            # Conformance counts every literal link occurrence so
+            # ``total_links``, ``resolves_under_standard_semantics``,
+            # and ``broken_under_standard_semantics`` reflect link
+            # counts rather than unique-target counts.  Two anchored
+            # links to the same file (``guide.md#a``, ``guide.md#b``)
+            # normalize to the same cleaned path, but each is a
+            # separate authored link the report is meant to tally.
+            dedupe=False,
         ):
             normalized = strip_fragment(ref)
             # Skip absolute or drive-qualified paths — both are spec
@@ -247,53 +271,67 @@ def _connected_components(
     metric would no longer match its documented ``in-scope .md
     files`` definition.
 
-    Builds an undirected reachability index from the directed edges
-    (filtered against ``edges.keys()`` so cross-set targets do not
-    pollute it), then walks each root's component.  In-scope files
-    not reached by any root walk are unreachable.
+    Reachability and component count use *different* adjacency views
+    of the same edge set:
+
+    * **Reachability** is computed from the directed ``src → tgt``
+      edges only.  An agent following links from an entry root can
+      only traverse links written *outward* from a file; a back-link
+      from an otherwise orphan reference to ``SKILL.md`` does not
+      make that reference discoverable.  Using undirected adjacency
+      here would silently mark such orphans reachable, falsely
+      passing the conformance gate.
+    * **Components** are weakly connected — that is the documented
+      metric, so the helper builds an undirected adjacency for the
+      component pass.  The undirected view legitimately merges two
+      subgraphs that share a back-edge, since the metric is meant
+      to surface clusters of files that have any reference relation
+      to each other.
+
+    Targets outside the in-scope set are filtered out of both views.
     """
     in_scope = set(edges.keys())
 
-    # Undirected adjacency for component detection — only edges
-    # between in-scope nodes count.  ``edges`` may contain targets
-    # outside the in-scope set (non-md or excluded subtrees); those
-    # are skipped here so they neither inflate the unreachable count
-    # nor alter component shape.
-    adj: dict[str, set[str]] = {n: set() for n in in_scope}
+    # Directed adjacency — outward edges only, used to walk what an
+    # agent can reach from an entry root.  Filter to in-scope targets
+    # so cross-set links (e.g. to ``scripts/foo.py``) do not appear
+    # as reachable nodes.
+    directed_adj: dict[str, set[str]] = {n: set() for n in in_scope}
     for src, targets in edges.items():
         for tgt in targets:
             if tgt in in_scope:
-                adj[src].add(tgt)
-                adj[tgt].add(src)
+                directed_adj[src].add(tgt)
 
-    visited: set[str] = set()
-    component_count = 0
-    # First pass: walk each entry root's component.  Roots are the
-    # canonical entry points (SKILL.md + every capability.md), so a
-    # router skill in which SKILL.md links every capability merges
-    # all per-scope subgraphs into a single component here.
+    # Undirected adjacency — built from the same filtered edges, used
+    # for the weakly-connected-component pass.
+    undirected_adj: dict[str, set[str]] = {n: set() for n in in_scope}
+    for src, targets in directed_adj.items():
+        for tgt in targets:
+            undirected_adj[src].add(tgt)
+            undirected_adj[tgt].add(src)
+
+    # Reachability pass: walk each root following directed edges
+    # outward.  An in-scope file not reached by any root is
+    # unreachable, even if it links *back* to an entry root.
+    reached: set[str] = set()
     for root in roots:
-        if root in visited or root not in adj:
+        if root not in directed_adj or root in reached:
             continue
         stack = [root]
         while stack:
             node = stack.pop()
-            if node in visited:
+            if node in reached:
                 continue
-            visited.add(node)
-            stack.extend(adj[node] - visited)
-        component_count += 1
+            reached.add(node)
+            stack.extend(directed_adj[node] - reached)
+    unreachable_count = len(in_scope - reached)
 
-    # Second pass: every still-unvisited in-scope node belongs to an
-    # *orphan* component — a connected subgraph that no entry root
-    # reaches.  The metric is documented as the count of
-    # weakly-connected components in the in-scope link graph, so the
-    # report must surface these too; otherwise an isolated cluster
-    # of orphan markdown files would only contribute to
-    # ``files_unreachable_from_root`` while ``connected_components``
-    # silently underreports the drift.
-    unreachable_nodes = in_scope - visited
-    for node in unreachable_nodes:
+    # Component pass: walk weakly-connected components on the
+    # undirected adjacency.  Visit every in-scope node so isolated
+    # clusters with no entry root still contribute a component.
+    visited: set[str] = set()
+    component_count = 0
+    for node in in_scope:
         if node in visited:
             continue
         stack = [node]
@@ -302,10 +340,10 @@ def _connected_components(
             if cur in visited:
                 continue
             visited.add(cur)
-            stack.extend(adj[cur] - visited)
+            stack.extend(undirected_adj[cur] - visited)
         component_count += 1
 
-    return component_count, len(unreachable_nodes)
+    return component_count, unreachable_count
 
 
 def _list_roots(skill_root: str) -> list[str]:

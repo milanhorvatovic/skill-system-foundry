@@ -77,6 +77,7 @@ def extract_body_references(
     *,
     include_router_table: bool = False,
     filter_capability_entries: bool = True,
+    dedupe: bool = True,
 ) -> list[str]:
     """Return cleaned reference paths from a markdown body.
 
@@ -92,8 +93,8 @@ def extract_body_references(
     Anchor fragments, queries, and title suffixes are stripped via
     :func:`strip_fragment`.  Template placeholders (containing ``<``
     or ``>``) are dropped.  Order is preserved as the body presents
-    them, with duplicates removed on first sight.  Router-table
-    capability paths follow whatever links were found in prose.
+    them.  Router-table capability paths follow whatever links were
+    found in prose.
 
     *filter_capability_entries* (default True) drops references that
     point at a capability entry point (``capabilities/<name>/capability.md``)
@@ -103,6 +104,15 @@ def extract_body_references(
     consumers (e.g. ``validate_skill._check_references``) need to
     *validate* references to capability entry points, so they pass
     ``filter_capability_entries=False`` to keep those paths in scope.
+
+    *dedupe* (default True) drops duplicate cleaned paths after first
+    sight, which is what graph walkers and validators want — visiting
+    the same target twice gains them nothing.  Conformance metrics
+    that count link occurrences (``total_links``,
+    ``broken_under_standard_semantics``) need every literal link
+    instance, including separate anchored forms that normalize to the
+    same path (``guide.md#a`` vs ``guide.md#b``); those callers pass
+    ``dedupe=False``.
     """
     stripped = _RE_FENCED_BLOCK.sub("", content)
     raw_refs: list[str] = []
@@ -174,9 +184,10 @@ def extract_body_references(
             prefix_stripped = prefix_stripped.split("/", 1)[1]
         if prefix_stripped.startswith("roles/"):
             continue
-        if clean in seen:
-            continue
-        seen.add(clean)
+        if dedupe:
+            if clean in seen:
+                continue
+            seen.add(clean)
         cleaned.append(clean)
     return cleaned
 
