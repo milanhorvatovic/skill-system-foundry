@@ -64,8 +64,15 @@ class ComputeReportConformingSkillTests(unittest.TestCase):
         # Capability bodies resolve refs file-relative under the
         # redefined rule (see references/path-resolution.md).
         # ``[x](references/y.md)`` resolves under the capability root.
+        # SKILL.md links the capability so the conformance gate's
+        # component check (see test_unrouted_capability_fails_conformance)
+        # is satisfied — this test is only verifying capability-local
+        # resolution, not router wiring drift.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(tmp)
+            _build_skill(
+                tmp,
+                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
+            )
             cap_dir = os.path.join(tmp, "capabilities", "demo")
             write_text(
                 os.path.join(cap_dir, "capability.md"),
@@ -123,8 +130,14 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
     per capability so the future capability-lift tool can find them."""
 
     def test_external_edges_counted_per_capability(self) -> None:
+        # SKILL.md links the capability so the conformance gate's
+        # component check passes — this test is only verifying the
+        # external-edge tally, not router wiring drift.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(tmp)
+            _build_skill(
+                tmp,
+                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
+            )
             write_text(
                 os.path.join(tmp, "references", "alpha.md"), "# Alpha\n",
             )
@@ -175,8 +188,13 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
         # — not a lift-rewrite candidate.  The metric must not count
         # every ``../``-prefixed link blindly; it counts only links
         # whose resolved target sits outside ``capabilities/<name>/``.
+        # SKILL.md links the capability so the conformance gate's
+        # component check passes.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(tmp)
+            _build_skill(
+                tmp,
+                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
+            )
             cap_dir = os.path.join(tmp, "capabilities", "demo")
             write_text(
                 os.path.join(cap_dir, "capability.md"),
@@ -223,6 +241,35 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
 class ComputeReportConnectedComponentsTests(unittest.TestCase):
     """The connected-component analysis treats SKILL.md and every
     capability.md as roots; reachability spans both directions."""
+
+    def test_unrouted_capability_fails_conformance(self) -> None:
+        # A capability whose internal subgraph is fine but that
+        # SKILL.md never links to is a router-drift case the gate
+        # exists to catch.  ``capability.md`` is its own reachability
+        # root, so its subgraph is "reachable" and contributes
+        # nothing to ``files_unreachable_from_root`` — yet it forms a
+        # separate connected component, and that component count is
+        # what the conformance gate must use to detect the drift.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md without any link to the capability.
+            _build_skill(tmp, "# Skill\n")
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Alpha\n\nSee [r](references/r.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "r.md"),
+                "# R\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The capability subgraph is internally consistent, so no
+        # files are unreachable.
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        # But it forms a separate component from SKILL.md.
+        self.assertEqual(report["connected_components"], 2)
+        # Conforms must fail — that's the whole point of the gate.
+        self.assertFalse(report["conforms"])
 
     def test_orphan_subgraph_counts_as_its_own_component(self) -> None:
         # The metric is documented as weakly-connected components in

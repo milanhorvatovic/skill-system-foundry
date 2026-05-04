@@ -45,8 +45,15 @@ Metrics:
   ``capabilities/<name>/references/foo.md``) are intra-scope and
   not counted.
 
-A skill conforms when ``broken_under_standard_semantics == 0`` and
-``files_unreachable_from_root == 0``.  Other fields are diagnostic.
+A skill conforms when ``broken_under_standard_semantics == 0``,
+``files_unreachable_from_root == 0``, and ``connected_components == 1``.
+The component check catches a class of drift the other two signals
+miss: an unrouted capability whose subgraph is internally consistent
+but never linked from the parent ``SKILL.md``.  ``capability.md``
+acts as its own reachability root, so the subgraph is "reachable" and
+no file is "unreachable" — yet the router is incomplete and the
+capability's subgraph forms a separate component.  Other fields are
+diagnostic.
 
 This entry point is a thin wrapper over ``lib.conformance.compute_report``
 — argument parsing, output formatting, and exit status only.  Any

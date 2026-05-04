@@ -354,5 +354,29 @@ def compute_report(skill_root: str) -> dict:
         "external_edges_per_capability": dict(
             sorted(ext_per_cap.items())
         ),
-        "conforms": broken == 0 and unreachable_count == 0,
+        # Conforms requires three signals to be clean:
+        #
+        # - ``broken == 0`` — every captured link resolves to a real
+        #   in-scope file under file-relative semantics.
+        # - ``unreachable_count == 0`` — no in-scope ``.md`` file is
+        #   stranded with no path from any entry root.
+        # - ``component_count == 1`` — every in-scope file lives in
+        #   one connected subgraph.  Without this, an unrouted
+        #   capability (a ``capability.md`` whose subgraph is
+        #   internally consistent but never linked from the parent
+        #   ``SKILL.md`` router) would still pass: ``capability.md``
+        #   acts as its own reachability root, so its subgraph is
+        #   "reachable", and ``unreachable_count`` stays 0 even
+        #   though the router is incomplete.  ``component_count``
+        #   captures that drift: every router-linked capability
+        #   merges into the SKILL.md component, so an unrouted
+        #   capability bumps the count to 2+.  An empty skill (no
+        #   markdown beyond SKILL.md, or just SKILL.md and orphan
+        #   entries — both of which are caught by the other two
+        #   signals) reports ``component_count == 1`` cleanly.
+        "conforms": (
+            broken == 0
+            and unreachable_count == 0
+            and component_count == 1
+        ),
     }
