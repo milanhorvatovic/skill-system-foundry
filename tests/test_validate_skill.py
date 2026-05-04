@@ -1191,6 +1191,35 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
 
+    def test_role_references_are_not_captured(self) -> None:
+        """An orchestration ``SKILL.md`` that links a role file uses
+        system-root-relative paths (``roles/<group>/<name>.md``) per
+        the role exception in the path-resolution rule.  The new
+        multi-segment regex captures any path through unrecognized
+        directories, so without an extraction-time filter ``roles/``
+        links would be resolved file-relative under skill_root and
+        surface as broken in-skill paths.  ``extract_body_references``
+        drops them so the path-resolution surface stays focused on
+        in-skill cross-file references; the audit's
+        ``check_upward_references`` rule (``--allow-orchestration``)
+        validates role links separately.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "Role: [reviewer](roles/release/reviewer.md)\n"
+                "Dotted: [r2](./roles/release/reviewer.md)\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [e for e in errors if e.startswith(LEVEL_WARN)]
+        targets = " ".join(broken)
+        # Neither role link should produce a broken-link finding —
+        # both are out-of-scope for the path-resolution rule.
+        self.assertNotIn("roles/release/reviewer.md", targets)
+
     def test_uri_scheme_links_are_not_captured(self) -> None:
         """URI-scheme markdown links like ``mailto:guide.md`` end in
         a recognized extension but are external destinations, not

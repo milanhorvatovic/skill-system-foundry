@@ -154,6 +154,26 @@ def extract_body_references(
         clean = strip_fragment(ref)
         if not clean:
             continue
+        # Drop role references — those use system-root-relative
+        # paths (``roles/<group>/<name>.md``) per the path-resolution
+        # rule's role exception, not file-relative.  An orchestration
+        # SKILL.md that links a role would otherwise have the link
+        # captured here, resolved file-relative under skill_root, and
+        # surfaced as a broken in-skill path.  Role references are
+        # validated separately by the audit's dependency-direction
+        # rule (``check_upward_references`` with
+        # ``--allow-orchestration``); they are out of scope for
+        # the path-resolution surface.  Strip leading ``./`` or
+        # ``../`` segments before checking the prefix so explicit-
+        # relative spellings like ``./roles/x.md`` are also caught.
+        prefix_stripped = clean
+        while (
+            prefix_stripped.startswith("./")
+            or prefix_stripped.startswith("../")
+        ):
+            prefix_stripped = prefix_stripped.split("/", 1)[1]
+        if prefix_stripped.startswith("roles/"):
+            continue
         if clean in seen:
             continue
         seen.add(clean)
