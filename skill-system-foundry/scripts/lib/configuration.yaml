@@ -79,7 +79,7 @@ skill:
     # path file-relative under the redefined rule
     # (see references/path-resolution.md).
     reference_patterns:
-      # Four alternatives, ordered from most-specific to most-general:
+      # Six alternatives, ordered from most-specific to most-general:
       #
       # - directory-anchored paths (``capabilities/foo.md``,
       #   ``../../references/foo.md``) — recognized top-level dir
@@ -102,6 +102,20 @@ skill:
       #   top-level directory.  Without this branch a broken
       #   ``guides/setup.md`` link from a reference file would slip
       #   past validation and the conformance gate.
+      # - POSIX absolute paths (``/foo.md``, ``/tmp/foo.md``) —
+      #   leading ``/`` followed by a non-slash, non-colon
+      #   character so URL schemes (``http://...``) cannot reach
+      #   this branch.  Spec-violating; the resolver emits a WARN
+      #   via ``os.path.isabs``.
+      # - Windows drive-qualified paths (``C:foo.md``, ``C:/foo.md``,
+      #   ``C:\foo.md``) — single drive letter, ``:``, then a path
+      #   that excludes ``:`` and whitespace so multi-letter URL
+      #   schemes (``mailto:``, ``myproto:``) cannot reach this
+      #   branch.  Spec-violating; the resolver emits a WARN via
+      #   ``is_drive_qualified``.  Without these last two
+      #   alternatives, an absolute or drive-qualified link would
+      #   never enter the extractor at all and the resolver's
+      #   defensive checks would be unreachable from the capture.
       #
       # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./``
       # and ``../`` are accepted — standard markdown treats
@@ -111,12 +125,24 @@ skill:
       # constants load time with the alternation built from
       # ``path_resolution.reference_extensions`` (see
       # ``constants.RE_MARKDOWN_LINK_REF``), so the supported
-      # extension list lives in exactly one place.  Editing
-      # ``reference_extensions`` flows through automatically — the
-      # markdown_link regex, the ``backtick`` regex, and the
-      # ``is_glob_path`` boundary regex all source the same
-      # alternation.
-      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      # extension list lives in exactly one place — but only
+      # alternatives that *carry an extension match* consume it.
+      # Specifically: the bare-sibling, parent-traversal, and
+      # generic multi-segment alternatives below substitute
+      # ``__EXT_ALT__`` into a literal extension test, and the
+      # ``is_glob_path`` boundary regex in ``lib/references.py``
+      # uses the same alternation.  The directory-anchored
+      # alternative (capabilities / references / scripts / assets /
+      # shared) and the ``backtick`` regex below both rely on the
+      # directory whitelist as their discriminator and capture any
+      # path under those directories regardless of file extension —
+      # asset references, capability-local templates, and similar
+      # legitimately appear there with arbitrary extensions, so an
+      # extension filter would silently drop them.  Editing
+      # ``reference_extensions`` therefore controls the extension-
+      # matching alternatives only; the directory-anchored capture
+      # is governed by the directory whitelist.
+      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|/[A-Za-z0-9_][^):\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|[A-Za-z]:[^):\s]+\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
       backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500

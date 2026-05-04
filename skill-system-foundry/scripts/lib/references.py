@@ -111,11 +111,18 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 
 _GLOB_METACHARS = "*?[]{}"
 # Build the boundary regex from the configured extension list.  The
-# body ``reference_patterns.markdown_link`` regex in configuration.yaml
-# uses the same alternation via the ``__EXT_ALT__`` placeholder
-# substituted in ``constants.py``, so editing
-# ``path_resolution.reference_extensions`` flows through to both the
-# extractor and this glob discriminator from a single source.
+# extension-matching alternatives of ``reference_patterns.markdown_link``
+# in configuration.yaml (bare-sibling, parent-traversal, and generic
+# multi-segment) substitute the same ``__EXT_ALT__`` placeholder via
+# ``constants.py``, so editing ``path_resolution.reference_extensions``
+# flows through to those extractor alternatives and this glob
+# discriminator from a single source.  The directory-anchored
+# alternative of ``markdown_link`` and the ``backtick`` regex are
+# governed by their directory whitelist and capture any path under
+# the recognized top-level directories regardless of extension —
+# editing ``reference_extensions`` does not affect those captures
+# (and would not improve them: asset references and capability-local
+# templates legitimately use arbitrary extensions there).
 # Extensions are escaped to keep the alternation safe even if a
 # future YAML edit introduces a regex metacharacter.
 _EXT_FRAGMENT_BOUNDARY_RE = re.compile(

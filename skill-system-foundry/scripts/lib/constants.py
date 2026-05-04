@@ -343,6 +343,12 @@ _body_refs = _skill_body["reference_patterns"]
 # in YAML keeps the placeholder for readability; the alternation is
 # assembled here from a single source — the YAML list — so adding or
 # removing an extension never requires editing the regex template.
+# The substitution applies to ``markdown_link`` only.  The
+# ``backtick`` pattern is directory-anchored and captures any path
+# under the recognized top-level directories regardless of
+# extension (the directory whitelist is its discriminator) — see
+# the ``reference_patterns`` block in configuration.yaml for the
+# full breakdown of which alternatives consume the alternation.
 _ext_alt_for_md_link = "|".join(
     re.escape(ext) for ext in PATH_RESOLUTION_REFERENCE_EXTENSIONS
 )

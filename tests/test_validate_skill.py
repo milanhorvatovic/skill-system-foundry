@@ -1295,6 +1295,60 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         self.assertNotIn("mailto:guide.md", targets)
         self.assertNotIn("myproto:foo.md", targets)
 
+    def test_absolute_path_link_is_captured_and_warned(self) -> None:
+        """A POSIX absolute markdown link (``[bad](/tmp/foo.md)``) is
+        spec-violating.  Earlier extractor regexes excluded leading
+        ``/`` from every alternative, so absolute links never
+        reached the validator's ``os.path.isabs`` defensive check —
+        the WARN was unreachable and the violation passed silently.
+        The absolute-path alternative now captures these targets so
+        the resolver can emit the intended finding.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [a](/tmp/foo.md) and [b](/foo.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        joined = " ".join(warns)
+        # Both targets must enter the finding stream — absolute paths
+        # are always spec-violating, but the precise finding text is
+        # the resolver's contract (broken link / out-of-skill /
+        # absolute), not this test's.  The extractor's job is just
+        # to surface them.
+        self.assertIn("/tmp/foo.md", joined)
+        self.assertIn("/foo.md", joined)
+
+    def test_drive_qualified_path_link_is_captured_and_warned(self) -> None:
+        """A Windows drive-qualified markdown link (``[bad](C:foo.md)``,
+        ``[bad](C:/foo.md)``) is spec-violating.  Earlier extractor
+        regexes excluded ``:`` from every relative-path alternative,
+        so drive-qualified links never reached the validator's
+        ``is_drive_qualified`` defensive check — the WARN was
+        unreachable.  The drive-qualified alternative now captures
+        these targets while still rejecting URI schemes
+        (``mailto:``, ``myproto:``) because those have multi-letter
+        scheme names and the alternative requires a single letter
+        before the colon.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [a](C:foo.md) and [b](D:/Windows/foo.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        joined = " ".join(warns)
+        self.assertIn("C:foo.md", joined)
+        self.assertIn("D:/Windows/foo.md", joined)
+
     def test_dot_slash_prefixed_multi_segment_links_are_extracted(self) -> None:
         """Standard markdown allows the explicit-relative ``./``
         prefix on every form of relative link, including multi-
