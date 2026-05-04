@@ -1191,6 +1191,30 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
 
+    def test_dot_slash_prefixed_multi_segment_links_are_extracted(self) -> None:
+        """Standard markdown allows the explicit-relative ``./``
+        prefix on every form of relative link, including multi-
+        segment paths through unrecognized child directories
+        (``./guides/setup.md``).  Without ``./`` support on the
+        4th regex alternative, that shape slips past the extractor
+        and a broken ``./guides/setup.md`` link silently passes the
+        conformance gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [g](./guides/setup.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        targets = " ".join(broken)
+        self.assertIn("./guides/setup.md", targets)
+
     def test_multi_segment_relative_links_are_extracted(self) -> None:
         """Standard markdown file-relative links can travel through
         unrecognized child directories — ``guides/setup.md`` from a
@@ -2803,6 +2827,16 @@ class MainInProcessTests(unittest.TestCase):
         self.assertEqual(payload["tool"], "validate_skill")
         self.assertFalse(payload["success"])
         self.assertIn("is not a directory", payload["error"])
+        # Every --json exit must include the path_resolution block
+        # so consumers can navigate to the canonical rule from any
+        # output stream — success, failure, or early exit.
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            payload["path_resolution"]["documentation_path"],
+        )
 
     def test_valid_skill_text_mode_prints_all_passed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
