@@ -375,8 +375,15 @@ class DocsSafetyTests(unittest.TestCase):
         — they are how a capability reaches the shared skill root.
         Every ``../``-using link must still resolve to an existing
         file inside the skill directory; links that escape the skill
-        root entirely are flagged elsewhere as INFO (out of scope)."""
-        skill_root = os.path.dirname(os.path.dirname(DOCS["SKILL.md"]))
+        root entirely are flagged elsewhere as INFO (out of scope).
+        """
+        # ``DOCS["SKILL.md"]`` already points at the skill entry, so the
+        # enclosing skill directory is one ``dirname`` up — not two.
+        # A double-dirname would land on the repo root, which would
+        # quietly accept escapes from a capability into top-level repo
+        # files (e.g. ``../../../README.md``) as "in-scope" and miss
+        # the very class of bad links this test is meant to flag.
+        skill_root = os.path.dirname(DOCS["SKILL.md"])
         failures = []
 
         for doc_label, doc_path in DOCS.items():
