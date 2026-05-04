@@ -500,8 +500,13 @@ def validate_skill_references(
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
-    Walks *skill_path*, reads each ``.md`` file, and checks that all
-    intra-skill references resolve from *skill_root*.  The entry file
+    Walks *skill_path*, reads each ``.md`` file, and checks that every
+    intra-skill reference resolves under standard markdown semantics
+    — i.e. file-relative from the directory containing the source
+    file, per ``references/path-resolution.md``.  *skill_root* is
+    used only as the *boundary* for the in-scope check (paths that
+    escape it are surfaced as INFO and skipped); resolution itself
+    is anchored at each source file's own directory.  The entry file
     (*entry_file*) is skipped because it is already validated by
     :func:`validate_body`.
 
