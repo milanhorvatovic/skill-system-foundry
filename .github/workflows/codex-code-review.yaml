@@ -96,6 +96,12 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - name: Validate retain-findings configuration
+        if: ${{ vars.CODEX_RETAIN_FINDINGS == 'true' && vars.CODEX_RETAIN_FINDINGS_DAYS == '' }}
+        run: |
+          echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be defined as a positive integer (action clamps at 90)."
+          exit 1
+
       - name: Download review artifacts
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
         with:
