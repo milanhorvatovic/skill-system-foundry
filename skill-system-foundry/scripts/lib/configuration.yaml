@@ -79,7 +79,16 @@ skill:
     # path file-relative under the redefined rule
     # (see references/path-resolution.md).
     reference_patterns:
-      markdown_link: \[.*?\]\(((?:\.\./)*(?:(?:capabilities|references|scripts|assets|shared)/[^)]+|[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)))\)
+      # Bare-sibling alternative also captures optional anchor / query
+      # suffixes (``#section``, ``?v=2``) and markdown title
+      # annotations (``foo.md "Title"``) so the resolver in
+      # ``lib/reachability.py`` and the conformance report see the
+      # full link before they hand it to ``strip_fragment``.  Without
+      # this, anchored sibling links (the canonical form inside
+      # ``references/``) would be invisible to validation, stats, and
+      # the conformance report — false negatives on a class of links
+      # the rest of the pipeline is designed to handle.
+      markdown_link: \[.*?\]\(((?:\.\./)*(?:(?:capabilities|references|scripts|assets|shared)/[^)]+|[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?))\)
       backtick: "`((?:\.\./)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
