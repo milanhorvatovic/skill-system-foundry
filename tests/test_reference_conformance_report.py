@@ -32,6 +32,28 @@ def _build_skill(skill_root: str, skill_body: str = "") -> None:
     write_text(skill_md, f"---\nname: test\n---\n{body}")
 
 
+def _router_table(*capability_names: str) -> str:
+    """Return a markdown router table that lists the given capabilities.
+
+    The conformance report's routing check reads the router table
+    (parsed by ``router_table.extract_capability_paths``), so tests
+    that need a capability to count as routed must place it in this
+    structured table — a plain markdown link from SKILL.md is not
+    sufficient since router-table membership is what makes a
+    capability dispatchable.
+    """
+    rows = "\n".join(
+        f"| {name} | trigger | capabilities/{name}/capability.md |"
+        for name in capability_names
+    )
+    return (
+        "## Capabilities\n\n"
+        "| Capability | Trigger | Path |\n"
+        "|---|---|---|\n"
+        f"{rows}\n"
+    )
+
+
 # ===================================================================
 # compute_report
 # ===================================================================
@@ -64,15 +86,12 @@ class ComputeReportConformingSkillTests(unittest.TestCase):
         # Capability bodies resolve refs file-relative under the
         # redefined rule (see references/path-resolution.md).
         # ``[x](references/y.md)`` resolves under the capability root.
-        # SKILL.md links the capability so the conformance gate's
-        # component check (see test_unrouted_capability_fails_conformance)
-        # is satisfied — this test is only verifying capability-local
-        # resolution, not router wiring drift.
+        # SKILL.md routes the capability via a router table so the
+        # conformance gate's routing check passes — this test is
+        # only verifying capability-local resolution, not router
+        # wiring drift.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(
-                tmp,
-                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
-            )
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
             cap_dir = os.path.join(tmp, "capabilities", "demo")
             write_text(
                 os.path.join(cap_dir, "capability.md"),
@@ -130,14 +149,12 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
     per capability so the future capability-lift tool can find them."""
 
     def test_external_edges_counted_per_capability(self) -> None:
-        # SKILL.md links the capability so the conformance gate's
-        # component check passes — this test is only verifying the
-        # external-edge tally, not router wiring drift.
+        # SKILL.md routes the capability via a router table so the
+        # conformance gate's routing check passes — this test is
+        # only verifying the external-edge tally, not router wiring
+        # drift.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(
-                tmp,
-                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
-            )
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
             write_text(
                 os.path.join(tmp, "references", "alpha.md"), "# Alpha\n",
             )
@@ -188,13 +205,10 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
         # — not a lift-rewrite candidate.  The metric must not count
         # every ``../``-prefixed link blindly; it counts only links
         # whose resolved target sits outside ``capabilities/<name>/``.
-        # SKILL.md links the capability so the conformance gate's
-        # component check passes.
+        # SKILL.md routes the capability via a router table so the
+        # conformance gate's routing check passes.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(
-                tmp,
-                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
-            )
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
             cap_dir = os.path.join(tmp, "capabilities", "demo")
             write_text(
                 os.path.join(cap_dir, "capability.md"),
@@ -284,10 +298,7 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         # ``files_unreachable_from_root`` even though the report's
         # contract excludes those subtrees from its scope.
         with tempfile.TemporaryDirectory() as tmp:
-            _build_skill(
-                tmp,
-                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
-            )
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
             cap_dir = os.path.join(tmp, "capabilities", "demo")
             write_text(
                 os.path.join(cap_dir, "capability.md"), "# Demo\n",
@@ -309,21 +320,18 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         self.assertTrue(report["conforms"])
 
     def test_transitive_link_does_not_route_a_capability(self) -> None:
-        # The router-completeness check uses only DIRECT edges out
-        # of SKILL.md — not the transitive forward closure.  If
-        # capability alpha is routed and alpha links to capability
-        # beta (architecture violation, but still a forward edge in
-        # the link graph), beta is *not* routed.  The router table
-        # never names beta, so the conformance gate must surface
-        # beta in unrouted_capabilities.  A transitive-closure
-        # check would mask this case.
+        # The router-completeness check reads the router table
+        # directly — not the transitive forward closure.  If
+        # capability alpha is routed (named in the table) and alpha
+        # links to capability beta (architecture violation, but
+        # still a forward edge in the link graph), beta is *not*
+        # routed: the router table never names beta, so the
+        # conformance gate must surface beta in
+        # unrouted_capabilities.  A transitive-closure check would
+        # mask this case.
         with tempfile.TemporaryDirectory() as tmp:
-            # SKILL.md routes only alpha.
-            _build_skill(
-                tmp,
-                "# Skill\n\n"
-                "See [a](capabilities/alpha/capability.md).\n",
-            )
+            # SKILL.md routes only alpha via the router table.
+            _build_skill(tmp, f"# Skill\n\n{_router_table('alpha')}")
             cap_a = os.path.join(tmp, "capabilities", "alpha")
             cap_b = os.path.join(tmp, "capabilities", "beta")
             # Alpha has a forward link to beta (cross-capability —
@@ -342,6 +350,35 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         # must still flag it.
         self.assertIn("beta", report["unrouted_capabilities"])
         self.assertNotIn("alpha", report["unrouted_capabilities"])
+        self.assertFalse(report["conforms"])
+
+    def test_doc_link_to_capability_does_not_count_as_routed(self) -> None:
+        # The router table — a structured markdown table — is the
+        # surface the agent harness reads to dispatch.  A plain
+        # markdown link to a capability from prose elsewhere in
+        # SKILL.md is *not* a routing entry; the agent has no way
+        # to know it should reach that capability.  The
+        # conformance gate must therefore use router-table
+        # membership (not "any link out of SKILL.md") for the
+        # unrouted-capability check.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md mentions the capability in prose only — no
+            # router table at all.
+            _build_skill(
+                tmp,
+                "# Skill\n\n"
+                "See [a](capabilities/alpha/capability.md) for more.\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Alpha\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The doc link merges the components for the undirected
+        # graph (so connected_components stays at 1), but the
+        # capability is still unrouted because no router table
+        # names it.
+        self.assertEqual(report["unrouted_capabilities"], ["alpha"])
         self.assertFalse(report["conforms"])
 
     def test_unrouted_capability_through_shared_reference_still_fails(self) -> None:

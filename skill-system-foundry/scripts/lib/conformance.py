@@ -24,6 +24,7 @@ from .constants import (
 from .frontmatter import strip_frontmatter_for_scan
 from .reachability import extract_body_references
 from .references import is_drive_qualified, is_within_directory, strip_fragment
+from .router_table import extract_capability_paths
 
 
 # ===================================================================
@@ -369,25 +370,33 @@ def compute_report(skill_root: str) -> dict:
     # walk from SKILL.md only follows edges *out* of each node, so a
     # shared-resource sink cannot smuggle the capability into the
     # closure.
-    # Routing check uses *direct* edges out of SKILL.md only — not
-    # the transitive forward closure.  A capability is "routed"
-    # exactly when SKILL.md links it directly through the router
-    # table: if capability A is routed and links to capability B,
-    # the transitive closure would include B even though SKILL.md
-    # never named it, masking the architecture violation that
-    # cross-capability references represent.  ``set(edges[skill_md])``
-    # is the set of router-table targets only; intersecting with the
-    # capability list gives the routed set, and the difference is
-    # the unrouted list.
+    # Routing check reads the *router table* directly — not every
+    # link out of SKILL.md.  ``edges[skill_md]`` would include any
+    # capability path SKILL.md mentions in prose, so a capability
+    # that's missing from the router table but doc-linked elsewhere
+    # in the entry would falsely look "routed".  The router table
+    # is the structured surface the agent harness reads to dispatch;
+    # router-table membership is what dispatchability hinges on, so
+    # ``extract_capability_paths`` (router-shaped table parser) is
+    # the authoritative source.  A capability not named in the table
+    # is unrouted regardless of what other prose references SKILL.md
+    # carries.
     skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
-    direct_router_targets = (
-        set(edges.get(skill_md_abs, ()))
-        if os.path.isfile(skill_md_abs)
-        else set()
-    )
+    router_table_paths: set[str] = set()
+    if os.path.isfile(skill_md_abs):
+        try:
+            with open(skill_md_abs, "r", encoding="utf-8") as fh:
+                skill_content = fh.read()
+        except (OSError, UnicodeError):
+            skill_content = ""
+        skill_body = strip_frontmatter_for_scan(skill_content)
+        for cell in extract_capability_paths(skill_body):
+            router_table_paths.add(
+                os.path.normpath(os.path.join(skill_root, cell))
+            )
     unrouted_capabilities = sorted(
         name for name, cap_md in _list_capability_entries(skill_root)
-        if cap_md not in direct_router_targets
+        if cap_md not in router_table_paths
     )
 
     return {
