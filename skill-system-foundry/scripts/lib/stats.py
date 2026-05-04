@@ -470,11 +470,16 @@ def compute_stats(skill_path: str) -> dict:
         for ref in extract_body_references(
             body_only, include_router_table=is_entry,
         ):
-            if os.path.isabs(ref):
+            # ``splitdrive`` catches the Windows drive-relative form
+            # (``C:foo.md``) that ``os.path.isabs`` misses; without it
+            # ``os.path.join`` would treat the path as drive-rooted and
+            # the byte-budget metric would include a file outside the
+            # skill tree.
+            if os.path.isabs(ref) or os.path.splitdrive(ref)[0]:
                 result["errors"].append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"absolute reference '{ref}' in '{rel}' skipped — "
-                    f"references must be relative"
+                    f"absolute or drive-qualified reference '{ref}' in "
+                    f"'{rel}' skipped — references must be relative"
                 )
                 continue
             ref_norm = ref.replace("\\", "/")
