@@ -96,12 +96,16 @@ def compute_recommended_replacement(
     source_dir = os.path.dirname(source_abs_path)
 
     ref_norm = ref.replace("\\", "/").strip()
-    # Reject absolute and drive-qualified refs.  ``splitdrive`` catches
-    # the Windows drive-relative form (``C:foo.md``) that
-    # ``os.path.isabs`` misses — without it, ``os.path.join(skill_root,
-    # 'C:foo.md')`` drops ``skill_root`` and the rewriter could probe
-    # an out-of-skill file and emit an out-of-skill replacement.  Same
-    # guard applies to the post-suffix-split path below.
+    # Reject absolute and drive-qualified refs.  ``is_drive_qualified``
+    # (lib/references) catches the Windows drive-relative form
+    # (``C:foo.md``) that ``os.path.isabs`` misses — without the
+    # extra check, ``os.path.join(skill_root, 'C:foo.md')`` drops
+    # ``skill_root`` on Windows and the rewriter could probe an
+    # out-of-skill file and emit an out-of-skill replacement.
+    # ``os.path.splitdrive`` is host-dependent (returns empty drive
+    # on POSIX), so the foundry uses its own helper to keep the
+    # rejection identical on every platform.  Same guard applies to
+    # the post-suffix-split path below.
     if (
         not ref_norm
         or os.path.isabs(ref_norm)

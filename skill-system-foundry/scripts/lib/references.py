@@ -329,9 +329,13 @@ def resolve_reference_with_reason(
     becomes vestigial.
     """
     # Reject absolute and drive-qualified paths — references must be
-    # relative.  On Windows, ``C:foo/bar`` is drive-relative and passes
-    # ``os.path.isabs()``, but ``os.path.join()`` treats it as rooted on
-    # that drive, effectively bypassing the relative-only rule.
+    # relative.  On Windows, ``C:foo/bar`` is drive-relative and is
+    # *not* caught by ``os.path.isabs()``, but ``os.path.join()``
+    # treats it as rooted on that drive, effectively bypassing the
+    # relative-only rule.  ``is_drive_qualified`` provides
+    # platform-independent detection of the ``C:...`` form;
+    # ``os.path.splitdrive`` would only catch it on Windows because
+    # ``os.path`` is host-dependent.
     if os.path.isabs(ref_path) or is_drive_qualified(ref_path):
         return None, "absolute_path"
 

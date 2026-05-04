@@ -255,10 +255,16 @@ def walk_reachable(
         for ref in extract_body_references(
             body_only, include_router_table=is_entry,
         ):
-            # Reject absolute and drive-qualified paths.  ``splitdrive``
-            # catches the Windows drive-relative form (``C:foo.md``)
-            # that ``os.path.isabs`` misses but ``os.path.join`` would
-            # silently treat as drive-rooted, escaping the skill walk.
+            # Reject absolute and drive-qualified paths.
+            # ``is_drive_qualified`` (lib/references) provides
+            # platform-independent detection of the Windows
+            # drive-relative form (``C:foo.md``) that
+            # ``os.path.isabs`` misses on every platform; using
+            # ``os.path.splitdrive`` would only catch it on Windows
+            # because ``os.path`` is host-dependent.  Without the
+            # check ``os.path.join`` would treat the path as drive-
+            # rooted on Windows and let the reference escape the
+            # skill walk.
             if os.path.isabs(ref) or is_drive_qualified(ref):
                 warnings.append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "

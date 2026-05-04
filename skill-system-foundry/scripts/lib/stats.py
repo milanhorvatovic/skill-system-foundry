@@ -470,11 +470,14 @@ def compute_stats(skill_path: str) -> dict:
         for ref in extract_body_references(
             body_only, include_router_table=is_entry,
         ):
-            # ``splitdrive`` catches the Windows drive-relative form
-            # (``C:foo.md``) that ``os.path.isabs`` misses; without it
-            # ``os.path.join`` would treat the path as drive-rooted and
-            # the byte-budget metric would include a file outside the
-            # skill tree.
+            # ``is_drive_qualified`` (lib/references) catches the
+            # Windows drive-relative form (``C:foo.md``) that
+            # ``os.path.isabs`` misses on every platform — using
+            # ``os.path.splitdrive`` would only catch it on Windows
+            # because ``os.path`` is host-dependent.  Without this
+            # check ``os.path.join`` would treat the path as drive-
+            # rooted on Windows and the byte-budget metric would
+            # include a file outside the skill tree.
             if os.path.isabs(ref) or is_drive_qualified(ref):
                 result["errors"].append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
