@@ -224,6 +224,32 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
     """The connected-component analysis treats SKILL.md and every
     capability.md as roots; reachability spans both directions."""
 
+    def test_orphan_subgraph_counts_as_its_own_component(self) -> None:
+        # The metric is documented as weakly-connected components in
+        # the in-scope link graph, not just components reachable from
+        # SKILL.md / capability.md roots.  An isolated cluster of two
+        # markdown files that link to each other but that no root
+        # reaches is still a connected component and must contribute
+        # to ``connected_components`` — otherwise drift in the form
+        # of "unrouted but internally consistent" subgraphs hides
+        # under ``files_unreachable_from_root`` alone.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Two-file orphan cluster, mutually linked.
+            write_text(
+                os.path.join(tmp, "references", "orphan_a.md"),
+                "# Orphan A\n\nSee [b](orphan_b.md).\n",
+            )
+            write_text(
+                os.path.join(tmp, "references", "orphan_b.md"),
+                "# Orphan B\n\nSee [a](orphan_a.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # SKILL.md alone is one component; the orphan pair is a
+        # second.  Total = 2.
+        self.assertEqual(report["connected_components"], 2)
+        self.assertEqual(report["files_unreachable_from_root"], 2)
+
     def test_unreached_md_file_is_unreachable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp)

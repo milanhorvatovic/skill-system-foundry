@@ -147,7 +147,17 @@ def _build_graph(
             filter_capability_entries=False,
         ):
             normalized = strip_fragment(ref)
-            if not normalized or os.path.isabs(normalized):
+            # Skip absolute or drive-qualified paths — both are spec
+            # violations, not in-scope conformance candidates.
+            # ``splitdrive`` catches the Windows ``C:foo.md`` form
+            # that ``os.path.isabs`` misses; without it ``os.path.join``
+            # would treat the path as drive-rooted and distort the
+            # broken/resolved tally on Windows.
+            if (
+                not normalized
+                or os.path.isabs(normalized)
+                or os.path.splitdrive(normalized)[0]
+            ):
                 continue
             ref_abs = os.path.normpath(os.path.join(source_dir, normalized))
 
@@ -247,10 +257,13 @@ def _connected_components(
 
     visited: set[str] = set()
     component_count = 0
+    # First pass: walk each entry root's component.  Roots are the
+    # canonical entry points (SKILL.md + every capability.md), so a
+    # router skill in which SKILL.md links every capability merges
+    # all per-scope subgraphs into a single component here.
     for root in roots:
         if root in visited or root not in adj:
             continue
-        # BFS the component from this root.
         stack = [root]
         while stack:
             node = stack.pop()
@@ -260,8 +273,28 @@ def _connected_components(
             stack.extend(adj[node] - visited)
         component_count += 1
 
-    unreachable = in_scope - visited
-    return component_count, len(unreachable)
+    # Second pass: every still-unvisited in-scope node belongs to an
+    # *orphan* component — a connected subgraph that no entry root
+    # reaches.  The metric is documented as the count of
+    # weakly-connected components in the in-scope link graph, so the
+    # report must surface these too; otherwise an isolated cluster
+    # of orphan markdown files would only contribute to
+    # ``files_unreachable_from_root`` while ``connected_components``
+    # silently underreports the drift.
+    unreachable_nodes = in_scope - visited
+    for node in unreachable_nodes:
+        if node in visited:
+            continue
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if cur in visited:
+                continue
+            visited.add(cur)
+            stack.extend(adj[cur] - visited)
+        component_count += 1
+
+    return component_count, len(unreachable_nodes)
 
 
 def _list_roots(skill_root: str) -> list[str]:
