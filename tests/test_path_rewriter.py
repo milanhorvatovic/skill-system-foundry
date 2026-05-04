@@ -376,6 +376,40 @@ class FindFixableReferencesTests(unittest.TestCase):
         self.assertEqual(len(capture), 1)
         self.assertEqual(capture[0]["line"], 9)
 
+    def test_line_number_skips_frontmatter(self) -> None:
+        # ``apply_fixes`` skips YAML frontmatter during rewrite, so
+        # the reported ``line`` must skip it too — otherwise a
+        # legacy ref string that happens to appear inside a folded
+        # ``description`` would surface a frontmatter line that the
+        # eventual write never touches, sending consumers to the
+        # wrong place.  Pin that the reported line is the body
+        # occurrence.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(tmp, "capabilities", "demo", "capability.md")
+            # Frontmatter ``description`` mentions the same legacy
+            # path as the body link below.  Without the frontmatter
+            # skip the reported line would be 3 (the description),
+            # not 8 (the actual rewriteable body line).
+            write_text(
+                cap_md,
+                "---\n"                                            # 1
+                "name: demo\n"                                     # 2
+                "description: see references/guide.md for setup\n" # 3
+                "---\n"                                            # 4
+                "# Demo\n"                                         # 5
+                "\n"                                               # 6
+                "\n"                                               # 7
+                "Body link: [g](references/guide.md).\n"           # 8
+            )
+            rows = find_fixable_references(tmp)
+        capture = [r for r in rows if r["file_rel"].endswith("capability.md")]
+        self.assertEqual(len(capture), 1)
+        self.assertEqual(capture[0]["line"], 8)
+
     def test_excludes_capability_local_scripts_and_assets_subtrees(self) -> None:
         # Top-level pruning isn't enough: capability-local
         # ``capabilities/<name>/scripts/`` and ``assets/`` markdown

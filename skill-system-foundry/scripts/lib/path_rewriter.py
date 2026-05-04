@@ -31,7 +31,7 @@ from .constants import (
     RE_BACKTICK_REF,
     RE_MARKDOWN_LINK_REF,
 )
-from .frontmatter import strip_frontmatter_for_scan
+from .frontmatter import split_frontmatter, strip_frontmatter_for_scan
 from .references import is_drive_qualified, is_glob_path, is_within_directory
 
 
@@ -331,6 +331,31 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                 start_line = content.count("\n", 0, fm.start()) + 1
                 end_line = content.count("\n", 0, fm.end()) + 1
                 for ln in range(start_line, end_line + 1):
+                    fenced_lines.add(ln)
+
+            # Apply the same skip to lines occupied by a leading YAML
+            # frontmatter block.  ``apply_fixes`` skips frontmatter
+            # during rewrite (the body extractor already does too),
+            # but the line search below walks the *raw* content
+            # including frontmatter — so a legacy ref string that
+            # happens to appear in a folded ``description`` would
+            # report a frontmatter line that the rewrite never
+            # touches, sending consumers to the wrong place.
+            # ``split_frontmatter`` returns a non-``None`` tuple only
+            # for a well-formed open + close pair; the closing
+            # delimiter is the first standalone ``---`` after line 1,
+            # so the frontmatter span is lines ``1..close_line``.
+            frontmatter_raw, body_raw = split_frontmatter(content)
+            if frontmatter_raw is not None and body_raw is not None:
+                # ``frontmatter_raw`` is the content between the two
+                # delimiters.  The opening ``---`` is line 1; each
+                # ``\n`` in the inner content represents one
+                # frontmatter-content line; the closing ``---`` is
+                # the next line after that.  ``--apply`` writes from
+                # ``body_raw`` onward, so any line ``<= close_line``
+                # is untouched and must be excluded from the search.
+                fm_close_line = frontmatter_raw.count("\n") + 2
+                for ln in range(1, fm_close_line + 1):
                     fenced_lines.add(ln)
 
             seen: set[str] = set()
