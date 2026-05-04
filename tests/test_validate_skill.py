@@ -1191,6 +1191,34 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
 
+    def test_dot_slash_prefixed_links_are_extracted(self) -> None:
+        """Standard markdown treats ``./foo.md`` as equivalent to
+        ``foo.md`` — a valid file-relative link.  The body reference
+        regex must accept the ``./`` prefix in both directory-anchored
+        and bare-sibling forms; without it, a broken anchored sibling
+        like ``./missing.md#section`` would silently slip past
+        validation, stats, reachability, and the conformance report.
+        Pin the explicit-relative-prefix coverage with a missing
+        target so the validator fails the run.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [bare-sibling](./missing-sibling.md).\n"
+                "See [anchored](./references/missing-anchored.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        targets = " ".join(broken)
+        self.assertIn("./missing-sibling.md", targets)
+        self.assertIn("./references/missing-anchored.md", targets)
+
     def test_capability_to_other_capability_is_not_classified_as_external(self) -> None:
         """A capability reaching into a sibling capability is an
         architecture concern, not a lift-rewrite candidate.  After
@@ -2340,6 +2368,25 @@ class FixModeTests(unittest.TestCase):
         )
         # Exit clean: a covered fix is the only finding.
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+    def test_fix_apply_json_no_rows_marks_applied_false(self) -> None:
+        """When ``--apply`` is passed on a skill with no legacy refs
+        to rewrite, ``applied`` must be false because nothing was
+        actually written.  The user's intent is preserved in
+        ``apply_requested`` so consumers can still distinguish
+        ``--fix --apply`` against a clean skill from ``--fix``
+        without ``--apply``."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            # Clean skill — nothing for the rewriter to find.
+            write_skill_md(skill_dir)
+            proc = _run([skill_dir, "--fix", "--apply", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertFalse(payload["applied"])
+        self.assertTrue(payload["apply_requested"])
+        self.assertEqual(payload["modified"], 0)
+        self.assertEqual(payload["fixes"], [])
 
     def test_fix_apply_json_emits_modified_count_after_write(self) -> None:
         """``--fix --apply --json`` runs the rewrite *before* printing

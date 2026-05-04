@@ -106,8 +106,18 @@ skill:
       # conformance report, and the validator silently misses an
       # architecture violation that audit_skill_system also catches
       # via RE_SIBLING_CAP_REF.
-      markdown_link: \[.*?\]\(((?:\.\./)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.\./)*[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
-      backtick: "`((?:\.\./)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
+      # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./`` and
+      # ``../`` are accepted.  Standard markdown treats ``./foo.md`` as
+      # equivalent to ``foo.md`` — a valid file-relative link — and
+      # without the ``./`` form the extractor silently skips them, so
+      # a broken anchored sibling like ``./missing.md#x`` would never
+      # reach validation, stats, reachability, or the conformance
+      # report.  The third alternative still requires a ``../`` to
+      # block URLs (``https://example.com/foo.md``) from matching,
+      # since a pure ``./`` chain stays in the current dir and the
+      # bare-sibling alternative already covers that shape.
+      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
 
