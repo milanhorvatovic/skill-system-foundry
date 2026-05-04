@@ -2234,6 +2234,9 @@ class FixModeTests(unittest.TestCase):
         self.assertTrue(any(
             "references/missing.md" in f for f in payload["unfixable_findings"]
         ))
+        # The non-path FAIL gate is exposed in JSON so consumers can
+        # see why the run is failing without re-parsing finding text.
+        self.assertIn("non_path_fails", payload)
         self.assertEqual(
             payload["path_resolution"]["rule_name"], "path-resolution",
         )
@@ -2241,6 +2244,76 @@ class FixModeTests(unittest.TestCase):
             "path-resolution.md",
             payload["path_resolution"]["documentation_path"],
         )
+
+    def test_fix_capability_mode_walks_enclosing_skill_root(self) -> None:
+        """``--fix --capability`` must rewrite the whole skill tree, not
+        just the capability subtree.  Otherwise legacy refs in the
+        parent SKILL.md and sibling capabilities would be invisible to
+        the rewriter, and ``file_rel`` labels would be capability-
+        relative instead of skill-root-relative."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            # Two legacy refs — one in the capability under target,
+            # one in a *sibling* capability outside the supplied path.
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            sibling_md = os.path.join(
+                skill_dir, "capabilities", "other", "capability.md",
+            )
+            write_text(
+                sibling_md,
+                "# Other\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run(
+                [cap_dir, "--capability", "--fix", "--json"],
+                cwd=REPO_ROOT,
+            )
+            payload = json.loads(proc.stdout)
+        files = {row["file"] for row in payload["fixes"]}
+        # Both capabilities must have rewrite rows — proving the
+        # rewriter walked the enclosing skill root, not the capability
+        # subtree alone.
+        self.assertIn("capabilities/demo/capability.md", files)
+        self.assertIn("capabilities/other/capability.md", files)
+
+    def test_fix_capability_mode_without_skill_root_errors(self) -> None:
+        """When ``--capability`` is given but no SKILL.md sits above
+        the supplied directory, ``--fix`` must refuse rather than
+        silently scan only the capability subtree."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No SKILL.md anywhere — just a bare capability.md.
+            cap_dir = os.path.join(tmpdir, "lonely")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Lonely\n",
+            )
+            proc = _run(
+                [cap_dir, "--capability", "--fix", "--json"],
+                cwd=REPO_ROOT,
+            )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload.get("success", True))
+        self.assertIn("skill root", payload["error"])
+
+    def test_fix_exits_one_on_non_path_fail(self) -> None:
+        """A skill missing SKILL.md is not conformant; ``--fix`` must
+        not exit 0 just because there are no path-resolution
+        findings.  The broader-validity gate carries that signal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            empty_dir = os.path.join(tmpdir, "not-a-skill")
+            os.makedirs(empty_dir)
+            proc = _run([empty_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertIn("non_path_fails", payload)
+        self.assertTrue(len(payload["non_path_fails"]) >= 1)
 
     def test_fix_lists_fixable_and_unfixable_independently(self) -> None:
         """Fixable rewrites and unfixable findings surface in their

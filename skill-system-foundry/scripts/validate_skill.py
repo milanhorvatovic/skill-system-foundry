@@ -435,10 +435,17 @@ def validate_body(
     # are caught here — without this they would only be flagged by
     # the reachability walker, forcing the orphan rule to surface
     # walk warnings.
+    #
+    # ``source_label`` is left unset so ``_check_references`` derives
+    # the skill-root-relative form from ``source_abs_path`` — for the
+    # SKILL.md entry that's just ``SKILL.md``, but for a capability
+    # entry it expands to ``capabilities/<name>/capability.md``.  The
+    # full form is what ``--fix``'s coverage filter matches on
+    # (``file_rel``), so a basename-only label here would silently
+    # break the ``_is_covered_by_rewriter`` check.
     ref_errors, ref_passes = _check_references(
         body, skill_md_path, skill_root, allow_nested_refs,
         include_router_table=(entry_filename == FILE_SKILL_MD),
-        source_label=entry_filename,
     )
     errors.extend(ref_errors)
     passes.extend(ref_passes)
@@ -985,7 +992,31 @@ def main() -> None:
     if args.fix:
         from lib.path_rewriter import find_fixable_references, apply_fixes
 
-        rows = find_fixable_references(os.path.abspath(skill_path))
+        # In capability mode the supplied path is a capability directory
+        # — walking only that subtree would miss legacy refs in the
+        # parent SKILL.md and in sibling capabilities, and the
+        # ``file_rel`` labels the rewriter emits would be capability-
+        # relative instead of skill-root-relative (which the
+        # ``_is_covered_by_rewriter`` filter compares against).  Detect
+        # the enclosing skill root and rewrite the whole tree.
+        rewrite_root = os.path.abspath(skill_path)
+        if is_capability:
+            detected = find_skill_root(os.path.dirname(rewrite_root))
+            if detected is None:
+                msg = (
+                    f"--fix --capability needs an enclosing skill root, "
+                    f"but no SKILL.md was found above '{skill_path}'"
+                )
+                if json_output:
+                    print(to_json_output({
+                        "tool": "validate_skill", "mode": "fix",
+                        "success": False, "error": msg,
+                    }))
+                else:
+                    print(f"Error: {msg}")
+                sys.exit(1)
+            rewrite_root = detected
+        rows = find_fixable_references(rewrite_root)
         validation_errors, _passes = validate_skill(
             skill_path, is_capability, allow_nested_refs,
         )
@@ -1016,6 +1047,16 @@ def main() -> None:
             and (err.startswith(LEVEL_FAIL) or err.startswith(LEVEL_WARN))
             and not _is_covered_by_rewriter(err)
         ]
+        # Compute the broader-validity gate up front so JSON consumers
+        # see the same gate the human output reflects.  Without it
+        # ``--fix`` could exit 0 on a non-skill directory with no
+        # path-resolution findings — silently passing CI on something
+        # that ``validate_skill`` (without ``--fix``) would have failed.
+        non_path_fails = [
+            err for err in validation_errors
+            if err.startswith(LEVEL_FAIL)
+            and f"[{PATH_RESOLUTION_RULE_NAME}]" not in err
+        ]
         if json_output:
             print(to_json_output({
                 "tool": "validate_skill",
@@ -1031,13 +1072,14 @@ def main() -> None:
                     for r in rows
                 ],
                 "unfixable_findings": path_resolution_findings,
+                "non_path_fails": non_path_fails,
                 "path_resolution": {
                     "rule_name": PATH_RESOLUTION_RULE_NAME,
                     "documentation_path": PATH_RESOLUTION_DOC_PATH,
                 },
             }))
         else:
-            if not rows and not path_resolution_findings:
+            if not rows and not path_resolution_findings and not non_path_fails:
                 print("No mechanical rewrites needed — skill conforms.")
             elif rows:
                 action = "Applying" if args.apply else "Would apply"
@@ -1055,13 +1097,23 @@ def main() -> None:
                 )
                 for finding in path_resolution_findings:
                     print_error_line(finding)
+            if non_path_fails:
+                print(
+                    f"\n{len(non_path_fails)} other FAIL finding(s) — "
+                    f"run validate_skill without --fix for the full "
+                    f"validation report:"
+                )
+                for finding in non_path_fails:
+                    print_error_line(finding)
         if args.apply and rows:
             modified = apply_fixes(rows)
             if not json_output:
                 print(f"Modified {modified} file(s).")
         # Exit non-zero when any unfixable path-resolution issue
-        # remains so CI / scripts can gate on a clean run.
-        sys.exit(1 if path_resolution_findings else 0)
+        # remains *or* when the skill has any other FAIL finding.
+        sys.exit(
+            1 if path_resolution_findings or non_path_fails else 0,
+        )
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 
