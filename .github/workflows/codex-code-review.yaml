@@ -40,13 +40,20 @@ jobs:
       skipped: ${{ steps.prepare.outputs.skipped }}
     steps:
       - name: Validate retain-findings configuration
-        if: ${{ vars.CODEX_RETAIN_FINDINGS == 'true' }}
+        if: ${{ vars.CODEX_RETAIN_FINDINGS != '' }}
         env:
+          RETAIN: ${{ vars.CODEX_RETAIN_FINDINGS }}
           DAYS: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
         run: |
-          if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be a positive integer (action clamps values >90 at 90). Got: '$DAYS'"
+          if [[ "$RETAIN" != "true" && "$RETAIN" != "false" ]]; then
+            echo "::error::CODEX_RETAIN_FINDINGS must be 'true' or 'false'. Got: '$RETAIN'"
             exit 1
+          fi
+          if [[ "$RETAIN" == "true" ]]; then
+            if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || (( DAYS > 90 )); then
+              echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be an integer between 1 and 90. Got: '$DAYS'"
+              exit 1
+            fi
           fi
 
       - name: Checkout PR
