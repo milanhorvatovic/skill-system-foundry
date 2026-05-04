@@ -166,27 +166,30 @@ def _build_graph(
                 )
 
             # External edges — the lift tool's rewrite candidates.
-            # An external edge is one that *escapes the capability root*,
-            # not just any ``../``-prefixed link.  A capability-local
-            # reference under ``capabilities/<name>/references/foo.md``
-            # legitimately uses ``../capability.md`` to reach its own
-            # entry; that edge stays within the capability scope and
-            # does not need rewriting at lift time.  Filter on the
-            # resolved path's containment in the capability directory
-            # instead of on the literal prefix.
+            # The metric counts capability links whose resolved target
+            # lands *in the shared skill root* (outside the
+            # capabilities/ tree entirely).  Three kinds of capability
+            # links are excluded:
             #
-            # Broken targets are excluded from this count.  The metric
-            # documents itself as "edges into the shared skill root
-            # that a future capability-lift tool would mechanically
-            # rewrite" — a missing target is not lift-rewriteable
-            # content, and counting it would double-count the
-            # offender (it's already in ``broken_links``) while
-            # overstating the lift-cost surface area.
+            # - Intra-capability links (``../capability.md`` from a
+            #   capability-local reference file) stay inside the
+            #   capability scope and need no rewriting at lift time.
+            # - Cross-capability links (``capabilities/<other>/...``)
+            #   are an architecture concern — after lift, the sibling
+            #   capability is gone, so the link cannot be mechanically
+            #   inlined.  ``audit_skill_system``'s capability-isolation
+            #   rule catches these from a different angle.
+            # - Broken targets (file does not exist) are not
+            #   lift-rewriteable content; they're already in
+            #   ``broken_links`` and would double-count here while
+            #   overstating the lift-cost surface area.
             if scope_kind == "capability" and os.path.isfile(ref_abs):
-                cap_root = os.path.join(
-                    skill_root, DIR_CAPABILITIES, scope_name,
-                )
-                if not is_within_directory(ref_abs, cap_root):
+                cap_dir = os.path.join(skill_root, DIR_CAPABILITIES)
+                # Must escape the entire capabilities/ tree to count —
+                # this excludes both the source capability and any
+                # sibling capability, leaving only true shared-root
+                # targets (references/, assets/, scripts/, ...).
+                if not is_within_directory(ref_abs, cap_dir):
                     external_per_capability[scope_name] = (
                         external_per_capability.get(scope_name, 0) + 1
                     )

@@ -144,6 +144,30 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
             report["external_edges_per_capability"], {"demo": 2},
         )
 
+    def test_cross_capability_link_is_not_counted_as_external_edge(self) -> None:
+        # ``external_edges_per_capability`` documents itself as edges
+        # into the shared skill root — i.e. lift-rewrite candidates.
+        # A link from one capability into another is an architecture
+        # concern, not a lift candidate (after lift the sibling is
+        # gone and the link cannot be mechanically inlined).  The
+        # metric must exclude cross-capability targets so the lift
+        # cost is honest and so an architecture violation does not
+        # hide inside a seemingly-normal external-edge count.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            cap_a = os.path.join(tmp, "capabilities", "alpha")
+            cap_b = os.path.join(tmp, "capabilities", "beta")
+            write_text(
+                os.path.join(cap_b, "capability.md"), "# Beta\n",
+            )
+            write_text(
+                os.path.join(cap_a, "capability.md"),
+                "# Alpha\n\nSee [b](../beta/capability.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The metric must NOT count the alpha→beta edge.
+        self.assertEqual(report["external_edges_per_capability"], {})
+
     def test_capability_local_parent_traversal_is_not_external(self) -> None:
         # A capability-local reference under
         # ``capabilities/<name>/references/foo.md`` reaching back to
@@ -267,7 +291,6 @@ class CliInvocationTests(unittest.TestCase):
         # docstring is what users actually need.
         rc, out, _err = self._invoke([])
         self.assertEqual(rc, 1)
-        self.assertIn("Reference Conformance", out) if False else None
         # The docstring opens with "Report a skill's cross-file
         # reference conformance" — a stable substring to pin against.
         self.assertIn("cross-file reference conformance", out)
