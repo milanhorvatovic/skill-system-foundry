@@ -130,7 +130,18 @@ def extract_body_references(
     seen: set[str] = set()
     cleaned: list[str] = []
     for ref in raw_refs:
+        # Drop template placeholders (``<name>``, ``<...>``) and
+        # glob-style inline-code mentions (``capabilities/**/*.md``,
+        # ``references/[abc].md``).  Globs are documentation
+        # patterns, not real cross-file references; without this
+        # filter the configured ``backtick`` extractor would treat
+        # an inline ``capabilities/**/*.md`` mention as a broken
+        # link and the conformance gate would fail on documentation
+        # that legitimately discusses globs.  Glob metacharacters
+        # are ``*``, ``?``, ``[``, ``]``, ``{``, ``}``.
         if "<" in ref or ">" in ref:
+            continue
+        if any(c in ref for c in "*?[]{}"):
             continue
         clean = strip_fragment(ref)
         if not clean:

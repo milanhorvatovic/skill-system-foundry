@@ -325,7 +325,15 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                 if ref in seen:
                     continue
                 seen.add(ref)
+                # Skip template placeholders (``<...>``) and
+                # glob-style inline-code mentions
+                # (``capabilities/**/*.md``, ``references/[abc].md``).
+                # Globs are documentation patterns, not rewriteable
+                # references — the rewriter must not propose a
+                # mechanical replacement for a glob.
                 if "<" in ref or ">" in ref:
+                    continue
+                if any(c in ref for c in "*?[]{}"):
                     continue
                 replacement = compute_recommended_replacement(
                     ref, filepath, skill_root,
@@ -420,7 +428,15 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                 if ref in seen:
                     continue
                 seen.add(ref)
+                # Skip template placeholders (``<...>``) and
+                # glob-style inline-code mentions
+                # (``capabilities/**/*.md``, ``references/[abc].md``).
+                # Globs are documentation patterns, not rewriteable
+                # references — the rewriter must not propose a
+                # mechanical replacement for a glob.
                 if "<" in ref or ">" in ref:
+                    continue
+                if any(c in ref for c in "*?[]{}"):
                     continue
                 ambiguous = detect_ambiguous_legacy_target(
                     ref, filepath, skill_root,
@@ -508,16 +524,50 @@ def apply_fixes(rows: list[dict]) -> int:
             )
             return segment
 
-        # Walk the document in alternating non-fence/fence segments
-        # so substitutions never enter a fenced block.  ``finditer``
+        # Split the file into the YAML frontmatter block (if any)
+        # and the body.  ``find_fixable_references`` strips
+        # frontmatter via ``strip_frontmatter_for_scan`` before
+        # scanning, so a path that only appears inside frontmatter
+        # is by construction not in *rows*.  But a path that appears
+        # both as a real link in the body *and* as a string in the
+        # frontmatter (e.g. quoted in a folded ``description`` block)
+        # would otherwise be rewritten in *both* places when
+        # ``apply_fixes`` walks the whole file.  Mirror the scan's
+        # frontmatter-skip during write-back so an ostensibly
+        # body-link-only ``--fix --apply`` cannot mutate metadata
+        # that the scan deliberately excluded.
+        if content.startswith("---\n") or content.startswith("---\r\n"):
+            after_first = content.split("\n", 1)
+            # Find the closing ``---`` line.  Walk line by line so we
+            # match only delimiter-on-its-own lines (not ``---`` that
+            # happens to appear inside a YAML scalar).
+            close_idx: int | None = None
+            offset = len(after_first[0]) + 1
+            for line in after_first[1].split("\n"):
+                if line.strip() == "---":
+                    close_idx = offset + len(line)
+                    break
+                offset += len(line) + 1
+            if close_idx is not None:
+                frontmatter = content[:close_idx + 1]
+                body = content[close_idx + 1:]
+            else:
+                frontmatter = ""
+                body = content
+        else:
+            frontmatter = ""
+            body = content
+
+        # Walk the body in alternating non-fence/fence segments so
+        # substitutions never enter a fenced block.  ``finditer``
         # gives us span boundaries we can use as splice points.
-        parts: list[str] = []
+        parts: list[str] = [frontmatter]
         cursor = 0
-        for fence_match in _FENCE_RE.finditer(content):
-            parts.append(_rewrite(content[cursor:fence_match.start()]))
+        for fence_match in _FENCE_RE.finditer(body):
+            parts.append(_rewrite(body[cursor:fence_match.start()]))
             parts.append(fence_match.group(0))
             cursor = fence_match.end()
-        parts.append(_rewrite(content[cursor:]))
+        parts.append(_rewrite(body[cursor:]))
         new_content = "".join(parts)
 
         if new_content != content:

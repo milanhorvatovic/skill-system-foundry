@@ -228,6 +228,27 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             extract_body_references(body, filter_capability_entries=False),
         )
 
+    def test_glob_inline_code_is_filtered(self) -> None:
+        """Glob-style inline-code mentions like
+        ``capabilities/**/*.md`` are documentation patterns, not
+        rewriteable cross-file references.  The body regex's backtick
+        alternative captures them (the ``[^`]+`` body matches glob
+        metacharacters), but ``extract_body_references`` must drop
+        them post-capture so validation, stats, reachability, and
+        the conformance report do not flag the documentation as a
+        broken-link finding."""
+        body = (
+            "Validate `capabilities/**/*.md` and "
+            "`references/?ref.md` and `assets/{a,b}.md` patterns."
+        )
+        refs = extract_body_references(body)
+        for r in refs:
+            for meta in "*?[]{}":
+                self.assertNotIn(
+                    meta, r,
+                    msg=f"glob metachar {meta!r} survived filter: {r!r}",
+                )
+
     def test_capability_link_filtered_with_anchor_fragment(self) -> None:
         """Anchored capability links (``capabilities/foo/capability.md#section``)
         in non-entry bodies are still recognized as entry-point edges
