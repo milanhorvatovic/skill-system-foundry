@@ -25,7 +25,9 @@ if _SCRIPTS not in sys.path:
 from lib.path_rewriter import (  # noqa: E402
     apply_fixes,
     compute_recommended_replacement,
+    detect_ambiguous_legacy_target,
     detect_source_scope,
+    find_ambiguous_legacy_refs,
     find_fixable_references,
 )
 
@@ -440,6 +442,266 @@ class ApplyFixesTests(unittest.TestCase):
             }]
             modified = apply_fixes(rows)
         self.assertEqual(modified, 0)
+
+
+class DetectAmbiguousLegacyTargetTests(unittest.TestCase):
+    """``detect_ambiguous_legacy_target`` returns ``(legacy, file_rel)``
+    only when both resolutions land on existing in-scope files that
+    are *different*.  Every other case must return ``None`` so the
+    rewriter (and the conformance gate) cannot surface a false
+    ambiguous finding for a normal link."""
+
+    def _write_skill(self, tmp: str) -> str:
+        skill = os.path.join(tmp, "skill")
+        write_text(os.path.join(skill, "SKILL.md"), "---\nname: t\n---\n")
+        return skill
+
+    def test_ambiguous_returns_both_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            # Shared-root foo.md
+            write_text(
+                os.path.join(skill, "references", "foo.md"),
+                "# Shared\n",
+            )
+            # Capability-local foo.md (different file)
+            cap_md = os.path.join(skill, "capabilities", "demo", "capability.md")
+            write_text(cap_md, "# Demo\n")
+            write_text(
+                os.path.join(skill, "capabilities", "demo", "references", "foo.md"),
+                "# Local\n",
+            )
+            result = detect_ambiguous_legacy_target(
+                "references/foo.md", cap_md, skill,
+            )
+        self.assertIsNotNone(result)
+        legacy_target, file_rel_target = result
+        self.assertTrue(legacy_target.endswith("references/foo.md"))
+        self.assertTrue(
+            file_rel_target.endswith(
+                "capabilities/demo/references/foo.md",
+            )
+        )
+
+    def test_empty_ref_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "", os.path.join(skill, "SKILL.md"), skill,
+                )
+            )
+
+    def test_absolute_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "/etc/passwd",
+                    os.path.join(skill, "SKILL.md"),
+                    skill,
+                )
+            )
+
+    def test_drive_qualified_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "C:foo.md",
+                    os.path.join(skill, "SKILL.md"),
+                    skill,
+                )
+            )
+
+    def test_dot_slash_prefix_returns_none(self) -> None:
+        # Already file-relative — author trusted to know what they wrote.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "./foo.md",
+                    os.path.join(skill, "SKILL.md"),
+                    skill,
+                )
+            )
+
+    def test_dot_dot_slash_prefix_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            cap_md = os.path.join(
+                skill, "capabilities", "demo", "capability.md",
+            )
+            write_text(cap_md, "# Demo\n")
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "../../references/foo.md", cap_md, skill,
+                )
+            )
+
+    def test_legacy_outside_skill_returns_none(self) -> None:
+        # ``references/../../foo.md`` normalizes outside the skill;
+        # legacy escape rules out ambiguity.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            cap_md = os.path.join(
+                skill, "capabilities", "demo", "capability.md",
+            )
+            write_text(cap_md, "# Demo\n")
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "references/../../foo.md", cap_md, skill,
+                )
+            )
+
+    def test_legacy_missing_returns_none(self) -> None:
+        # legacy_target normalizes inside skill but the file does not exist
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            cap_md = os.path.join(
+                skill, "capabilities", "demo", "capability.md",
+            )
+            write_text(cap_md, "# Demo\n")
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "references/missing.md", cap_md, skill,
+                )
+            )
+
+    def test_file_rel_missing_returns_none(self) -> None:
+        # legacy resolves but file-relative target doesn't exist —
+        # this is the rewrite-eligible case, not ambiguous.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            write_text(
+                os.path.join(skill, "references", "foo.md"),
+                "# Foo\n",
+            )
+            cap_md = os.path.join(
+                skill, "capabilities", "demo", "capability.md",
+            )
+            write_text(cap_md, "# Demo\n")
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "references/foo.md", cap_md, skill,
+                )
+            )
+
+    def test_same_file_returns_none(self) -> None:
+        # Both resolutions land on the same file (e.g. SKILL.md → references/x.md
+        # — legacy = file_rel because SKILL.md sits at skill root).
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._write_skill(tmp)
+            write_text(
+                os.path.join(skill, "references", "x.md"),
+                "# X\n",
+            )
+            self.assertIsNone(
+                detect_ambiguous_legacy_target(
+                    "references/x.md",
+                    os.path.join(skill, "SKILL.md"),
+                    skill,
+                )
+            )
+
+class FindAmbiguousLegacyRefsTests(unittest.TestCase):
+    """``find_ambiguous_legacy_refs`` walks the skill and returns one
+    row per ambiguous ref, with both targets and the rewriteable
+    line number.  Pruning matches ``find_fixable_references``."""
+
+    def test_collects_ambiguous_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "foo.md"),
+                "# Shared\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [f](references/foo.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "foo.md"),
+                "# Local\n",
+            )
+            rows = find_ambiguous_legacy_refs(tmp)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["file_rel"], "capabilities/demo/capability.md")
+        self.assertEqual(row["original"], "references/foo.md")
+        self.assertEqual(row["legacy_target"], "references/foo.md")
+        self.assertEqual(
+            row["file_rel_target"],
+            "capabilities/demo/references/foo.md",
+        )
+        self.assertGreater(row["line"], 0)
+
+    def test_prunes_capability_local_assets_and_scripts(self) -> None:
+        # Same component-based pruning rule as the rewriter scan —
+        # capability-local assets/scripts must not contribute rows.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "foo.md"),
+                "# Shared\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            # Place an ambiguous-shaped link inside an excluded subtree.
+            write_text(
+                os.path.join(cap_dir, "assets", "template.md"),
+                "# Template\n\nSee [f](references/foo.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "scripts", "doc.md"),
+                "# Doc\n\nSee [f](references/foo.md).\n",
+            )
+            rows = find_ambiguous_legacy_refs(tmp)
+        for r in rows:
+            self.assertNotIn("assets/", r["file_rel"])
+            self.assertNotIn("scripts/", r["file_rel"])
+
+    def test_skips_template_placeholder_refs(self) -> None:
+        # Refs containing ``<`` or ``>`` are template placeholders.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [f](references/<placeholder>.md).\n",
+            )
+            rows = find_ambiguous_legacy_refs(tmp)
+        self.assertEqual(rows, [])
+
+    def test_unreadable_file_is_skipped(self) -> None:
+        # A file whose UTF-8 read fails should not abort the walk —
+        # other files must still produce rows.  Simulate by creating
+        # a markdown file with non-UTF-8 bytes.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "foo.md"),
+                "# Shared\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [f](references/foo.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "foo.md"),
+                "# Local\n",
+            )
+            # Drop a non-UTF-8 file under references/
+            with open(
+                os.path.join(tmp, "references", "binary.md"),
+                "wb",
+            ) as f:
+                f.write(b"\xff\xfe\x00bad utf-8\n")
+            rows = find_ambiguous_legacy_refs(tmp)
+        # The capability link still produces an ambiguous row; the
+        # unreadable file is silently skipped.
+        self.assertEqual(len(rows), 1)
 
 
 if __name__ == "__main__":
