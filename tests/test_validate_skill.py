@@ -2450,7 +2450,10 @@ class FixModeTests(unittest.TestCase):
     def test_fix_capability_mode_without_skill_root_errors(self) -> None:
         """When ``--capability`` is given but no SKILL.md sits above
         the supplied directory, ``--fix`` must refuse rather than
-        silently scan only the capability subtree."""
+        silently scan only the capability subtree.  The error JSON
+        carries the same ``path_resolution`` block as the success
+        payload so consumers can navigate to the canonical rule
+        without special-casing the failure schema."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # No SKILL.md anywhere — just a bare capability.md.
             cap_dir = os.path.join(tmpdir, "lonely")
@@ -2465,6 +2468,13 @@ class FixModeTests(unittest.TestCase):
         payload = json.loads(proc.stdout)
         self.assertFalse(payload.get("success", True))
         self.assertIn("skill root", payload["error"])
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            payload["path_resolution"]["documentation_path"],
+        )
 
     def test_fix_exits_one_on_non_path_fail(self) -> None:
         """A skill missing SKILL.md is not conformant; ``--fix`` must
