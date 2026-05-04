@@ -274,6 +274,40 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         # Conforms must fail — that's the whole point of the gate.
         self.assertFalse(report["conforms"])
 
+    def test_capability_local_assets_and_scripts_are_pruned(self) -> None:
+        # Capability-local ``assets/`` and ``scripts/`` subtrees are
+        # not part of the prose link graph — same as their top-level
+        # equivalents — so a markdown template under
+        # ``capabilities/<name>/assets/`` must be invisible to the
+        # conformance walker.  Without component-based pruning, the
+        # walker would add the template to the graph and flag it as
+        # ``files_unreachable_from_root`` even though the report's
+        # contract excludes those subtrees from its scope.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(
+                tmp,
+                "# Skill\n\nSee [d](capabilities/demo/capability.md).\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Demo\n",
+            )
+            # Capability-local asset markdown — must be pruned.
+            write_text(
+                os.path.join(cap_dir, "assets", "template.md"),
+                "# Template\n",
+            )
+            # Capability-local script markdown — must also be pruned.
+            write_text(
+                os.path.join(cap_dir, "scripts", "doc.md"),
+                "# Doc\n",
+            )
+            report = rcr.compute_report(tmp)
+        # Both files are excluded from the graph, so the report
+        # should be clean.
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        self.assertTrue(report["conforms"])
+
     def test_unrouted_capability_through_shared_reference_still_fails(self) -> None:
         # The undirected component graph would falsely merge an
         # unrouted capability into the SKILL.md component whenever

@@ -63,17 +63,24 @@ def _read(filepath: str) -> str | None:
 def enumerate_markdown_files(skill_root: str) -> list[str]:
     """Return absolute paths of every in-scope ``.md`` file under *skill_root*.
 
-    Excludes ``scripts/`` and ``assets/`` — those trees are not part
-    of the prose link graph the report measures.  ``SKILL.md`` and
-    every file under ``references/``, ``capabilities/``, and
-    ``shared/`` is included.
+    Excludes ``scripts/`` and ``assets/`` at *any* depth — those
+    trees are not part of the prose link graph the report measures.
+    A capability with a markdown template under
+    ``capabilities/<name>/assets/`` would otherwise be added to the
+    conformance graph and could be flagged ``unreachable`` even
+    though the report's contract excludes assets and scripts from
+    its scope.  ``SKILL.md`` and every file under ``references/``,
+    ``capabilities/<name>/``, ``capabilities/<name>/references/``,
+    and ``shared/`` is included.
     """
     files: list[str] = []
     for root, dirs, names in os.walk(skill_root):
         rel_root = os.path.relpath(root, skill_root).replace(os.sep, "/")
-        # Prune scripts/ and assets/ subtrees from the walk.
-        top = rel_root.split("/", 1)[0] if rel_root != "." else ""
-        if top in ("scripts", "assets"):
+        # Prune scripts/ and assets/ subtrees at any scope depth —
+        # check every component, not just the first, so capability-
+        # local trees are excluded too.
+        rel_parts = [] if rel_root == "." else rel_root.split("/")
+        if any(part in ("scripts", "assets") for part in rel_parts):
             dirs[:] = []
             continue
         for name in names:
