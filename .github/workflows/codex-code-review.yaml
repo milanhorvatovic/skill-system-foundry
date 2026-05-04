@@ -40,11 +40,15 @@ jobs:
       skipped: ${{ steps.prepare.outputs.skipped }}
     steps:
       - name: Validate retain-findings configuration
-        if: ${{ vars.CODEX_RETAIN_FINDINGS != '' }}
+        if: ${{ vars.CODEX_RETAIN_FINDINGS != '' || vars.CODEX_RETAIN_FINDINGS_DAYS != '' }}
         env:
           RETAIN: ${{ vars.CODEX_RETAIN_FINDINGS }}
           DAYS: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
         run: |
+          if [[ -z "$RETAIN" ]]; then
+            echo "::error::CODEX_RETAIN_FINDINGS_DAYS is set but CODEX_RETAIN_FINDINGS is not. Define CODEX_RETAIN_FINDINGS as 'true' or 'false'."
+            exit 1
+          fi
           if [[ "$RETAIN" != "true" && "$RETAIN" != "false" ]]; then
             echo "::error::CODEX_RETAIN_FINDINGS must be 'true' or 'false'. Got: '$RETAIN'"
             exit 1
