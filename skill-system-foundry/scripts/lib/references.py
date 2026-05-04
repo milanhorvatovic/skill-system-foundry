@@ -108,6 +108,39 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 # Reference Extraction
 # ===================================================================
 
+_GLOB_METACHARS = "*?[]{}"
+_EXT_FRAGMENT_BOUNDARY_RE = re.compile(
+    r"\.(?:md|py|sh|yaml|yml|json|toml|txt)([?#]|$)"
+)
+
+
+def is_glob_path(ref: str) -> bool:
+    """Return True when *ref* contains glob metacharacters in its
+    filesystem-path portion.
+
+    Glob metacharacters are ``*``, ``?``, ``[``, ``]``, ``{``, ``}``.
+    ``?`` is the tricky one: it is also a markdown link query
+    separator (``foo.md?v=2``) that the rewriter explicitly
+    preserves, so the simple "any ``?`` is glob" rule rejects
+    legitimate query-suffixed links.
+
+    Discriminator: a markdown link's path ends at the first ``?``
+    or ``#`` that follows a recognized file extension, or at end of
+    string.  Anything before that boundary is the path; anything
+    after is the suffix.  ``?``/``#``/``[`` etc. inside the path
+    portion are unambiguously glob; the same characters in the
+    suffix are part of the query/anchor and not a glob signal.
+
+    For ``references/?ref.md`` the path portion is the whole string
+    (the ``?`` is *before* the extension), so the ``?`` counts as
+    glob.  For ``guide.md?v=2`` the path portion is ``guide.md`` and
+    the ``?`` lives in the suffix, so the link is not a glob.
+    """
+    m = _EXT_FRAGMENT_BOUNDARY_RE.search(ref)
+    path_part = ref[: m.start(1)] if m else ref
+    return any(c in path_part for c in _GLOB_METACHARS)
+
+
 def is_drive_qualified(path: str) -> bool:
     """Return True when *path* is a Windows drive-qualified path.
 

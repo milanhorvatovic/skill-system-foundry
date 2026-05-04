@@ -32,7 +32,7 @@ from .constants import (
     RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import strip_frontmatter_for_scan
-from .references import is_drive_qualified, is_within_directory
+from .references import is_drive_qualified, is_glob_path, is_within_directory
 
 
 # ===================================================================
@@ -326,29 +326,16 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                     continue
                 seen.add(ref)
                 # Skip template placeholders (``<...>``) and
-                # glob-style inline-code mentions
-                # (``capabilities/**/*.md``, ``references/[abc].md``).
-                # Globs are documentation patterns, not rewriteable
-                # references — the rewriter must not propose a
-                # mechanical replacement for a glob.
-                #
-                # Apply the glob-metachar check to the *path
-                # portion only* — ``?`` is a glob metacharacter
-                # but it is also a markdown link query separator
-                # (``foo.md?v=2``) that the rewriter explicitly
-                # supports preserving.  ``_split_path_and_suffix``
-                # peels the suffix off the path, and the glob
-                # check then runs on the path portion alone, so a
-                # legitimate query suffix never gets mistaken for
-                # a glob.
+                # glob-style inline-code mentions.  ``is_glob_path``
+                # discriminates between a query-suffix ``?``
+                # (``foo.md?v=2`` — preserved through the rewrite)
+                # and a glob-inside-path ``?`` (``references/?ref.md``
+                # — must be filtered) by looking only at the path
+                # portion before any extension-anchored
+                # query/anchor boundary.
                 if "<" in ref or ">" in ref:
                     continue
-                ref_path_only_for_glob, _suffix = (
-                    _split_path_and_suffix(ref)
-                )
-                if any(
-                    c in ref_path_only_for_glob for c in "*?[]{}"
-                ):
+                if is_glob_path(ref):
                     continue
                 replacement = compute_recommended_replacement(
                     ref, filepath, skill_root,
@@ -444,29 +431,16 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                     continue
                 seen.add(ref)
                 # Skip template placeholders (``<...>``) and
-                # glob-style inline-code mentions
-                # (``capabilities/**/*.md``, ``references/[abc].md``).
-                # Globs are documentation patterns, not rewriteable
-                # references — the rewriter must not propose a
-                # mechanical replacement for a glob.
-                #
-                # Apply the glob-metachar check to the *path
-                # portion only* — ``?`` is a glob metacharacter
-                # but it is also a markdown link query separator
-                # (``foo.md?v=2``) that the rewriter explicitly
-                # supports preserving.  ``_split_path_and_suffix``
-                # peels the suffix off the path, and the glob
-                # check then runs on the path portion alone, so a
-                # legitimate query suffix never gets mistaken for
-                # a glob.
+                # glob-style inline-code mentions.  ``is_glob_path``
+                # discriminates between a query-suffix ``?``
+                # (``foo.md?v=2`` — preserved through the rewrite)
+                # and a glob-inside-path ``?`` (``references/?ref.md``
+                # — must be filtered) by looking only at the path
+                # portion before any extension-anchored
+                # query/anchor boundary.
                 if "<" in ref or ">" in ref:
                     continue
-                ref_path_only_for_glob, _suffix = (
-                    _split_path_and_suffix(ref)
-                )
-                if any(
-                    c in ref_path_only_for_glob for c in "*?[]{}"
-                ):
+                if is_glob_path(ref):
                     continue
                 ambiguous = detect_ambiguous_legacy_target(
                     ref, filepath, skill_root,

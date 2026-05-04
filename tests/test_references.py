@@ -22,6 +22,7 @@ from lib.references import (
     find_containing_skill,
     infer_system_root,
     is_drive_qualified,
+    is_glob_path,
     is_within_directory,
     resolve_reference,
     resolve_reference_with_reason,
@@ -45,6 +46,57 @@ class StripFragmentTests(unittest.TestCase):
         for raw_ref, expected in cases.items():
             with self.subTest(raw_ref=raw_ref):
                 self.assertEqual(strip_fragment(raw_ref), expected)
+
+
+class IsGlobPathTests(unittest.TestCase):
+    """``is_glob_path`` returns True iff the *path portion* of a
+    markdown link target contains a glob metacharacter.  ``?``
+    after a recognized file extension is the markdown query
+    separator and counts as suffix, not glob — so it must not
+    register as glob.  Same characters in the path portion
+    (before the extension, or in directory components) must
+    register."""
+
+    def test_query_suffix_is_not_glob(self) -> None:
+        # Query separators after a recognized extension are part
+        # of the suffix, not the path — they must not flag as glob.
+        for ref in (
+            "foo.md?v=2",
+            "references/guide.md?mode=raw",
+            "../foo.md?",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
+    def test_anchor_suffix_is_not_glob(self) -> None:
+        # Anchor separators after a recognized extension are
+        # treated the same — they're suffix, not path.
+        for ref in (
+            "foo.md#section",
+            "references/guide.md#part-1",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
+    def test_glob_in_path_is_glob(self) -> None:
+        # Metachars *in the path* (before the extension or as a
+        # directory wildcard) flag as glob.
+        for ref in (
+            "capabilities/**/*.md",
+            "references/?ref.md",
+            "references/[abc].md",
+            "references/{a,b}.md",
+            "*.md",
+        ):
+            with self.subTest(ref=ref):
+                self.assertTrue(is_glob_path(ref), msg=ref)
+
+    def test_non_extension_path_falls_back_to_full_check(self) -> None:
+        # When the ref has no recognized extension boundary, the
+        # whole string is treated as path — a ``?`` anywhere
+        # registers as glob.
+        self.assertTrue(is_glob_path("subdir/?other"))
+        self.assertFalse(is_glob_path("subdir/other"))
 
 
 class IsDriveQualifiedTests(unittest.TestCase):
