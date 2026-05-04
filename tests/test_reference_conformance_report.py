@@ -446,6 +446,56 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         self.assertEqual(report["connected_components"], 2)
         self.assertEqual(report["files_unreachable_from_root"], 2)
 
+    def test_absolute_link_counts_as_broken(self) -> None:
+        """A POSIX absolute markdown link (``[bad](/tmp/foo.md)``)
+        is a path-resolution violation.  The body-reference regex
+        captures it now, but ``_build_graph`` must count it toward
+        ``broken_under_standard_semantics`` rather than silently
+        dropping it — otherwise a skill containing such a link
+        could pass the conformance gate even though the rule
+        explicitly forbids absolute paths.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [a](/tmp/foo.md).\n")
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertFalse(report["conforms"])
+        # The broken row preserves the original link text so a
+        # maintainer reading the human output sees the violating path.
+        targets = [row["target"] for row in report["broken_links"]]
+        self.assertIn("/tmp/foo.md", targets)
+
+    def test_drive_qualified_link_counts_as_broken(self) -> None:
+        """A Windows drive-qualified link (``[bad](C:foo.md)``) is
+        also a path-resolution violation.  Symmetric with the
+        POSIX absolute case — counted as broken so the gate fails.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [a](C:foo.md).\n")
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertFalse(report["conforms"])
+        targets = [row["target"] for row in report["broken_links"]]
+        self.assertIn("C:foo.md", targets)
+
+    def test_compute_report_on_non_skill_directory_fails_loudly(self) -> None:
+        """Programmatic callers (the docstring of
+        ``reference_conformance_report`` recommends importing
+        ``compute_report`` directly) get a dict with
+        ``conforms: false`` and ``missing_skill_md: true`` when the
+        target directory has no ``SKILL.md``.  Without this guard
+        the function would observe zero md files, zero links, and
+        zero unreachable nodes — silently reporting ``conforms: true``
+        for an empty or non-skill directory.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            # Deliberately do not write SKILL.md.
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["missing_skill_md"])
+        self.assertFalse(report["conforms"])
+
     def test_unreadable_markdown_file_fails_conformance(self) -> None:
         """An in-scope markdown file the I/O layer cannot UTF-8
         decode contributes no links to the graph — a silent skip

@@ -196,20 +196,29 @@ def _build_graph(
             dedupe=False,
         ):
             normalized = strip_fragment(ref)
-            # Skip absolute or drive-qualified paths — both are spec
-            # violations, not in-scope conformance candidates.
-            # ``is_drive_qualified`` (lib/references) catches the
-            # Windows ``C:foo.md`` form that ``os.path.isabs`` misses
-            # on every platform; using ``os.path.splitdrive`` would
-            # only catch it on Windows because ``os.path`` is
-            # host-dependent.  Without the cross-platform check
-            # ``os.path.join`` would treat the path as drive-rooted
-            # and distort the broken/resolved tally on Windows.
-            if (
-                not normalized
-                or os.path.isabs(normalized)
-                or is_drive_qualified(normalized)
-            ):
+            if not normalized:
+                continue
+            # Absolute and drive-qualified paths are spec violations.
+            # The body-reference regex now captures both shapes (a
+            # leading-``/`` POSIX absolute alternative and a single-
+            # letter drive-qualified alternative — see
+            # ``configuration.yaml`` ``markdown_link``), so the
+            # conformance gate counts them as broken rather than
+            # silently dropping them.  ``is_drive_qualified``
+            # (lib/references) catches the Windows ``C:foo.md`` form
+            # that ``os.path.isabs`` misses on every platform; using
+            # ``os.path.splitdrive`` would only catch it on Windows
+            # because ``os.path`` is host-dependent.  ``os.path.join``
+            # would also treat the path as drive-rooted on Windows,
+            # so this branch must run before resolution to avoid
+            # distorting the resolved/broken tally.
+            if os.path.isabs(normalized) or is_drive_qualified(normalized):
+                total_links += 1
+                broken += 1
+                broken_rows.append((rel, ref))
+                broken_by_scope[scope_label] = (
+                    broken_by_scope.get(scope_label, 0) + 1
+                )
                 continue
             ref_abs = os.path.normpath(os.path.join(source_dir, normalized))
 
@@ -402,8 +411,35 @@ def compute_report(skill_root: str) -> dict:
     The returned dict is the canonical shape consumed by both the
     human-readable formatter and the ``--json`` output of
     ``reference_conformance_report.py``.
+
+    Programmatic callers (the docstring of
+    ``reference_conformance_report`` recommends importing this
+    function directly) get a dict with ``conforms: false`` and a
+    ``missing_skill_md: true`` flag when *skill_root* has no
+    ``SKILL.md``.  Without this guard a non-skill directory would
+    silently report ``conforms: true`` because there are no files
+    to enumerate, no links to break, and no roots to walk — a
+    false PASS the CLI catches via its own ``[skill_path]/SKILL.md``
+    existence check but library callers do not.
     """
     skill_root = os.path.abspath(skill_root)
+    skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
+    if not os.path.isfile(skill_md_abs):
+        return {
+            "skill_root": skill_root,
+            "missing_skill_md": True,
+            "total_links": 0,
+            "resolves_under_standard_semantics": 0,
+            "broken_under_standard_semantics": 0,
+            "broken_under_standard_semantics_by_scope": {},
+            "broken_links": [],
+            "connected_components": 0,
+            "files_unreachable_from_root": 0,
+            "external_edges_per_capability": {},
+            "unrouted_capabilities": [],
+            "unreadable_files": [],
+            "conforms": False,
+        }
     md_files = enumerate_markdown_files(skill_root)
     (
         edges,
