@@ -136,13 +136,24 @@ def compute_recommended_replacement(
         # there's no clear target to rewrite to.
         return None
 
-    # Resolution under the NEW file-relative rule.
+    # Resolution under the NEW file-relative rule.  If the link
+    # already resolves under file-relative semantics — even to a
+    # *different* file than the legacy resolution — the link is
+    # already valid as written and the rewriter must not mutate it.
+    # The classic trap: a capability-local
+    # ``capabilities/<n>/references/foo.md`` link resolves
+    # file-relative to its own ``references/foo.md``.  The skill root
+    # may also have a ``references/foo.md`` (a different file).
+    # Without this guard the rewriter would propose rewriting the
+    # working capability-local link into ``../../references/foo.md``
+    # — silently changing the link's target to the shared-root file.
+    # Skip the rewrite whenever the existing form already lands on
+    # an in-scope file under file-relative semantics.
     file_rel_target = os.path.normpath(os.path.join(source_dir, ref_path_only))
     if (
         os.path.isfile(file_rel_target)
-        and os.path.samefile(file_rel_target, legacy_target)
+        and is_within_directory(file_rel_target, skill_root)
     ):
-        # Already correct under both rules — no rewrite needed.
         return None
 
     # Compute the canonical form: the relative path from source_dir

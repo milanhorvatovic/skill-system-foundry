@@ -170,6 +170,39 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
             )
         self.assertIsNone(replacement)
 
+    def test_already_valid_file_relative_link_is_not_rewritten(self) -> None:
+        # A capability-local link ``references/foo.md`` from
+        # ``capabilities/demo/capability.md`` resolves file-relative
+        # to ``capabilities/demo/references/foo.md``.  If the skill
+        # root *also* has ``references/foo.md`` (a different file),
+        # the legacy skill-root resolution would land on a real file
+        # — but rewriting the working link to ``../../references/foo.md``
+        # would silently re-target it from the capability-local file
+        # to the unrelated shared-root file, breaking the link's
+        # meaning.  The rewriter must skip refs whose file-relative
+        # form already resolves to an in-scope file.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            # Shared-root foo.md (different file).
+            write_text(
+                os.path.join(tmp, "references", "foo.md"),
+                "# Shared-root foo\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(cap_md, "# Demo\n")
+            # Capability-local foo.md (different file).
+            write_text(
+                os.path.join(cap_dir, "references", "foo.md"),
+                "# Capability-local foo\n",
+            )
+            replacement = compute_recommended_replacement(
+                "references/foo.md", cap_md, tmp,
+            )
+        # The link already resolves correctly under file-relative —
+        # rewriting it would silently break the author's intent.
+        self.assertIsNone(replacement)
+
     def test_drive_qualified_path_returns_none(self) -> None:
         # Windows drive-qualified refs like ``C:foo.md`` are not
         # caught by ``os.path.isabs`` but ``os.path.join(skill_root,
