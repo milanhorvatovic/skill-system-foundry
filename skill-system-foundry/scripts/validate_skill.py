@@ -244,8 +244,11 @@ def _check_references(
         # into the external-ref INFO branch, which both misclassified
         # them ("acceptable for shared resources") and on Windows
         # would treat ``C:foo.md`` as drive-rooted when ``os.path.join``
-        # composed it with the skill root.  ``splitdrive`` catches the
-        # Windows drive-relative form that ``os.path.isabs`` misses.
+        # composed it with the skill root.  ``is_drive_qualified``
+        # catches the Windows drive-relative form that
+        # ``os.path.isabs`` misses on every platform — using
+        # ``os.path.splitdrive`` would only catch it on Windows
+        # because ``os.path`` is host-dependent.
         if os.path.isabs(normalized_ref) or is_drive_qualified(normalized_ref):
             errors.append(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
