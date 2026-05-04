@@ -56,11 +56,11 @@ Metrics:
   know it should reach that capability.
 
 A skill conforms when ``broken_under_standard_semantics == 0``,
-``files_unreachable_from_root == 0``, and
-``unrouted_capabilities == []``.  ``connected_components`` stays
+``files_unreachable_from_root == 0``, ``unrouted_capabilities == []``,
+and ``unreadable_files == []``.  ``connected_components`` stays
 diagnostic — useful for distinguishing orphan clusters from
 incomplete-router cases when investigating a failure, but the gate
-proper reads the three signals above.
+proper reads the four signals above.
 
 This entry point is a thin wrapper over ``lib.conformance.compute_report``
 — argument parsing, output formatting, and exit status only.  Any
@@ -138,6 +138,19 @@ def print_human(report: dict, verbose: bool) -> None:
             )
             for cap in report["unrouted_capabilities"]:
                 print(f"  {cap}")
+        # Surface unreadable files unconditionally on failure for
+        # the same reason as unrouted capabilities — the gate fails
+        # on this signal independently of broken/unreachable counts,
+        # and a maintainer needs the actionable file path in the
+        # human output without re-running with ``--json``.
+        if report.get("unreadable_files"):
+            print()
+            print(
+                "Unreadable markdown files "
+                "(I/O or UTF-8 decode error — links not parsed):"
+            )
+            for path in report["unreadable_files"]:
+                print(f"  {path}")
         if verbose and report["broken_links"]:
             print()
             print("Broken links:")

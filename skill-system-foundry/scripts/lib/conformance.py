@@ -121,6 +121,7 @@ def _build_graph(
     list[tuple[str, str]],
     dict[str, int],
     dict[str, int],
+    list[str],
 ]:
     """Build the link graph and tally per-link conformance.
 
@@ -143,6 +144,13 @@ def _build_graph(
                        grouped by the *source* scope (``"skill"`` or
                        ``"capability:<name>"``).  Missing scopes have
                        no entry.
+        unreadable_rels — skill-root-relative paths of every in-scope
+                       markdown file the I/O layer could not read or
+                       UTF-8 decode.  These cannot contribute links
+                       to the graph, so a silent skip would let an
+                       unreadable entry root or reference file pass
+                       the conformance gate by accident.  The
+                       conformance predicate gates on this list.
     """
     edges: dict[str, list[str]] = {f: [] for f in md_files}
     total_links = 0
@@ -151,12 +159,21 @@ def _build_graph(
     broken_rows: list[tuple[str, str]] = []
     external_per_capability: dict[str, int] = {}
     broken_by_scope: dict[str, int] = {}
+    unreadable_rels: list[str] = []
 
     skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
 
     for filepath in md_files:
         content = _read(filepath)
         if content is None:
+            # An in-scope markdown file the harness cannot read or
+            # decode contributes no links to the graph.  Surfacing
+            # it here means the conformance gate fails loudly
+            # instead of silently passing on a tree where an entry
+            # root or a reachable reference is unreadable.
+            unreadable_rels.append(
+                os.path.relpath(filepath, skill_root).replace(os.sep, "/")
+            )
             continue
         body = strip_frontmatter_for_scan(content)
         rel = os.path.relpath(filepath, skill_root).replace(os.sep, "/")
@@ -247,6 +264,7 @@ def _build_graph(
         broken_rows,
         external_per_capability,
         broken_by_scope,
+        sorted(unreadable_rels),
     )
 
 
@@ -395,6 +413,7 @@ def compute_report(skill_root: str) -> dict:
         broken_rows,
         ext_per_cap,
         broken_by_scope,
+        unreadable_rels,
     ) = _build_graph(skill_root, md_files)
     roots = _list_roots(skill_root)
     component_count, unreachable_count = _connected_components(edges, roots)
@@ -450,15 +469,25 @@ def compute_report(skill_root: str) -> dict:
         ),
         # Names of capabilities whose ``capability.md`` path is not
         # listed in SKILL.md's router-shaped markdown table.
-        # Distinct from ``files_unreachable_from_root`` (which uses
-        # an undirected reachability walk that treats every
-        # capability.md as its own root) and from
-        # ``connected_components`` (which an undirected shared-
-        # reference edge can artificially merge).  This list is the
-        # authoritative router-completeness signal — it does not
-        # consult the link graph at all, only the router table.
+        # Distinct from ``files_unreachable_from_root`` (a directed
+        # ``src → tgt`` walk from each canonical entry root) and
+        # from ``connected_components`` (an undirected shared-
+        # reference edge can artificially merge two scopes).  This
+        # list is the authoritative router-completeness signal — it
+        # does not consult the link graph at all, only the router
+        # table.
         "unrouted_capabilities": unrouted_capabilities,
-        # Conforms requires three independent signals:
+        # Skill-root-relative paths of every in-scope markdown file
+        # the I/O layer could not read or UTF-8 decode.  The graph
+        # build silently dropped these before, which let an
+        # unreadable entry root or reference file pass the
+        # conformance gate accidentally — the report would observe
+        # ``broken == 0`` and ``unreachable_count == 0`` even though
+        # the file's links were never parsed.  Surfacing the list
+        # here and gating ``conforms`` on it makes the failure
+        # mode loud.
+        "unreadable_files": list(unreadable_rels),
+        # Conforms requires four independent signals:
         #
         # - ``broken == 0`` — every captured link resolves to a real
         #   in-scope file under file-relative semantics.
@@ -470,14 +499,20 @@ def compute_report(skill_root: str) -> dict:
         #   shared-reference edge or a prose link can artificially
         #   make a capability look connected to SKILL.md even when
         #   the router table never names it).
+        # - ``unreadable_files == []`` — every in-scope ``.md`` file
+        #   parsed successfully.  An unreadable file contributes no
+        #   links to the graph, so without this gate the report
+        #   could observe zero broken links on a tree where a
+        #   file's body was never inspected.
         #
         # ``connected_components`` stays diagnostic — it is useful
         # for distinguishing orphan clusters from missing-router
         # cases when investigating a failure, but the gate proper
-        # reads the three boolean signals above.
+        # reads the four boolean signals above.
         "conforms": (
             broken == 0
             and unreachable_count == 0
             and not unrouted_capabilities
+            and not unreadable_rels
         ),
     }

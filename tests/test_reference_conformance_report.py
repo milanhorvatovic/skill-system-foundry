@@ -446,6 +446,33 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         self.assertEqual(report["connected_components"], 2)
         self.assertEqual(report["files_unreachable_from_root"], 2)
 
+    def test_unreadable_markdown_file_fails_conformance(self) -> None:
+        """An in-scope markdown file the I/O layer cannot UTF-8
+        decode contributes no links to the graph — a silent skip
+        would let the conformance gate observe ``broken == 0`` and
+        ``unreachable == 0`` even though that file's links were
+        never parsed.  Surfacing it as ``unreadable_files`` and
+        gating ``conforms`` on the list keeps the failure mode
+        loud.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Write a Latin-1-encoded file under references/ — it
+            # has the ``.md`` extension and lives in the in-scope
+            # set, but the harness's UTF-8 read raises
+            # ``UnicodeDecodeError``.
+            ref_dir = os.path.join(tmp, "references")
+            os.makedirs(ref_dir, exist_ok=True)
+            ref = os.path.join(ref_dir, "latin1.md")
+            with open(ref, "wb") as fh:
+                fh.write("# Résumé\n".encode("latin-1"))
+            report = rcr.compute_report(tmp)
+        self.assertIn(
+            "references/latin1.md",
+            report["unreadable_files"],
+        )
+        self.assertFalse(report["conforms"])
+
     def test_top_level_readme_is_not_in_scope(self) -> None:
         """Top-level ``.md`` files at the skill root other than
         ``SKILL.md`` (``README.md``, ``CHANGELOG.md``, etc.) are
