@@ -106,7 +106,7 @@ skill:
       # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./``
       # and ``../`` are accepted — standard markdown treats
       # ``./foo.md`` as equivalent to ``foo.md``.
-      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
       backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
@@ -470,6 +470,22 @@ path_resolution:
   # this path in the unfixable-findings header, so an integrator can
   # navigate to the rule from any output stream.
   documentation_path: references/path-resolution.md
+  # File extensions a markdown link target may carry to be treated
+  # as a cross-file reference.  This list is the single source of
+  # truth: the body ``reference_patterns`` regex above and the
+  # ``is_glob_path`` helper in ``lib/references.py`` both build
+  # their extension match from this value.  Adding or removing an
+  # extension here flows through to extraction, glob discrimination,
+  # and the rewriter without code changes.
+  reference_extensions:
+    - md
+    - py
+    - sh
+    - yaml
+    - yml
+    - json
+    - toml
+    - txt
 
 # ============================================================
 # Bundle Packaging

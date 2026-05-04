@@ -21,6 +21,7 @@ from .constants import (
     BUNDLE_INFER_MAX_WALK_DEPTH,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
+    PATH_RESOLUTION_REFERENCE_EXTENSIONS,
 )
 
 # ===================================================================
@@ -109,8 +110,16 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 # ===================================================================
 
 _GLOB_METACHARS = "*?[]{}"
+# Build the boundary regex from the configured extension list so this
+# helper stays in sync with the body ``reference_patterns`` regex —
+# both source their extension set from
+# ``path_resolution.reference_extensions`` in configuration.yaml.
+# Extensions are escaped to keep the alternation safe even if a
+# future YAML edit introduces a regex metacharacter.
 _EXT_FRAGMENT_BOUNDARY_RE = re.compile(
-    r"\.(?:md|py|sh|yaml|yml|json|toml|txt)([?#\s]|$)"
+    r"\.(?:" + "|".join(
+        re.escape(ext) for ext in PATH_RESOLUTION_REFERENCE_EXTENSIONS
+    ) + r")([?#\s]|$)"
 )
 
 

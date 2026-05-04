@@ -575,6 +575,21 @@ if not PATH_RESOLUTION_DOC_PATH:
         "configuration.yaml has an empty value for "
         "'path_resolution.documentation_path'."
     )
+if "reference_extensions" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'path_resolution.reference_extensions'."
+    )
+_raw_extensions = _path_resolution["reference_extensions"]
+if not isinstance(_raw_extensions, list) or not _raw_extensions:
+    raise RuntimeError(
+        "configuration.yaml 'path_resolution.reference_extensions' "
+        "must be a non-empty list."
+    )
+PATH_RESOLUTION_REFERENCE_EXTENSIONS: tuple[str, ...] = tuple(
+    str(ext).strip() for ext in _raw_extensions
+)
+del _raw_extensions
 
 # --- Bundle Packaging ---
 _bundle = _config["bundle"]
