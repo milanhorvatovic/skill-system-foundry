@@ -249,6 +249,19 @@ class ExtractBodyReferencesTests(unittest.TestCase):
                     msg=f"glob metachar {meta!r} survived filter: {r!r}",
                 )
 
+    def test_query_suffixed_link_is_kept(self) -> None:
+        """A markdown link with a query suffix
+        (``[g](references/guide.md?v=2)``) carries ``?`` purely as
+        the standard markdown query separator after the file
+        extension — not as a glob metacharacter.  The glob filter
+        must therefore run on the path portion only; otherwise
+        ``?`` in the query rejects the entire link and the resolver
+        never sees it.  Confirm the link survives the filter and
+        appears in extracted refs in its strip_fragment'd form."""
+        body = "[g](references/guide.md?v=2)"
+        refs = extract_body_references(body, filter_capability_entries=False)
+        self.assertIn("references/guide.md", refs)
+
     def test_capability_link_filtered_with_anchor_fragment(self) -> None:
         """Anchored capability links (``capabilities/foo/capability.md#section``)
         in non-entry bodies are still recognized as entry-point edges

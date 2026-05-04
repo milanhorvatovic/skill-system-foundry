@@ -289,6 +289,39 @@ class FindFixableReferencesTests(unittest.TestCase):
             targets,
         )
 
+    def test_query_suffixed_link_is_picked_up_by_walker(self) -> None:
+        # A capability link with a query suffix
+        # (``references/guide.md?v=2``) is a legitimate markdown
+        # link.  The glob-metachar filter excludes ``?``, but the
+        # filter must run on the path portion only — otherwise the
+        # walker would drop a query-suffixed ref before
+        # ``compute_recommended_replacement`` got a chance to rewrite
+        # it, even though the rewriter's own API explicitly supports
+        # preserving query suffixes through the rewrite.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(
+                tmp, "capabilities", "demo", "capability.md",
+            )
+            write_text(
+                cap_md,
+                "# Demo\nSee [g](references/guide.md?v=2).\n",
+            )
+            rows = find_fixable_references(tmp)
+        cap_rows = [
+            r for r in rows
+            if r["file_rel"].endswith("capability.md")
+        ]
+        self.assertEqual(len(cap_rows), 1)
+        self.assertEqual(cap_rows[0]["original"], "references/guide.md?v=2")
+        self.assertEqual(
+            cap_rows[0]["replacement"],
+            "../../references/guide.md?v=2",
+        )
+
     def test_line_number_points_to_rewriteable_occurrence(self) -> None:
         # If the same legacy path appears first inside a fenced code
         # block (which ``apply_fixes`` leaves untouched) and later

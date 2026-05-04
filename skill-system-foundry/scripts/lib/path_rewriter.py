@@ -331,9 +331,24 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                 # Globs are documentation patterns, not rewriteable
                 # references — the rewriter must not propose a
                 # mechanical replacement for a glob.
+                #
+                # Apply the glob-metachar check to the *path
+                # portion only* — ``?`` is a glob metacharacter
+                # but it is also a markdown link query separator
+                # (``foo.md?v=2``) that the rewriter explicitly
+                # supports preserving.  ``_split_path_and_suffix``
+                # peels the suffix off the path, and the glob
+                # check then runs on the path portion alone, so a
+                # legitimate query suffix never gets mistaken for
+                # a glob.
                 if "<" in ref or ">" in ref:
                     continue
-                if any(c in ref for c in "*?[]{}"):
+                ref_path_only_for_glob, _suffix = (
+                    _split_path_and_suffix(ref)
+                )
+                if any(
+                    c in ref_path_only_for_glob for c in "*?[]{}"
+                ):
                     continue
                 replacement = compute_recommended_replacement(
                     ref, filepath, skill_root,
@@ -434,9 +449,24 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                 # Globs are documentation patterns, not rewriteable
                 # references — the rewriter must not propose a
                 # mechanical replacement for a glob.
+                #
+                # Apply the glob-metachar check to the *path
+                # portion only* — ``?`` is a glob metacharacter
+                # but it is also a markdown link query separator
+                # (``foo.md?v=2``) that the rewriter explicitly
+                # supports preserving.  ``_split_path_and_suffix``
+                # peels the suffix off the path, and the glob
+                # check then runs on the path portion alone, so a
+                # legitimate query suffix never gets mistaken for
+                # a glob.
                 if "<" in ref or ">" in ref:
                     continue
-                if any(c in ref for c in "*?[]{}"):
+                ref_path_only_for_glob, _suffix = (
+                    _split_path_and_suffix(ref)
+                )
+                if any(
+                    c in ref_path_only_for_glob for c in "*?[]{}"
+                ):
                     continue
                 ambiguous = detect_ambiguous_legacy_target(
                     ref, filepath, skill_root,
