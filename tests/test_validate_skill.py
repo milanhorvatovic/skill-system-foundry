@@ -2447,6 +2447,11 @@ class FixModeTests(unittest.TestCase):
         # The non-path FAIL gate is exposed in JSON so consumers can
         # see why the run is failing without re-parsing finding text.
         self.assertIn("non_path_fails", payload)
+        # ``success`` mirrors the exit code so JSON consumers do not
+        # have to inspect the process status.  An unfixable finding
+        # must surface as ``success: false``.
+        self.assertIn("success", payload)
+        self.assertFalse(payload["success"])
         self.assertEqual(
             payload["path_resolution"]["rule_name"], "path-resolution",
         )
@@ -2454,6 +2459,23 @@ class FixModeTests(unittest.TestCase):
             "path-resolution.md",
             payload["path_resolution"]["documentation_path"],
         )
+
+    def test_fix_json_success_true_on_clean_skill(self) -> None:
+        """A skill with no path-resolution findings, no FAILs, and no
+        ambiguous legacy links must surface ``success: true`` and
+        exit 0 in fix mode.  Pins the success-predicate alignment
+        between the JSON payload and the exit code.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n")
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["fixes"], [])
+        self.assertEqual(payload["unfixable_findings"], [])
+        self.assertEqual(payload["non_path_fails"], [])
 
     def test_fix_capability_mode_walks_enclosing_skill_root(self) -> None:
         """``--fix --capability`` must rewrite the whole skill tree, not

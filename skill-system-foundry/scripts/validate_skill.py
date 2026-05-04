@@ -1209,10 +1209,22 @@ def main() -> None:
             except (OSError, UnicodeError) as exc:
                 apply_error = f"{exc.__class__.__name__}: {exc}"
 
+        # Single source of truth for the fix-mode pass/fail predicate.
+        # The exit-code branch and the JSON ``success`` field both
+        # consume this so machine consumers can read the outcome from
+        # the captured payload without inspecting the process status.
+        fix_success = not (
+            path_resolution_findings
+            or non_path_fails
+            or ambiguous_rows
+            or apply_error is not None
+        )
+
         if json_output:
             payload = {
                 "tool": "validate_skill",
                 "mode": "fix",
+                "success": fix_success,
                 # ``applied`` reflects an actual successful write —
                 # true only when ``--apply`` ran, the rewriter found
                 # something to apply (``rows`` non-empty), and the
@@ -1315,14 +1327,7 @@ def main() -> None:
         # gates exit because a silent retargeting is exactly the
         # class of migration hazard the rule's tooling exists to
         # surface.
-        sys.exit(
-            1 if (
-                path_resolution_findings
-                or non_path_fails
-                or ambiguous_rows
-                or apply_error is not None
-            ) else 0,
-        )
+        sys.exit(0 if fix_success else 1)
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 
