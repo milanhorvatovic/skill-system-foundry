@@ -617,6 +617,43 @@ class ValidateBodyTests(unittest.TestCase):
         skip_pass = [p for p in passes if "skipped" in p]
         self.assertEqual(len(skip_pass), 1)
 
+    def test_non_markdown_target_skips_nested_scan(self) -> None:
+        """Non-markdown targets (``.py``, ``.yaml``, etc.) must not be
+        scanned for nested references.
+
+        ``path_resolution.reference_extensions`` legitimately covers
+        scripts and configs.  Their content is not markdown, so
+        feeding it to ``extract_body_references`` would surface
+        spurious nested-reference WARNs whenever a docstring or
+        comment happens to contain a ``[link](path.md)`` snippet.
+        Existence is still checked via the broken-link branch above
+        — this test pins that the read-and-scan stage is skipped
+        once the target's extension is not ``.md``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            scripts_dir = os.path.join(tmpdir, "scripts")
+            # A Python file whose docstring looks like markdown — if
+            # the validator scans it for nested refs, both
+            # ``[guide](references/guide.md)`` and
+            # ``[other](references/other.md)`` would surface.
+            write_text(
+                os.path.join(scripts_dir, "tool.py"),
+                "\"\"\"Helper.\n\n"
+                "See [guide](references/guide.md) and "
+                "[other](references/other.md).\n\"\"\"\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "Run [tool](scripts/tool.py) for details.\n"
+            )
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(nested_warns, [])
+
     def test_broken_ref_detected_with_allow_nested_refs(self) -> None:
         """Broken references are detected even when allow_nested_refs=True."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1020,8 +1057,19 @@ class ValidateBodyTests(unittest.TestCase):
         skip_passes = [p for p in passes if "skipped" in p]
         self.assertEqual(skip_passes, [])
 
-    def test_binary_ref_file_returns_warn(self) -> None:
-        """A reference to a binary file produces a WARN, not a crash."""
+    def test_binary_ref_file_does_not_emit_cannot_be_read(self) -> None:
+        """A reference to a binary file under a recognized directory
+        (e.g. ``references/image.png``) is treated as a valid file
+        reference: existence + non-directory checks pass, and the
+        UTF-8 read + nested-reference scan is skipped because the
+        target is not markdown.
+
+        The ``cannot be read`` WARN belongs to markdown targets
+        whose body the validator must scan for nested references —
+        binary asset links are not a decode-error class of finding,
+        and the existence branch already covers the broken-link
+        surface.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             ref_dir = os.path.join(tmpdir, "references")
@@ -1035,12 +1083,13 @@ class ValidateBodyTests(unittest.TestCase):
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         read_warns = [e for e in warn_errors if "cannot be read" in e]
-        self.assertEqual(len(read_warns), 1)
-        self.assertIn("references/image.png", read_warns[0])
-        self.assertIn("UnicodeDecodeError", read_warns[0])
-        # No FAIL errors
+        self.assertEqual(read_warns, [])
+        # No FAIL errors and no broken-link finding either — the
+        # file exists and is a regular file.
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken, [])
 
     def test_non_utf8_ref_file_returns_warn(self) -> None:
         """A reference to a non-UTF8 text file produces a WARN, not a crash."""

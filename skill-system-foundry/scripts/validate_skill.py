@@ -367,7 +367,24 @@ def _check_references(
                 "FAILs this under the capability-isolation rule)"
             )
 
-        # Check file is readable
+        # The readability check + nested-reference scan only apply to
+        # markdown targets.  ``path_resolution.reference_extensions``
+        # legitimately includes non-markdown extensions (``py``,
+        # ``sh``, ``yaml``, ``json``, ``toml``, ``txt``) so authors
+        # can link to scripts and configs from skill bodies, but
+        # ``extract_body_references`` is markdown-aware: feeding it a
+        # Python docstring or YAML comment that happens to contain a
+        # ``[link](path.md)`` snippet would surface a spurious
+        # nested-reference WARN.  Likewise, a UTF-8 decode error on a
+        # binary-leaning extension would emit a ``cannot be read``
+        # finding for a file we never needed to read.  Skip the read
+        # and the recursion when the target is not markdown — the
+        # existence + non-directory checks above already covered the
+        # broken-link surface.
+        if not ref_path.lower().endswith(EXT_MARKDOWN):
+            continue
+
+        # Check file is readable (markdown targets only)
         try:
             with open(ref_path, "r", encoding="utf-8") as f:
                 ref_content = f.read()
