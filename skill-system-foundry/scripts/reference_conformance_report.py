@@ -45,15 +45,20 @@ Metrics:
   ``capabilities/<name>/references/foo.md``) are intra-scope and
   not counted.
 
+* ``unrouted_capabilities`` — names of capabilities whose
+  ``capability.md`` is not directly reachable from ``SKILL.md`` via
+  the forward edge chain.  Computed with a directed walk (only
+  forward edges from ``SKILL.md``), so a shared-reference edge
+  cannot falsely merge an unrouted capability into the closure the
+  way an undirected ``connected_components`` measurement would.
+  This is the authoritative router-completeness signal.
+
 A skill conforms when ``broken_under_standard_semantics == 0``,
-``files_unreachable_from_root == 0``, and ``connected_components == 1``.
-The component check catches a class of drift the other two signals
-miss: an unrouted capability whose subgraph is internally consistent
-but never linked from the parent ``SKILL.md``.  ``capability.md``
-acts as its own reachability root, so the subgraph is "reachable" and
-no file is "unreachable" — yet the router is incomplete and the
-capability's subgraph forms a separate component.  Other fields are
-diagnostic.
+``files_unreachable_from_root == 0``, and
+``unrouted_capabilities == []``.  ``connected_components`` stays
+diagnostic — useful for distinguishing orphan clusters from
+incomplete-router cases when investigating a failure, but the gate
+proper reads the three signals above.
 
 This entry point is a thin wrapper over ``lib.conformance.compute_report``
 — argument parsing, output formatting, and exit status only.  Any

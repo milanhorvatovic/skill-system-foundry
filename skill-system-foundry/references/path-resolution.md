@@ -158,7 +158,7 @@ Metrics:
 - `files_unreachable_from_root` — count of `.md` files under the skill that no root reaches.
 - `external_edges_per_capability` — for each capability, the number of `../../` edges into the shared skill root. The lift tool's per-capability rewrite cost.
 
-A skill conforms when `broken_under_standard_semantics == 0`, `files_unreachable_from_root == 0`, and `connected_components == 1`. The component check catches an unrouted capability whose subgraph is internally consistent but no `SKILL.md` router edge reaches — `capability.md` is its own reachability root, so the unrouted subgraph is "reachable" and contributes nothing to the unreachable count, yet it forms a separate component the router gate must catch. Other fields are diagnostic.
+A skill conforms when `broken_under_standard_semantics == 0`, `files_unreachable_from_root == 0`, and `unrouted_capabilities == []`. The `unrouted_capabilities` list names every capability whose `capability.md` is not directly reachable from `SKILL.md` via the forward edge chain (computed with a directed walk so a shared-reference edge cannot falsely merge an unrouted capability into the closure). It is the authoritative router-completeness signal: an undirected `connected_components` measurement would let a capability and `SKILL.md` both linking the same shared resource appear as one component even when the router table never names the capability. `connected_components` stays in the report as a diagnostic — useful for distinguishing orphan clusters from incomplete-router cases when investigating a failure — but the gate proper reads the three signals above.
 
 ## Spec Divergence
 

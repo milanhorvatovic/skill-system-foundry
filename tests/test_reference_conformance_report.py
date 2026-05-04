@@ -247,9 +247,9 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         # SKILL.md never links to is a router-drift case the gate
         # exists to catch.  ``capability.md`` is its own reachability
         # root, so its subgraph is "reachable" and contributes
-        # nothing to ``files_unreachable_from_root`` — yet it forms a
-        # separate connected component, and that component count is
-        # what the conformance gate must use to detect the drift.
+        # nothing to ``files_unreachable_from_root`` — yet the
+        # capability is still unrouted, and the gate must surface
+        # that through ``unrouted_capabilities``.
         with tempfile.TemporaryDirectory() as tmp:
             # SKILL.md without any link to the capability.
             _build_skill(tmp, "# Skill\n")
@@ -268,7 +268,49 @@ class ComputeReportConnectedComponentsTests(unittest.TestCase):
         self.assertEqual(report["files_unreachable_from_root"], 0)
         # But it forms a separate component from SKILL.md.
         self.assertEqual(report["connected_components"], 2)
+        # The authoritative signal: the capability name is in the
+        # unrouted list.
+        self.assertEqual(report["unrouted_capabilities"], ["alpha"])
         # Conforms must fail — that's the whole point of the gate.
+        self.assertFalse(report["conforms"])
+
+    def test_unrouted_capability_through_shared_reference_still_fails(self) -> None:
+        # The undirected component graph would falsely merge an
+        # unrouted capability into the SKILL.md component whenever
+        # both touch the same shared reference (e.g.
+        # ``references/foo.md``): the shared edge makes the
+        # capability "connected" to SKILL.md even though the router
+        # table never names it.  The directed-from-SKILL.md walk
+        # used by ``unrouted_capabilities`` ignores that smuggling
+        # path: shared-resource edges only flow forward to the
+        # shared file, never back, so a shared sink cannot smuggle
+        # the capability into SKILL.md's directed forward closure.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md uses the shared reference but does NOT link
+            # the capability.
+            _build_skill(
+                tmp,
+                "# Skill\n\nSee [s](references/shared.md).\n",
+            )
+            write_text(
+                os.path.join(tmp, "references", "shared.md"),
+                "# Shared\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            # Capability uses the *same* shared reference (so the
+            # undirected component graph merges them) — but is
+            # itself unrouted.
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Alpha\n\nSee [s](../../references/shared.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # Shared edge merges them in the undirected graph — so the
+        # *components* count would falsely suggest "all good".
+        self.assertEqual(report["connected_components"], 1)
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        # But the directed router-completeness check sees through it.
+        self.assertEqual(report["unrouted_capabilities"], ["alpha"])
         self.assertFalse(report["conforms"])
 
     def test_orphan_subgraph_counts_as_its_own_component(self) -> None:
