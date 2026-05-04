@@ -1191,6 +1191,42 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
 
+    def test_multi_segment_relative_links_are_extracted(self) -> None:
+        """Standard markdown file-relative links can travel through
+        unrecognized child directories — ``guides/setup.md`` from a
+        reference file is a valid link even though ``guides`` is not
+        in the recognized top-level dir list.  Without a fourth
+        regex alternative, those links would slip past validation,
+        stats, reachability, and the conformance report, and a
+        broken ``guides/setup.md`` link would silently pass CI even
+        though a standard markdown reader sees it as broken.
+
+        URLs are kept out by the no-``:`` rule in the new branch
+        — ``https://example.com/foo.md`` contains a ``:`` and so
+        cannot match the multi-segment pattern.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [g](guides/setup.md).\n"
+                "URL: [up](https://example.com/foo.md)\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "does not exist" in e
+        ]
+        targets = " ".join(broken)
+        # The unrecognized-dir relative link must be flagged.
+        self.assertIn("guides/setup.md", targets)
+        # The URL must NOT be flagged — the no-``:`` rule keeps it
+        # out of the regex.
+        self.assertNotIn("https://example.com/foo.md", targets)
+
     def test_dot_slash_prefixed_links_are_extracted(self) -> None:
         """Standard markdown treats ``./foo.md`` as equivalent to
         ``foo.md`` — a valid file-relative link.  The body reference

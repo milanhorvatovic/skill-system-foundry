@@ -79,44 +79,34 @@ skill:
     # path file-relative under the redefined rule
     # (see references/path-resolution.md).
     reference_patterns:
-      # Three alternatives:
+      # Four alternatives, ordered from most-specific to most-general:
       #
       # - directory-anchored paths (``capabilities/foo.md``,
       #   ``../../references/foo.md``) — recognized top-level dir
-      #   prefix with optional ``../`` traversal.
-      # - bare-sibling files (``foo.md``, ``../foo.md``) — relative
-      #   path with no internal slash, file extension at the end.
-      #   Captures optional anchor/query suffixes (``#section``,
-      #   ``?v=2``) and markdown link title annotations
-      #   (``foo.md "Title"``) so the resolver sees the full link
-      #   before it hands it to ``strip_fragment``.
-      # - relative paths through unrecognized directories
-      #   (``../beta/capability.md`` from one capability into another,
-      #   or any other multi-segment relative path).  This branch
-      #   *requires* at least one ``../`` prefix, which keeps URLs
-      #   (``https://example.com/foo.md``) and absolute paths from
-      #   matching, while still capturing the natural sibling-
-      #   capability link form that file-relative semantics enable.
+      #   prefix with optional ``./`` or ``../`` traversal.
+      # - bare-sibling files (``foo.md``, ``./foo.md``,
+      #   ``../foo.md``) — relative path with no internal slash, file
+      #   extension at the end.  Captures optional anchor/query
+      #   suffixes (``#section``, ``?v=2``) and markdown link title
+      #   annotations (``foo.md "Title"``) so the resolver sees the
+      #   full link before it hands it to ``strip_fragment``.
+      # - parent-traversal multi-segment paths
+      #   (``../beta/capability.md`` into a sibling capability) —
+      #   requires at least one ``../`` to block URLs.
+      # - generic multi-segment relative paths through unrecognized
+      #   directories (``guides/setup.md``, ``examples/case.md``)
+      #   without a ``../`` prefix.  ``[^):\s]`` excludes ``:``,
+      #   which keeps URL schemes (``https://``, ``mailto:``) from
+      #   matching while still capturing standard markdown
+      #   file-relative links that don't anchor on a recognized
+      #   top-level directory.  Without this branch a broken
+      #   ``guides/setup.md`` link from a reference file would slip
+      #   past validation and the conformance gate.
       #
-      # The third alternative is essential for catching cross-
-      # capability links like ``[other](../beta/capability.md)`` from
-      # ``capabilities/alpha/capability.md`` — ``beta`` is not a
-      # recognized top-level directory, so without this branch the
-      # link is invisible to validation, stats, reachability, and the
-      # conformance report, and the validator silently misses an
-      # architecture violation that audit_skill_system also catches
-      # via RE_SIBLING_CAP_REF.
-      # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./`` and
-      # ``../`` are accepted.  Standard markdown treats ``./foo.md`` as
-      # equivalent to ``foo.md`` — a valid file-relative link — and
-      # without the ``./`` form the extractor silently skips them, so
-      # a broken anchored sibling like ``./missing.md#x`` would never
-      # reach validation, stats, reachability, or the conformance
-      # report.  The third alternative still requires a ``../`` to
-      # block URLs (``https://example.com/foo.md``) from matching,
-      # since a pure ``./`` chain stays in the current dir and the
-      # bare-sibling alternative already covers that shape.
-      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./``
+      # and ``../`` are accepted — standard markdown treats
+      # ``./foo.md`` as equivalent to ``foo.md``.
+      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^)/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
       backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
