@@ -991,6 +991,10 @@ def main() -> None:
                 "tool": "validate_skill",
                 "success": False,
                 "error": message,
+                "path_resolution": {
+                    "rule_name": PATH_RESOLUTION_RULE_NAME,
+                    "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                },
             }))
             sys.exit(1)
         parser.print_usage(sys.stderr)
@@ -1013,11 +1017,20 @@ def main() -> None:
 
     if not os.path.isdir(skill_path):
         if json_output:
+            # Include the ``path_resolution`` block in every JSON
+            # exit so consumers don't have to special-case the
+            # schema based on which exit point produced the
+            # payload.  Same rationale as the --fix --capability
+            # error path.
             print(to_json_output({
                 "tool": "validate_skill",
                 "path": os.path.abspath(skill_path),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
+                "path_resolution": {
+                    "rule_name": PATH_RESOLUTION_RULE_NAME,
+                    "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                },
             }))
         else:
             print(f"Error: '{skill_path}' is not a directory")
