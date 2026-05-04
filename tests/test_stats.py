@@ -242,12 +242,14 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             "`references/?ref.md` and `assets/{a,b}.md` patterns."
         )
         refs = extract_body_references(body)
-        for r in refs:
-            for meta in "*?[]{}":
-                self.assertNotIn(
-                    meta, r,
-                    msg=f"glob metachar {meta!r} survived filter: {r!r}",
-                )
+        # All three captures are pure glob patterns — none of them
+        # should reach the resolver.  Asserting an empty list pins
+        # the contract; checking only "no glob metachar in returned
+        # refs" would silently pass if a future regression in
+        # ``strip_fragment`` truncated the captures to ``capabilities``
+        # / ``references`` / ``assets`` (no metachar but also no real
+        # target).
+        self.assertEqual(refs, [])
 
     def test_query_suffixed_link_is_kept(self) -> None:
         """A markdown link with a query suffix
