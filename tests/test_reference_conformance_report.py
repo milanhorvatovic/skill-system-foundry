@@ -144,6 +144,31 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
             report["external_edges_per_capability"], {"demo": 2},
         )
 
+    def test_capability_local_parent_traversal_is_not_external(self) -> None:
+        # A capability-local reference under
+        # ``capabilities/<name>/references/foo.md`` reaching back to
+        # the capability entry via ``../capability.md`` is intra-scope
+        # — not a lift-rewrite candidate.  The metric must not count
+        # every ``../``-prefixed link blindly; it counts only links
+        # whose resolved target sits outside ``capabilities/<name>/``.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [r](references/r.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "r.md"),
+                "# R\n\nBack to [entry](../capability.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(
+            report["external_edges_per_capability"], {},
+            msg="../capability.md is intra-capability, not external",
+        )
+
     def test_skill_root_links_are_not_external_edges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp, "See [g](references/guide.md).\n")
