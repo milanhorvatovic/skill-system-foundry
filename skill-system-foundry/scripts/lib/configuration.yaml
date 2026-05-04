@@ -110,6 +110,31 @@ skill:
           - NotebookEdit
           - Task
           - Skill
+          - Agent
+          - AskUserQuestion
+          - CronCreate
+          - CronDelete
+          - CronList
+          - EnterPlanMode
+          - EnterWorktree
+          - ExitPlanMode
+          - ExitWorktree
+          - LSP
+          - ListMcpResourcesTool
+          - Monitor
+          - PowerShell
+          - ReadMcpResourceTool
+          - SendMessage
+          - TaskCreate
+          - TaskGet
+          - TaskList
+          - TaskOutput
+          - TaskStop
+          - TaskUpdate
+          - TeamCreate
+          - TeamDelete
+          - TodoWrite
+          - ToolSearch
         # Generic CLI names sometimes written into allowed-tools.
         # NOT harness primitives — listing `bash` does not grant the
         # harness Bash tool.  Retained so typo-detection on third-party
@@ -145,7 +170,7 @@ skill:
     catalog_provenance:
       claude_code:
         source_url: https://code.claude.com/docs/en/tools-reference.md
-        last_checked: "2026-05-01"
+        last_checked: "2026-05-04"
     # Fence/script-presence signals for the coherence rule.  Maps a
     # harness-tool name (PascalCase, must appear in
     # ``catalogs.claude_code.harness_tools``) to its body-fence
