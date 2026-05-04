@@ -2507,6 +2507,18 @@ class FixModeTests(unittest.TestCase):
                 [cap_dir, "--capability", "--fix", "--json"],
                 cwd=REPO_ROOT,
             )
+            # Pin the happy-path exit code.  The contract is "fix
+            # mode rewrites the whole skill tree from a capability
+            # subtarget"; that contract includes the CLI returning
+            # success.  Without this assertion a regression that
+            # produced both rewrite rows but exited non-zero (e.g.,
+            # success-predicate drift, an unrelated capability-mode
+            # validation FAIL, an apply error) would still satisfy
+            # the ``files`` assertion below and leave the bug
+            # invisible.
+            self.assertEqual(
+                proc.returncode, 0, msg=proc.stdout + proc.stderr,
+            )
             payload = json.loads(proc.stdout)
         files = {row["file"] for row in payload["fixes"]}
         # Both capabilities must have rewrite rows — proving the
