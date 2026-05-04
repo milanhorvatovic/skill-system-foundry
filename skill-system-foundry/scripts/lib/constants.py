@@ -236,12 +236,122 @@ for _phrase in DESCRIPTION_TRIGGER_PHRASES:
         break
 DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
 
+# --- Path Resolution ---
+# Loaded before the skill body reference patterns because the body's
+# ``markdown_link`` regex carries a ``__EXT_ALT__`` placeholder that
+# expands into an alternation built from
+# ``path_resolution.reference_extensions``.  Keeping this block here
+# (rather than co-located with the related YAML further down) means
+# the body regex consumes the *validated* extension tuple — empty,
+# dotted, whitespace-bearing, or duplicate entries fail loudly at
+# import instead of silently neutering reference extraction.
+if "path_resolution" not in _config:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'path_resolution'; this foundry build is incomplete."
+    )
+_path_resolution = _config["path_resolution"]
+if "rule_name" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'path_resolution.rule_name'."
+    )
+if "documentation_path" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'path_resolution.documentation_path'."
+    )
+PATH_RESOLUTION_RULE_NAME = str(_path_resolution["rule_name"]).strip()
+PATH_RESOLUTION_DOC_PATH = str(_path_resolution["documentation_path"]).strip()
+if not PATH_RESOLUTION_RULE_NAME:
+    raise RuntimeError(
+        "configuration.yaml has an empty value for "
+        "'path_resolution.rule_name'."
+    )
+if not PATH_RESOLUTION_DOC_PATH:
+    raise RuntimeError(
+        "configuration.yaml has an empty value for "
+        "'path_resolution.documentation_path'."
+    )
+if "reference_extensions" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'path_resolution.reference_extensions'."
+    )
+_raw_extensions = _path_resolution["reference_extensions"]
+if not isinstance(_raw_extensions, list) or not _raw_extensions:
+    raise RuntimeError(
+        "configuration.yaml 'path_resolution.reference_extensions' "
+        "must be a non-empty list."
+    )
+# Per-entry validation.  Empty / whitespace-only entries silently
+# expand to an alternation alternative that matches any string; a
+# leading dot ("`.md`") would be doubled because consumers prefix the
+# dot themselves; duplicates inflate the alternation and indicate a
+# config edit accident.  Reject all three loudly so authoring
+# mistakes surface at import instead of mutating extraction
+# behaviour at a distance.
+_normalized_extensions: list[str] = []
+_seen_extensions: set[str] = set()
+for _ext in _raw_extensions:
+    if not isinstance(_ext, str):
+        raise RuntimeError(
+            "configuration.yaml has a non-string entry in "
+            f"'path_resolution.reference_extensions': {_ext!r}."
+        )
+    _candidate = _ext.strip()
+    if not _candidate:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry "
+            "in 'path_resolution.reference_extensions'; remove the "
+            "entry or replace it with a real extension — empty entries "
+            "silently neuter reference extraction."
+        )
+    if _candidate.startswith("."):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'path_resolution.reference_extensions': {_ext!r}. "
+            "Entries must be bare extensions without a leading '.' — "
+            "consumers prefix the dot themselves."
+        )
+    if any(ch.isspace() for ch in _candidate):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            f"'path_resolution.reference_extensions': {_ext!r}. "
+            "Extensions must not contain whitespace."
+        )
+    if _candidate in _seen_extensions:
+        raise RuntimeError(
+            f"configuration.yaml has a duplicate entry '{_ext}' in "
+            "'path_resolution.reference_extensions'; remove the "
+            "redundant entry — duplicates indicate a config edit accident."
+        )
+    _seen_extensions.add(_candidate)
+    _normalized_extensions.append(_candidate)
+PATH_RESOLUTION_REFERENCE_EXTENSIONS: tuple[str, ...] = tuple(
+    _normalized_extensions
+)
+del _raw_extensions, _normalized_extensions, _seen_extensions
+
 # Skill body constraints
 _skill_body = _skill["body"]
 MAX_BODY_LINES = int(_skill_body["max_lines"])
 _body_refs = _skill_body["reference_patterns"]
-RE_MARKDOWN_LINK_REF = re.compile(_body_refs["markdown_link"])
+# Substitute the ``__EXT_ALT__`` placeholder in ``markdown_link``
+# with the extension alternation built from the validated
+# ``PATH_RESOLUTION_REFERENCE_EXTENSIONS`` tuple.  The regex literal
+# in YAML keeps the placeholder for readability; the alternation is
+# assembled here from a single source — the YAML list — so adding or
+# removing an extension never requires editing the regex template.
+_ext_alt_for_md_link = "|".join(
+    re.escape(ext) for ext in PATH_RESOLUTION_REFERENCE_EXTENSIONS
+)
+_markdown_link_pattern = _body_refs["markdown_link"].replace(
+    "__EXT_ALT__", _ext_alt_for_md_link,
+)
+RE_MARKDOWN_LINK_REF = re.compile(_markdown_link_pattern)
 RE_BACKTICK_REF = re.compile(_body_refs["backtick"])
+del _ext_alt_for_md_link, _markdown_link_pattern
 
 # Skill compatibility constraints
 MAX_COMPATIBILITY_CHARS = int(_skill["compatibility"]["max_length"])
@@ -540,56 +650,6 @@ for _entry in _raw_allowed_orphans:
         )
     _normalized_orphans.append(_candidate)
 ALLOWED_ORPHANS = tuple(_normalized_orphans)
-
-# --- Path Resolution ---
-# Cross-file references inside a skill follow standard markdown
-# semantics (file-relative).  See references/path-resolution.md for
-# the canonical rule, the per-scope behavior (skill root vs
-# capability root), the external-reference syntax (../../<dir>/<file>),
-# and the liftability invariant.
-if "path_resolution" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'path_resolution'; this foundry build is incomplete."
-    )
-_path_resolution = _config["path_resolution"]
-if "rule_name" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'path_resolution.rule_name'."
-    )
-if "documentation_path" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'path_resolution.documentation_path'."
-    )
-PATH_RESOLUTION_RULE_NAME = str(_path_resolution["rule_name"]).strip()
-PATH_RESOLUTION_DOC_PATH = str(_path_resolution["documentation_path"]).strip()
-if not PATH_RESOLUTION_RULE_NAME:
-    raise RuntimeError(
-        "configuration.yaml has an empty value for "
-        "'path_resolution.rule_name'."
-    )
-if not PATH_RESOLUTION_DOC_PATH:
-    raise RuntimeError(
-        "configuration.yaml has an empty value for "
-        "'path_resolution.documentation_path'."
-    )
-if "reference_extensions" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'path_resolution.reference_extensions'."
-    )
-_raw_extensions = _path_resolution["reference_extensions"]
-if not isinstance(_raw_extensions, list) or not _raw_extensions:
-    raise RuntimeError(
-        "configuration.yaml 'path_resolution.reference_extensions' "
-        "must be a non-empty list."
-    )
-PATH_RESOLUTION_REFERENCE_EXTENSIONS: tuple[str, ...] = tuple(
-    str(ext).strip() for ext in _raw_extensions
-)
-del _raw_extensions
 
 # --- Bundle Packaging ---
 _bundle = _config["bundle"]

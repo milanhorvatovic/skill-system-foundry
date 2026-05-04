@@ -1124,6 +1124,64 @@ class MissingSectionFailFastTests(unittest.TestCase):
         self.assertIn("allowed_orphans", message)
         self.assertIn("'..'", message)
 
+    def test_empty_entry_in_reference_extensions_raises(self) -> None:
+        # Empty / whitespace-only entries expand to a regex
+        # alternative that matches any string, silently neutering
+        # ``markdown_link`` extraction and the ``is_glob_path``
+        # boundary regex.  Loader must refuse them loudly.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "    - md\n",
+                    "    - md\n    - \"\"\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("reference_extensions", message)
+        self.assertIn("empty", message.lower())
+
+    def test_dotted_entry_in_reference_extensions_raises(self) -> None:
+        # Consumers prefix the dot themselves; a leading dot would
+        # double it (".md" → "..md") and silently break extraction.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "    - md\n",
+                    "    - .md\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("reference_extensions", message)
+        self.assertIn("'.md'", message)
+
+    def test_whitespace_in_reference_extensions_raises(self) -> None:
+        # Embedded whitespace would corrupt the extension alternation
+        # and never match real filenames.  Loader rejects it loudly.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "    - md\n",
+                    "    - 'md txt'\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("reference_extensions", message)
+        self.assertIn("whitespace", message.lower())
+
+    def test_duplicate_entry_in_reference_extensions_raises(self) -> None:
+        # Duplicates inflate the alternation and indicate a config
+        # edit accident.  Symmetric with the trigger_phrases guard.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "    - md\n",
+                    "    - md\n    - md\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("reference_extensions", message)
+        self.assertIn("duplicate", message.lower())
+
     def test_duplicate_error_surfaces_raw_and_normalized_forms(self) -> None:
         # Author writes 'Triggers When' (mixed case) and again as
         # 'triggers when' — both normalize to the same value.  The

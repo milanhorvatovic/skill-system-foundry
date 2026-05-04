@@ -110,10 +110,12 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 # ===================================================================
 
 _GLOB_METACHARS = "*?[]{}"
-# Build the boundary regex from the configured extension list so this
-# helper stays in sync with the body ``reference_patterns`` regex —
-# both source their extension set from
-# ``path_resolution.reference_extensions`` in configuration.yaml.
+# Build the boundary regex from the configured extension list.  The
+# body ``reference_patterns.markdown_link`` regex in configuration.yaml
+# uses the same alternation via the ``__EXT_ALT__`` placeholder
+# substituted in ``constants.py``, so editing
+# ``path_resolution.reference_extensions`` flows through to both the
+# extractor and this glob discriminator from a single source.
 # Extensions are escaped to keep the alternation safe even if a
 # future YAML edit introduces a regex metacharacter.
 _EXT_FRAGMENT_BOUNDARY_RE = re.compile(

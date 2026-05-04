@@ -106,7 +106,17 @@ skill:
       # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./``
       # and ``../`` are accepted — standard markdown treats
       # ``./foo.md`` as equivalent to ``foo.md``.
-      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:md|py|sh|yaml|yml|json|toml|txt)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      #
+      # The literal token ``__EXT_ALT__`` is substituted at
+      # constants load time with the alternation built from
+      # ``path_resolution.reference_extensions`` (see
+      # ``constants.RE_MARKDOWN_LINK_REF``), so the supported
+      # extension list lives in exactly one place.  Editing
+      # ``reference_extensions`` flows through automatically — the
+      # markdown_link regex, the ``backtick`` regex, and the
+      # ``is_glob_path`` boundary regex all source the same
+      # alternation.
+      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
       backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
