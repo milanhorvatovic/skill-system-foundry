@@ -108,6 +108,16 @@ def print_human(report: dict, verbose: bool) -> None:
 
 
 def main() -> int:
+    # Fast-path: no arguments at all → print module docstring as the
+    # usage hint and exit non-zero.  Matches the convention used by
+    # validate_skill.py, bundle.py, scaffold.py — keeps the CLI UX
+    # uniform across foundry entry points and ensures the module
+    # docstring serves as the actual usage message a user sees when
+    # they invoke the script with no arguments.
+    if len(sys.argv) == 1:
+        print(__doc__)
+        return 1
+
     parser = argparse.ArgumentParser(
         description=(
             "Report a skill's cross-file reference conformance under "
