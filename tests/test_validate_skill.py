@@ -1269,6 +1269,48 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         # both are out-of-scope for the path-resolution rule.
         self.assertNotIn("roles/release/reviewer.md", targets)
 
+    def test_role_references_in_capability_body_are_still_validated(self) -> None:
+        """The role-link exception applies *only* to orchestration
+        ``SKILL.md`` entries — that is the file the convention
+        permits to use system-root-relative ``roles/...`` links.
+        A capability body or shared reference that contains
+        ``../../roles/foo.md`` is NOT covered by the exception:
+        it is an out-of-scope link that should surface as a
+        broken-link finding.  Without gating the role-link filter
+        on ``include_router_table`` (only True for the SKILL.md
+        scan), any file under the skill could hide an invalid
+        out-of-skill link by spelling it through ``roles/``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            cap_md = os.path.join(
+                tmpdir, "capabilities", "demo", "capability.md",
+            )
+            # A capability body links a role via parent-traversal —
+            # ``extract_body_references`` would previously strip
+            # the ``../../`` prefixes, see ``roles/`` and silently
+            # drop the link before validation could surface it.
+            write_text(
+                cap_md,
+                "---\nname: demo\n---\n# Demo\n"
+                "\n"
+                "See [r](../../roles/release/reviewer.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        # The capability-scoped link must reach the validator and
+        # surface as a broken-link finding.  The role exception
+        # only applies inside the SKILL.md scan.
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "roles/release/reviewer.md" in e
+        ]
+        self.assertEqual(
+            len(broken), 1,
+            msg=f"expected one broken-link finding, got {broken!r}",
+        )
+
     def test_uri_scheme_links_are_not_captured(self) -> None:
         """URI-scheme markdown links like ``mailto:guide.md`` end in
         a recognized extension but are external destinations, not

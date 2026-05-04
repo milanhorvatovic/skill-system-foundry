@@ -176,13 +176,23 @@ def extract_body_references(
         # the path-resolution surface.  Strip leading ``./`` or
         # ``../`` segments before checking the prefix so explicit-
         # relative spellings like ``./roles/x.md`` are also caught.
+        #
+        # Gate the filter on ``include_router_table`` so the
+        # exception only applies when scanning the SKILL.md entry
+        # — that is the file the role-link convention permits.
+        # Capability bodies and reference files are NOT supposed to
+        # link roles directly; if they do, the link is an
+        # out-of-scope reference that the conformance and validator
+        # surfaces should report.  Without this gate any file under
+        # the skill could hide an invalid out-of-skill link by
+        # spelling it ``../../roles/foo.md``.
         prefix_stripped = clean
         while (
             prefix_stripped.startswith("./")
             or prefix_stripped.startswith("../")
         ):
             prefix_stripped = prefix_stripped.split("/", 1)[1]
-        if prefix_stripped.startswith("roles/"):
+        if include_router_table and prefix_stripped.startswith("roles/"):
             continue
         if dedupe:
             if clean in seen:
