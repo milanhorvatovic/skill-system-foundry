@@ -2522,6 +2522,94 @@ class FixModeTests(unittest.TestCase):
         self.assertEqual(payload["modified"], 1)
         self.assertNotIn("error", payload)
 
+    def test_fix_in_process_covers_main_branch(self) -> None:
+        """Run ``validate_skill.main()`` with ``--fix`` in-process so
+        the fix-mode block contributes to coverage measurement.  The
+        existing FixMode tests use a subprocess via ``_run`` and
+        therefore do not feed the parent's coverage session — the
+        whole fix branch shows up as uncovered even though it is
+        exercised end-to-end.  Pin one happy-path and one error-path
+        invocation here so the per-file branch coverage threshold
+        catches future drift."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            # Happy path — dry run, JSON.
+            code, out, _err = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(len(payload["fixes"]), 1)
+        self.assertEqual(payload["unfixable_findings"], [])
+        # Cover the human-output branch and the apply path.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            code, out, _err = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("Applied", out)
+
+    def test_fix_with_foundry_self_runs_prose_yaml_check(self) -> None:
+        """``--foundry-self`` is documented to imply the prose-YAML
+        check.  Before this fix the ``--fix`` branch exited from
+        ``main()`` before the prose-YAML block ran, so
+        ``--foundry-self --fix`` silently skipped that gate while
+        the same command without ``--fix`` would surface the
+        finding.  Build a skill with a prose-YAML fence the
+        validator flags (an unquoted value that starts with a flow
+        indicator — strict parsers misread it as a flow
+        collection) and pin that ``--fix --foundry-self`` exits
+        non-zero with the finding visible in ``non_path_fails``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            ref_md = os.path.join(skill_dir, "references", "y.md")
+            # ``a: [unclosed`` is a strict-parser hazard the
+            # prose-YAML check surfaces as a FAIL.
+            write_text(
+                ref_md,
+                "# Y\n\n```yaml\na: [unclosed\n```\n",
+            )
+            proc = _run(
+                [skill_dir, "--fix", "--foundry-self", "--json"],
+                cwd=REPO_ROOT,
+            )
+            payload = json.loads(proc.stdout)
+        # The flagged YAML must surface in non_path_fails — the
+        # broader-validity gate that ``--fix`` reads for its exit
+        # decision.
+        prose_fails = [
+            f for f in payload["non_path_fails"]
+            if "flow" in f.lower() or "[spec]" in f
+        ]
+        self.assertGreater(
+            len(prose_fails), 0,
+            msg=f"expected prose-YAML failure in non_path_fails; "
+                f"got: {payload['non_path_fails']!r}",
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+
     def test_fix_capability_mode_validates_enclosing_skill_root(self) -> None:
         """When ``--fix --capability`` rewrites the parent skill tree,
         it must also *validate* that same tree.  Otherwise unfixable

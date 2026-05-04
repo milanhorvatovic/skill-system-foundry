@@ -1106,6 +1106,26 @@ def main() -> None:
         validation_errors, _passes = validate_skill(
             rewrite_root, False, allow_nested_refs,
         )
+        # Mirror the prose-YAML check the non-fix branch runs below
+        # so ``--foundry-self --fix`` doesn't silently skip the
+        # YAML validation that ``--foundry-self`` alone would
+        # enforce.  ``--check-prose-yaml`` and ``--foundry-self``
+        # are validation gates that apply to the whole skill body,
+        # not the path-resolution surface — but exit through the
+        # ``--fix`` branch must include them in ``non_path_fails``
+        # so CI / scripts can rely on a single command for the
+        # combined gate.  Use the module-level import (imported at
+        # the top of this file) — re-importing inside this block
+        # would mark the symbol as local for the entire function
+        # and break the non-fix prose_yaml call site below.
+        if check_prose:
+            prose_fix_findings, _checked, _per_file = (
+                collect_prose_findings(rewrite_root)
+            )
+            for finding in prose_fix_findings:
+                validation_errors.append(
+                    format_finding_as_string(finding)
+                )
         # Drop findings that the rewriter already handles — they are
         # represented in ``rows`` and would otherwise double-count.
         # The match uses the position-bounded ``referenced in <file>
