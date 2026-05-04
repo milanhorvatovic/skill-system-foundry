@@ -112,11 +112,27 @@ def print_human(report: dict, verbose: bool) -> None:
         print("  External edges per capability:")
         for cap, count in report["external_edges_per_capability"].items():
             print(f"    {cap:30s} {count:>4d}")
+    if report.get("unrouted_capabilities"):
+        print("  Unrouted capabilities:")
+        for cap in report["unrouted_capabilities"]:
+            print(f"    {cap}")
     print("-" * SEPARATOR_WIDTH)
     if report["conforms"]:
         print("Conformance: PASS")
     else:
         print("Conformance: FAIL")
+        # Always surface unrouted capabilities on failure — they are
+        # the most common drift case after the gate change, and the
+        # gate fails on this signal even when broken/unreachable
+        # counts are zero.  CI runs the human form (``--verbose``),
+        # so a maintainer needs the actionable capability name in
+        # the failure output without having to re-run with
+        # ``--json``.
+        if report.get("unrouted_capabilities"):
+            print()
+            print("Unrouted capabilities (not reachable from SKILL.md):")
+            for cap in report["unrouted_capabilities"]:
+                print(f"  {cap}")
         if verbose and report["broken_links"]:
             print()
             print("Broken links:")

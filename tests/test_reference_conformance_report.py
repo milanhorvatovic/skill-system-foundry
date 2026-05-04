@@ -477,6 +477,24 @@ class CliInvocationTests(unittest.TestCase):
         self.assertIn("conforms", payload)
         self.assertTrue(payload["conforms"])
 
+    def test_human_output_lists_unrouted_capabilities_on_failure(self) -> None:
+        # When ``conforms`` is false because of an unrouted capability,
+        # the human report must name the capability — otherwise CI
+        # users see "Conformance: FAIL" with broken/unreachable both
+        # at zero and have to re-run with --json to discover the
+        # actual problem.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "# Skill\n")
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Alpha\n",
+            )
+            rc, out, _err = self._invoke([tmp])
+        self.assertEqual(rc, 1)
+        self.assertIn("Conformance: FAIL", out)
+        self.assertIn("Unrouted capabilities", out)
+        self.assertIn("alpha", out)
+
     def test_verbose_lists_broken_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp, "See [m](references/missing.md).\n")
