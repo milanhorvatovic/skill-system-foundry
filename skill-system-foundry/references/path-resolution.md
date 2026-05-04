@@ -36,7 +36,11 @@ A skill's filesystem is divided into two scopes that own their own subgraph of r
 | **Skill root** | the directory containing `SKILL.md` | `SKILL.md`, `references/`, `assets/`, `scripts/` (the shared root tree) |
 | **Capability root** | each `capabilities/<name>/` directory | `capability.md`, `capabilities/<name>/references/`, `capabilities/<name>/assets/`, `capabilities/<name>/scripts/` |
 
-Each scope is a self-contained connected component of the link graph. Within a scope, every reference resolves file-relative and lands inside that same scope. References that cross scope boundaries are *external references* (next section).
+Each scope is a self-contained subgraph for resolution: within a scope, every reference resolves file-relative under standard markdown semantics. Three kinds of cross-scope edges exist and the validator treats them differently:
+
+- **Router-wiring edges** — `SKILL.md` linking each `capabilities/<name>/capability.md` (the router-table pattern). These are entry-point edges, expected and required for a router skill, and the validator does not surface them as external. The conformance report uses them to merge per-scope subgraphs into one connected component.
+- **Capability-outbound edges into the shared skill root** — links from a capability into `references/`, `assets/`, `scripts/`, etc. (the next section's `../../<dir>/<file>` form). Surfaced as INFO and recorded for the future capability-lift tool, because lifting a capability into a standalone skill needs to inline these targets.
+- **Capability-outbound edges into a sibling capability** — an *architecture* concern, not a liftability one. After lift, the sibling capability is gone, so the link cannot be mechanically inlined. Surfaced as INFO that names the target capability and points at `audit_skill_system`'s capability-isolation rule.
 
 A capability is structurally a sub-skill: it has its own optional `references/`, `assets/`, `scripts/`, and a `capability.md` that mirrors `SKILL.md`'s role. Treat each capability as if it were a standalone skill living at `capabilities/<name>/` — every link inside it resolves from `capabilities/<name>/`, never from the enclosing skill root.
 
@@ -60,22 +64,22 @@ There is no foundry-specific sigil (no `@skill/...`, no `<skill-root>/...`). The
 
 ## Liftability Invariant
 
-A capability is liftable to a standalone skill through purely mechanical rewriting of its external references. No semantic rework is needed.
+A capability is liftable to a standalone skill through purely mechanical rewriting of its capability-outbound edges into the shared skill root. No semantic rework is needed.
 
-To promote `capabilities/<name>/` to a standalone skill, a future foundry tool walks the capability's filesystem, finds every reference whose path starts with `..`, and either:
+To promote `capabilities/<name>/` to a standalone skill, a future foundry tool walks the capability's filesystem, resolves every reference file-relative, and identifies the lift-rewrite candidates as references whose **resolved target sits outside the capability root and inside the shared skill-root tree** (`references/`, `assets/`, `scripts/`, etc.). For each one it either:
 
 - inlines the referenced shared content into the new standalone skill's own `references/`/`assets/`/`scripts/`, or
 - copies the referenced file and rewrites the link to the new local path.
 
-That is the only class of edge that needs touching. Internal capability references stay as-is, because they already resolve file-relative from the capability root and that root becomes the new skill root after the lift.
+That is the only class of edge that needs touching. References whose resolved target stays inside the capability root — including `../capability.md` from a capability-local reference file, and bare-sibling links inside `capabilities/<name>/references/` — already resolve file-relative within the capability scope, and that scope becomes the new skill root after the lift; they need no rewriting.
 
 The rule above guarantees this property:
 
-1. Every intra-capability reference is file-relative within the capability scope. The capability sub-graph is self-contained.
-2. Every external reference is uniquely identifiable by its leading `..` segment. The lift tool finds them with a trivial regex.
+1. Every intra-capability reference is file-relative within the capability scope. The capability sub-graph is self-contained, including links that use `..` to step within the same capability.
+2. Every lift-rewrite candidate is identifiable by resolving the link file-relative and checking whether the target lies inside the capability root. The lift tool needs no special parser — `os.path.normpath` plus a containment check (`is_within_directory`) is enough.
 3. The lift tool needs no per-skill configuration, no special-case logic, no semantic understanding of the link target.
 
-A capability whose link graph satisfies the rule is *mechanically liftable*. A capability that violates the rule (e.g. uses skill-root-relative form for shared resources, or omits `..` on a cross-scope link) is not liftable without manual review. The validator's per-scope finding output makes that distinction visible.
+A capability whose link graph satisfies the rule is *mechanically liftable*. A capability that uses skill-root-relative form for shared resources (so the link does not resolve file-relative under standard semantics) or that links into a sibling capability (the link cannot be mechanically inlined because the sibling capability is gone after lift) is not liftable without manual review. The validator's per-scope finding output makes both distinctions visible.
 
 ## Concrete Examples
 
