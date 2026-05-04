@@ -429,6 +429,45 @@ class ApplyFixesTests(unittest.TestCase):
         # Inside the fence: untouched.
         self.assertIn("Example: [a](references/x.md)", content)
 
+    def test_does_not_rewrite_inside_frontmatter(self) -> None:
+        # ``find_fixable_references`` strips YAML frontmatter before
+        # scanning, so a path mentioned in frontmatter (e.g. quoted
+        # inside a folded ``description``) is never in *rows*.  When
+        # the same path *also* appears in the body, the rewrite must
+        # touch only the body occurrence — frontmatter metadata that
+        # the scan deliberately excluded must not be mutated by
+        # ``--fix --apply``.
+        with tempfile.TemporaryDirectory() as tmp:
+            ref_a = os.path.join(tmp, "ref.md")
+            write_text(
+                ref_a,
+                "---\n"
+                "name: t\n"
+                "description: >\n"
+                "  Mentions references/x.md in the description.\n"
+                "---\n"
+                "\n"
+                "Real link: [a](references/x.md)\n",
+            )
+            rows = [{
+                "file": ref_a,
+                "file_rel": "ref.md",
+                "original": "references/x.md",
+                "replacement": "x.md",
+                "line": 8,
+            }]
+            modified = apply_fixes(rows)
+            with open(ref_a, "r", encoding="utf-8") as f:
+                content = f.read()
+        self.assertEqual(modified, 1)
+        # Frontmatter occurrence: untouched (still says references/x.md).
+        self.assertIn(
+            "Mentions references/x.md in the description",
+            content,
+        )
+        # Body occurrence: rewritten.
+        self.assertIn("Real link: [a](x.md)", content)
+
     def test_unchanged_file_not_counted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ref_a = os.path.join(tmp, "ref.md")
