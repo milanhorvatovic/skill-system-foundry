@@ -361,26 +361,21 @@ def compute_report(skill_root: str) -> dict:
     roots = _list_roots(skill_root)
     component_count, unreachable_count = _connected_components(edges, roots)
 
-    # Unrouted-capability check: every capability.md must be
-    # reachable from SKILL.md via the forward (directed) edge chain.
-    # The undirected component count alone misses the case where a
-    # capability and SKILL.md both link the same shared reference —
-    # the shared edge would merge them into one component even
-    # though the router table never names the capability.  A directed
-    # walk from SKILL.md only follows edges *out* of each node, so a
-    # shared-resource sink cannot smuggle the capability into the
-    # closure.
-    # Routing check reads the *router table* directly — not every
-    # link out of SKILL.md.  ``edges[skill_md]`` would include any
-    # capability path SKILL.md mentions in prose, so a capability
-    # that's missing from the router table but doc-linked elsewhere
-    # in the entry would falsely look "routed".  The router table
-    # is the structured surface the agent harness reads to dispatch;
-    # router-table membership is what dispatchability hinges on, so
-    # ``extract_capability_paths`` (router-shaped table parser) is
-    # the authoritative source.  A capability not named in the table
-    # is unrouted regardless of what other prose references SKILL.md
-    # carries.
+    # Unrouted-capability check: a capability is *routed* iff its
+    # path appears in SKILL.md's router-shaped markdown table.  No
+    # link-graph walk is involved — the router table is the
+    # structured surface the agent harness reads to dispatch, so
+    # router-table membership is the authoritative dispatchability
+    # signal.  Other forms of link from SKILL.md (prose paragraph
+    # references, capability paths quoted in inline-code, links to
+    # the capability's own README/asset) all fail to count as
+    # routing because the harness does not consult them.
+    #
+    # ``extract_capability_paths`` (router_table.py) is the parser
+    # for the canonical ``Capability | Trigger | Path`` table.  It
+    # returns just the path cells (with the same decoration-stripping
+    # recovery the audit uses), so the routed set is exactly the
+    # cells that the harness would dispatch through.
     skill_md_abs = os.path.abspath(os.path.join(skill_root, FILE_SKILL_MD))
     router_table_paths: set[str] = set()
     if os.path.isfile(skill_md_abs):
@@ -415,13 +410,15 @@ def compute_report(skill_root: str) -> dict:
         "external_edges_per_capability": dict(
             sorted(ext_per_cap.items())
         ),
-        # Names of capabilities not directly reachable from SKILL.md
-        # via the router-table forward edge chain.  Distinct from
-        # ``files_unreachable_from_root`` (which uses an undirected
-        # walk that treats every capability.md as its own root) and
-        # from ``connected_components`` (which an undirected shared-
+        # Names of capabilities whose ``capability.md`` path is not
+        # listed in SKILL.md's router-shaped markdown table.
+        # Distinct from ``files_unreachable_from_root`` (which uses
+        # an undirected reachability walk that treats every
+        # capability.md as its own root) and from
+        # ``connected_components`` (which an undirected shared-
         # reference edge can artificially merge).  This list is the
-        # authoritative router-completeness signal.
+        # authoritative router-completeness signal — it does not
+        # consult the link graph at all, only the router table.
         "unrouted_capabilities": unrouted_capabilities,
         # Conforms requires three independent signals:
         #
@@ -430,10 +427,11 @@ def compute_report(skill_root: str) -> dict:
         # - ``unreachable_count == 0`` — no in-scope ``.md`` file is
         #   stranded with no path from any entry root.
         # - ``unrouted_capabilities == []`` — every capability is
-        #   directly reachable from SKILL.md.  This catches the
-        #   incomplete-router case the undirected component metric
-        #   misses (a shared-reference edge can artificially merge
-        #   an unrouted capability into the SKILL.md component).
+        #   listed in SKILL.md's router table.  This catches the
+        #   incomplete-router case the link-graph metrics miss (a
+        #   shared-reference edge or a prose link can artificially
+        #   make a capability look connected to SKILL.md even when
+        #   the router table never names it).
         #
         # ``connected_components`` stays diagnostic — it is useful
         # for distinguishing orphan clusters from missing-router

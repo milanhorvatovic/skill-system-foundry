@@ -118,9 +118,10 @@ def extract_body_references(
         # audit_skill_system).  Either way, do not treat it as a live
         # load edge.  Nested capability resources like
         # ``capabilities/<name>/references/foo.md`` remain legitimate
-        # — those are skill-root-relative links from within a
-        # capability into its own local references and must stay in
-        # the load graph.
+        # — those are file-relative links from within a capability
+        # into its own local references (resolved from the source
+        # file's directory under the path-resolution rule), and they
+        # must stay in the load graph.
         #
         # Apply ``strip_fragment`` before the shape check so anchored
         # links (``capabilities/foo/capability.md#section``) and

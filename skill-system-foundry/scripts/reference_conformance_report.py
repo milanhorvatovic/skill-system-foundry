@@ -46,12 +46,14 @@ Metrics:
   not counted.
 
 * ``unrouted_capabilities`` — names of capabilities whose
-  ``capability.md`` is not directly reachable from ``SKILL.md`` via
-  the forward edge chain.  Computed with a directed walk (only
-  forward edges from ``SKILL.md``), so a shared-reference edge
-  cannot falsely merge an unrouted capability into the closure the
-  way an undirected ``connected_components`` measurement would.
-  This is the authoritative router-completeness signal.
+  ``capability.md`` path is not listed in ``SKILL.md``'s
+  router-shaped markdown table.  No link-graph walk is involved:
+  the router table is the structured surface the agent harness
+  reads to dispatch, so router-table membership is the
+  authoritative dispatchability signal.  A capability that
+  ``SKILL.md`` mentions only in prose (or in inline-code, or as a
+  link to an asset) is *unrouted* — the harness has no way to
+  know it should reach that capability.
 
 A skill conforms when ``broken_under_standard_semantics == 0``,
 ``files_unreachable_from_root == 0``, and
