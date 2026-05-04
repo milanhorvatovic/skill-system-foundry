@@ -25,7 +25,11 @@ A foundry-only convention that requires every reader to know "links resolve from
 
 Every cross-file reference inside a skill resolves **relative to the file that contains the reference**, using standard markdown semantics. There is no privileged base directory. The skill root is no longer a special resolution context — it is just the directory that happens to contain `SKILL.md`.
 
-This is one rule, applied uniformly. There is no per-file-type variation, no announcement required, no out-of-band knowledge.
+This is one rule, applied uniformly *inside a skill*. There is no per-file-type variation, no announcement required, no out-of-band knowledge.
+
+### Out of scope: role references
+
+One link form is deliberately out of scope for this rule: links from an orchestration `SKILL.md` into the system-wide roles tree (`roles/<group>/<name>.md`). Roles live alongside skills, not inside them, so role links are interpreted *system-root-relative* — the same path syntax skills themselves are dispatched under. The body extractor (`extract_body_references` in `lib/reachability.py`) drops anything matching `roles/...` (after `./`/`../` prefix stripping) before it enters the path-resolution pipeline; role links are validated separately by the audit's dependency-direction rule (`check_upward_references` with `--allow-orchestration`). The path-resolution rule applies to every other cross-file reference inside a skill.
 
 ## Two Scopes
 
