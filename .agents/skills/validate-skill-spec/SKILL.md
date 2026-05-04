@@ -29,7 +29,7 @@ This skill provides a manual validation workflow that complements automated vali
 
 ## Step 1: Identify the Skill Directory
 
-Determine the skill directory to validate. The skill root is the directory containing `SKILL.md`. Cross-file references resolve file-relative (standard markdown semantics) under the redefined path-resolution rule — every link resolves from the directory containing the file the link lives in. The skill root and each capability root own their own subgraph; capability bodies reach the shared skill root via the explicit `../../<dir>/<file>` form. The full rule lives in `references/path-resolution.md`.
+Determine the skill directory to validate. The skill root is the directory containing `SKILL.md`. Cross-file references resolve file-relative (standard markdown semantics) under the redefined path-resolution rule — every link resolves from the directory containing the file the link lives in. The skill root and each capability root own their own subgraph; capability bodies reach the shared skill root via the explicit `../../<dir>/<file>` form. The full rule lives in the foundry skill's reference document at `skill-system-foundry/references/path-resolution.md`.
 
 If validation scripts are available (e.g., `validate_skill.py` from this repository), run them from within the `skill-system-foundry/` directory:
 
