@@ -24,14 +24,19 @@ Metrics:
   to an existing file under file-relative resolution.
 * ``broken_under_standard_semantics`` — count of links that do not.
 * ``connected_components`` — count of weakly-connected components in
-  the link graph reachable from ``SKILL.md`` and every ``capability.md``.
-  A router skill in which ``SKILL.md`` links every capability typically
-  reports ``1`` because the router edges merge all per-scope sub-graphs
-  into a single component.  A larger value signals capability scopes
-  that no router edge reaches — useful for detecting accidentally
-  unrouted capabilities.
+  the in-scope link graph.  Counts every cluster of mutually-linked
+  ``.md`` files, including orphan subgraphs that no entry root
+  reaches.  A router skill in which ``SKILL.md`` links every
+  capability typically reports ``1`` because the router edges merge
+  all per-scope sub-graphs into a single component.  A larger value
+  signals either capability scopes that no router edge reaches *or*
+  orphan clusters of files that no root reaches — both are useful
+  drift signals.  ``files_unreachable_from_root`` is the companion
+  metric that distinguishes the two cases (orphan clusters
+  contribute to both, unrouted-but-router-linked subgraphs only
+  inflate this count).
 * ``files_unreachable_from_root`` — count of in-scope ``.md`` files
-  under the skill that no root reaches.
+  under the skill that no entry root reaches.
 * ``external_edges_per_capability`` — for each capability, the number
   of edges that escape the capability root and land in the shared
   skill root.  These are the edges a future capability-lift tool
