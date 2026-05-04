@@ -110,7 +110,7 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 
 _GLOB_METACHARS = "*?[]{}"
 _EXT_FRAGMENT_BOUNDARY_RE = re.compile(
-    r"\.(?:md|py|sh|yaml|yml|json|toml|txt)([?#]|$)"
+    r"\.(?:md|py|sh|yaml|yml|json|toml|txt)([?#\s]|$)"
 )
 
 
@@ -120,21 +120,30 @@ def is_glob_path(ref: str) -> bool:
 
     Glob metacharacters are ``*``, ``?``, ``[``, ``]``, ``{``, ``}``.
     ``?`` is the tricky one: it is also a markdown link query
-    separator (``foo.md?v=2``) that the rewriter explicitly
-    preserves, so the simple "any ``?`` is glob" rule rejects
-    legitimate query-suffixed links.
+    separator (``foo.md?v=2``) and can appear inside a markdown link
+    title (``foo.md "Why?"``), both of which the rewriter and the
+    extractor explicitly preserve.  A simple "any ``?`` is glob"
+    rule rejects all three legitimate forms.
 
-    Discriminator: a markdown link's path ends at the first ``?``
-    or ``#`` that follows a recognized file extension, or at end of
-    string.  Anything before that boundary is the path; anything
-    after is the suffix.  ``?``/``#``/``[`` etc. inside the path
-    portion are unambiguously glob; the same characters in the
-    suffix are part of the query/anchor and not a glob signal.
+    Discriminator: a markdown link's path ends at the first ``?``,
+    ``#``, or whitespace that follows a recognized file extension,
+    or at end of string.  Anything before that boundary is the path;
+    anything after is the suffix (query, anchor, or title
+    annotation).  Glob metachars inside the path portion register;
+    the same characters in the suffix are part of the query/anchor/
+    title and stay benign.
 
-    For ``references/?ref.md`` the path portion is the whole string
-    (the ``?`` is *before* the extension), so the ``?`` counts as
-    glob.  For ``guide.md?v=2`` the path portion is ``guide.md`` and
-    the ``?`` lives in the suffix, so the link is not a glob.
+    Examples:
+    - ``references/?ref.md`` — the ``?`` is *before* the extension,
+      so the path portion is the whole string and the ``?`` counts
+      as glob.
+    - ``guide.md?v=2`` — boundary at ``?`` after ``.md``, path is
+      ``guide.md``, no glob metachars.
+    - ``guide.md "Why?"`` — boundary at the space after ``.md``,
+      path is ``guide.md``, no glob metachars (the ``?`` lives in
+      the title and is irrelevant).
+    - ``capabilities/**/*.md`` — extension at end with no boundary
+      character, whole string is path, ``*`` flags as glob.
     """
     m = _EXT_FRAGMENT_BOUNDARY_RE.search(ref)
     path_part = ref[: m.start(1)] if m else ref

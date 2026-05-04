@@ -78,6 +78,24 @@ class IsGlobPathTests(unittest.TestCase):
             with self.subTest(ref=ref):
                 self.assertFalse(is_glob_path(ref), msg=ref)
 
+    def test_title_suffix_is_not_glob(self) -> None:
+        # Markdown link title annotations live after whitespace
+        # following a recognized extension.  ``?`` or ``[``/``]``
+        # inside a title are part of the human-readable title, not
+        # the filesystem path — they must not flag the link as a
+        # glob.  Without whitespace as a boundary character, a link
+        # like ``[guide](missing.md "Why?")`` would be misclassified
+        # as a glob and dropped before validation, hiding the
+        # broken-link finding the validator should surface.
+        for ref in (
+            'foo.md "Why?"',
+            'references/guide.md "Q[A]?"',
+            "foo.md 'simple title'",
+            'references/guide.md "title with #anchor-like text"',
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
     def test_glob_in_path_is_glob(self) -> None:
         # Metachars *in the path* (before the extension or as a
         # directory wildcard) flag as glob.
