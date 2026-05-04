@@ -238,6 +238,24 @@ def _check_references(
         if not normalized_ref:
             continue  # Nothing to check (pure fragment reference)
 
+        # Reject absolute and drive-qualified paths up front.  The
+        # spec says references must be relative; the previous code
+        # path let absolute or drive-qualified targets fall through
+        # into the external-ref INFO branch, which both misclassified
+        # them ("acceptable for shared resources") and on Windows
+        # would treat ``C:foo.md`` as drive-rooted when ``os.path.join``
+        # composed it with the skill root.  ``splitdrive`` catches the
+        # Windows drive-relative form that ``os.path.isabs`` misses.
+        if os.path.isabs(normalized_ref) or os.path.splitdrive(normalized_ref)[0]:
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "is absolute or drive-qualified — references must be "
+                "relative"
+            )
+            broken_found = True
+            continue
+
         # File-relative resolution per the redefined rule
         # (references/path-resolution.md).  Parent-traversal segments
         # are legal — they are how a capability reaches the shared
@@ -1053,10 +1071,25 @@ def main() -> None:
         # ``FixModeTests`` class in ``tests/test_validate_skill.py``
         # carries the contract test that pins this marker against the
         # actual ``_check_references`` output shape.
+        # ``_check_references`` extracts refs through
+        # ``extract_body_references``, which routes them through
+        # ``strip_fragment`` before resolving — so finding text
+        # contains the *stripped* form (``'guide.md'``), not the
+        # captured form (``'guide.md#section'``).  The rewriter's
+        # ``row['original']`` is the captured form.  Compare against
+        # the strip_fragment-applied form so an anchored or titled
+        # legacy link (which the rewriter handles) does not also
+        # appear under ``unfixable_findings``.
         def _is_covered_by_rewriter(err: str) -> bool:
             for row in rows:
                 marker = f" referenced in {row['file_rel']} (scope:"
-                if f"'{row['original']}'" in err and marker in err:
+                if marker not in err:
+                    continue
+                stripped = strip_fragment(row["original"])
+                if (
+                    f"'{row['original']}'" in err
+                    or f"'{stripped}'" in err
+                ):
                     return True
             return False
 
@@ -1076,11 +1109,31 @@ def main() -> None:
             if err.startswith(LEVEL_FAIL)
             and f"[{PATH_RESOLUTION_RULE_NAME}]" not in err
         ]
+        # Apply rewrites *before* emitting any output so the result —
+        # success or failure — can be represented in both human and
+        # JSON streams.  Emitting JSON first and then writing files
+        # would mean a write error after ``applied: true`` left
+        # consumers with a success-looking payload followed by a
+        # traceback on stdout, breaking the ``--json`` contract.
+        modified = 0
+        apply_error: str | None = None
+        if args.apply and rows:
+            try:
+                modified = apply_fixes(rows)
+            except (OSError, UnicodeError) as exc:
+                apply_error = f"{exc.__class__.__name__}: {exc}"
+
         if json_output:
-            print(to_json_output({
+            payload = {
                 "tool": "validate_skill",
                 "mode": "fix",
-                "applied": bool(args.apply),
+                # ``applied`` reflects the actual outcome — true only
+                # when ``--apply`` ran and reached completion without
+                # raising.  An I/O error keeps it false so consumers
+                # do not mistake a partial / failed rewrite for a
+                # successful one.
+                "applied": bool(args.apply) and apply_error is None,
+                "modified": modified,
                 "fixes": [
                     {
                         "file": r["file_rel"],
@@ -1096,12 +1149,15 @@ def main() -> None:
                     "rule_name": PATH_RESOLUTION_RULE_NAME,
                     "documentation_path": PATH_RESOLUTION_DOC_PATH,
                 },
-            }))
+            }
+            if apply_error is not None:
+                payload["error"] = apply_error
+            print(to_json_output(payload))
         else:
             if not rows and not path_resolution_findings and not non_path_fails:
                 print("No mechanical rewrites needed — skill conforms.")
             elif rows:
-                action = "Applying" if args.apply else "Would apply"
+                action = "Applied" if args.apply else "Would apply"
                 print(f"{action} {len(rows)} rewrites:")
                 for r in rows:
                     print(
@@ -1124,14 +1180,20 @@ def main() -> None:
                 )
                 for finding in non_path_fails:
                     print_error_line(finding)
-        if args.apply and rows:
-            modified = apply_fixes(rows)
-            if not json_output:
-                print(f"Modified {modified} file(s).")
+            if args.apply and rows:
+                if apply_error is None:
+                    print(f"Modified {modified} file(s).")
+                else:
+                    print(f"Error during apply: {apply_error}")
         # Exit non-zero when any unfixable path-resolution issue
-        # remains *or* when the skill has any other FAIL finding.
+        # remains, when the skill has any other FAIL finding, or
+        # when an apply step failed mid-write.
         sys.exit(
-            1 if path_resolution_findings or non_path_fails else 0,
+            1 if (
+                path_resolution_findings
+                or non_path_fails
+                or apply_error is not None
+            ) else 0,
         )
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)

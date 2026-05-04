@@ -2211,7 +2211,12 @@ class FixModeTests(unittest.TestCase):
             with open(cap_md, "r", encoding="utf-8") as f:
                 contents_after = f.read()
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
-        self.assertIn("Applying", proc.stdout)
+        # ``--apply`` now runs the rewrite *before* printing, so the
+        # human banner is past tense ("Applied") rather than "Applying".
+        # The change exists so an I/O failure during apply can be
+        # reflected in the JSON payload instead of arriving after a
+        # success-looking line on stdout.
+        self.assertIn("Applied", proc.stdout)
         self.assertIn("[g](../../references/guide.md)", contents_after)
 
     def test_fix_surfaces_unfixable_broken_ref_and_exits_one(self) -> None:
@@ -2295,6 +2300,72 @@ class FixModeTests(unittest.TestCase):
         # subtree alone.
         self.assertIn("capabilities/demo/capability.md", files)
         self.assertIn("capabilities/other/capability.md", files)
+
+    def test_fix_anchored_legacy_link_is_not_double_reported(self) -> None:
+        """An anchored legacy capability link such as
+        ``[g](references/guide.md#section)`` is mechanically fixable —
+        the rewriter produces a row that preserves the anchor.  The
+        ``--fix`` coverage filter must recognize the same link in
+        ``_check_references`` finding text (which carries the
+        ``strip_fragment``-applied form) so the link does not appear
+        under both ``fixes`` *and* ``unfixable_findings``.  Without
+        this, the run would exit non-zero on a link the rewriter
+        already handled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md#section).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        # The rewriter must have produced a row for the anchored link.
+        self.assertEqual(len(payload["fixes"]), 1)
+        self.assertEqual(
+            payload["fixes"][0]["original"],
+            "references/guide.md#section",
+        )
+        # And the same link must NOT also appear under
+        # unfixable_findings — the coverage filter must match through
+        # the strip_fragment normalization.
+        self.assertEqual(
+            payload["unfixable_findings"], [],
+            msg=str(payload),
+        )
+        # Exit clean: a covered fix is the only finding.
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+    def test_fix_apply_json_emits_modified_count_after_write(self) -> None:
+        """``--fix --apply --json`` runs the rewrite *before* printing
+        the JSON payload so the result reflects what actually
+        happened: ``modified`` carries the file count, ``applied``
+        is true only on a successful write, and any I/O failure
+        surfaces under ``error`` instead of as a traceback after a
+        success-looking payload on stdout.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--apply", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertTrue(payload["applied"])
+        self.assertEqual(payload["modified"], 1)
+        self.assertNotIn("error", payload)
 
     def test_fix_capability_mode_validates_enclosing_skill_root(self) -> None:
         """When ``--fix --capability`` rewrites the parent skill tree,
