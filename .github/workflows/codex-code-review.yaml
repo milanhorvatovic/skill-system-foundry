@@ -39,6 +39,26 @@ jobs:
       chunk-matrix: ${{ steps.prepare.outputs.chunk-matrix }}
       skipped: ${{ steps.prepare.outputs.skipped }}
     steps:
+      - name: Validate retain-findings configuration
+        env:
+          RETAIN: ${{ vars.CODEX_RETAIN_FINDINGS }}
+          DAYS: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
+        run: |
+          if [[ -z "$RETAIN" ]]; then
+            echo "::error::CODEX_RETAIN_FINDINGS is not defined. Set it to 'true' or 'false' as a repository variable."
+            exit 1
+          fi
+          if [[ "$RETAIN" != "true" && "$RETAIN" != "false" ]]; then
+            echo "::error::CODEX_RETAIN_FINDINGS must be 'true' or 'false'. Got: '$RETAIN'"
+            exit 1
+          fi
+          if [[ "$RETAIN" == "true" ]]; then
+            if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]] || (( 10#$DAYS > 90 )); then
+              echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be an integer between 1 and 90. Got: '$DAYS'"
+              exit 1
+            fi
+          fi
+
       - name: Checkout PR
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
@@ -110,3 +130,5 @@ jobs:
           model: ${{ vars.CODEX_REVIEW_MODEL }}
           review-effort: ${{ vars.CODEX_REVIEW_EFFORT }}
           min-confidence: ${{ vars.CODEX_MIN_CONFIDENCE || '0' }}
+          retain-findings: ${{ vars.CODEX_RETAIN_FINDINGS }}
+          retain-findings-days: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
