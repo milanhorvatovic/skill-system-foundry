@@ -47,7 +47,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 
 ## File References
 
-- **File-relative resolution** — every cross-file reference resolves from the directory containing the file the link lives in (standard markdown semantics). Two scopes own their own subgraph: the skill root (containing `SKILL.md`, `references/`, `assets/`, `scripts/`) and each capability root (`capabilities/<name>/`). A capability reaches the shared skill root via the explicit `../../<dir>/<file>` form. The full rule, the liftability invariant, the migration cheat sheet, and the validator finding shape live in [`skill-system-foundry/references/path-resolution.md`](../skill-system-foundry/references/path-resolution.md)
+- **File-relative resolution** — every cross-file reference resolves from the directory containing the file the link lives in (standard markdown semantics). Two scopes own their own subgraph: the skill root (containing `SKILL.md`, `references/`, `assets/`, `scripts/`) and each capability root (`capabilities/<name>/`). A capability reaches the shared skill root via the explicit `../../<dir>/<file>` form. The full rule, the liftability invariant, the migration cheat sheet, and the validator finding shape live in [`skill-system-foundry/references/path-resolution.md`](../../skill-system-foundry/references/path-resolution.md)
 - **Forward slashes only** — regardless of operating system
 - **Descriptive filenames** — `form-validation-rules.md` not `doc2.md`
 - **System-root-relative paths in roles** — role files live outside skill directories, so they reference skills as `skills/<domain>/SKILL.md` (relative to the directory containing `skills/` and `roles/`)
