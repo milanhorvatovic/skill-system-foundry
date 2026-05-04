@@ -174,7 +174,15 @@ def _build_graph(
             # does not need rewriting at lift time.  Filter on the
             # resolved path's containment in the capability directory
             # instead of on the literal prefix.
-            if scope_kind == "capability":
+            #
+            # Broken targets are excluded from this count.  The metric
+            # documents itself as "edges into the shared skill root
+            # that a future capability-lift tool would mechanically
+            # rewrite" — a missing target is not lift-rewriteable
+            # content, and counting it would double-count the
+            # offender (it's already in ``broken_links``) while
+            # overstating the lift-cost surface area.
+            if scope_kind == "capability" and os.path.isfile(ref_abs):
                 cap_root = os.path.join(
                     skill_root, DIR_CAPABILITIES, scope_name,
                 )
@@ -204,20 +212,33 @@ def _connected_components(
 ) -> tuple[int, int]:
     """Return ``(component_count, files_unreachable_from_root)``.
 
-    Builds an undirected reachability index from the directed edges,
-    then walks each root's component.  Files not reached by any root
-    walk are unreachable.
-    """
-    nodes = set(edges.keys())
-    for src, targets in edges.items():
-        for tgt in targets:
-            nodes.add(tgt)
+    The graph is restricted to the in-scope ``.md`` set: ``edges.keys()``
+    holds every enumerated markdown file (the conformance scan
+    excludes ``scripts/`` and ``assets/``).  Targets outside that set
+    — non-markdown files like ``scripts/foo.py`` and out-of-scope
+    markdown like ``scripts/notes.md`` — are valid links but not
+    nodes for the component / unreachable analysis.  Without this
+    restriction ``files_unreachable_from_root`` would inflate with
+    every non-markdown target a markdown file links to, and the
+    metric would no longer match its documented ``in-scope .md
+    files`` definition.
 
-    # Undirected adjacency for component detection.
-    adj: dict[str, set[str]] = {n: set() for n in nodes}
+    Builds an undirected reachability index from the directed edges
+    (filtered against ``edges.keys()`` so cross-set targets do not
+    pollute it), then walks each root's component.  In-scope files
+    not reached by any root walk are unreachable.
+    """
+    in_scope = set(edges.keys())
+
+    # Undirected adjacency for component detection — only edges
+    # between in-scope nodes count.  ``edges`` may contain targets
+    # outside the in-scope set (non-md or excluded subtrees); those
+    # are skipped here so they neither inflate the unreachable count
+    # nor alter component shape.
+    adj: dict[str, set[str]] = {n: set() for n in in_scope}
     for src, targets in edges.items():
         for tgt in targets:
-            if tgt in adj:  # only edges between known .md files
+            if tgt in in_scope:
                 adj[src].add(tgt)
                 adj[tgt].add(src)
 
@@ -236,7 +257,7 @@ def _connected_components(
             stack.extend(adj[node] - visited)
         component_count += 1
 
-    unreachable = nodes - visited
+    unreachable = in_scope - visited
     return component_count, len(unreachable)
 
 

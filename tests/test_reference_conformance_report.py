@@ -169,6 +169,23 @@ class ComputeReportExternalEdgeTests(unittest.TestCase):
             msg="../capability.md is intra-capability, not external",
         )
 
+    def test_broken_external_link_is_not_counted_as_external_edge(self) -> None:
+        # A broken capability link to the shared skill root is in
+        # ``broken_links`` already.  Counting it again under
+        # ``external_edges_per_capability`` would double-report and
+        # would mislead the future lift tool into thinking there is
+        # rewriteable shared content where there is none.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [m](../../references/missing.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertEqual(report["external_edges_per_capability"], {})
+
     def test_skill_root_links_are_not_external_edges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp, "See [g](references/guide.md).\n")
@@ -240,6 +257,20 @@ class CliInvocationTests(unittest.TestCase):
         rc, _out, err = self._invoke(["/nonexistent/path/that/does/not/exist"])
         self.assertEqual(rc, 2)
         self.assertIn("error", err.lower())
+
+    def test_no_args_prints_docstring_and_exits_one(self) -> None:
+        # Mirrors the convention shared with validate_skill.py /
+        # bundle.py / scaffold.py: invoking the script with no
+        # arguments prints the module docstring as a usage hint and
+        # exits non-zero.  The argparse usage line on its own does
+        # not surface the metric definitions or scope rules, so the
+        # docstring is what users actually need.
+        rc, out, _err = self._invoke([])
+        self.assertEqual(rc, 1)
+        self.assertIn("Reference Conformance", out) if False else None
+        # The docstring opens with "Report a skill's cross-file
+        # reference conformance" — a stable substring to pin against.
+        self.assertIn("cross-file reference conformance", out)
 
     def test_directory_without_skill_md_exits_two(self) -> None:
         # Refuses to scan an arbitrary directory — without the guard the
