@@ -119,9 +119,19 @@ def compute_recommended_replacement(
     ref_path_only, suffix = _split_path_and_suffix(ref_norm)
     if not ref_path_only or is_drive_qualified(ref_path_only):
         return None
-    # Already file-relative if it starts with ../ or ./  — we trust
-    # the author and don't second-guess the form.
-    if ref_path_only.startswith("../") or ref_path_only.startswith("./"):
+    # ``../``-prefixed refs are intentional file-relative form — the
+    # author wrote a parent-traversal explicitly, so respect it and
+    # do not propose a rewrite that would change the link.  ``./``
+    # is *not* the same: a ``./``-prefixed legacy ref like
+    # ``./references/foo.md`` from a capability still resolves to
+    # ``capabilities/<n>/references/foo.md`` file-relative (broken
+    # under the new rule) but lands on ``<skill_root>/references/
+    # foo.md`` under legacy skill-root resolution — i.e. it is
+    # exactly the kind of mechanically rewriteable legacy link the
+    # rewriter exists to surface.  Let ``./``-prefixed refs flow
+    # through the legacy/file-relative comparison below and only
+    # short-circuit on ``../``.
+    if ref_path_only.startswith("../"):
         return None
 
     # Resolution under the LEGACY skill-root rule.  Mid-path ``..``
@@ -211,7 +221,10 @@ def detect_ambiguous_legacy_target(
     ref_path_only, _suffix = _split_path_and_suffix(ref_norm)
     if not ref_path_only or is_drive_qualified(ref_path_only):
         return None
-    if ref_path_only.startswith("../") or ref_path_only.startswith("./"):
+    # Only short-circuit on ``../`` — see ``compute_recommended_replacement``
+    # for why ``./``-prefixed refs need to flow through the
+    # legacy/file-relative comparison below.
+    if ref_path_only.startswith("../"):
         return None
 
     legacy_target = os.path.normpath(os.path.join(skill_root, ref_path_only))

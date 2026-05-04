@@ -122,6 +122,30 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
         # skill-root-relative.  No rewrite needed.
         self.assertIsNone(replacement)
 
+    def test_dot_slash_legacy_form_is_rewritten(self) -> None:
+        # A ``./``-prefixed legacy capability link such as
+        # ``./references/foo.md`` from a capability resolves
+        # file-relative to ``capabilities/<n>/references/foo.md``
+        # (broken under the new rule) but lands on the shared-root
+        # ``references/foo.md`` under legacy skill-root resolution.
+        # The rewriter must surface this as a mechanically fixable
+        # rewrite — proposing ``../../references/foo.md`` — instead
+        # of treating the ``./`` prefix as "already canonical" and
+        # returning None.  ``./`` is just a redundant
+        # current-directory marker; it does not signal intentional
+        # file-relative form the way ``../`` does.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "foo.md"), "# Foo\n",
+            )
+            cap_md = os.path.join(tmp, "capabilities", "demo", "capability.md")
+            write_text(cap_md, "# Demo\n")
+            replacement = compute_recommended_replacement(
+                "./references/foo.md", cap_md, tmp,
+            )
+        self.assertEqual(replacement, "../../references/foo.md")
+
     def test_already_file_relative_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
