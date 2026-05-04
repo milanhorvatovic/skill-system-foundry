@@ -140,6 +140,28 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
             )
         self.assertIsNone(replacement)
 
+    def test_mid_path_traversal_escaping_skill_root_returns_none(self) -> None:
+        # A ref like ``references/../../shared/foo.md`` does not start
+        # with ``../`` (so the leading-prefix guard does not reject
+        # it) but *normalizes* outside the skill root.  The rewriter
+        # must refuse to suggest a replacement for these — both to
+        # honor the validator's "no filesystem checks for paths
+        # outside the skill" boundary and to avoid emitting a
+        # non-canonical relative path that points outside the tree.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_root = os.path.join(tmp, "skill")
+            outside_dir = os.path.join(tmp, "shared")
+            write_text(os.path.join(skill_root, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(os.path.join(outside_dir, "foo.md"), "# Outside\n")
+            cap_md = os.path.join(
+                skill_root, "capabilities", "demo", "capability.md",
+            )
+            write_text(cap_md, "# Demo\n")
+            replacement = compute_recommended_replacement(
+                "references/../../shared/foo.md", cap_md, skill_root,
+            )
+        self.assertIsNone(replacement)
+
     def test_absolute_path_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
@@ -213,6 +235,36 @@ class FindFixableReferencesTests(unittest.TestCase):
             ("capabilities/demo/capability.md", "references/guide.md"),
             targets,
         )
+
+    def test_line_number_points_to_rewriteable_occurrence(self) -> None:
+        # If the same legacy path appears first inside a fenced code
+        # block (which ``apply_fixes`` leaves untouched) and later
+        # outside as a real link, the reported ``line`` must point at
+        # the real link — that's the line ``apply_fixes`` will
+        # actually modify.  Otherwise the dry-run / JSON row sends
+        # consumers to a fenced example that never changes.
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(tmp, "capabilities", "demo", "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n"
+                "\n"
+                "Example fence:\n"
+                "\n"
+                "```markdown\n"
+                "[g](references/guide.md)\n"      # line 6, fenced
+                "```\n"
+                "\n"
+                "Real link: [g](references/guide.md).\n"   # line 9, rewriteable
+            )
+            rows = find_fixable_references(tmp)
+        capture = [r for r in rows if r["file_rel"].endswith("capability.md")]
+        self.assertEqual(len(capture), 1)
+        self.assertEqual(capture[0]["line"], 9)
 
     def test_excludes_scripts_and_assets_subtrees(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

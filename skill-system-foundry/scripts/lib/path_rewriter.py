@@ -32,6 +32,7 @@ from .constants import (
     RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import strip_frontmatter_for_scan
+from .references import is_within_directory
 
 
 # ===================================================================
@@ -109,8 +110,17 @@ def compute_recommended_replacement(
     if ref_path_only.startswith("../") or ref_path_only.startswith("./"):
         return None
 
-    # Resolution under the LEGACY skill-root rule.
+    # Resolution under the LEGACY skill-root rule.  Mid-path ``..``
+    # segments (e.g. ``references/../../shared/foo.md``) can normalize
+    # outside the skill root even though the leading-prefix guard
+    # above didn't reject them — refuse to suggest a replacement
+    # whose legacy target is out of skill, both to honor the
+    # validator's "no existence checks for out-of-skill paths"
+    # boundary and to avoid emitting a non-canonical relative path
+    # that points outside the skill tree.
     legacy_target = os.path.normpath(os.path.join(skill_root, ref_path_only))
+    if not is_within_directory(legacy_target, skill_root):
+        return None
     if not os.path.isfile(legacy_target):
         # Legacy resolution doesn't land on a real file either —
         # there's no clear target to rewrite to.
@@ -205,6 +215,20 @@ def find_fixable_references(skill_root: str) -> list[dict]:
             captures.extend(RE_MARKDOWN_LINK_REF.findall(stripped))
             captures.extend(RE_BACKTICK_REF.findall(stripped))
 
+            # Pre-compute the 1-based line numbers that fall inside a
+            # fenced code block in *content*.  ``apply_fixes`` skips
+            # those regions during rewrite, so the displayed line
+            # number must skip them too — otherwise ``--fix`` could
+            # report a fenced example line that the eventual write
+            # never touches, sending the author or automation to the
+            # wrong place.
+            fenced_lines: set[int] = set()
+            for fm in fence_re.finditer(content):
+                start_line = content.count("\n", 0, fm.start()) + 1
+                end_line = content.count("\n", 0, fm.end()) + 1
+                for ln in range(start_line, end_line + 1):
+                    fenced_lines.add(ln)
+
             seen: set[str] = set()
             for ref in captures:
                 if ref in seen:
@@ -217,10 +241,13 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                 )
                 if replacement is None:
                     continue
-                # Find the first line containing the original ref — used
-                # for human-readable diff output.
+                # Find the first non-fenced line containing the
+                # original ref — that's the one ``apply_fixes`` will
+                # actually modify, and the only line worth reporting.
                 line_no = 0
                 for idx, line in enumerate(content.split("\n"), start=1):
+                    if idx in fenced_lines:
+                        continue
                     if ref in line:
                         line_no = idx
                         break
