@@ -1191,6 +1191,58 @@ class ValidateBodySkillRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
 
+    def test_capability_to_other_capability_is_not_classified_as_external(self) -> None:
+        """A capability reaching into a sibling capability is an
+        architecture concern, not a lift-rewrite candidate.  After
+        lift, the sibling capability is gone — the link cannot be
+        mechanically inlined as shared content.  The path-resolution
+        rule emits a distinct INFO that names the target capability
+        and points at the audit's capability-isolation rule, so a
+        single-skill ``validate_skill`` run does not silently absorb
+        the architecture violation as a generic ``external reference
+        — recorded for the capability-lift tool``.
+
+        The link uses the canonical ``../../capabilities/<other>/...``
+        form — that is the only cross-capability shape the body
+        reference regex captures (the shorter ``../<other>/...`` form
+        does not anchor on a recognized top-level directory and slips
+        past the extractor entirely; the audit's RE_SIBLING_CAP_REF
+        catches that case from the other direction).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n",
+            )
+            # Two capabilities; the first links into the second.
+            cap_a = os.path.join(tmpdir, "capabilities", "alpha")
+            cap_b = os.path.join(tmpdir, "capabilities", "beta")
+            write_text(
+                os.path.join(cap_b, "capability.md"), "# Beta\n",
+            )
+            cap_a_md = os.path.join(cap_a, "capability.md")
+            body = (
+                "# Alpha\n\n"
+                "See [beta](../../capabilities/beta/capability.md).\n"
+            )
+            write_text(cap_a_md, body)
+            errors, _passes = validate_body(body, cap_a_md, tmpdir)
+        info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
+        # Must NOT carry the lift-tool external-reference message.
+        lift_external = [
+            e for e in info_errors
+            if "external reference — recorded for the capability-lift tool"
+            in e
+        ]
+        self.assertEqual(lift_external, [])
+        # Must surface a distinct INFO that names the target capability
+        # and points at the capability-isolation rule.
+        cross_cap = [
+            e for e in info_errors
+            if "crosses into capability 'beta'" in e
+            and "capability-isolation" in e
+        ]
+        self.assertEqual(len(cross_cap), 1)
+
     def test_capability_link_to_missing_local_reference_fails(self) -> None:
         """A capability link to a non-existent local reference fails —
         the broken-link finding names the (capability:<n>) scope."""
@@ -1386,7 +1438,15 @@ class ValidateSkillReferencesTests(unittest.TestCase):
         """Under the redefined rule (``references/path-resolution.md``),
         ``..`` segments are legal — a reference file linking
         ``../assets/other.md`` resolves to a sibling-of-references
-        directory and produces no findings when the target exists."""
+        directory and produces no findings when the target exists.
+
+        The assertion checks the *full* warning list, not just the
+        broken-link subset.  The previous form filtered on
+        ``"does not exist"`` and would have silently passed if a
+        regression reintroduced the legacy ``parent traversal`` WARN —
+        that finding does not contain ``"does not exist"`` and would
+        slip past a narrower filter.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, "---\nname: test\n---\n# Skill\n")
@@ -1402,8 +1462,7 @@ class ValidateSkillReferencesTests(unittest.TestCase):
                 tmpdir, tmpdir, skill_md,
             )
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        broken = [e for e in warn_errors if "does not exist" in e]
-        self.assertEqual(broken, [])
+        self.assertEqual(warn_errors, [])
 
     def test_skips_entry_file(self) -> None:
         """The entry file is skipped (already validated by validate_body)."""

@@ -270,25 +270,35 @@ def _check_references(
             # as a filesystem existence oracle in CI environments.
             continue
 
-        # Cross-scope reference from a capability — the canonical
-        # external-reference form for capability liftability.  Surfaced
-        # as INFO so the future capability-lift tool can find them, but
-        # only when the target actually exists; a broken external ref
-        # gets a single broken-link WARN below (avoids the
-        # noise of double-reporting the same offender).  Skill →
-        # capability references (the router-table pattern) are NOT
-        # flagged: they are entry-point edges, not lift-relevant
-        # external resources.
+        # Cross-scope reference from a capability.  Two sub-cases:
+        #
+        # 1. capability → skill root (canonical external reference for
+        #    liftability) — surfaced as INFO so the future capability-lift
+        #    tool can find them.  Skill → capability references (the
+        #    router-table pattern) are NOT flagged here: they are
+        #    entry-point edges, not lift-relevant external resources.
+        # 2. capability → another capability — an *architecture* concern,
+        #    not a liftability concern.  The audit's capability-isolation
+        #    rule (RE_SIBLING_CAP_REF in audit_skill_system.py) FAILs the
+        #    full system audit for this; surface it here as a distinct
+        #    INFO so single-skill ``validate_skill`` runs do not silently
+        #    pass it as "external reference".  After lift, a cross-
+        #    capability target stops existing — it is not shared
+        #    skill-root content.
+        #
+        # Broken refs short-circuit before this branch — a missing target
+        # gets a single broken-link WARN above, not a double-report here.
         ref_rel_to_root = os.path.relpath(ref_path, skill_root).replace(
             os.sep, "/",
         )
         ref_scope_kind, ref_scope_name = _detect_scope(ref_rel_to_root)
-        is_cross_scope_from_capability = (
+        capability_to_skill_root = (
+            scope_kind == "capability" and ref_scope_kind != "capability"
+        )
+        capability_to_other_capability = (
             scope_kind == "capability"
-            and (
-                ref_scope_kind != "capability"
-                or ref_scope_name != scope_name
-            )
+            and ref_scope_kind == "capability"
+            and ref_scope_name != scope_name
         )
 
         internal_checked += 1
@@ -302,12 +312,20 @@ def _check_references(
             )
             continue
 
-        if is_cross_scope_from_capability:
+        if capability_to_skill_root:
             errors.append(
                 f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) is "
                 "an external reference — recorded for the capability-lift "
                 "tool"
+            )
+        elif capability_to_other_capability:
+            errors.append(
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"crosses into capability '{ref_scope_name}' — sibling "
+                "capabilities must stay independent (audit_skill_system "
+                "FAILs this under the capability-isolation rule)"
             )
 
         # Handle directory references gracefully
