@@ -39,6 +39,16 @@ jobs:
       chunk-matrix: ${{ steps.prepare.outputs.chunk-matrix }}
       skipped: ${{ steps.prepare.outputs.skipped }}
     steps:
+      - name: Validate retain-findings configuration
+        if: ${{ vars.CODEX_RETAIN_FINDINGS == 'true' }}
+        env:
+          DAYS: ${{ vars.CODEX_RETAIN_FINDINGS_DAYS }}
+        run: |
+          if ! [[ "$DAYS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be a positive integer (action clamps values >90 at 90). Got: '$DAYS'"
+            exit 1
+          fi
+
       - name: Checkout PR
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
@@ -96,12 +106,6 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - name: Validate retain-findings configuration
-        if: ${{ vars.CODEX_RETAIN_FINDINGS == 'true' && vars.CODEX_RETAIN_FINDINGS_DAYS == '' }}
-        run: |
-          echo "::error::CODEX_RETAIN_FINDINGS=true requires CODEX_RETAIN_FINDINGS_DAYS to be defined as a positive integer (action clamps at 90)."
-          exit 1
-
       - name: Download review artifacts
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # @v8 as 8.0.0
         with:
