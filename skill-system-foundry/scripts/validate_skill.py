@@ -359,9 +359,11 @@ def _check_references(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "
                 "looks like a Windows-without-DevMode degraded symlink "
-                "(small file whose content is a single relative path) — "
+                "(small file whose content is a single relative path "
+                "to a missing target) — if you cloned on Windows, "
                 "enable Developer Mode or set core.symlinks=true and "
-                "re-clone so git materialises the link"
+                "re-clone so git materialises the link; otherwise "
+                "create the missing target file or remove the stub"
             )
             continue
 

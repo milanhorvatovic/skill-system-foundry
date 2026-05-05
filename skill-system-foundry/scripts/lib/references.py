@@ -209,14 +209,31 @@ def is_dangling_symlink(path: str) -> bool:
 # relative target the link would have resolved to.  The validator
 # cannot use ``os.path.islink`` to detect this — the file is a real
 # regular file by then.  Instead, we recognise the shape: small file,
-# valid UTF-8, content is a single relative-looking path with one of
-# the foundry's reference extensions.  Recognised forms produce the
-# same actionable WARN as a true dangling symlink so the integrator
-# is pointed at the right fix (Developer Mode or core.symlinks=true)
-# instead of the generic "file does not exist" diagnostic.
+# valid UTF-8, content is a single relative-looking path ending in
+# one of the foundry's reference extensions.  Recognised forms
+# produce the same actionable WARN as a true dangling symlink so the
+# integrator is pointed at the right fix (Developer Mode or
+# core.symlinks=true) instead of the generic "file does not exist"
+# diagnostic.
+#
+# The pattern accepts three shim shapes git produces:
+#   1. Bare-name target — ``ln -s sibling.md link.md`` stores
+#      ``sibling.md`` verbatim (no leading slash or dot).  This is
+#      the most common foundry shape (e.g., ``CLAUDE.md → AGENTS.md``).
+#   2. Dot-relative target — ``ln -s ./bar.md`` and
+#      ``ln -s ../bar.md`` store with the explicit dot prefix.
+#   3. Multi-component relative target — ``ln -s sub/dir/foo.md``
+#      stores as ``sub/dir/foo.md`` (forward or back slashes).
+#
+# The trailing extension alternation is restricted to the file types
+# the foundry actually ships (markdown, yaml, json, txt, sh, py,
+# toml).  This shrinks the false-positive surface to exactly the
+# extensions real shims would carry — a one-line note ending in
+# ``.exe`` or ``.dll`` cannot accidentally trip the heuristic.
 _DEGRADED_SYMLINK_MAX_BYTES = 512
 _DEGRADED_SYMLINK_PATTERN = re.compile(
-    r"^\.{0,2}[\\/][^\r\n]+\.[A-Za-z0-9]+$"
+    r"^(?:\.{0,2}[\\/])?[^\r\n\\/]+(?:[\\/][^\r\n\\/]+)*"
+    r"\.(?:md|yaml|yml|json|txt|sh|py|toml)$"
 )
 
 

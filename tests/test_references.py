@@ -2729,6 +2729,47 @@ class LooksLikeDegradedSymlinkTests(unittest.TestCase):
             write_text(p, "../target/foo.md\n../target/bar.md\n")
             self.assertFalse(looks_like_degraded_symlink(p))
 
+    def test_bare_name_with_missing_target_returns_true(self) -> None:
+        # Git stores ``ln -s sibling.md link.md`` as the literal
+        # string ``sibling.md`` with no leading slash or dot.  This
+        # is the most common foundry shim shape (e.g.,
+        # ``CLAUDE.md → AGENTS.md``); the regex must catch it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "missing-sibling.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_multi_component_bare_target_with_missing_target_returns_true(
+        self,
+    ) -> None:
+        # ``ln -s sub/dir/foo.md link.md`` stores as
+        # ``sub/dir/foo.md`` — multi-component, no leading dot or
+        # slash.  Still a valid shim shape.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "sub/dir/missing.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_bare_name_pointing_at_real_file_does_not_match(self) -> None:
+        # The bare-name shape only triggers when the target is
+        # missing.  A one-line note whose bare-name target resolves
+        # to a real sibling is deliberate content.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "real-target.md")
+            write_text(target, "# Real\n")
+            shim = os.path.join(tmpdir, "see.md")
+            write_text(shim, "real-target.md")
+            self.assertFalse(looks_like_degraded_symlink(shim))
+
+    def test_non_foundry_extension_does_not_match(self) -> None:
+        # The pattern restricts the trailing extension to file types
+        # the foundry actually ships.  A one-line file ending in
+        # ``.exe`` cannot accidentally trip the heuristic.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "../target/payload.exe")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
 
 class IsDanglingSymlinkTests(unittest.TestCase):
     """``is_dangling_symlink`` reports symlinks whose target is missing."""
