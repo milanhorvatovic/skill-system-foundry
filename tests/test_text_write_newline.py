@@ -109,25 +109,32 @@ def _extract_open_kwargs(call: ast.Call) -> dict[str, ast.expr]:
 def _is_text_mode_write(mode: str) -> bool:
     """Return True for text-mode writes.
 
-    Covers the three Python file-mode prefixes that produce a
-    writable text stream:
+    Covers every Python file-mode shape that produces a writable
+    text stream:
 
     * ``w`` — open for writing, truncating first.
     * ``a`` — open for writing, appending.
     * ``x`` — open for exclusive creation, failing if the path exists.
+    * ``r+`` (and the optional ``t``) — open for reading AND
+      writing.  Even though the prefix is ``r``, the ``+`` opens a
+      writable stream that performs the same newline translation
+      as the other text modes.
 
-    All three honour newline translation in text mode, so each
-    requires ``newline="\\n"`` to keep output deterministic on
-    Windows.  Binary modes (those containing ``b``) are exempt
-    because they bypass newline translation entirely.
+    All four shapes require ``newline="\\n"`` to keep output
+    deterministic on Windows.  Binary modes (those containing
+    ``b``) are exempt because they bypass newline translation
+    entirely.
     """
     if not mode:
         return False
     if "b" in mode:  # binary writes are exempt
         return False
-    if mode[0] not in ("w", "a", "x"):  # read modes don't apply
-        return False
-    return True
+    # Mode is writable when its prefix is ``w``/``a``/``x`` OR when
+    # it carries ``+`` (which makes ``r+``/``rt+`` writable text
+    # streams).  Read-only modes (``r``, ``rt``) never carry ``+``
+    # and never start with one of the write prefixes, so they fall
+    # through to False.
+    return mode[0] in ("w", "a", "x") or "+" in mode
 
 
 def _find_offenders(source_path: str) -> list[tuple[int, str]]:
@@ -240,11 +247,15 @@ class LintCoverageTests(unittest.TestCase):
         # ``"w+"`` and friends are text-mode writes; the lint must
         # flag them when ``newline="\n"`` is absent.  ``x`` /
         # ``x+`` / ``xt`` (exclusive-create text writes) are also
-        # text-mode and must be covered.
+        # text-mode and must be covered.  ``r+`` / ``rt+`` open
+        # an existing file for read AND write — the ``+`` makes
+        # the stream writable and newline translation still
+        # applies, so the lint must flag them too.
         for mode in (
             "w+", "wt", "wt+",
             "a+", "at", "at+",
             "x", "x+", "xt", "xt+",
+            "r+", "rt+",
         ):
             with self.subTest(mode=mode):
                 source = (

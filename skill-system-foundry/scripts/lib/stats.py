@@ -308,24 +308,35 @@ def _to_skill_root_relative(filepath: str, skill_root: str) -> str:
 def compute_stats(skill_path: str) -> dict:
     """Compute byte-based stats for the skill rooted at *skill_path*.
 
-    Returns a dict with keys::
+    Returns a dict whose required keys are always present and whose
+    optional keys are toggle-dependent::
 
         {
+            # Required:
             "skill":           str,           # skill name (frontmatter or dir basename)
             "metric":          "bytes",
             "discovery_bytes": int,
             "load_bytes":      int,
             "files":           list[dict],    # sorted by relative POSIX path
             "errors":          list[str],     # FAIL/WARN/INFO finding strings
+
+            # Optional (only when ``stats.line_endings.enabled``
+            # is true in configuration.yaml):
+            "discovery_bytes_lf": int,
+            "load_bytes_lf":      int,
         }
 
     Each ``files`` entry has the shape::
 
         {
+            # Required:
             "path":            str,                 # relative to skill root, POSIX
             "bytes":           int,
             "reachable_from":  list[str],           # parents, sorted alphabetically
+
+            # Optional:
             "discovery_bytes": int,                 # only on discovery-relevant rows
+            "line_endings":    "lf" | "crlf" | "mixed",  # only on text-shaped rows
         }
 
     The optional ``discovery_bytes`` key is populated on rows the
@@ -342,6 +353,24 @@ def compute_stats(skill_path: str) -> dict:
     falsely imply they contribute to discovery cost.  The
     top-level ``discovery_bytes`` is the sum across rows that
     carry the key.
+
+    The optional ``line_endings`` key (and the top-level
+    ``discovery_bytes_lf`` / ``load_bytes_lf`` companions) are
+    emitted only when ``stats.line_endings.enabled`` is true in
+    ``configuration.yaml``.  When enabled, the per-row key is
+    further restricted to text-shaped extensions (``md``, ``yaml``,
+    ``yml``, ``json``, ``txt``, ``sh``, ``py``, ``toml``); binary
+    load-budget contributors (e.g., a PNG referenced from
+    ``references/``) deliberately omit the key because arbitrary
+    ``\\r\\n`` byte pairs in binary content are not line
+    terminators.  Consumers should branch on key presence rather
+    than treat the missing key on a binary row as a regression.
+    The ``*_lf`` aggregates subtract one byte per ``\\r\\n`` pair
+    detected in the relevant window — ``load_bytes_lf`` subtracts
+    every CRLF in every text-shaped load contributor;
+    ``discovery_bytes_lf`` subtracts only the CRLFs inside each
+    frontmatter block — so a CRLF checkout and an LF checkout of
+    the same content produce equal normalised totals.
 
     The traversal:
 

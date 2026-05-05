@@ -76,15 +76,34 @@ class RewriteTests(unittest.TestCase):
                 raw = fh.read()
         self.assertNotIn(b"\r\n", raw)
 
-    def test_no_frontmatter_prepends_stub(self) -> None:
+    def test_no_frontmatter_returns_one(self) -> None:
+        """A SKILL.md without a frontmatter opener FAILs the helper.
+
+        Pinned regression: an earlier implementation silently
+        prepended the stub when the source had no ``---`` opener,
+        masking a scaffold regression that omits frontmatter.  The
+        smoke job's job is to surface scaffold-pipeline regressions
+        — refusing to rewrite a malformed SKILL.md is the right
+        failure mode.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             with open(skill_md, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write("# Demo\n\nbody only\n")
-            self.assertEqual(smoke_rewrite.rewrite(skill_md), 0)
-            content = _read(skill_md)
-            self.assertTrue(content.startswith("---\nname: demo\n"))
-            self.assertIn("# Demo\n\nbody only\n", content)
+            self.assertEqual(smoke_rewrite.rewrite(skill_md), 1)
+
+    def test_unclosed_frontmatter_returns_one(self) -> None:
+        """A SKILL.md with an opener but no closer FAILs the helper.
+
+        Same rationale as the no-frontmatter case: half-open
+        frontmatter is a corruption signal, not something the
+        helper should silently overwrite.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_md, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("---\nname: demo\n# no closer\nbody\n")
+            self.assertEqual(smoke_rewrite.rewrite(skill_md), 1)
 
     def test_missing_file_returns_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

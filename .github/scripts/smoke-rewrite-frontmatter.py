@@ -86,13 +86,35 @@ def rewrite(skill_md_path: str) -> int:
         return 1
     # Strip the existing frontmatter block so the body alone remains.
     # ``str.split`` with maxsplit=2 yields ``["", "<frontmatter>",
-    # "<body>"]`` for a file that starts with ``---``; otherwise
-    # ``body == src`` and no frontmatter is dropped.
-    if src.startswith("---"):
-        parts = src.split("---", 2)
-        body = parts[2] if len(parts) >= 3 else ""
-    else:
-        body = src
+    # "<body>"]`` for a file that starts with ``---``.
+    #
+    # Refuse to silently rewrite a file that lacks a parseable
+    # frontmatter block (no opener, or no closer).  The smoke job's
+    # purpose is to verify the scaffold pipeline; if ``scaffold.py``
+    # regresses to omit or corrupt the SKILL.md frontmatter, this
+    # helper is the right place to FAIL — falling through to a
+    # ``body = src`` / ``body = ""`` path would silently mask the
+    # regression by writing a valid stub on top of garbage.
+    if not src.startswith("---"):
+        print(
+            f"FAIL: '{skill_md_path}' has no frontmatter opener "
+            "('---' on line 1) — refusing to rewrite a file the "
+            "scaffold pipeline should have produced with a proper "
+            "frontmatter block",
+            file=sys.stderr,
+        )
+        return 1
+    parts = src.split("---", 2)
+    if len(parts) < 3:
+        print(
+            f"FAIL: '{skill_md_path}' has an unclosed frontmatter "
+            "block (no second '---' delimiter found) — refusing to "
+            "rewrite a file the scaffold pipeline should have "
+            "produced with a complete frontmatter block",
+            file=sys.stderr,
+        )
+        return 1
+    body = parts[2]
     new_content = _STUB_FRONTMATTER + body.lstrip()
     try:
         with open(skill_md_path, "w", encoding="utf-8", newline="\n") as fh:

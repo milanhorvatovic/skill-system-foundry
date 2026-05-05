@@ -812,6 +812,33 @@ def validate_skill(
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
+        # Cross-platform pre-flight in capability mode: the bundler
+        # writes capability files under ``<parent-skill>/capabilities
+        # /<cap>/...``, so the long-path and reserved-name rules need
+        # an ``arcname_root`` that produces those exact arcnames
+        # (``dirname(skill_root)`` is the dir above the parent
+        # skill).  Walk the capability subtree itself rather than the
+        # whole parent so findings stay scoped to the directory the
+        # user invoked validation against.  Boundary widens to the
+        # parent skill root so an in-cap symlink targeting sibling
+        # capabilities or the parent's ``references/`` is inspected
+        # too.
+        cap_arcname_root = os.path.dirname(skill_root) or skill_root
+        cap_lp_errors, cap_lp_passes = check_long_paths(
+            skill_path,
+            severity=LEVEL_WARN,
+            arcname_root=cap_arcname_root,
+            boundary=skill_root,
+        )
+        errors.extend(cap_lp_errors)
+        passes.extend(cap_lp_passes)
+        cap_rn_errors, cap_rn_passes = check_reserved_path_components(
+            skill_path,
+            severity=LEVEL_WARN,
+            boundary=skill_root,
+        )
+        errors.extend(cap_rn_errors)
+        passes.extend(cap_rn_passes)
         # Tool coherence is owned by the skill-level invocation (the
         # rule's scope is the whole skill tree, not a single
         # capability), so this branch deliberately does not run it.

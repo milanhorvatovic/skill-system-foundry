@@ -663,6 +663,35 @@ def audit_skill_system(
         if not rn_errors and verbose:
             print(f"  ✓ {skill['name']}: no reserved-name path components")
 
+    # ``roles/`` lives outside ``aggregation_targets`` (which only
+    # contains registered skills + the synthetic top-level skill
+    # entry) but the bundler can copy roles into the archive when
+    # they appear in the skill's reference graph.  Walk the
+    # ``<system_root>/roles/`` tree directly so a role with a
+    # reserved-name component or an over-budget path is caught at
+    # audit time instead of slipping through to bundle
+    # post-validation.  Skip the section when no ``roles/`` tree
+    # exists (distribution-repo mode, or a system that does not use
+    # the role layer).
+    roles_dir = os.path.join(system_root, "roles")
+    if os.path.isdir(roles_dir):
+        roles_lp_errors, _roles_lp_passes = check_long_paths(
+            roles_dir, severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in roles_lp_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: roles/: {detail}")
+        if not roles_lp_errors and verbose:
+            print("  ✓ roles/: long-path clean")
+        roles_rn_errors, _roles_rn_passes = check_reserved_path_components(
+            roles_dir, severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in roles_rn_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: roles/: {detail}")
+        if not roles_rn_errors and verbose:
+            print("  ✓ roles/: no reserved-name path components")
+
     # --- Capabilities should not be registered ---
     if verbose:
         print("\n== Capability Isolation ==")
