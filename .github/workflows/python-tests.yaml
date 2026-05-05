@@ -186,20 +186,35 @@ jobs:
       - name: Scaffold a synthetic skill
         # Uses scaffold.py to build a complete minimal skill in a
         # work directory outside the repo so the bundle pipeline
-        # exercises a layout with no foundry-specific quirks.
+        # exercises a layout with no foundry-specific quirks.  The
+        # scaffolded SKILL.md ships with a placeholder description
+        # longer than the 200-char Claude.ai cap, so the next step
+        # rewrites the frontmatter description to a short stub —
+        # the smoke test then exercises bundle.py's default
+        # ``--target claude`` (the most-shipped consumer target),
+        # not the more permissive ``generic`` mode.
         run: |
           python skill-system-foundry/scripts/scaffold.py skill demo --root smoke-work
         env:
           PYTHONUTF8: "1"
 
-      - name: Bundle the synthetic skill
-        # ``--target generic`` skips the Claude.ai-specific 200-char
-        # description cap.  The scaffolded SKILL.md ships with a
-        # placeholder description longer than that limit and the
-        # smoke test is about pipeline mechanics, not the consumer-
-        # platform tightenings.
+      - name: Shrink scaffolded description to fit Claude.ai cap
+        # Replaces the entire ``description: …`` line in the
+        # scaffolded SKILL.md so the smoke skill is bundle-able
+        # under the default Claude.ai target.  Uses Python so the
+        # step runs identically on Linux and Windows runners.
         run: |
-          python skill-system-foundry/scripts/bundle.py smoke-work/skills/demo --output smoke-bundle.zip --target generic
+          python -c "import os; p=os.path.join('smoke-work','skills','demo','SKILL.md'); t=open(p,'r',encoding='utf-8').read(); lines=[('description: triggers when the demo runs') if l.startswith('description:') else l for l in t.splitlines()]; open(p,'w',encoding='utf-8',newline='\n').write('\n'.join(lines)+'\n')"
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Bundle the synthetic skill
+        # Default target is ``claude`` — the most-shipped consumer
+        # platform — so the smoke job catches regressions in the
+        # Claude.ai-specific tightenings rather than only the
+        # permissive ``generic`` mode.
+        run: |
+          python skill-system-foundry/scripts/bundle.py smoke-work/skills/demo --output smoke-bundle.zip
         env:
           PYTHONUTF8: "1"
 
