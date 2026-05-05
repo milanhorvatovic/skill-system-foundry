@@ -617,6 +617,20 @@ def audit_skill_system(
         if not agg_errors and verbose:
             print(f"  ✓ {skill['name']}: aggregation clean")
 
+    # --- Long-path pre-flight (cross-platform) ---
+    if verbose:
+        print("\n== Long-Path Budget ==")
+    from lib.bundling import check_long_paths
+    for skill in skills:
+        lp_errors, lp_passes = check_long_paths(
+            skill["path"], severity=LEVEL_WARN,
+        )
+        for finding in lp_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']}: {detail}")
+        if not lp_errors and verbose:
+            print(f"  ✓ {skill['name']}: long-path clean")
+
     # --- Capabilities should not be registered ---
     if verbose:
         print("\n== Capability Isolation ==")

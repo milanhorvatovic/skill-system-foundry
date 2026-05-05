@@ -22,6 +22,8 @@ from .constants import (
     BUNDLE_EXCLUDE_PATTERNS,
     LEVEL_FAIL,
     LEVEL_WARN,
+    LONG_PATH_THRESHOLD,
+    LONG_PATH_USER_PREFIX_BUDGET,
 )
 from .frontmatter import load_frontmatter
 from .references import (
@@ -38,6 +40,75 @@ from .references import (
     RE_BUNDLE_MD_LINK,
     RE_BUNDLE_BACKTICK,
 )
+
+def check_long_paths(
+    skill_path: str,
+    *,
+    threshold: int = LONG_PATH_THRESHOLD,
+    user_prefix_budget: int = LONG_PATH_USER_PREFIX_BUDGET,
+    severity: str = LEVEL_FAIL,
+) -> tuple[list[str], list[str]]:
+    """Pre-flight check for paths that risk Windows MAX_PATH on extract.
+
+    Walks every file under *skill_path* (excluding patterns the bundler
+    already skips) and computes the worst-case extracted path length:
+    ``user_prefix_budget + len(arcname)`` where the arcname is the
+    file's relative path from the skill root, normalised to forward
+    slashes.  Any path whose total exceeds *threshold* is reported as
+    a finding at *severity*.
+
+    The helper is callable from validators (WARN at authoring time)
+    and from the bundler (FAIL at packaging time) so the same rule
+    fires from both surfaces with consistent numbers.  The relative
+    path produced for the message uses forward slashes regardless of
+    host so finding text is identical on every runner.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    A skill that contains no offending paths reports a single pass
+    line summarising the budget so consumers see the rule ran.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not os.path.isdir(skill_path):
+        return errors, passes
+    abs_root = os.path.abspath(skill_path)
+    available = threshold - user_prefix_budget
+    longest = 0
+    longest_rel = ""
+    file_count = 0
+    for dirpath, dirnames, filenames in os.walk(abs_root):
+        dirnames[:] = [
+            d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
+        ]
+        for fname in filenames:
+            if should_exclude(fname, BUNDLE_EXCLUDE_PATTERNS):
+                continue
+            file_count += 1
+            full = os.path.join(dirpath, fname)
+            rel = os.path.relpath(full, abs_root).replace(os.sep, "/")
+            arcname_len = len(rel)
+            if arcname_len > longest:
+                longest = arcname_len
+                longest_rel = rel
+            if user_prefix_budget + arcname_len > threshold:
+                errors.append(
+                    f"{severity}: '{rel}' exceeds the long-path budget "
+                    f"({user_prefix_budget} prefix + {arcname_len} arcname "
+                    f"= {user_prefix_budget + arcname_len} > {threshold} "
+                    "threshold) — Windows checkouts under a typical user "
+                    "directory may fail to extract this path.  Shorten "
+                    "the path or raise bundle.long_path.threshold in "
+                    "configuration.yaml after auditing the integrator's "
+                    "install location."
+                )
+    if not errors and file_count:
+        passes.append(
+            f"long-path: longest arcname '{longest_rel}' ({longest} chars) "
+            f"fits within the {threshold - user_prefix_budget}-char arcname "
+            f"budget (threshold {threshold}, prefix {user_prefix_budget})"
+        )
+    return errors, passes
+
 
 class BundleStats(TypedDict):
     """Bundle creation statistics used in summary output."""

@@ -33,6 +33,7 @@ from lib.bundling import (
     create_bundle,
     postvalidate,
     create_zip,
+    check_long_paths,
 )
 from lib.constants import (
     BUNDLE_DEFAULT_TARGET,
@@ -373,6 +374,12 @@ def main() -> None:
         inline_orchestrated_skills=inline_skills,
         bundle_target=bundle_target,
     )
+    # Long-path pre-flight: any arcname whose worst-case extracted
+    # path on Windows would exceed MAX_PATH is a FAIL before we spend
+    # time assembling the bundle.  Same rule fires from validate_skill
+    # at WARN severity during authoring.
+    long_path_errors, _ = check_long_paths(skill_path)
+    errors = list(errors) + long_path_errors
     # In JSON mode, merge early warnings (e.g. missing system root)
     # with prevalidation warnings so they appear in the JSON output.
     # In human mode, early warnings were already printed inline, so

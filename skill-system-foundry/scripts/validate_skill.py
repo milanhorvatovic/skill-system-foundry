@@ -828,6 +828,17 @@ def validate_skill(
     errors.extend(coh_errors)
     passes.extend(coh_passes)
 
+    # Long-path pre-flight at WARN — surfaces arcname-length problems
+    # at authoring time so the FAIL at bundle time is never the first
+    # place an author hears about the issue.  The bundler reuses the
+    # same helper at FAIL severity from the same configuration.
+    from lib.bundling import check_long_paths
+    lp_errors, lp_passes = check_long_paths(
+        skill_path, severity=LEVEL_WARN,
+    )
+    errors.extend(lp_errors)
+    passes.extend(lp_passes)
+
     # Bottom-up aggregation — parent SKILL.md ``allowed-tools`` must be
     # a superset of the union of capability-declared sets.  Layered on
     # top of the per-file coherence check above: coherence catches
