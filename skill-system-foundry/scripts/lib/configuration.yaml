@@ -16,6 +16,38 @@ skill:
     reserved_words:
       - anthropic
       - claude
+    # Names reserved by the Windows / NTFS filesystem.  A skill or
+    # capability whose base name (case-insensitive) matches any of
+    # these cannot be created on Windows even though POSIX accepts it,
+    # so the rule fails on every host to keep the foundry's
+    # cross-platform contract consistent.  Match is case-insensitive
+    # and applies to the path component before any extension (NTFS
+    # rejects ``con.txt`` the same way it rejects ``CON``).
+    windows_reserved_names:
+      - CON
+      - PRN
+      - AUX
+      - NUL
+      - COM0
+      - COM1
+      - COM2
+      - COM3
+      - COM4
+      - COM5
+      - COM6
+      - COM7
+      - COM8
+      - COM9
+      - LPT0
+      - LPT1
+      - LPT2
+      - LPT3
+      - LPT4
+      - LPT5
+      - LPT6
+      - LPT7
+      - LPT8
+      - LPT9
   description:
     max_length: 1024
     xml_tag_pattern: <[^>]+>
@@ -556,3 +588,28 @@ bundle:
     - $RECYCLE.BIN
     - "*.pyc"
     - "*.lnk"
+  # Long-path pre-flight thresholds for cross-platform safety.  Windows
+  # historically caps full paths at MAX_PATH (260 chars) without a
+  # registry override; the worst-case extraction path on a typical
+  # Windows checkout is the user-prefix budget plus the bundle
+  # arcname.  ``threshold`` is the absolute cap any path may reach
+  # after the user prefix is added; ``user_prefix_budget`` reserves
+  # bytes for a representative ``C:\Users\<name>\<repo>\`` location.
+  # Values configurable so integrators with longer install paths can
+  # tighten the budget.
+  long_path:
+    threshold: 260
+    user_prefix_budget: 80
+
+# ============================================================
+# Stats (Token-Budget Proxy)
+# ============================================================
+stats:
+  # Per-file line-ending detection toggle.  When enabled, ``stats.py``
+  # reports ``line_endings`` on every counted file (``lf`` / ``crlf``
+  # / ``mixed``) and produces normalized ``*_lf`` companions to the
+  # raw byte counts so consumers can compare across CRLF and LF
+  # checkouts without re-reading any files.  The raw counts continue
+  # to be reported as the deterministic on-disk signal.
+  line_endings:
+    enabled: true
