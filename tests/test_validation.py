@@ -491,21 +491,6 @@ class ValidateNameWindowsReservedTests(unittest.TestCase):
                 )
                 self.assertIn(reserved, fail_errors[0])
 
-    def test_extension_does_not_evade_rule(self) -> None:
-        """``con.txt``-style stems still match the reserved name."""
-        # The rule strips at the first dot — but skill names cannot
-        # legally contain dots under the format pattern, so this
-        # branch covers the rule's defence-in-depth path even though
-        # the format check FAILs first in production.
-        from lib.validation import validate_name as _vn
-        # Use a legal-format name whose stem matches: cannot use a
-        # dot in the name itself, so verify the stem-extraction logic
-        # via a lowercase exact match (already covered above).  The
-        # extension-bearing scenario is exercised through scaffold
-        # tooling where directory creation produces ``con.txt``.
-        errors, _ = _vn("con", "con")
-        self.assertTrue(any("Windows reserved" in e for e in errors))
-
     def test_non_reserved_name_passes(self) -> None:
         """A regular skill name does not trigger the rule."""
         errors, _ = validate_name("demo-skill", "demo-skill")

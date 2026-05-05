@@ -213,18 +213,17 @@ def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
             )
 
     # NTFS reserved base names.  Windows rejects any path component
-    # whose stem matches one of these names regardless of extension or
-    # case, so a skill named ``con`` or ``nul`` scaffolds on POSIX and
-    # breaks on Windows.  The rule fires on every host to keep the
-    # foundry's stated cross-platform contract honest.  Match is
-    # case-insensitive against the stem (the portion before the first
-    # ``.``) because NTFS rejects ``con.txt`` exactly like it rejects
-    # ``CON``.
-    name_stem = name.split(".", 1)[0]
-    if name_stem.upper() in WINDOWS_RESERVED_NAMES:
+    # whose name matches one of these regardless of case, so a skill
+    # named ``con`` or ``nul`` scaffolds on POSIX and breaks on
+    # Windows.  The rule fires on every host to keep the foundry's
+    # stated cross-platform contract honest.  Match is case-
+    # insensitive against the bare name; the format pattern earlier in
+    # this function already FAILs any name containing ``.``, so the
+    # ``con.txt`` shape cannot reach this branch via a legal name.
+    if name.upper() in WINDOWS_RESERVED_NAMES:
         errors.append(
             f"{LEVEL_FAIL}: 'name' '{name}' matches a Windows reserved "
-            f"filesystem name ({name_stem.upper()}) — illegal on NTFS "
+            f"filesystem name ({name.upper()}) — illegal on NTFS "
             "regardless of host platform; rename to keep the skill "
             "creatable on Windows."
         )
