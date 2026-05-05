@@ -10,11 +10,20 @@ Computes per-skill metrics that quantify how well the skill's link
 graph matches what a standard markdown reader sees.  See
 ``references/path-resolution.md`` for the rule the report is checking.
 
-The scan covers every ``.md`` file under the skill *except* the
-``scripts/`` and ``assets/`` subtrees — those are not part of the
-prose link graph the report measures.  ``SKILL.md``, files under
-``references/``, every ``capabilities/<name>/`` tree, and any
-``shared/`` tree are all included.
+The scan covers ``SKILL.md`` plus every ``.md`` file under the
+skill's ``references/``, ``capabilities/<name>/``, and ``shared/``
+subtrees — that is the load graph the agent harness walks during
+skill use.  ``scripts/`` and ``assets/`` subtrees are excluded at
+any depth (capability-local trees too) because they are not part
+of the prose link graph the report measures.  Top-level ``.md``
+files at the skill root other than ``SKILL.md`` (``README.md``,
+``CHANGELOG.md``, ``LICENSE.md``) are package metadata, not load-
+graph nodes — the agent harness never loads them — so they are
+excluded as well.  Without that exclusion, a README that links
+outward to capabilities but receives no inbound link from any
+entry root would surface as ``unreachable`` under the directed
+reachability rule and fail the conformance gate, even though it
+is genuinely external to the load surface.
 
 Metrics:
 
