@@ -1716,5 +1716,34 @@ class ComputeStatsLineEndingFieldsTests(unittest.TestCase):
         # smaller — this assertion would have failed under the bug.
 
 
+class LineEndingsToggleDisabledTests(unittest.TestCase):
+    """``*_lf`` keys and ``line_endings`` rows omitted when toggle off.
+
+    The schema invariant is "raw bytes minus the CRLFs in the relevant
+    window".  With detection disabled, no CRLFs are counted, so a
+    fallback that emits ``load_bytes_lf == load_bytes`` would
+    misrepresent CRLF checkouts as already-LF-normalised.  The
+    corrected behaviour drops the keys entirely so consumers branch
+    on key presence.
+    """
+
+    def test_keys_omitted_when_toggle_disabled(self) -> None:
+        # Patch the in-module reference to STATS_LINE_ENDINGS_ENABLED
+        # (the symbol was imported into ``lib.stats`` at module load
+        # time, so flipping the constant in ``lib.constants`` would
+        # not take effect).  ``unittest.mock.patch`` is preferable
+        # to direct attribute assignment because it auto-restores
+        # the original value even if the assertion below raises.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            with patch("lib.stats.STATS_LINE_ENDINGS_ENABLED", False):
+                result = compute_stats(tmpdir)
+        self.assertNotIn("discovery_bytes_lf", result)
+        self.assertNotIn("load_bytes_lf", result)
+        for entry in result["files"]:
+            self.assertNotIn("line_endings", entry)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -375,16 +375,24 @@ def compute_stats(skill_path: str) -> dict:
     skill_path = os.path.abspath(skill_path)
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
 
+    # ``*_lf`` keys are emitted only when line-ending detection is
+    # enabled.  Consumers should branch on key presence — when the
+    # toggle is off, a CRLF-checkout integrator would otherwise see
+    # ``load_bytes_lf == load_bytes`` (the schema name implies "raw
+    # bytes minus CRLFs", but with detection skipped no CRLFs are
+    # subtracted) and treat the equal-to-raw value as a normalised
+    # total.  Omitting the key keeps the schema honest.
     result: dict = {
         "skill": os.path.basename(skill_path.rstrip(os.sep)),
         "metric": "bytes",
         "discovery_bytes": 0,
         "load_bytes": 0,
-        "discovery_bytes_lf": 0,
-        "load_bytes_lf": 0,
         "files": [],
         "errors": [],
     }
+    if STATS_LINE_ENDINGS_ENABLED:
+        result["discovery_bytes_lf"] = 0
+        result["load_bytes_lf"] = 0
 
     if not os.path.isfile(skill_md):
         result["errors"].append(
@@ -651,19 +659,15 @@ def compute_stats(skill_path: str) -> dict:
     entries.sort(key=lambda entry: entry["path"])
     result["files"] = entries
     result["load_bytes"] = load_total
-    result["load_bytes_lf"] = (
-        load_total_lf if STATS_LINE_ENDINGS_ENABLED else load_total
-    )
-    discovery_total_crlf = discovery_crlf + sum(
-        crlf for _, crlf in capability_discovery.values()
-    )
     result["discovery_bytes"] = discovery_count + sum(
         cap_bytes for cap_bytes, _ in capability_discovery.values()
     )
     if STATS_LINE_ENDINGS_ENABLED:
+        discovery_total_crlf = discovery_crlf + sum(
+            crlf for _, crlf in capability_discovery.values()
+        )
+        result["load_bytes_lf"] = load_total_lf
         result["discovery_bytes_lf"] = (
             result["discovery_bytes"] - discovery_total_crlf
         )
-    else:
-        result["discovery_bytes_lf"] = result["discovery_bytes"]
     return result

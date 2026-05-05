@@ -262,6 +262,15 @@ def main() -> None:
             },
             "errors": categorize_errors_for_json(result["errors"]),
         }
+        # ``*_lf`` companions are emitted only when ``compute_stats``
+        # produced them (i.e. line-ending detection is enabled in
+        # configuration.yaml).  Consumers branch on key presence
+        # rather than reading an equal-to-raw fallback that would
+        # silently misrepresent CRLF checkouts.
+        if "discovery_bytes_lf" in result:
+            payload["discovery_bytes_lf"] = result["discovery_bytes_lf"]
+        if "load_bytes_lf" in result:
+            payload["load_bytes_lf"] = result["load_bytes_lf"]
         print(to_json_output(payload))
         sys.exit(1 if fails else 0)
 
