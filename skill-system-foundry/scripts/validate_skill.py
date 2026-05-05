@@ -20,7 +20,13 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from lib.frontmatter import load_frontmatter, count_body_lines
-from lib.references import is_drive_qualified, is_within_directory, strip_fragment
+from lib.references import (
+    is_dangling_symlink,
+    is_drive_qualified,
+    is_within_directory,
+    resolve_case_exact,
+    strip_fragment,
+)
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
@@ -324,12 +330,36 @@ def _check_references(
 
         internal_checked += 1
 
+        if is_dangling_symlink(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "is a dangling symlink — the link exists but its "
+                "target is missing (on Windows this often indicates a "
+                "checkout without Developer Mode or core.symlinks=true)"
+            )
+            continue
+
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "
                 "does not exist"
+            )
+            continue
+
+        case_ok, suggested = resolve_case_exact(skill_root, ref_path)
+        if not case_ok and suggested is not None:
+            broken_found = True
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"differs from the on-disk casing — actual path is "
+                f"'{suggested}'.  Case-insensitive filesystems "
+                "(Windows, default macOS) accept the link but it "
+                "404s on Linux."
             )
             continue
 

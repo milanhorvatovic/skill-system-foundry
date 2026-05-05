@@ -191,6 +191,95 @@ def is_drive_qualified(path: str) -> bool:
     return is_ascii_letter and path[1] == ":"
 
 
+def is_dangling_symlink(path: str) -> bool:
+    """Return True when *path* is a symlink whose target does not exist.
+
+    On Windows without Developer Mode (and on git checkouts that
+    materialised a symlink as a literal text file containing the
+    target path), the validator must distinguish a dangling symlink
+    from a never-created file so the finding can point the author at
+    the right fix.  A dangling link is reported with a dedicated
+    message that names the link and its missing target; a missing
+    plain file gets the generic "does not exist" message.
+
+    ``os.path.islink`` is host-aware: on Linux/macOS it returns True
+    for actual symlinks; on Windows it also recognises symbolic
+    links and reparse points.  The companion existence check uses
+    ``os.path.exists`` so a link to a present file still returns
+    False here even when the target is reached via the link.
+    """
+    return os.path.islink(path) and not os.path.exists(path)
+
+
+def resolve_case_exact(skill_root: str, ref_path: str) -> tuple[bool, str | None]:
+    """Resolve *ref_path* against *skill_root* with byte-exact case.
+
+    On case-insensitive filesystems (NTFS, default macOS HFS+/APFS)
+    ``os.path.exists`` returns True for any case match — a markdown
+    link that points to ``References/foo.md`` resolves on Windows and
+    on macOS, but 404s on Linux.  This helper walks the path
+    component-by-component, listing each parent directory and
+    requiring an exact match against the on-disk basename so the
+    case-divergence bug is caught at validation time on every host.
+
+    Parameters:
+
+    - *skill_root* — absolute path to the skill root the reference is
+      anchored against.  Must already exist.
+    - *ref_path* — absolute path produced by joining the source file
+      directory with the reference target and normpath-ing the
+      result.  The helper does not normalise here; callers pass the
+      same path they would otherwise pass to ``os.path.exists``.
+
+    Returns ``(True, None)`` when the path resolves with byte-exact
+    case at every component; returns ``(False, suggested_path)`` when
+    the basename matches case-insensitively but the on-disk casing
+    differs — *suggested_path* is the on-disk-correct form so the
+    finding can name the fix; returns ``(False, None)`` when the
+    path does not exist under any casing.
+
+    Symlinks are treated as case-significant for their own basename
+    (the link itself must match exactly) and the helper does not
+    follow them; the caller's existence check decides whether a
+    matching link with a missing target is reported as dangling.
+    """
+    abs_root = os.path.abspath(skill_root)
+    abs_ref = os.path.abspath(ref_path)
+    try:
+        rel = os.path.relpath(abs_ref, abs_root)
+    except ValueError:
+        # Different drives on Windows — not under skill_root, so we
+        # cannot apply the case rule meaningfully; defer to existence.
+        return os.path.exists(abs_ref), None
+    if rel.startswith(".."):
+        return os.path.exists(abs_ref), None
+    parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
+    if not parts:
+        return True, None
+    cursor = abs_root
+    suggested_parts: list[str] = []
+    case_diverged = False
+    for part in parts:
+        try:
+            entries = os.listdir(cursor)
+        except OSError:
+            return False, None
+        if part in entries:
+            suggested_parts.append(part)
+            cursor = os.path.join(cursor, part)
+            continue
+        lowered = {e.lower(): e for e in entries}
+        actual = lowered.get(part.lower())
+        if actual is None:
+            return False, None
+        suggested_parts.append(actual)
+        cursor = os.path.join(cursor, actual)
+        case_diverged = True
+    if not case_diverged:
+        return True, None
+    return False, "/".join(suggested_parts)
+
+
 def strip_fragment(ref_path: str) -> str:
     """Strip query/anchor/title wrappers from a reference path.
 
