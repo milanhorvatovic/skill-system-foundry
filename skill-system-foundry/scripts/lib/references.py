@@ -223,17 +223,30 @@ _DEGRADED_SYMLINK_PATTERN = re.compile(
 def looks_like_degraded_symlink(path: str) -> bool:
     """Return True when *path* looks like a Windows-without-DevMode shim.
 
-    The function is a heuristic — it does not resolve the path it
-    finds inside the file, only checks the shape.  Callers pair it
-    with the existence check so a real markdown file that happens to
-    contain a single relative-looking path is not misclassified
-    (real markdown content has at least one non-path line, or
-    multiple lines, or formatting characters).
+    Two-stage heuristic:
 
-    Returns False on read failures, on files larger than
-    ``_DEGRADED_SYMLINK_MAX_BYTES``, on files whose body is not
-    valid UTF-8, and on files whose content does not match the
-    single-relative-path shape.
+    1. Shape match — *path* must be a small file (<=
+       ``_DEGRADED_SYMLINK_MAX_BYTES``), valid UTF-8, single-line
+       content matching ``^\\.{0,2}[\\/][^\\r\\n]+\\.[A-Za-z0-9]+$``.
+    2. Broken-target confirmation — the captured path, resolved
+       relative to *path*'s parent directory, must NOT point to an
+       existing file.
+
+    The second stage is what distinguishes a Windows-without-DevMode
+    shim (where git stored the would-be link's target as a small text
+    file because the underlying symlink could not be created, so the
+    target is not actually present) from a deliberate one-line
+    markdown note (where the captured path resolves to a real file
+    the author wanted to point at).  Without it, a stub
+    ``references/see-also.md`` containing nothing but
+    ``./full-content.md`` would be misclassified as a degraded
+    symlink even though the pointer is intact.
+
+    Returns False on read failures, on files larger than the size
+    cap, on files whose body is not valid UTF-8, on files whose
+    content does not match the single-relative-path shape, and on
+    files where the captured path resolves to an existing file
+    (i.e., real one-line markdown notes).
     """
     try:
         size = os.path.getsize(path)
@@ -253,7 +266,19 @@ def looks_like_degraded_symlink(path: str) -> bool:
     body = text.strip()
     if not body or "\n" in body or "\r" in body:
         return False
-    return bool(_DEGRADED_SYMLINK_PATTERN.match(body))
+    if not _DEGRADED_SYMLINK_PATTERN.match(body):
+        return False
+    # Broken-target confirmation: a real degraded symlink's captured
+    # path does not resolve to an existing file (the symlink was
+    # never materialised).  A deliberate one-line note's captured
+    # path does resolve — keep that case out of the True branch.
+    parent = os.path.dirname(os.path.abspath(path))
+    candidate = os.path.normpath(
+        os.path.join(parent, body.replace("\\", "/"))
+    )
+    if os.path.exists(candidate):
+        return False
+    return True
 
 
 def resolve_case_exact(
@@ -289,6 +314,13 @@ def resolve_case_exact(
       N·M listdirs; with the cache it costs at most one listdir per
       unique directory the reference graph touches.  The cache is
       not read concurrently; safe to share within a single pass.
+      Cache keys are absolute path strings as composed by
+      ``os.path.join``; aliases reached via different symlink paths
+      produce different cache entries even when they resolve to the
+      same physical directory.  The redundancy does not affect
+      correctness — both keys list the same content — but the cache
+      is less effective on skills that lean on internal-symlink
+      aliases for naming.
 
     Returns ``(True, None)`` when the path resolves with byte-exact
     case at every component; returns ``(False, suggested_path)`` when

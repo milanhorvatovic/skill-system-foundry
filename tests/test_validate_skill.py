@@ -4955,7 +4955,8 @@ class DegradedSymlinkReferenceTests(unittest.TestCase):
             ref_dir = os.path.join(tmpdir, "references")
             os.makedirs(ref_dir)
             # Simulate Windows-without-DevMode: a small text file
-            # whose entire body is a relative target.
+            # whose entire body is a relative target that does NOT
+            # resolve (the symlink was never materialised).
             shim = os.path.join(ref_dir, "guide.md")
             write_text(shim, "../../target/guide.md")
             skill_md = os.path.join(tmpdir, "SKILL.md")
@@ -4976,6 +4977,40 @@ class DegradedSymlinkReferenceTests(unittest.TestCase):
                 if e.startswith(LEVEL_WARN) and "does not exist" in e
             ]
             self.assertEqual(generic, [])
+
+    def test_one_line_note_pointing_at_real_file_passes(self) -> None:
+        """A small file whose content is a path that resolves is NOT a shim.
+
+        Pinned regression for the false-positive risk identified in
+        critique: a deliberate one-line ``see-also.md`` whose body is
+        a relative path pointing at an existing sibling must not be
+        classified as a Windows-without-DevMode degraded symlink.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            # Real file the note points at
+            write_text(
+                os.path.join(ref_dir, "full-content.md"),
+                "# Full content\n",
+            )
+            # One-line note whose body resolves to the real file
+            note = os.path.join(ref_dir, "see-also.md")
+            write_text(note, "./full-content.md")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\n"
+                "See [n](references/see-also.md).\n"
+                "See [f](references/full-content.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            degraded = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "degraded symlink" in e
+            ]
+            self.assertEqual(degraded, [])
 
 
 class DanglingSymlinkReferenceTests(unittest.TestCase):

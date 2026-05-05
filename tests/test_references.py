@@ -2658,19 +2658,42 @@ class ResolveCaseExactCacheTests(unittest.TestCase):
 
 
 class LooksLikeDegradedSymlinkTests(unittest.TestCase):
-    """The Windows-without-DevMode degraded-symlink heuristic."""
+    """The Windows-without-DevMode degraded-symlink heuristic.
 
-    def test_relative_path_text_file_matches(self) -> None:
+    The heuristic has two stages: shape match (small file, single
+    relative-path line) and broken-target confirmation (the captured
+    path does not resolve to an existing file).  Both stages must
+    pass for the helper to return True so a deliberate one-line
+    note that points at a real file is not misclassified.
+    """
+
+    def test_shape_match_with_missing_target_returns_true(self) -> None:
+        # shim.md content is "../../target/foo.md"; that target does
+        # not exist, so the helper recognises the degraded shape.
         with tempfile.TemporaryDirectory() as tmpdir:
             p = os.path.join(tmpdir, "shim.md")
             write_text(p, "../../target/foo.md")
             self.assertTrue(looks_like_degraded_symlink(p))
 
-    def test_dot_relative_path_matches(self) -> None:
+    def test_dot_relative_with_missing_target_returns_true(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             p = os.path.join(tmpdir, "shim.md")
+            # ``./target/foo.md`` resolves to ``<tmpdir>/target/foo.md``
+            # which does not exist; the degraded shape applies.
             write_text(p, "./target/foo.md")
             self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_one_line_note_pointing_at_real_file_does_not_match(self) -> None:
+        # Real one-line markdown note whose body is a relative path
+        # that DOES resolve.  This is the false-positive case the
+        # broken-target stage protects against — the file is
+        # deliberate content, not a degraded symlink.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "full-content.md")
+            write_text(target, "# Full content\n")
+            note = os.path.join(tmpdir, "see-also.md")
+            write_text(note, "./full-content.md")
+            self.assertFalse(looks_like_degraded_symlink(note))
 
     def test_real_markdown_does_not_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
