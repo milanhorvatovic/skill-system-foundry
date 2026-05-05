@@ -21,7 +21,6 @@ from .constants import (
     BUNDLE_INFER_MAX_WALK_DEPTH,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
-    PATH_RESOLUTION_REFERENCE_EXTENSIONS,
 )
 
 # ===================================================================
@@ -110,26 +109,24 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 # ===================================================================
 
 _GLOB_METACHARS = "*?[]{}"
-# Build the boundary regex from the configured extension list.  The
-# extension-matching alternatives of ``reference_patterns.markdown_link``
-# in configuration.yaml (bare-sibling, parent-traversal, and generic
-# multi-segment) substitute the same ``__EXT_ALT__`` placeholder via
-# ``constants.py``, so editing ``path_resolution.reference_extensions``
-# flows through to those extractor alternatives and this glob
-# discriminator from a single source.  The directory-anchored
-# alternative of ``markdown_link`` and the ``backtick`` regex are
-# governed by their directory whitelist and capture any path under
-# the recognized top-level directories regardless of extension —
-# editing ``reference_extensions`` does not affect those captures
-# (and would not improve them: asset references and capability-local
-# templates legitimately use arbitrary extensions there).
-# Extensions are escaped to keep the alternation safe even if a
-# future YAML edit introduces a regex metacharacter.
-_EXT_FRAGMENT_BOUNDARY_RE = re.compile(
-    r"\.(?:" + "|".join(
-        re.escape(ext) for ext in PATH_RESOLUTION_REFERENCE_EXTENSIONS
-    ) + r")([?#\s]|$)"
-)
+# The boundary regex must recognize ANY extension-shaped suffix —
+# not just the ones configured in
+# ``path_resolution.reference_extensions``.  Directory-anchored
+# captures from ``markdown_link`` (and every ``backtick`` capture)
+# legitimately accept arbitrary extensions for asset and shared-
+# resource links (``assets/logo.svg?v=2``, ``shared/photo.png``).
+# If the boundary regex restricted itself to the configured list,
+# such a link would have no extension match — ``path_part`` would
+# fall back to the whole reference and a query/title ``?`` would
+# be misclassified as a glob, dropping the link from validation,
+# conformance, and ``--fix``.  Match ``.<word-chars>`` followed by
+# the actual suffix boundary (``?``, ``#``, whitespace, or end of
+# string) so the discriminator works on every shape the extractors
+# capture.  ``[A-Za-z0-9_]+`` is broad enough for every realistic
+# extension while still guaranteeing at least one char between the
+# leading ``.`` and the boundary, which prevents matching the bare
+# ``.`` in path segments like ``./foo``.
+_EXT_FRAGMENT_BOUNDARY_RE = re.compile(r"\.[A-Za-z0-9_]+([?#\s]|$)")
 
 
 def is_glob_path(ref: str) -> bool:

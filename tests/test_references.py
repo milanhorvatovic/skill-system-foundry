@@ -68,6 +68,26 @@ class IsGlobPathTests(unittest.TestCase):
             with self.subTest(ref=ref):
                 self.assertFalse(is_glob_path(ref), msg=ref)
 
+    def test_arbitrary_extension_query_is_not_glob(self) -> None:
+        # The boundary regex must recognize *any* extension shape,
+        # not just the configured ``reference_extensions`` list.
+        # Directory-anchored captures legitimately accept arbitrary
+        # extensions for asset and shared-resource links — if the
+        # boundary regex restricted itself to the configured list,
+        # these links would have no extension match, ``path_part``
+        # would fall back to the whole reference, and a query-suffix
+        # ``?`` would be misclassified as a glob, dropping the link
+        # from validation, conformance, and ``--fix``.
+        for ref in (
+            "assets/logo.svg?v=2",
+            "shared/photo.png?w=64",
+            "assets/diagram.webp?cache=1",
+            'assets/icon.svg "Why?"',
+            "assets/data.csv#row-3",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
     def test_anchor_suffix_is_not_glob(self) -> None:
         # Anchor separators after a recognized extension are
         # treated the same — they're suffix, not path.
