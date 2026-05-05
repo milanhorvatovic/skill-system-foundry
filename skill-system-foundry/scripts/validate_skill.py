@@ -19,6 +19,7 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
+from lib.bundling import check_long_paths
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.references import (
     is_dangling_symlink,
@@ -864,7 +865,6 @@ def validate_skill(
     # at authoring time so the FAIL at bundle time is never the first
     # place an author hears about the issue.  The bundler reuses the
     # same helper at FAIL severity from the same configuration.
-    from lib.bundling import check_long_paths
     lp_errors, lp_passes = check_long_paths(
         skill_path, severity=LEVEL_WARN,
     )

@@ -92,6 +92,7 @@ from lib.constants import (
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
+from lib.bundling import check_long_paths
 from lib.router_table import audit_router_table
 from lib.validation import (
     validate_description_triggers,
@@ -620,7 +621,6 @@ def audit_skill_system(
     # --- Long-path pre-flight (cross-platform) ---
     if verbose:
         print("\n== Long-Path Budget ==")
-    from lib.bundling import check_long_paths
     for skill in skills:
         lp_errors, lp_passes = check_long_paths(
             skill["path"], severity=LEVEL_WARN,
