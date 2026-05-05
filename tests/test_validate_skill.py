@@ -5018,6 +5018,7 @@ class DanglingSymlinkReferenceTests(unittest.TestCase):
 
     def test_dangling_symlink_emits_dedicated_warn(self) -> None:
         from validate_skill import validate_body
+        from lib.references import is_dangling_symlink
         with tempfile.TemporaryDirectory() as tmpdir:
             ref_dir = os.path.join(tmpdir, "references")
             os.makedirs(ref_dir)
@@ -5036,16 +5037,19 @@ class DanglingSymlinkReferenceTests(unittest.TestCase):
                 self.skipTest("symlinks not supported on this host")
             os.unlink(target)
             # Sanity check: the precondition must hold before the
-            # assertion below is meaningful.  If the host produced
-            # something other than a true dangling symlink (e.g., a
-            # junction, a copy, a non-symlink reparse point), skip
-            # rather than fail — the test exercises the validator,
-            # not the OS's symlink semantics.
-            if not (os.path.islink(link) and not os.path.exists(link)):
+            # assertion below is meaningful.  Use the validator's
+            # exact ``is_dangling_symlink`` helper rather than ad-hoc
+            # ``os.path.islink``/``os.path.exists`` calls so we test
+            # the same logic the validator runs — if the helper
+            # disagrees with the OS-level primitives on this host,
+            # the test will skipTest with diagnostic context rather
+            # than mis-fire downstream.
+            if not is_dangling_symlink(link):
                 self.skipTest(
-                    "host did not produce a dangling symlink "
-                    f"(islink={os.path.islink(link)}, "
-                    f"exists={os.path.exists(link)})"
+                    "host did not produce a state is_dangling_symlink "
+                    f"recognises (islink={os.path.islink(link)}, "
+                    f"exists={os.path.exists(link)}, "
+                    f"is_dangling_symlink={is_dangling_symlink(link)})"
                 )
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [g](references/guide.md).\n"
@@ -5055,7 +5059,19 @@ class DanglingSymlinkReferenceTests(unittest.TestCase):
                 e for e in errors
                 if e.startswith(LEVEL_WARN) and "dangling symlink" in e
             ]
-            self.assertEqual(len(dangling), 1)
+            # If the dangling WARN didn't fire, dump the full error
+            # list with environment context so the Windows runner's
+            # divergence is visible in the failure log instead of
+            # forcing another commit-and-rerun cycle to diagnose.
+            self.assertEqual(
+                len(dangling), 1,
+                msg=(
+                    f"expected 1 dangling-symlink WARN, got {len(dangling)}; "
+                    f"link={link!r}, "
+                    f"is_dangling_symlink(link)={is_dangling_symlink(link)}, "
+                    f"all errors={errors!r}"
+                ),
+            )
             self.assertIn("references/guide.md", dangling[0])
             generic = [
                 e for e in errors
