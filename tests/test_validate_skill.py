@@ -4884,5 +4884,97 @@ class CapabilityAggregationIntegrationTests(unittest.TestCase):
         self.assertEqual(len(parse_fails), 1)
 
 
+class CaseExactReferenceTests(unittest.TestCase):
+    """Reference resolution must reject case-divergent links."""
+
+    def test_wrong_case_link_fails(self) -> None:
+        """A link that differs from on-disk casing produces a FAIL.
+
+        Uses ``validate_body`` (entry-file validation) so the test
+        does not rely on which other-file walker is exercised.  The
+        case-exact rule lives inside ``_check_references`` and fires
+        from both surfaces; exercising the entry-file path keeps the
+        test independent of ``validate_skill_references`` selection
+        rules.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [guide](References/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            broken = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            # On case-insensitive filesystems the FAIL fires; on
+            # case-sensitive Linux the broken-ref WARN fires instead.
+            self.assertEqual(
+                len(case_fails) + len(broken), 1,
+                msg=f"errors={errors}",
+            )
+
+    def test_correct_case_link_passes(self) -> None:
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [guide](references/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            self.assertEqual(case_fails, [])
+
+
+class DanglingSymlinkReferenceTests(unittest.TestCase):
+    """Dangling symlinks produce dedicated findings, not generic 'missing'."""
+
+    def test_dangling_symlink_emits_dedicated_warn(self) -> None:
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            link = os.path.join(ref_dir, "guide.md")
+            try:
+                os.symlink(os.path.join(tmpdir, "missing-target.md"), link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [g](references/guide.md).\n"
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            dangling = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "dangling symlink" in e
+            ]
+            self.assertEqual(len(dangling), 1)
+            self.assertIn("references/guide.md", dangling[0])
+            generic = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            self.assertEqual(generic, [])
+
+
 if __name__ == "__main__":
     unittest.main()

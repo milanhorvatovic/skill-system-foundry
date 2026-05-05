@@ -22,6 +22,7 @@ from lib.bundling import (
     _rewrite_markdown_content,
     _rewrite_markdown_paths,
     _rewrite_reference_target,
+    check_long_paths,
     create_bundle,
     postvalidate,
     prevalidate,
@@ -1646,6 +1647,90 @@ class PostValidateCoverageTests(unittest.TestCase):
         ]
         self.assertEqual(len(unresolved), 1)
         self.assertIn(LEVEL_FAIL, unresolved[0])
+
+
+class CheckLongPathsTests(unittest.TestCase):
+    """``check_long_paths`` flags arcnames that exceed the budget."""
+
+    def _build_skill_with_arcname(
+        self, root: str, arcname: str
+    ) -> None:
+        full = os.path.join(root, *arcname.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("body")
+
+    def test_under_threshold_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._build_skill_with_arcname(tmpdir, "SKILL.md")
+            errors, passes = check_long_paths(
+                tmpdir, threshold=260, user_prefix_budget=80,
+            )
+            self.assertEqual(errors, [])
+            self.assertEqual(len(passes), 1)
+            self.assertIn("long-path", passes[0])
+
+    def test_arcname_at_threshold_passes(self) -> None:
+        # threshold(50) - prefix(10) = 40; the arcname must total <=
+        # 40 chars to fit.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            arcname = "a" * 36 + ".md"  # 39 chars
+            self._build_skill_with_arcname(tmpdir, arcname)
+            errors, _ = check_long_paths(
+                tmpdir, threshold=50, user_prefix_budget=10,
+            )
+            self.assertEqual(errors, [])
+
+    def test_arcname_over_threshold_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            arcname = "a" * 50 + ".md"  # 53 chars
+            self._build_skill_with_arcname(tmpdir, arcname)
+            errors, _ = check_long_paths(
+                tmpdir, threshold=50, user_prefix_budget=10,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(errors[0].startswith(LEVEL_FAIL))
+            self.assertIn(arcname, errors[0])
+
+    def test_severity_override_emits_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            arcname = "a" * 50 + ".md"
+            self._build_skill_with_arcname(tmpdir, arcname)
+            errors, _ = check_long_paths(
+                tmpdir,
+                threshold=50,
+                user_prefix_budget=10,
+                severity=LEVEL_WARN,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(errors[0].startswith(LEVEL_WARN))
+
+    def test_excluded_pattern_not_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._build_skill_with_arcname(tmpdir, "SKILL.md")
+            self._build_skill_with_arcname(
+                tmpdir, ".git/" + "x" * 200,
+            )
+            errors, _ = check_long_paths(
+                tmpdir, threshold=100, user_prefix_budget=10,
+            )
+            # The .git/ entry would exceed the threshold but is
+            # excluded from the walk by the bundler's exclude
+            # patterns, so no FAIL fires.
+            self.assertEqual(errors, [])
+
+    def test_finding_uses_forward_slashes(self) -> None:
+        # The reported path must always be POSIX-form so the message
+        # is identical on every runner.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            arcname = "deeply/nested/" + "x" * 50 + ".md"
+            self._build_skill_with_arcname(tmpdir, arcname)
+            errors, _ = check_long_paths(
+                tmpdir, threshold=50, user_prefix_budget=5,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertNotIn("\\", errors[0])
+            self.assertIn("deeply/nested/", errors[0])
 
 
 if __name__ == "__main__":

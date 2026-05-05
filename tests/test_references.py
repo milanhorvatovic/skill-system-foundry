@@ -21,9 +21,11 @@ from lib.references import (
     extract_references,
     find_containing_skill,
     infer_system_root,
+    is_dangling_symlink,
     is_drive_qualified,
     is_glob_path,
     is_within_directory,
+    resolve_case_exact,
     resolve_reference,
     resolve_reference_with_reason,
     scan_references,
@@ -2547,6 +2549,98 @@ class ScanReferencesTextDetectedRecursionTests(unittest.TestCase):
         # The file appears exactly once in external_files (set deduplication)
         self.assertIn(os.path.abspath(shared), result["external_files"])
         self.assertEqual(result["errors"], [])
+
+
+class ResolveCaseExactTests(unittest.TestCase):
+    """``resolve_case_exact`` enforces byte-exact case at every component."""
+
+    def test_exact_case_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            write_text(target, "x")
+            ok, suggested = resolve_case_exact(tmpdir, target)
+            self.assertTrue(ok)
+            self.assertIsNone(suggested)
+
+    def test_wrong_case_in_directory_component_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            write_text(target, "x")
+            wrong = os.path.join(tmpdir, "References", "foo.md")
+            ok, suggested = resolve_case_exact(tmpdir, wrong)
+            self.assertFalse(ok)
+            self.assertEqual(suggested, "references/foo.md")
+
+    def test_wrong_case_in_filename_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            write_text(target, "x")
+            wrong = os.path.join(tmpdir, "references", "FOO.md")
+            ok, suggested = resolve_case_exact(tmpdir, wrong)
+            # On case-sensitive Linux the file does not exist at all;
+            # the helper returns (False, None) in that case.  On
+            # case-insensitive macOS / NTFS the file exists under a
+            # different case and the helper produces a suggestion.
+            if suggested is None:
+                self.assertFalse(ok)
+            else:
+                self.assertFalse(ok)
+                self.assertEqual(suggested, "references/foo.md")
+
+    def test_missing_file_returns_false_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            wrong = os.path.join(tmpdir, "references", "missing.md")
+            ok, suggested = resolve_case_exact(tmpdir, wrong)
+            self.assertFalse(ok)
+            self.assertIsNone(suggested)
+
+    def test_path_outside_root_falls_back_to_existence(self) -> None:
+        with tempfile.TemporaryDirectory() as outer:
+            inner = os.path.join(outer, "skill")
+            sibling = os.path.join(outer, "sibling")
+            os.makedirs(inner)
+            os.makedirs(sibling)
+            target = os.path.join(sibling, "ref.md")
+            write_text(target, "x")
+            ok, suggested = resolve_case_exact(inner, target)
+            # Outside the skill root, the helper defers to existence
+            # without applying the case-exact rule.
+            self.assertTrue(ok)
+            self.assertIsNone(suggested)
+
+
+class IsDanglingSymlinkTests(unittest.TestCase):
+    """``is_dangling_symlink`` reports symlinks whose target is missing."""
+
+    def test_link_to_existing_file_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real = os.path.join(tmpdir, "real.md")
+            write_text(real, "x")
+            link = os.path.join(tmpdir, "link.md")
+            try:
+                os.symlink(real, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            self.assertFalse(is_dangling_symlink(link))
+
+    def test_link_to_missing_target_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            link = os.path.join(tmpdir, "link.md")
+            try:
+                os.symlink(os.path.join(tmpdir, "missing.md"), link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            self.assertTrue(is_dangling_symlink(link))
+
+    def test_plain_missing_file_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertFalse(
+                is_dangling_symlink(os.path.join(tmpdir, "missing.md"))
+            )
 
 
 if __name__ == "__main__":
