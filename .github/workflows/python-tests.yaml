@@ -208,8 +208,15 @@ jobs:
         # is throw-away; only its shape (parses cleanly, fits under
         # the Claude.ai 200-char description cap) matters for
         # exercising the bundle pipeline.
+        #
+        # Stub fields cover the validator surface: ``name`` and
+        # ``description`` are spec-required; ``allowed-tools: ""`` is
+        # the documented opt-out the tool-coherence rule keys off;
+        # ``compatibility`` exercises the optional-string check;
+        # ``license`` exercises the SPDX recognition; and
+        # ``metadata.version`` exercises semver validation.
         run: |
-          python -c "import os; p=os.path.join('smoke-work','skills','demo','SKILL.md'); src=open(p,'r',encoding='utf-8').read(); body=src.split('---',2)[2] if src.startswith('---') else src; fm='---\nname: demo\ndescription: triggers when the demo runs\nlicense: MIT\nmetadata:\n  version: 1.0.0\n---\n'; open(p,'w',encoding='utf-8',newline='\n').write(fm+body.lstrip())"
+          python -c "import os; p=os.path.join('smoke-work','skills','demo','SKILL.md'); src=open(p,'r',encoding='utf-8').read(); body=src.split('---',2)[2] if src.startswith('---') else src; fm='---\nname: demo\ndescription: triggers when the demo runs\nallowed-tools: \"\"\ncompatibility: smoke test\nlicense: MIT\nmetadata:\n  version: 1.0.0\n---\n'; open(p,'w',encoding='utf-8',newline='\n').write(fm+body.lstrip())"
         env:
           PYTHONUTF8: "1"
 
