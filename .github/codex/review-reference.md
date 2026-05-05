@@ -33,12 +33,13 @@ Apply these in addition to the standard workflow checklist:
 
 ## Markdown inside skills (`skill-system-foundry/**/*.md`)
 
-Apply these rules to file-reference links inside skill content (`SKILL.md`, `capabilities/**/*.md`, `references/**/*.md`). They override plain CommonMark expectations:
+Apply these rules to file-reference links inside skill content (`SKILL.md`, `capabilities/**/*.md`, `references/**/*.md`). The canonical rule (with examples, the liftability invariant, and the migration cheat sheet) lives in `skill-system-foundry/references/path-resolution.md`:
 
-- **Skill-root-relative paths, never parent traversals** — every markdown link target is written as if the file were standing at the skill root, regardless of the referencing file's physical location (e.g., from `capabilities/validation/capability.md` the correct link is `[...](references/authoring-principles.md)`, not `../../references/authoring-principles.md`). Do **not** flag these as broken links — the in-repo reference resolver (`lib/references.py::resolve_reference`) tries source-dir-relative first, then falls back to skill-root-relative, so skill-root paths always resolve.
+- **File-relative resolution (standard markdown semantics)** — every markdown link target resolves from the directory containing the file the link lives in. The skill root and each capability root own their own subgraph; a capability reaches the shared skill root via the explicit `../../<dir>/<file>` form (e.g., from `capabilities/validation/capability.md` the correct link is `[...](../../references/authoring-principles.md)`, not `[...](references/authoring-principles.md)`). Capability-local references use the bare in-scope form (e.g., `[...](references/<file>.md)` for a sibling under `capabilities/<name>/references/`).
+- **`..` segments are legal** — they are how a capability reaches the shared skill root. Paths whose `..` chain escapes the skill root entirely are surfaced by the validator as INFO (out of scope), not as broken-link FAILs.
 - **Forward slashes only** — no Windows-style backslashes in link targets.
-- **Role files are the exception** — files outside any `skills/` tree (the `roles/` tree) use system-root-relative paths (e.g., `skills/<domain>/SKILL.md`). Skill-internal links still use the skill-root-relative form.
-- Do flag a link as broken only after confirming the target does not exist **at the skill root** either; do not rely on `<source-dir>/<link>` existence alone.
+- **Role files are the exception** — files outside any `skills/` tree (the `roles/` tree) use system-root-relative paths (e.g., `skills/<domain>/SKILL.md`). Skill-internal links still use the file-relative form.
+- Flag a link as broken only after confirming the target does not exist under file-relative resolution from the source file's directory; legacy skill-root-form links are still tolerated by `lib/references.py::resolve_reference` during integrator transition (source-relative first, system-root fallback) but `validate_skill.py --fix` is the canonical path to bring them into compliance.
 
 ## Review-specific focus areas
 

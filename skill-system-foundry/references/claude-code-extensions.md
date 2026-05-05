@@ -1,6 +1,6 @@
 # Claude Code Extensions
 
-Claude Code extends the Agent Skills specification (agentskills.io) with additional frontmatter fields and features. This reference covers what is specific to Claude Code; see [agentskills-spec.md](references/agentskills-spec.md) for the core specification and [tool-integration.md](references/tool-integration.md) for cross-tool architecture.
+Claude Code extends the Agent Skills specification (agentskills.io) with additional frontmatter fields and features. This reference covers what is specific to Claude Code; see [agentskills-spec.md](agentskills-spec.md) for the core specification and [tool-integration.md](tool-integration.md) for cross-tool architecture.
 
 ## Table of Contents
 
@@ -92,7 +92,7 @@ Plugin marketplace:
 | Surface | Network | Packages | Notes |
 |---|---|---|---|
 | Claude Code (CLI) | Full | Yes (prefer local) | Primary surface |
-| Claude.ai (Consumer) | Varies | Yes (npm, PyPI, GitHub) | Upload zip via Settings > Features, per-user. See [tool-integration.md](references/tool-integration.md#zip-bundle-packaging) for bundle structure and constraints (200-char description limit, single SKILL.md). |
+| Claude.ai (Consumer) | Varies | Yes (npm, PyPI, GitHub) | Upload zip via Settings > Features, per-user. See [tool-integration.md](tool-integration.md#zip-bundle-packaging) for bundle structure and constraints (200-char description limit, single SKILL.md). |
 | Claude API | None | No (pre-installed only) | `/v1/skills` endpoints, `skill_id`, beta headers |
 
 ## Loading Mechanism
@@ -116,9 +116,9 @@ Skill descriptions share a dynamic character budget (2% of context window, fallb
 
 ## Deployment Pointer
 
-Deployment pointers for Claude Code can be wrapper files or symlinks. Claude Code follows symlinked skill directories and files. See [tool-integration.md](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
+Deployment pointers for Claude Code can be wrapper files or symlinks. Claude Code follows symlinked skill directories and files. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
 
-When creating a wrapper-based deployment pointer for Claude Code (see [tool-integration.md](references/tool-integration.md)), use these tool conventions:
+When creating a wrapper-based deployment pointer for Claude Code (see [tool-integration.md](tool-integration.md)), use these tool conventions:
 - File reading: bash `cat` or Claude's `view` tool
 - Tool invocation: bash commands, MCP with `ServerName:tool_name` format
 - Scripts: execute directly via bash

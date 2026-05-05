@@ -50,9 +50,100 @@ skill:
       imperative_start: (?i)^(Create|Design|Build|Run|Execute|Deploy|Generate|Manage|Configure|Set up|Install|Analyze|Process|Handle|Implement|Define|Write|Read|Update|Delete|Check|Validate|Test|Review|Fix|Debug|Monitor|Track|Scan|Parse|Fetch|Send|Transform|Convert|Extract|Load|Save|Export|Import|Migrate|Provision|Orchestrate|Wire|Scaffold|Audit)\b
   body:
     max_lines: 500
+    # Cross-file reference patterns.
+    #
+    # ``markdown_link`` is deliberately broad — markdown links are
+    # intentional, structured references that should always resolve.
+    # Match shapes:
+    # - skill-root-anchored paths: ``[x](references/foo.md)``
+    #   (recognized top-level dirs).
+    # - external references from a capability:
+    #   ``[x](../../references/foo.md)`` (any number of leading
+    #   ``../`` segments before a recognized top-level dir).
+    # - file-relative bare siblings and parent files:
+    #   ``[x](foo.md)``, ``[x](../capability.md)`` (any leading
+    #   ``../`` segments followed by a filename ending in a
+    #   recognized extension).
+    #
+    # ``backtick`` is intentionally narrow — inline-code path
+    # mentions in prose are common, and matching every bare filename
+    # produces false positives for prose discussions.  Restrict to
+    # paths that contain a recognized top-level directory segment so
+    # inline mentions of script names (``validate_skill.py``) are
+    # not treated as references.  Authors who want a backtick path
+    # treated as a real reference can use the directory-anchored
+    # form (``scripts/validate_skill.py``).
+    #
+    # The resolver in ``lib/reachability.py`` and
+    # ``validate_skill._check_references`` interprets every captured
+    # path file-relative under the redefined rule
+    # (see references/path-resolution.md).
     reference_patterns:
-      markdown_link: \[.*?\]\(((?:capabilities|references|scripts|assets)/[^)]+)\)
-      backtick: "`((?:capabilities|references|scripts|assets)/[^`]+)`"
+      # Six alternatives, ordered from most-specific to most-general:
+      #
+      # - directory-anchored paths (``capabilities/foo.md``,
+      #   ``../../references/foo.md``) — recognized top-level dir
+      #   prefix with optional ``./`` or ``../`` traversal.
+      # - bare-sibling files (``foo.md``, ``./foo.md``,
+      #   ``../foo.md``) — relative path with no internal slash, file
+      #   extension at the end.  Captures optional anchor/query
+      #   suffixes (``#section``, ``?v=2``) and markdown link title
+      #   annotations (``foo.md "Title"``) so the resolver sees the
+      #   full link before it hands it to ``strip_fragment``.
+      # - parent-traversal multi-segment paths
+      #   (``../beta/capability.md`` into a sibling capability) —
+      #   requires at least one ``../`` to block URLs.
+      # - generic multi-segment relative paths through unrecognized
+      #   directories (``guides/setup.md``, ``examples/case.md``)
+      #   without a ``../`` prefix.  ``[^):\s]`` excludes ``:``,
+      #   which keeps URL schemes (``https://``, ``mailto:``) from
+      #   matching while still capturing standard markdown
+      #   file-relative links that don't anchor on a recognized
+      #   top-level directory.  Without this branch a broken
+      #   ``guides/setup.md`` link from a reference file would slip
+      #   past validation and the conformance gate.
+      # - POSIX absolute paths (``/foo.md``, ``/tmp/foo.md``) —
+      #   leading ``/`` followed by a non-slash, non-colon
+      #   character so URL schemes (``http://...``) cannot reach
+      #   this branch.  Spec-violating; the resolver emits a WARN
+      #   via ``os.path.isabs``.
+      # - Windows drive-qualified paths (``C:foo.md``, ``C:/foo.md``,
+      #   ``C:\foo.md``) — single drive letter, ``:``, then a path
+      #   that excludes ``:`` and whitespace so multi-letter URL
+      #   schemes (``mailto:``, ``myproto:``) cannot reach this
+      #   branch.  Spec-violating; the resolver emits a WARN via
+      #   ``is_drive_qualified``.  Without these last two
+      #   alternatives, an absolute or drive-qualified link would
+      #   never enter the extractor at all and the resolver's
+      #   defensive checks would be unreachable from the capture.
+      #
+      # Leading-prefix groups use ``(?:\.{1,2}/)*`` so both ``./``
+      # and ``../`` are accepted — standard markdown treats
+      # ``./foo.md`` as equivalent to ``foo.md``.
+      #
+      # The literal token ``__EXT_ALT__`` is substituted at
+      # constants load time with the alternation built from
+      # ``path_resolution.reference_extensions`` (see
+      # ``constants.RE_MARKDOWN_LINK_REF``), so the supported
+      # extension list lives in exactly one place — but only
+      # alternatives that *carry an extension match* consume it.
+      # Specifically: the bare-sibling, parent-traversal, and
+      # generic multi-segment alternatives below substitute
+      # ``__EXT_ALT__`` into a literal extension test, and the
+      # ``is_glob_path`` boundary regex in ``lib/references.py``
+      # uses the same alternation.  The directory-anchored
+      # alternative (capabilities / references / scripts / assets /
+      # shared) and the ``backtick`` regex below both rely on the
+      # directory whitelist as their discriminator and capture any
+      # path under those directories regardless of file extension —
+      # asset references, capability-local templates, and similar
+      # legitimately appear there with arbitrary extensions, so an
+      # extension filter would silently drop them.  Editing
+      # ``reference_extensions`` therefore controls the extension-
+      # matching alternatives only; the directory-anchored capture
+      # is governed by the directory whitelist.
+      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|/[A-Za-z0-9_][^):\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|[A-Za-z]:[^):\s]+\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500
 
@@ -387,6 +478,50 @@ role_composition:
 #       - skills/foo/references/staged.md
 orphan_references:
   allowed_orphans:
+
+# ============================================================
+# Path Resolution (cross-file references)
+# ============================================================
+# Cross-file references inside a skill follow standard markdown
+# semantics: resolve file-relative from the file that contains
+# the link.  Two scopes own their own subgraphs — the skill root
+# (containing SKILL.md, references/, assets/, scripts/, optional
+# shared/) and each capability root (containing capability.md
+# and its own optional references/, assets/, scripts/).  External
+# references from a capability into the shared skill root use
+# the explicit ``../../<dir>/<file>`` form (parent-traversal
+# segments are how the validator recognizes external refs).
+#
+# See references/path-resolution.md for the canonical rule, the
+# liftability invariant, the migration cheat sheet, and the
+# spec-divergence note.
+path_resolution:
+  # Identifier surfaced in finding text and ``--json`` output so
+  # consumers can filter or group findings by rule.
+  rule_name: path-resolution
+  # Skill-root-relative path to the canonical reference doc.
+  # ``validate_skill`` and ``audit_skill_system`` emit a top-level
+  # ``path_resolution`` block (``rule_name`` + ``documentation_path``)
+  # in their ``--json`` payloads, and ``validate_skill --fix`` cites
+  # this path in the unfixable-findings header, so an integrator can
+  # navigate to the rule from any output stream.
+  documentation_path: references/path-resolution.md
+  # File extensions a markdown link target may carry to be treated
+  # as a cross-file reference.  This list is the single source of
+  # truth: the body ``reference_patterns`` regex above and the
+  # ``is_glob_path`` helper in ``lib/references.py`` both build
+  # their extension match from this value.  Adding or removing an
+  # extension here flows through to extraction, glob discrimination,
+  # and the rewriter without code changes.
+  reference_extensions:
+    - md
+    - py
+    - sh
+    - yaml
+    - yml
+    - json
+    - toml
+    - txt
 
 # ============================================================
 # Bundle Packaging

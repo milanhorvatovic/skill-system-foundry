@@ -1,0 +1,742 @@
+"""Tests for ``scripts/reference_conformance_report.py``.
+
+The conformance report is a permanent foundry script that quantifies
+how well a skill's link graph matches what a standard markdown reader
+sees.  See ``references/path-resolution.md`` for the rule, and the
+script's docstring for the metrics it reports.
+"""
+
+import io
+import json
+import os
+import sys
+import tempfile
+import unittest
+import unittest.mock
+
+# Add scripts/ to the path so we can import the module under test.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SCRIPTS = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
+if _SCRIPTS not in sys.path:
+    sys.path.insert(0, _SCRIPTS)
+
+import reference_conformance_report as rcr  # noqa: E402
+
+from helpers import write_text  # noqa: E402
+
+
+def _build_skill(skill_root: str, skill_body: str = "") -> None:
+    """Write a minimal SKILL.md plus the requested body."""
+    skill_md = os.path.join(skill_root, "SKILL.md")
+    body = skill_body if skill_body else "# Skill\n"
+    write_text(skill_md, f"---\nname: test\n---\n{body}")
+
+
+def _router_table(*capability_names: str) -> str:
+    """Return a markdown router table that lists the given capabilities.
+
+    The conformance report's routing check reads the router table
+    (parsed by ``router_table.extract_capability_paths``), so tests
+    that need a capability to count as routed must place it in this
+    structured table — a plain markdown link from SKILL.md is not
+    sufficient since router-table membership is what makes a
+    capability dispatchable.
+    """
+    rows = "\n".join(
+        f"| {name} | trigger | capabilities/{name}/capability.md |"
+        for name in capability_names
+    )
+    return (
+        "## Capabilities\n\n"
+        "| Capability | Trigger | Path |\n"
+        "|---|---|---|\n"
+        f"{rows}\n"
+    )
+
+
+# ===================================================================
+# compute_report
+# ===================================================================
+
+
+class ComputeReportConformingSkillTests(unittest.TestCase):
+    """A conforming skill produces zeros and a single connected
+    component reachable from SKILL.md."""
+
+    def test_empty_skill_conforms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(report["total_links"], 0)
+        self.assertEqual(report["broken_under_standard_semantics"], 0)
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+
+    def test_skill_with_resolved_link_conforms(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [g](references/guide.md).\n")
+            write_text(os.path.join(tmp, "references", "guide.md"), "# Guide\n")
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["resolves_under_standard_semantics"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 0)
+
+    def test_capability_link_resolves_file_relative(self) -> None:
+        # Capability bodies resolve refs file-relative under the
+        # redefined rule (see references/path-resolution.md).
+        # ``[x](references/y.md)`` resolves under the capability root.
+        # SKILL.md routes the capability via a router table so the
+        # conformance gate's routing check passes — this test is
+        # only verifying capability-local resolution, not router
+        # wiring drift.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [y](references/y.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "y.md"),
+                "# Y\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(report["broken_under_standard_semantics"], 0)
+
+
+class ComputeReportBrokenLinkTests(unittest.TestCase):
+    """Broken intra-skill links are counted under
+    ``broken_under_standard_semantics`` and surfaced in
+    ``broken_links``."""
+
+    def test_broken_skill_link_is_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [m](references/missing.md).\n")
+            report = rcr.compute_report(tmp)
+        self.assertFalse(report["conforms"])
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertEqual(len(report["broken_links"]), 1)
+        self.assertEqual(report["broken_links"][0]["source"], "SKILL.md")
+        self.assertEqual(
+            report["broken_links"][0]["target"], "references/missing.md",
+        )
+
+    def test_broken_links_are_grouped_by_source_scope(self) -> None:
+        # The per-scope breakdown lets a triage user see at a glance
+        # whether the work is concentrated in the skill root or a
+        # specific capability.  Pin both buckets are tracked
+        # independently and only the scopes with broken links appear.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [m](references/missing.md).\n")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\n"
+                "See [a](references/a.md) and [b](references/b.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(
+            report["broken_under_standard_semantics_by_scope"],
+            {"capability:demo": 2, "skill": 1},
+        )
+
+
+class ComputeReportExternalEdgeTests(unittest.TestCase):
+    """Edges from a capability into the shared skill root are counted
+    per capability so the future capability-lift tool can find them."""
+
+    def test_external_edges_counted_per_capability(self) -> None:
+        # SKILL.md routes the capability via a router table so the
+        # conformance gate's routing check passes — this test is
+        # only verifying the external-edge tally, not router wiring
+        # drift.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
+            write_text(
+                os.path.join(tmp, "references", "alpha.md"), "# Alpha\n",
+            )
+            write_text(
+                os.path.join(tmp, "references", "beta.md"), "# Beta\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\n"
+                "See [a](../../references/alpha.md) and "
+                "[b](../../references/beta.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(
+            report["external_edges_per_capability"], {"demo": 2},
+        )
+
+    def test_cross_capability_link_is_not_counted_as_external_edge(self) -> None:
+        # ``external_edges_per_capability`` documents itself as edges
+        # into the shared skill root — i.e. lift-rewrite candidates.
+        # A link from one capability into another is an architecture
+        # concern, not a lift candidate (after lift the sibling is
+        # gone and the link cannot be mechanically inlined).  The
+        # metric must exclude cross-capability targets so the lift
+        # cost is honest and so an architecture violation does not
+        # hide inside a seemingly-normal external-edge count.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            cap_a = os.path.join(tmp, "capabilities", "alpha")
+            cap_b = os.path.join(tmp, "capabilities", "beta")
+            write_text(
+                os.path.join(cap_b, "capability.md"), "# Beta\n",
+            )
+            write_text(
+                os.path.join(cap_a, "capability.md"),
+                "# Alpha\n\nSee [b](../beta/capability.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The metric must NOT count the alpha→beta edge.
+        self.assertEqual(report["external_edges_per_capability"], {})
+
+    def test_capability_local_parent_traversal_is_not_external(self) -> None:
+        # A capability-local reference under
+        # ``capabilities/<name>/references/foo.md`` reaching back to
+        # the capability entry via ``../capability.md`` is intra-scope
+        # — not a lift-rewrite candidate.  The metric must not count
+        # every ``../``-prefixed link blindly; it counts only links
+        # whose resolved target sits outside ``capabilities/<name>/``.
+        # SKILL.md routes the capability via a router table so the
+        # conformance gate's routing check passes.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [r](references/r.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "r.md"),
+                "# R\n\nBack to [entry](../capability.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(
+            report["external_edges_per_capability"], {},
+            msg="../capability.md is intra-capability, not external",
+        )
+
+    def test_broken_external_link_is_not_counted_as_external_edge(self) -> None:
+        # A broken capability link to the shared skill root is in
+        # ``broken_links`` already.  Counting it again under
+        # ``external_edges_per_capability`` would double-report and
+        # would mislead the future lift tool into thinking there is
+        # rewriteable shared content where there is none.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [m](../../references/missing.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertEqual(report["external_edges_per_capability"], {})
+
+    def test_skill_root_links_are_not_external_edges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [g](references/guide.md).\n")
+            write_text(
+                os.path.join(tmp, "references", "guide.md"), "# Guide\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["external_edges_per_capability"], {})
+
+
+class ComputeReportConnectedComponentsTests(unittest.TestCase):
+    """The connected-component analysis treats SKILL.md and every
+    capability.md as roots; reachability spans both directions."""
+
+    def test_unrouted_capability_fails_conformance(self) -> None:
+        # A capability whose internal subgraph is fine but that
+        # SKILL.md never links to is a router-drift case the gate
+        # exists to catch.  ``capability.md`` is its own reachability
+        # root, so its subgraph is "reachable" and contributes
+        # nothing to ``files_unreachable_from_root`` — yet the
+        # capability is still unrouted, and the gate must surface
+        # that through ``unrouted_capabilities``.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md without any link to the capability.
+            _build_skill(tmp, "# Skill\n")
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Alpha\n\nSee [r](references/r.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "references", "r.md"),
+                "# R\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The capability subgraph is internally consistent, so no
+        # files are unreachable.
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        # But it forms a separate component from SKILL.md.
+        self.assertEqual(report["connected_components"], 2)
+        # The authoritative signal: the capability name is in the
+        # unrouted list.
+        self.assertEqual(report["unrouted_capabilities"], ["alpha"])
+        # Conforms must fail — that's the whole point of the gate.
+        self.assertFalse(report["conforms"])
+
+    def test_capability_local_assets_and_scripts_are_pruned(self) -> None:
+        # Capability-local ``assets/`` and ``scripts/`` subtrees are
+        # not part of the prose link graph — same as their top-level
+        # equivalents — so a markdown template under
+        # ``capabilities/<name>/assets/`` must be invisible to the
+        # conformance walker.  Without component-based pruning, the
+        # walker would add the template to the graph and flag it as
+        # ``files_unreachable_from_root`` even though the report's
+        # contract excludes those subtrees from its scope.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, f"# Skill\n\n{_router_table('demo')}")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Demo\n",
+            )
+            # Capability-local asset markdown — must be pruned.
+            write_text(
+                os.path.join(cap_dir, "assets", "template.md"),
+                "# Template\n",
+            )
+            # Capability-local script markdown — must also be pruned.
+            write_text(
+                os.path.join(cap_dir, "scripts", "doc.md"),
+                "# Doc\n",
+            )
+            report = rcr.compute_report(tmp)
+        # Both files are excluded from the graph, so the report
+        # should be clean.
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        self.assertTrue(report["conforms"])
+
+    def test_transitive_link_does_not_route_a_capability(self) -> None:
+        # The router-completeness check reads the router table
+        # directly — not the transitive forward closure.  If
+        # capability alpha is routed (named in the table) and alpha
+        # links to capability beta (architecture violation, but
+        # still a forward edge in the link graph), beta is *not*
+        # routed: the router table never names beta, so the
+        # conformance gate must surface beta in
+        # unrouted_capabilities.  A transitive-closure check would
+        # mask this case.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md routes only alpha via the router table.
+            _build_skill(tmp, f"# Skill\n\n{_router_table('alpha')}")
+            cap_a = os.path.join(tmp, "capabilities", "alpha")
+            cap_b = os.path.join(tmp, "capabilities", "beta")
+            # Alpha has a forward link to beta (cross-capability —
+            # architecturally forbidden but still a forward edge).
+            write_text(
+                os.path.join(cap_a, "capability.md"),
+                "# Alpha\n\n"
+                "See [b](../../capabilities/beta/capability.md).\n",
+            )
+            write_text(
+                os.path.join(cap_b, "capability.md"), "# Beta\n",
+            )
+            report = rcr.compute_report(tmp)
+        # Beta is reachable from SKILL.md transitively via alpha,
+        # but NOT directly routed by the router table.  The gate
+        # must still flag it.
+        self.assertIn("beta", report["unrouted_capabilities"])
+        self.assertNotIn("alpha", report["unrouted_capabilities"])
+        self.assertFalse(report["conforms"])
+
+    def test_doc_link_to_capability_does_not_count_as_routed(self) -> None:
+        # The router table — a structured markdown table — is the
+        # surface the agent harness reads to dispatch.  A plain
+        # markdown link to a capability from prose elsewhere in
+        # SKILL.md is *not* a routing entry; the agent has no way
+        # to know it should reach that capability.  The
+        # conformance gate must therefore use router-table
+        # membership (not "any link out of SKILL.md") for the
+        # unrouted-capability check.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md mentions the capability in prose only — no
+            # router table at all.
+            _build_skill(
+                tmp,
+                "# Skill\n\n"
+                "See [a](capabilities/alpha/capability.md) for more.\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Alpha\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The doc link merges the components for the undirected
+        # graph (so connected_components stays at 1), but the
+        # capability is still unrouted because no router table
+        # names it.
+        self.assertEqual(report["unrouted_capabilities"], ["alpha"])
+        self.assertFalse(report["conforms"])
+
+    def test_unrouted_capability_through_shared_reference_still_fails(self) -> None:
+        # The undirected component graph would falsely merge an
+        # unrouted capability into the SKILL.md component whenever
+        # both touch the same shared reference (e.g.
+        # ``references/foo.md``): the shared edge makes the
+        # capability "connected" to SKILL.md even though the router
+        # table never names it.  The directed-from-SKILL.md walk
+        # used by ``unrouted_capabilities`` ignores that smuggling
+        # path: shared-resource edges only flow forward to the
+        # shared file, never back, so a shared sink cannot smuggle
+        # the capability into SKILL.md's directed forward closure.
+        with tempfile.TemporaryDirectory() as tmp:
+            # SKILL.md uses the shared reference but does NOT link
+            # the capability.
+            _build_skill(
+                tmp,
+                "# Skill\n\nSee [s](references/shared.md).\n",
+            )
+            write_text(
+                os.path.join(tmp, "references", "shared.md"),
+                "# Shared\n",
+            )
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            # Capability uses the *same* shared reference (so the
+            # undirected component graph merges them) — but is
+            # itself unrouted.
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Alpha\n\nSee [s](../../references/shared.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # Shared edge merges them in the undirected graph — so the
+        # *components* count would falsely suggest "all good".
+        self.assertEqual(report["connected_components"], 1)
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        # But the directed router-completeness check sees through it.
+        self.assertEqual(report["unrouted_capabilities"], ["alpha"])
+        self.assertFalse(report["conforms"])
+
+    def test_orphan_subgraph_counts_as_its_own_component(self) -> None:
+        # The metric is documented as weakly-connected components in
+        # the in-scope link graph, not just components reachable from
+        # SKILL.md / capability.md roots.  An isolated cluster of two
+        # markdown files that link to each other but that no root
+        # reaches is still a connected component and must contribute
+        # to ``connected_components`` — otherwise drift in the form
+        # of "unrouted but internally consistent" subgraphs hides
+        # under ``files_unreachable_from_root`` alone.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Two-file orphan cluster, mutually linked.
+            write_text(
+                os.path.join(tmp, "references", "orphan_a.md"),
+                "# Orphan A\n\nSee [b](orphan_b.md).\n",
+            )
+            write_text(
+                os.path.join(tmp, "references", "orphan_b.md"),
+                "# Orphan B\n\nSee [a](orphan_a.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # SKILL.md alone is one component; the orphan pair is a
+        # second.  Total = 2.
+        self.assertEqual(report["connected_components"], 2)
+        self.assertEqual(report["files_unreachable_from_root"], 2)
+
+    def test_absolute_link_counts_as_broken(self) -> None:
+        """A POSIX absolute markdown link (``[bad](/tmp/foo.md)``)
+        is a path-resolution violation.  The body-reference regex
+        captures it now, but ``_build_graph`` must count it toward
+        ``broken_under_standard_semantics`` rather than silently
+        dropping it — otherwise a skill containing such a link
+        could pass the conformance gate even though the rule
+        explicitly forbids absolute paths.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [a](/tmp/foo.md).\n")
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertFalse(report["conforms"])
+        # The broken row preserves the original link text so a
+        # maintainer reading the human output sees the violating path.
+        targets = [row["target"] for row in report["broken_links"]]
+        self.assertIn("/tmp/foo.md", targets)
+
+    def test_drive_qualified_link_counts_as_broken(self) -> None:
+        """A Windows drive-qualified link (``[bad](C:foo.md)``) is
+        also a path-resolution violation.  Symmetric with the
+        POSIX absolute case — counted as broken so the gate fails.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [a](C:foo.md).\n")
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+        self.assertFalse(report["conforms"])
+        targets = [row["target"] for row in report["broken_links"]]
+        self.assertIn("C:foo.md", targets)
+
+    def test_compute_report_on_non_skill_directory_fails_loudly(self) -> None:
+        """Programmatic callers (the docstring of
+        ``reference_conformance_report`` recommends importing
+        ``compute_report`` directly) get a dict with
+        ``conforms: false`` and ``missing_skill_md: true`` when the
+        target directory has no ``SKILL.md``.  Without this guard
+        the function would observe zero md files, zero links, and
+        zero unreachable nodes — silently reporting ``conforms: true``
+        for an empty or non-skill directory.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            # Deliberately do not write SKILL.md.
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["missing_skill_md"])
+        self.assertFalse(report["conforms"])
+
+    def test_unreadable_markdown_file_fails_conformance(self) -> None:
+        """An in-scope markdown file the I/O layer cannot UTF-8
+        decode contributes no links to the graph — a silent skip
+        would let the conformance gate observe ``broken == 0`` and
+        ``unreachable == 0`` even though that file's links were
+        never parsed.  Surfacing it as ``unreadable_files`` and
+        gating ``conforms`` on the list keeps the failure mode
+        loud.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Write a Latin-1-encoded file under references/ — it
+            # has the ``.md`` extension and lives in the in-scope
+            # set, but the harness's UTF-8 read raises
+            # ``UnicodeDecodeError``.
+            ref_dir = os.path.join(tmp, "references")
+            os.makedirs(ref_dir, exist_ok=True)
+            ref = os.path.join(ref_dir, "latin1.md")
+            with open(ref, "wb") as fh:
+                fh.write("# Résumé\n".encode("latin-1"))
+            report = rcr.compute_report(tmp)
+        self.assertIn(
+            "references/latin1.md",
+            report["unreadable_files"],
+        )
+        self.assertFalse(report["conforms"])
+
+    def test_top_level_readme_is_not_in_scope(self) -> None:
+        """Top-level ``.md`` files at the skill root other than
+        ``SKILL.md`` (``README.md``, ``CHANGELOG.md``, etc.) are
+        package metadata, not load-graph nodes.  The conformance
+        report must exclude them so a README that links outward to
+        capabilities — but receives no inbound link from any entry
+        root — does not surface as ``unreachable`` under directed
+        reachability.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            write_text(
+                os.path.join(tmp, "README.md"),
+                "# Skill\n\nSee [cap](capabilities/foo/capability.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # README.md must not contribute to the unreachable count or
+        # be visible as an extra component.
+        self.assertEqual(report["files_unreachable_from_root"], 0)
+        self.assertTrue(report["conforms"])
+        # And the link from README.md must not be tallied either —
+        # if it were in scope, ``total_links`` would include the
+        # README → capability edge.  ``_build_skill`` produces a
+        # known link count; pin that the README contributes none.
+        baseline_total = report["total_links"]
+        # Re-run without the README and confirm total_links is identical.
+        with tempfile.TemporaryDirectory() as tmp2:
+            _build_skill(tmp2)
+            without_readme = rcr.compute_report(tmp2)
+        self.assertEqual(baseline_total, without_readme["total_links"])
+
+    def test_orphan_with_back_link_to_skill_md_is_still_unreachable(self) -> None:
+        """Reachability follows links *outward* from entry roots.
+
+        An otherwise orphan file that links *back* to ``SKILL.md``
+        (``[home](../SKILL.md)``) cannot be discovered by an agent
+        following links from ``SKILL.md`` outward — the back-edge is
+        only traversable in reverse.  The conformance gate must
+        treat it as unreachable so back-link tricks cannot silently
+        pass an orphan through CI.
+
+        ``connected_components`` uses an undirected view and so
+        legitimately merges the orphan with the rest of the graph
+        — the metric is weak connectivity by design.  This test
+        pins the directed/undirected split.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Orphan with a back-link to SKILL.md.  No outward link
+            # from SKILL.md or any other root reaches this file.
+            write_text(
+                os.path.join(tmp, "references", "orphan.md"),
+                "# Orphan\n\nSee [home](../SKILL.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        # The orphan must surface as unreachable despite the back-link.
+        self.assertEqual(report["files_unreachable_from_root"], 1)
+        self.assertFalse(report["conforms"])
+        # Component count: orphan's back-link to SKILL.md merges it
+        # into SKILL.md's component under the undirected view.
+        self.assertEqual(report["connected_components"], 1)
+
+    def test_total_links_counts_each_occurrence(self) -> None:
+        """``total_links`` and ``broken_under_standard_semantics``
+        report link *occurrences*, not unique-target counts.  A
+        single body that contains two anchored links to the same
+        broken target (``foo.md#a`` and ``foo.md#b``) must contribute
+        two to the broken tally — the conformance metrics quantify
+        authored links, and a reader following each anchor lands on
+        a different position in the (still missing) target.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            skill_md = os.path.join(tmp, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "See [a](references/missing.md#a) and "
+                "[b](references/missing.md#b) and "
+                "[plain](references/missing.md).\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 3)
+        self.assertEqual(report["broken_under_standard_semantics"], 3)
+
+    def test_unreached_md_file_is_unreachable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            # Reachable from SKILL.md
+            write_text(os.path.join(tmp, "references", "linked.md"), "# Linked\n")
+            skill_md = os.path.join(tmp, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\nSee [l](references/linked.md).\n",
+            )
+            # Orphan
+            write_text(os.path.join(tmp, "references", "orphan.md"), "# Orphan\n")
+            report = rcr.compute_report(tmp)
+        # 3 .md files: SKILL.md, linked.md, orphan.md
+        # 2 are reachable (SKILL → linked); 1 unreachable.
+        self.assertEqual(report["files_unreachable_from_root"], 1)
+        self.assertFalse(report["conforms"])
+
+
+# ===================================================================
+# CLI
+# ===================================================================
+
+
+class CliInvocationTests(unittest.TestCase):
+    """The CLI exits 0 on conformance, non-zero otherwise; ``--json``
+    emits a structured payload."""
+
+    def _invoke(self, args: list[str]) -> tuple[int, str, str]:
+        argv_backup = sys.argv
+        sys.argv = ["reference_conformance_report.py", *args]
+        out = io.StringIO()
+        err = io.StringIO()
+        try:
+            with unittest.mock.patch("sys.stdout", out):
+                with unittest.mock.patch("sys.stderr", err):
+                    rc = rcr.main()
+        finally:
+            sys.argv = argv_backup
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_conforming_skill_exits_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            rc, _out, _err = self._invoke([tmp])
+        self.assertEqual(rc, 0)
+
+    def test_non_conforming_skill_exits_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [m](references/missing.md).\n")
+            rc, _out, _err = self._invoke([tmp])
+        self.assertEqual(rc, 1)
+
+    def test_missing_directory_exits_two(self) -> None:
+        rc, _out, err = self._invoke(["/nonexistent/path/that/does/not/exist"])
+        self.assertEqual(rc, 2)
+        self.assertIn("error", err.lower())
+
+    def test_no_args_prints_docstring_and_exits_one(self) -> None:
+        # Mirrors the convention shared with validate_skill.py /
+        # bundle.py / scaffold.py: invoking the script with no
+        # arguments prints the module docstring as a usage hint and
+        # exits non-zero.  The argparse usage line on its own does
+        # not surface the metric definitions or scope rules, so the
+        # docstring is what users actually need.
+        rc, out, _err = self._invoke([])
+        self.assertEqual(rc, 1)
+        # The docstring opens with "Report a skill's cross-file
+        # reference conformance" — a stable substring to pin against.
+        self.assertIn("cross-file reference conformance", out)
+
+    def test_directory_without_skill_md_exits_two(self) -> None:
+        # Refuses to scan an arbitrary directory — without the guard the
+        # walker would enumerate whatever markdown the directory contains
+        # (e.g. the repo root's top-level docs, .github/, examples/) and
+        # report broken links for paths that are simply outside any skill.
+        with tempfile.TemporaryDirectory() as tmp:
+            # Add a markdown file but no SKILL.md so the directory is
+            # non-empty but still not a skill root.
+            write_text(os.path.join(tmp, "README.md"), "# Readme\n")
+            rc, _out, err = self._invoke([tmp])
+        self.assertEqual(rc, 2)
+        self.assertIn("SKILL.md", err)
+
+    def test_directory_without_skill_md_json_exits_two(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "README.md"), "# Readme\n")
+            rc, out, _err = self._invoke([tmp, "--json"])
+        self.assertEqual(rc, 2)
+        payload = json.loads(out)
+        self.assertEqual(payload["tool"], "reference_conformance_report")
+        self.assertIn("error", payload)
+
+    def test_json_output_is_valid_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp)
+            rc, out, _err = self._invoke([tmp, "--json"])
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["tool"], "reference_conformance_report")
+        self.assertIn("total_links", payload)
+        self.assertIn("conforms", payload)
+        self.assertTrue(payload["conforms"])
+
+    def test_human_output_lists_unrouted_capabilities_on_failure(self) -> None:
+        # When ``conforms`` is false because of an unrouted capability,
+        # the human report must name the capability — otherwise CI
+        # users see "Conformance: FAIL" with broken/unreachable both
+        # at zero and have to re-run with --json to discover the
+        # actual problem.
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "# Skill\n")
+            cap_dir = os.path.join(tmp, "capabilities", "alpha")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Alpha\n",
+            )
+            rc, out, _err = self._invoke([tmp])
+        self.assertEqual(rc, 1)
+        self.assertIn("Conformance: FAIL", out)
+        self.assertIn("Unrouted capabilities", out)
+        self.assertIn("alpha", out)
+
+    def test_verbose_lists_broken_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [m](references/missing.md).\n")
+            rc, out, _err = self._invoke([tmp, "--verbose"])
+        self.assertEqual(rc, 1)
+        self.assertIn("references/missing.md", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

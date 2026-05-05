@@ -44,8 +44,8 @@ Read only the relevant capability file. Do not load multiple capabilities unless
 
 ## Shared Resources
 
-- `shared/references/` — Common reference material across capabilities
-- `shared/assets/` — Reusable templates and static resources
+- `shared/references/<file>.md` — Common reference material across capabilities
+- `shared/assets/<file>` — Reusable templates and static resources
 
 <!--
 Trigger description rules:

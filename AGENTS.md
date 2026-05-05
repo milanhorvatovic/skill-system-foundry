@@ -252,7 +252,7 @@ Detailed review rules are in `.github/instructions/`:
 | `.github/instructions/markdown.instructions.md` | `**/*.md` | Documentation quality, description triggers |
 | `.github/instructions/scripts.instructions.md` | `scripts/**/*.py` | Code quality, stdlib-only, type hints |
 
-Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many frontmatter, naming, line-count, and structural checks. Manual review still verifies markdown file-reference conventions (including skill-root-relative paths), path validity, progressive disclosure, description quality, architecture justification, and semantic consistency.
+Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many frontmatter, naming, line-count, and structural checks. Manual review still verifies markdown file-reference conventions (file-relative resolution per `skill-system-foundry/references/path-resolution.md`, including the `../../<dir>/<file>` external-reference syntax used from capabilities), path validity, progressive disclosure, description quality, architecture justification, and semantic consistency.
 
 ## Release Process
 

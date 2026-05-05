@@ -47,7 +47,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 
 ## File References
 
-- **Relative paths from skill root** — all file references in markdown links use paths relative to the directory containing `SKILL.md`, regardless of which file contains the reference (e.g., `references/foo.md`, `scripts/validate.py`, `capabilities/deployment/capability.md`). This applies to `SKILL.md`, capability files, and reference files alike. Do not use `../` parent traversals to navigate from a file's physical location — write the path as if standing at the skill root
+- **File-relative resolution** — every cross-file reference resolves from the directory containing the file the link lives in (standard markdown semantics). Two scopes own their own subgraph: the skill root (containing `SKILL.md`, `references/`, `assets/`, `scripts/`) and each capability root (`capabilities/<name>/`). A capability reaches the shared skill root via the explicit `../../<dir>/<file>` form. The full rule, the liftability invariant, the migration cheat sheet, and the validator finding shape live in [`skill-system-foundry/references/path-resolution.md`](../../skill-system-foundry/references/path-resolution.md)
 - **Forward slashes only** — regardless of operating system
 - **Descriptive filenames** — `form-validation-rules.md` not `doc2.md`
 - **System-root-relative paths in roles** — role files live outside skill directories, so they reference skills as `skills/<domain>/SKILL.md` (relative to the directory containing `skills/` and `roles/`)
@@ -66,7 +66,7 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 3. **Simplicity** — Is the phrasing direct and clear? Could complex sentences be broken into simpler ones?
 4. **DRY** — Is the same concept defined in only one place? Do other files reference it rather than duplicate it?
 5. **Structure** — Does the file follow progressive disclosure? Is `SKILL.md` under 500 lines? Are cross-references one level deep?
-6. **File references** — Are all markdown link paths written relative to the skill root (no `../` traversals)? Forward slashes only? Do referenced files actually exist? Are role paths system-root-relative?
+6. **File references** — Do all markdown links resolve under standard file-relative semantics? Capability files reach the shared skill root via `../../<dir>/<file>`? Forward slashes only? Do referenced files actually exist? Are role paths system-root-relative?
 7. **Consistency** — Is terminology consistent within the file and across the repository?
 8. **Accuracy** — Are spec claims aligned with the validation scripts? Are referenced file paths valid?
 
@@ -83,6 +83,8 @@ Include: what the skill does (verbs and nouns), when to trigger it (user intent 
 - Unreferenced files in `references/`, `scripts/`, or `assets/` not reachable from `SKILL.md` (directly for standalone skills, or transitively through capabilities for router skills)
 - Backslashes in file paths
 - Non-descriptive filenames (`doc2.md`, `notes.md`, `misc.md`)
+- Capability file using legacy skill-root form (`references/foo.md`) instead of file-relative form (`../../references/foo.md` for shared resources, or local `references/foo.md` for capability-internal references)
+- Reference file using redundant `references/` prefix when linking siblings under the shared `references/` directory
 - Role file using skill-root-relative paths instead of system-root-relative paths
 - Missing table of contents in files over 100 lines
 - Placeholder markers removed or overwritten in template files

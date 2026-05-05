@@ -129,10 +129,38 @@ jobs:
         env:
           PYTHONUTF8: "1"
 
+  reference-conformance:
+    # Gates the meta-skill's link graph against the file-relative
+    # path-resolution rule (see skill-system-foundry/references/path-resolution.md).
+    # The report exits non-zero if any internal link fails to resolve
+    # under standard markdown semantics or any markdown file under the
+    # skill is unreachable from SKILL.md / capability.md roots.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # @v5 as 5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Reference conformance report
+        run: |
+          cd skill-system-foundry
+          python scripts/reference_conformance_report.py . --verbose
+        env:
+          PYTHONUTF8: "1"
+
   update-badge:
     needs:
       - test
       - validate-examples
+      - reference-conformance
     # Restrict to genuine pushes to main; this skips reusable
     # workflow_call invocations (e.g. release-prep.yml) where
     # github.event_name is the caller's event (workflow_dispatch) and

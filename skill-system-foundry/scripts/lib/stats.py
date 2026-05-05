@@ -39,10 +39,11 @@ from .constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
     LEVEL_WARN,
+    PATH_RESOLUTION_RULE_NAME,
 )
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
-from .references import is_within_directory
+from .references import is_drive_qualified, is_within_directory
 
 
 # Directory categories whose bytes are excluded from ``load_bytes``.
@@ -459,33 +460,50 @@ def compute_stats(skill_path: str) -> dict:
         # frontmatter scalar happens to contain a path-shaped string.
         body_only = strip_frontmatter_for_scan(content)
         is_entry = filepath == os.path.abspath(skill_md)
+        # File-relative resolution per ``references/path-resolution.md``:
+        # every link resolves from the directory containing the file the
+        # link lives in, with ``..`` segments legal (they are how a
+        # capability reaches the shared skill root).  The
+        # ``is_within_directory`` check below is the only boundary that
+        # matters — it catches paths that escape the skill root entirely.
+        source_dir = os.path.dirname(filepath)
         for ref in extract_body_references(
             body_only, include_router_table=is_entry,
         ):
-            if os.path.isabs(ref):
+            # ``is_drive_qualified`` (lib/references) catches the
+            # Windows drive-relative form (``C:foo.md``) that
+            # ``os.path.isabs`` misses on every platform — using
+            # ``os.path.splitdrive`` would only catch it on Windows
+            # because ``os.path`` is host-dependent.  Without this
+            # check ``os.path.join`` would treat the path as drive-
+            # rooted on Windows and the byte-budget metric would
+            # include a file outside the skill tree.
+            if os.path.isabs(ref) or is_drive_qualified(ref):
                 result["errors"].append(
-                    f"{LEVEL_WARN}: [foundry] absolute reference '{ref}' "
-                    f"in '{rel}' skipped — references must be relative"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"absolute or drive-qualified reference '{ref}' in "
+                    f"'{rel}' skipped — references must be relative"
                 )
                 continue
             ref_norm = ref.replace("\\", "/")
-            if ".." in ref_norm.split("/"):
-                result["errors"].append(
-                    f"{LEVEL_WARN}: [foundry] reference '{ref}' in '{rel}' "
-                    f"uses parent traversal — skipped from stats"
+
+            ref_abs = os.path.normpath(os.path.join(source_dir, ref_norm))
+
+            # Map back to skill-root form for the excluded-category gate.
+            # Out-of-skill refs cannot be expressed in skill-root form;
+            # the ``is_within_directory`` check below handles them.
+            if is_within_directory(ref_abs, skill_path):
+                rel_to_root = os.path.relpath(ref_abs, skill_path).replace(
+                    os.sep, "/",
                 )
-                continue
-
-            ref_abs = os.path.normpath(os.path.join(skill_path, ref_norm))
-
-            # Decline at the gate for excluded categories.  A missing
-            # scripts/foo.py or assets/template.md must not emit a
-            # broken-ref WARN, since those categories are silently
-            # excluded from load_bytes anyway — the existence check
-            # below would fire a false-positive warning on every
-            # missing helper script that the entry happens to mention.
-            if is_excluded_from_load(ref_norm):
-                continue
+                # Decline at the gate for excluded categories.  A missing
+                # scripts/foo.py or assets/template.md must not emit a
+                # broken-ref WARN, since those categories are silently
+                # excluded from load_bytes anyway — the existence check
+                # below would fire a false-positive warning on every
+                # missing helper script that the entry happens to mention.
+                if is_excluded_from_load(rel_to_root):
+                    continue
 
             # External / cross-skill references resolve outside the
             # skill root; report once and skip — they are not part of
@@ -494,22 +512,24 @@ def compute_stats(skill_path: str) -> dict:
             # the skill are correctly classified.
             if not is_within_directory(ref_abs, skill_path):
                 result["errors"].append(
-                    f"{LEVEL_INFO}: [foundry] reference '{ref}' in '{rel}' "
-                    f"resolves outside the skill directory — excluded "
-                    f"from load_bytes"
+                    f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' resolves outside the "
+                    f"skill directory — excluded from load_bytes"
                 )
                 continue
 
             if not os.path.exists(ref_abs):
                 result["errors"].append(
-                    f"{LEVEL_WARN}: [foundry] reference '{ref}' in '{rel}' "
-                    f"does not exist — excluded from load_bytes"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' does not exist — "
+                    f"excluded from load_bytes"
                 )
                 continue
             if not os.path.isfile(ref_abs):
                 result["errors"].append(
-                    f"{LEVEL_WARN}: [foundry] reference '{ref}' in '{rel}' "
-                    f"is not a regular file — excluded from load_bytes"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' is not a regular "
+                    f"file — excluded from load_bytes"
                 )
                 continue
 

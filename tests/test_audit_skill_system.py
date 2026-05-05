@@ -1760,13 +1760,25 @@ class AuditManifestFindingsJsonSchemaTests(unittest.TestCase):
             data = json.loads(proc.stdout)
         # Schema preserved: known top-level keys plus the additive
         # ``yaml_conformance`` slot (always present, zero sentinel when
-        # checks did not run).
+        # checks did not run) and ``path_resolution`` block (rule_name
+        # + documentation_path so consumers can navigate to the rule).
         self.assertEqual(
             set(data.keys()),
             {
                 "tool", "path", "success", "counts", "summary",
                 "errors", "version", "yaml_conformance",
+                "path_resolution",
             },
+        )
+        # Block contents must be populated — guards against silently
+        # degrading to ``{}`` if a future loader stops threading the
+        # constants into the JSON shape.
+        self.assertEqual(
+            data["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            data["path_resolution"]["documentation_path"],
         )
         manifest_fails = [
             entry for entry in data["errors"].get("failures", [])

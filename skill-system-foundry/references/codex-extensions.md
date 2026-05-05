@@ -1,6 +1,6 @@
 # Codex Extensions
 
-Codex extends the Agent Skills specification (agentskills.io) with `agents/openai.yaml` for UI metadata and tool dependencies. This reference covers what is specific to Codex; see [agentskills-spec.md](references/agentskills-spec.md) for the core specification and [tool-integration.md](references/tool-integration.md) for cross-tool architecture.
+Codex extends the Agent Skills specification (agentskills.io) with `agents/openai.yaml` for UI metadata and tool dependencies. This reference covers what is specific to Codex; see [agentskills-spec.md](agentskills-spec.md) for the core specification and [tool-integration.md](tool-integration.md) for cross-tool architecture.
 
 ## Table of Contents
 
@@ -112,9 +112,9 @@ Requires Codex restart to apply.
 
 ## Deployment Pointer
 
-Deployment pointers for Codex can be wrapper files or symlinks. Codex follows symlinked skill folders (see [Discovery Paths](#discovery-paths)). See [tool-integration.md](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
+Deployment pointers for Codex can be wrapper files or symlinks. Codex follows symlinked skill folders (see [Discovery Paths](#discovery-paths)). See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
 
-When creating a wrapper-based deployment pointer for Codex (see [tool-integration.md](references/tool-integration.md)), use these tool conventions:
+When creating a wrapper-based deployment pointer for Codex (see [tool-integration.md](tool-integration.md)), use these tool conventions:
 - File reading: shell tool (read, cat, head)
 - Tool invocation: shell commands
 - Include `agents/openai.yaml` if UI metadata needed

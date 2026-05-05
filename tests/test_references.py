@@ -21,6 +21,8 @@ from lib.references import (
     extract_references,
     find_containing_skill,
     infer_system_root,
+    is_drive_qualified,
+    is_glob_path,
     is_within_directory,
     resolve_reference,
     resolve_reference_with_reason,
@@ -44,6 +46,139 @@ class StripFragmentTests(unittest.TestCase):
         for raw_ref, expected in cases.items():
             with self.subTest(raw_ref=raw_ref):
                 self.assertEqual(strip_fragment(raw_ref), expected)
+
+
+class IsGlobPathTests(unittest.TestCase):
+    """``is_glob_path`` returns True iff the *path portion* of a
+    markdown link target contains a glob metacharacter.  ``?``
+    after a recognized file extension is the markdown query
+    separator and counts as suffix, not glob — so it must not
+    register as glob.  Same characters in the path portion
+    (before the extension, or in directory components) must
+    register."""
+
+    def test_query_suffix_is_not_glob(self) -> None:
+        # Query separators after a recognized extension are part
+        # of the suffix, not the path — they must not flag as glob.
+        for ref in (
+            "foo.md?v=2",
+            "references/guide.md?mode=raw",
+            "../foo.md?",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
+    def test_arbitrary_extension_query_is_not_glob(self) -> None:
+        # The boundary regex must recognize *any* extension shape,
+        # not just the configured ``reference_extensions`` list.
+        # Directory-anchored captures legitimately accept arbitrary
+        # extensions for asset and shared-resource links — if the
+        # boundary regex restricted itself to the configured list,
+        # these links would have no extension match, ``path_part``
+        # would fall back to the whole reference, and a query-suffix
+        # ``?`` would be misclassified as a glob, dropping the link
+        # from validation, conformance, and ``--fix``.
+        for ref in (
+            "assets/logo.svg?v=2",
+            "shared/photo.png?w=64",
+            "assets/diagram.webp?cache=1",
+            'assets/icon.svg "Why?"',
+            "assets/data.csv#row-3",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
+    def test_anchor_suffix_is_not_glob(self) -> None:
+        # Anchor separators after a recognized extension are
+        # treated the same — they're suffix, not path.
+        for ref in (
+            "foo.md#section",
+            "references/guide.md#part-1",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
+    def test_title_suffix_is_not_glob(self) -> None:
+        # Markdown link title annotations live after whitespace
+        # following a recognized extension.  ``?`` or ``[``/``]``
+        # inside a title are part of the human-readable title, not
+        # the filesystem path — they must not flag the link as a
+        # glob.  Without whitespace as a boundary character, a link
+        # like ``[guide](missing.md "Why?")`` would be misclassified
+        # as a glob and dropped before validation, hiding the
+        # broken-link finding the validator should surface.
+        for ref in (
+            'foo.md "Why?"',
+            'references/guide.md "Q[A]?"',
+            "foo.md 'simple title'",
+            'references/guide.md "title with #anchor-like text"',
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_glob_path(ref), msg=ref)
+
+    def test_glob_in_path_is_glob(self) -> None:
+        # Metachars *in the path* (before the extension or as a
+        # directory wildcard) flag as glob.
+        for ref in (
+            "capabilities/**/*.md",
+            "references/?ref.md",
+            "references/[abc].md",
+            "references/{a,b}.md",
+            "*.md",
+        ):
+            with self.subTest(ref=ref):
+                self.assertTrue(is_glob_path(ref), msg=ref)
+
+    def test_non_extension_path_falls_back_to_full_check(self) -> None:
+        # When the ref has no recognized extension boundary, the
+        # whole string is treated as path — a ``?`` anywhere
+        # registers as glob.
+        self.assertTrue(is_glob_path("subdir/?other"))
+        self.assertFalse(is_glob_path("subdir/other"))
+
+
+class IsDriveQualifiedTests(unittest.TestCase):
+    """``is_drive_qualified`` recognizes Windows ``C:`` -prefixed paths
+    on every platform.  ``os.path.splitdrive`` is platform-dependent
+    (returns empty drive on POSIX), so a check that relies on it
+    would silently pass these forms on Linux CI.  Pin a small matrix
+    of positive and negative cases to lock in the cross-platform
+    behavior.
+    """
+
+    def test_positive_cases(self) -> None:
+        for ref in (
+            "C:foo.md",
+            "c:foo.md",
+            "Z:references/guide.md",
+            "C:/foo.md",
+            "C:\\foo.md",
+        ):
+            with self.subTest(ref=ref):
+                self.assertTrue(is_drive_qualified(ref), msg=ref)
+
+    def test_negative_cases(self) -> None:
+        for ref in (
+            "",
+            "foo.md",
+            "references/foo.md",
+            "../foo.md",
+            "./foo.md",
+            ":colon-first.md",
+            "1:digit-first.md",  # not a letter — ignore
+            "/absolute/path.md",  # absolute, not drive-qualified
+            # Non-ASCII Unicode letters must NOT be treated as drive
+            # letters.  ``str.isalpha`` accepts hundreds of code
+            # points across world scripts, so a relative file named
+            # after a Greek/German/etc. letter would otherwise be
+            # misclassified as drive-qualified and silently dropped
+            # by the validator.  Drive letters are ASCII-only.
+            "Ω:notes.md",
+            "Ä:notes.md",
+            "ß:notes.md",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_drive_qualified(ref), msg=ref)
 
 
 class ShouldSkipReferenceTests(unittest.TestCase):

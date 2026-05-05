@@ -20,7 +20,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from lib.frontmatter import load_frontmatter, count_body_lines
-from lib.references import is_within_directory, strip_fragment
+from lib.references import is_drive_qualified, is_within_directory, strip_fragment
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
@@ -53,6 +53,8 @@ from lib.constants import (
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
     EXT_MARKDOWN,
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
+    PATH_RESOLUTION_DOC_PATH,
+    PATH_RESOLUTION_RULE_NAME,
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references
@@ -142,30 +144,71 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
     return errors, passes
 
 
+def _detect_scope(source_rel_path: str) -> tuple[str, str]:
+    """Return ``(scope_kind, scope_name)`` for a source file.
+
+    ``("skill", "")`` for files at the skill root or under shared
+    skill-root directories (``references/``, ``assets/``, ``scripts/``,
+    ``shared/``).  ``("capability", "<name>")`` for any file under
+    ``capabilities/<name>/``.  The scope determines how cross-file
+    references emitted from the file resolve (file-relative under
+    standard markdown semantics — see ``references/path-resolution.md``).
+    """
+    parts = source_rel_path.replace("\\", "/").split("/")
+    if len(parts) >= 2 and parts[0] == DIR_CAPABILITIES:
+        return ("capability", parts[1])
+    return ("skill", "")
+
+
+def _scope_tag(scope_kind: str, scope_name: str) -> str:
+    """Format a scope tuple as the suffix shown in finding text."""
+    if scope_kind == "capability":
+        return f"capability:{scope_name}"
+    return scope_kind
+
+
 def _check_references(
-    body: str, source_label: str, skill_root: str,
+    body: str, source_abs_path: str, skill_root: str,
     allow_nested_refs: bool = False,
     include_router_table: bool = False,
+    source_label: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Check markdown references in *body* against the skill root.
+    """Check markdown references in *body* using file-relative resolution.
 
-    *source_label* identifies the file in error messages (e.g.
-    ``"SKILL.md"`` or ``"references/guide.md"``).  All intra-skill
-    references are resolved relative to *skill_root*.
+    Every reference resolves from the directory containing the source
+    file (standard markdown semantics) per the redefined path-resolution
+    rule documented in ``references/path-resolution.md``.  Two scopes
+    own their own subgraphs: the skill root and each capability root.
+    A capability reaching the shared skill root uses the explicit
+    ``../../<dir>/<file>`` form; the validator allows ``..`` segments
+    and only flags paths that escape the skill root entirely.
 
-    *include_router_table* (default False) augments the body
-    reference set with capability paths recovered from a router
-    table.  Only the SKILL.md entry legitimately carries one, so
-    callers pass ``True`` only for that file — the validator then
-    catches misspelled router-table cells (e.g.
-    ``capabilities/typo/capability.md``) that the body regexes
-    alone would miss because router-table cells are bare paths,
-    not markdown links.  Without this, a misspelled cell would
-    only be caught by the reachability walker, forcing the orphan
-    rule to surface walk warnings to remain trustworthy.
+    *source_abs_path* is the absolute path of the file being validated,
+    used as the resolution base.  *source_label* (defaults to the
+    relative path from *skill_root*) is the display label that appears
+    in finding text.
+
+    *include_router_table* (default False) augments the body reference
+    set with capability paths recovered from a router table.  Only the
+    SKILL.md entry legitimately carries one, so callers pass ``True``
+    only for that file — the validator then catches misspelled
+    router-table cells (e.g.  ``capabilities/typo/capability.md``)
+    that the body regexes alone would miss because router-table cells
+    are bare paths, not markdown links.  Without this, a misspelled
+    cell would only be caught by the reachability walker, forcing the
+    orphan rule to surface walk warnings to remain trustworthy.
     """
     errors: list[str] = []
     passes: list[str] = []
+
+    source_dir = os.path.dirname(os.path.abspath(source_abs_path))
+    source_rel = os.path.relpath(source_abs_path, skill_root).replace(
+        os.sep, "/",
+    )
+    if source_label is None:
+        source_label = source_rel
+    scope_kind, scope_name = _detect_scope(source_rel)
+    scope_tag = _scope_tag(scope_kind, scope_name)
 
     # Single source of truth for body reference extraction lives in
     # lib.reachability.extract_body_references — applies the same
@@ -194,8 +237,34 @@ def _check_references(
         normalized_ref = strip_fragment(ref)
         if not normalized_ref:
             continue  # Nothing to check (pure fragment reference)
+
+        # Reject absolute and drive-qualified paths up front.  The
+        # spec says references must be relative; the previous code
+        # path let absolute or drive-qualified targets fall through
+        # into the external-ref INFO branch, which both misclassified
+        # them ("acceptable for shared resources") and on Windows
+        # would treat ``C:foo.md`` as drive-rooted when ``os.path.join``
+        # composed it with the skill root.  ``is_drive_qualified``
+        # catches the Windows drive-relative form that
+        # ``os.path.isabs`` misses on every platform — using
+        # ``os.path.splitdrive`` would only catch it on Windows
+        # because ``os.path`` is host-dependent.
+        if os.path.isabs(normalized_ref) or is_drive_qualified(normalized_ref):
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "is absolute or drive-qualified — references must be "
+                "relative"
+            )
+            broken_found = True
+            continue
+
+        # File-relative resolution per the redefined rule
+        # (references/path-resolution.md).  Parent-traversal segments
+        # are legal — they are how a capability reaches the shared
+        # skill root (``../../references/foo.md``).
         ref_path = os.path.normpath(
-            os.path.join(skill_root, normalized_ref)
+            os.path.join(source_dir, normalized_ref)
         )
 
         # Skip refs that resolve to the same file (e.g., guide.md#one vs guide.md#two)
@@ -203,59 +272,127 @@ def _check_references(
             continue
         seen_paths.add(ref_path)
 
-        # Note: references escaping the skill directory are allowed by the
-        # spec and used by the foundry's shared-resource architecture
-        # (e.g., ../../shared/references/).  Report as INFO for awareness.
-        # All filesystem checks (existence, readability, nesting) are
-        # skipped for external refs to avoid acting as an existence oracle.
+        # Out-of-skill paths: a ``..`` chain that lands outside
+        # ``skill_root`` is by definition out of scope for intra-skill
+        # validation.  Surfaced as INFO and skipped — acceptable for
+        # genuine shared resources outside the skill, but the path
+        # should be deliberate.
         is_external = not is_within_directory(ref_path, skill_root)
 
-        # Reject parent traversals (../) for intra-skill references.
-        # Check raw path segments before normalization to catch patterns
-        # like references/../references/guide.md that normpath would collapse.
-        # The WARN is emitted but validation continues so broken-link and
-        # nesting checks still run for the resolved path.
-        if not is_external and ".." in normalized_ref.replace("\\", "/").split("/"):
-            errors.append(
-                f"{LEVEL_WARN}: [foundry] '{ref}' referenced in {source_label} "
-                "uses parent traversal — use skill-root-relative paths instead"
-            )
         if is_external:
             external_found = True
             errors.append(
-                f"{LEVEL_INFO}: [foundry] '{ref}' referenced in {source_label} "
-                "resolves outside skill directory — acceptable for shared "
-                "resources but verify the path is intentional"
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "resolves outside the skill directory — acceptable for "
+                "shared resources but verify the path is intentional"
             )
             # Skip all filesystem checks for external refs to avoid acting
             # as a filesystem existence oracle in CI environments.
             continue
+
+        # Cross-scope reference from a capability.  Two sub-cases:
+        #
+        # 1. capability → skill root (canonical external reference for
+        #    liftability) — surfaced as INFO so the future capability-lift
+        #    tool can find them.  Skill → capability references (the
+        #    router-table pattern) are NOT flagged here: they are
+        #    entry-point edges, not lift-relevant external resources.
+        # 2. capability → another capability — an *architecture* concern,
+        #    not a liftability concern.  The audit's capability-isolation
+        #    rule (RE_SIBLING_CAP_REF in audit_skill_system.py) FAILs the
+        #    full system audit for this; surface it here as a distinct
+        #    INFO so single-skill ``validate_skill`` runs do not silently
+        #    pass it as "external reference".  After lift, a cross-
+        #    capability target stops existing — it is not shared
+        #    skill-root content.
+        #
+        # Broken refs short-circuit before this branch — a missing target
+        # gets a single broken-link WARN above, not a double-report here.
+        ref_rel_to_root = os.path.relpath(ref_path, skill_root).replace(
+            os.sep, "/",
+        )
+        ref_scope_kind, ref_scope_name = _detect_scope(ref_rel_to_root)
+        capability_to_skill_root = (
+            scope_kind == "capability" and ref_scope_kind != "capability"
+        )
+        capability_to_other_capability = (
+            scope_kind == "capability"
+            and ref_scope_kind == "capability"
+            and ref_scope_name != scope_name
+        )
 
         internal_checked += 1
 
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} does not exist"
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "does not exist"
             )
             continue
 
-        # Handle directory references gracefully
+        # Handle directory references gracefully — and short-circuit
+        # before the cross-scope INFO emission below.  A capability
+        # link that resolves to a *directory* (or anything that is not
+        # a regular file) is not a lift-rewrite candidate — the lift
+        # tool needs file content to inline.  Without the short-
+        # circuit, a cap → directory link would produce both a WARN
+        # ("non-file path") and an INFO ("recorded for the capability-
+        # lift tool" / "crosses into capability"), which is misleading
+        # for tooling consumers triaging findings.
         if not os.path.isfile(ref_path):
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} resolves to a non-file path"
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "resolves to a non-file path"
             )
             continue
 
-        # Check file is readable
+        if capability_to_skill_root:
+            errors.append(
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) is "
+                "an external reference — recorded for the capability-lift "
+                "tool"
+            )
+        elif capability_to_other_capability:
+            errors.append(
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"crosses into capability '{ref_scope_name}' — sibling "
+                "capabilities must stay independent (audit_skill_system "
+                "FAILs this under the capability-isolation rule)"
+            )
+
+        # The readability check + nested-reference scan only apply to
+        # markdown targets.  ``path_resolution.reference_extensions``
+        # legitimately includes non-markdown extensions (``py``,
+        # ``sh``, ``yaml``, ``json``, ``toml``, ``txt``) so authors
+        # can link to scripts and configs from skill bodies, but
+        # ``extract_body_references`` is markdown-aware: feeding it a
+        # Python docstring or YAML comment that happens to contain a
+        # ``[link](path.md)`` snippet would surface a spurious
+        # nested-reference WARN.  Likewise, a UTF-8 decode error on a
+        # binary-leaning extension would emit a ``cannot be read``
+        # finding for a file we never needed to read.  Skip the read
+        # and the recursion when the target is not markdown — the
+        # existence + non-directory checks above already covered the
+        # broken-link surface.
+        if not ref_path.lower().endswith(EXT_MARKDOWN):
+            continue
+
+        # Check file is readable (markdown targets only)
         try:
             with open(ref_path, "r", encoding="utf-8") as f:
                 ref_content = f.read()
         except (OSError, UnicodeError) as exc:
             broken_found = True
             errors.append(
-                f"{LEVEL_WARN}: [spec] '{ref}' referenced in {source_label} "
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
                 f"cannot be read ({exc.__class__.__name__}: {exc})"
             )
             continue
@@ -323,13 +460,25 @@ def _check_references(
 
 
 def validate_body(
-    body: str, skill_md_path: str, skill_root: str,
+    body: str, entry_abs_path: str, skill_root: str,
     allow_nested_refs: bool = False,
 ) -> tuple[list[str], list[str]]:
-    """Validate skill or capability entry point body."""
+    """Validate skill or capability entry point body.
+
+    *entry_abs_path* is the absolute filesystem path to the entry file
+    being validated — ``SKILL.md`` for a registered skill, or
+    ``capability.md`` for a capability.  The previous parameter name
+    (``skill_md_path``) was misleading because this function is shared
+    between the two modes, and a future change might base resolution
+    on the assumption it is always the router skill entry.  The
+    file-relative resolution rule
+    (``references/path-resolution.md``) makes the source file's own
+    location the resolution base, so the parameter must name what
+    it actually points at.
+    """
     errors: list[str] = []
     passes: list[str] = []
-    entry_filename = os.path.basename(skill_md_path)
+    entry_filename = os.path.basename(entry_abs_path)
 
     line_count = count_body_lines(body)
     if line_count > MAX_BODY_LINES:
@@ -344,8 +493,16 @@ def validate_body(
     # are caught here — without this they would only be flagged by
     # the reachability walker, forcing the orphan rule to surface
     # walk warnings.
+    #
+    # ``source_label`` is left unset so ``_check_references`` derives
+    # the skill-root-relative form from ``source_abs_path`` — for the
+    # SKILL.md entry that's just ``SKILL.md``, but for a capability
+    # entry it expands to ``capabilities/<name>/capability.md``.  The
+    # full form is what ``--fix``'s coverage filter matches on
+    # (``file_rel``), so a basename-only label here would silently
+    # break the ``_is_covered_by_rewriter`` check.
     ref_errors, ref_passes = _check_references(
-        body, entry_filename, skill_root, allow_nested_refs,
+        body, entry_abs_path, skill_root, allow_nested_refs,
         include_router_table=(entry_filename == FILE_SKILL_MD),
     )
     errors.extend(ref_errors)
@@ -360,8 +517,13 @@ def validate_skill_references(
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
-    Walks *skill_path*, reads each ``.md`` file, and checks that all
-    intra-skill references resolve from *skill_root*.  The entry file
+    Walks *skill_path*, reads each ``.md`` file, and checks that every
+    intra-skill reference resolves under standard markdown semantics
+    — i.e. file-relative from the directory containing the source
+    file, per ``references/path-resolution.md``.  *skill_root* is
+    used only as the *boundary* for the in-scope check (paths that
+    escape it are surfaced as INFO and skipped); resolution itself
+    is anchored at each source file's own directory.  The entry file
     (*entry_file*) is skipped because it is already validated by
     :func:`validate_body`.
 
@@ -420,7 +582,8 @@ def validate_skill_references(
                 allow_nested_refs if is_capability_entry else True
             )
             file_errors, _file_passes = _check_references(
-                content, rel_label, skill_root, file_allow_nested,
+                content, filepath, skill_root, file_allow_nested,
+                source_label=rel_label,
             )
 
             files_checked += 1
@@ -800,6 +963,27 @@ def _build_parser() -> argparse.ArgumentParser:
             "stack already includes the underlying check."
         ),
     )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        dest="fix",
+        help=(
+            "Preview mechanical rewrites that bring legacy "
+            "skill-root-form references into canonical file-relative "
+            "form (per references/path-resolution.md).  Dry-run by "
+            "default — no files are modified.  Use --fix --apply to "
+            "write the changes."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        dest="apply",
+        help=(
+            "Apply the rewrites previewed by --fix.  No-op without "
+            "--fix.  Modifies source files in place."
+        ),
+    )
     return parser
 
 
@@ -824,6 +1008,10 @@ def main() -> None:
                 "tool": "validate_skill",
                 "success": False,
                 "error": message,
+                "path_resolution": {
+                    "rule_name": PATH_RESOLUTION_RULE_NAME,
+                    "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                },
             }))
             sys.exit(1)
         parser.print_usage(sys.stderr)
@@ -846,15 +1034,300 @@ def main() -> None:
 
     if not os.path.isdir(skill_path):
         if json_output:
+            # Include the ``path_resolution`` block in every JSON
+            # exit so consumers don't have to special-case the
+            # schema based on which exit point produced the
+            # payload.  Same rationale as the --fix --capability
+            # error path.
             print(to_json_output({
                 "tool": "validate_skill",
                 "path": os.path.abspath(skill_path),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
+                "path_resolution": {
+                    "rule_name": PATH_RESOLUTION_RULE_NAME,
+                    "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                },
             }))
         else:
             print(f"Error: '{skill_path}' is not a directory")
         sys.exit(1)
+
+    # --fix mode: surface mechanical rewrites alongside any
+    # path-resolution findings the regular validation pass would
+    # report (so a clean ``fixes: []`` is not mistaken for "skill
+    # conforms").  The rewriter is independent of the per-rule
+    # findings — it operates on the captured ref strings directly
+    # and only suggests replacements where the legacy and new forms
+    # agree on the target file.  Broken references that cannot be
+    # mechanically rewritten still appear here as
+    # ``unfixable_findings`` so the user has a complete picture of
+    # work remaining before the skill is conformant; per
+    # ``references/path-resolution.md`` the rewriter never invents
+    # a target.
+    if args.fix:
+        from lib.path_rewriter import (
+            apply_fixes,
+            find_ambiguous_legacy_refs,
+            find_fixable_references,
+        )
+
+        # In capability mode the supplied path is a capability directory
+        # — walking only that subtree would miss legacy refs in the
+        # parent SKILL.md and in sibling capabilities, and the
+        # ``file_rel`` labels the rewriter emits would be capability-
+        # relative instead of skill-root-relative (which the
+        # ``_is_covered_by_rewriter`` filter compares against).  Detect
+        # the enclosing skill root and rewrite the whole tree.
+        rewrite_root = os.path.abspath(skill_path)
+        if is_capability:
+            detected = find_skill_root(os.path.dirname(rewrite_root))
+            if detected is None:
+                msg = (
+                    f"--fix --capability needs an enclosing skill root, "
+                    f"but no SKILL.md was found above '{skill_path}'"
+                )
+                if json_output:
+                    # Include the ``path_resolution`` block in the
+                    # error payload too — consumers shouldn't have
+                    # to special-case the schema between success and
+                    # failure to find the canonical-rule pointer.
+                    print(to_json_output({
+                        "tool": "validate_skill", "mode": "fix",
+                        "success": False, "error": msg,
+                        "path_resolution": {
+                            "rule_name": PATH_RESOLUTION_RULE_NAME,
+                            "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                        },
+                    }))
+                else:
+                    print(f"Error: {msg}")
+                sys.exit(1)
+            rewrite_root = detected
+        rows = find_fixable_references(rewrite_root)
+        # Ambiguous-migration refs: legacy form and file-relative
+        # form both resolve to existing in-scope files but to
+        # *different* files.  The link's meaning silently changes
+        # during migration unless the author reviews it manually,
+        # so the rewriter never auto-fixes these — they appear as
+        # a separate finding bucket and gate exit code so CI cannot
+        # silently accept the retargeting.
+        ambiguous_rows = find_ambiguous_legacy_refs(rewrite_root)
+        # Validate the same tree the rewriter operates on.  In
+        # capability mode the rewriter walks the enclosing skill root,
+        # so the validator must too — otherwise unfixable findings or
+        # FAILs in SKILL.md or sibling capabilities would not show up
+        # in ``unfixable_findings``/``non_path_fails`` and the command
+        # could exit 0 after applying whole-tree rewrites while
+        # leaving the skill non-conformant.
+        validation_errors, _passes = validate_skill(
+            rewrite_root, False, allow_nested_refs,
+        )
+        # Mirror the prose-YAML check the non-fix branch runs below
+        # so ``--foundry-self --fix`` doesn't silently skip the
+        # YAML validation that ``--foundry-self`` alone would
+        # enforce.  ``--check-prose-yaml`` and ``--foundry-self``
+        # are validation gates that apply to the whole skill body,
+        # not the path-resolution surface — but exit through the
+        # ``--fix`` branch must include them in ``non_path_fails``
+        # so CI / scripts can rely on a single command for the
+        # combined gate.  Use the module-level import (imported at
+        # the top of this file) — re-importing inside this block
+        # would mark the symbol as local for the entire function
+        # and break the non-fix prose_yaml call site below.
+        if check_prose:
+            prose_fix_findings, _checked, _per_file = (
+                collect_prose_findings(rewrite_root)
+            )
+            for finding in prose_fix_findings:
+                validation_errors.append(
+                    format_finding_as_string(finding)
+                )
+        # Drop findings that the rewriter already handles — they are
+        # represented in ``rows`` and would otherwise double-count.
+        # The match uses the position-bounded ``referenced in <file>
+        # (scope:`` shape produced by ``_check_references``.  The
+        # bounded form is defensive: in practice the rewriter and
+        # validator behave symmetrically across source files for the
+        # same ref (the legacy resolution is anchored at
+        # ``skill_root``), so constructing a real-world false-cover
+        # case is hard.  Using the marker rather than an unbounded
+        # ``row["file_rel"] in err`` future-proofs the filter against
+        # changes elsewhere that might introduce asymmetry.  The
+        # ``FixModeTests`` class in ``tests/test_validate_skill.py``
+        # carries the contract test that pins this marker against the
+        # actual ``_check_references`` output shape.
+        # ``_check_references`` extracts refs through
+        # ``extract_body_references``, which routes them through
+        # ``strip_fragment`` before resolving — so finding text
+        # contains the *stripped* form (``'guide.md'``), not the
+        # captured form (``'guide.md#section'``).  The rewriter's
+        # ``row['original']`` is the captured form.  Compare against
+        # the strip_fragment-applied form so an anchored or titled
+        # legacy link (which the rewriter handles) does not also
+        # appear under ``unfixable_findings``.
+        def _is_covered_by_rewriter(err: str) -> bool:
+            for row in rows:
+                marker = f" referenced in {row['file_rel']} (scope:"
+                if marker not in err:
+                    continue
+                stripped = strip_fragment(row["original"])
+                if (
+                    f"'{row['original']}'" in err
+                    or f"'{stripped}'" in err
+                ):
+                    return True
+            return False
+
+        path_resolution_findings = [
+            err for err in validation_errors
+            if f"[{PATH_RESOLUTION_RULE_NAME}]" in err
+            and (err.startswith(LEVEL_FAIL) or err.startswith(LEVEL_WARN))
+            and not _is_covered_by_rewriter(err)
+        ]
+        # Compute the broader-validity gate up front so JSON consumers
+        # see the same gate the human output reflects.  Without it
+        # ``--fix`` could exit 0 on a non-skill directory with no
+        # path-resolution findings — silently passing CI on something
+        # that ``validate_skill`` (without ``--fix``) would have failed.
+        non_path_fails = [
+            err for err in validation_errors
+            if err.startswith(LEVEL_FAIL)
+            and f"[{PATH_RESOLUTION_RULE_NAME}]" not in err
+        ]
+        # Apply rewrites *before* emitting any output so the result —
+        # success or failure — can be represented in both human and
+        # JSON streams.  Emitting JSON first and then writing files
+        # would mean a write error after ``applied: true`` left
+        # consumers with a success-looking payload followed by a
+        # traceback on stdout, breaking the ``--json`` contract.
+        modified = 0
+        apply_error: str | None = None
+        if args.apply and rows:
+            try:
+                modified = apply_fixes(rows)
+            except (OSError, UnicodeError) as exc:
+                apply_error = f"{exc.__class__.__name__}: {exc}"
+
+        # Single source of truth for the fix-mode pass/fail predicate.
+        # The exit-code branch and the JSON ``success`` field both
+        # consume this so machine consumers can read the outcome from
+        # the captured payload without inspecting the process status.
+        fix_success = not (
+            path_resolution_findings
+            or non_path_fails
+            or ambiguous_rows
+            or apply_error is not None
+        )
+
+        if json_output:
+            payload = {
+                "tool": "validate_skill",
+                "mode": "fix",
+                "success": fix_success,
+                # ``applied`` reflects an actual successful write —
+                # true only when ``--apply`` ran, the rewriter found
+                # something to apply (``rows`` non-empty), and the
+                # write completed without raising.  An I/O error or
+                # an empty ``rows`` list keeps it false so consumers
+                # do not interpret ``applied: true`` as "files were
+                # touched" when the run was actually a no-op or a
+                # partial / failed rewrite.  ``apply_requested``
+                # carries the user's intent (whether ``--apply`` was
+                # passed) for consumers that need to disambiguate
+                # "no fixes needed" from "did not request apply".
+                "apply_requested": bool(args.apply),
+                "applied": bool(args.apply) and bool(rows) and apply_error is None,
+                "modified": modified,
+                "fixes": [
+                    {
+                        "file": r["file_rel"],
+                        "line": r["line"],
+                        "original": r["original"],
+                        "replacement": r["replacement"],
+                    }
+                    for r in rows
+                ],
+                "unfixable_findings": path_resolution_findings,
+                "ambiguous_findings": [
+                    {
+                        "file": a["file_rel"],
+                        "line": a["line"],
+                        "original": a["original"],
+                        "legacy_target": a["legacy_target"],
+                        "file_rel_target": a["file_rel_target"],
+                    }
+                    for a in ambiguous_rows
+                ],
+                "non_path_fails": non_path_fails,
+                "path_resolution": {
+                    "rule_name": PATH_RESOLUTION_RULE_NAME,
+                    "documentation_path": PATH_RESOLUTION_DOC_PATH,
+                },
+            }
+            if apply_error is not None:
+                payload["error"] = apply_error
+            print(to_json_output(payload))
+        else:
+            if (
+                not rows
+                and not path_resolution_findings
+                and not non_path_fails
+                and not ambiguous_rows
+            ):
+                print("No mechanical rewrites needed — skill conforms.")
+            elif rows:
+                action = "Applied" if args.apply else "Would apply"
+                print(f"{action} {len(rows)} rewrites:")
+                for r in rows:
+                    print(
+                        f"  {r['file_rel']}:{r['line']} "
+                        f"'{r['original']}' → '{r['replacement']}'"
+                    )
+            if path_resolution_findings:
+                print(
+                    f"\n{len(path_resolution_findings)} path-resolution "
+                    f"finding(s) the rewriter cannot resolve mechanically "
+                    f"(see {PATH_RESOLUTION_DOC_PATH}):"
+                )
+                for finding in path_resolution_findings:
+                    print_error_line(finding)
+            if ambiguous_rows:
+                print(
+                    f"\n{len(ambiguous_rows)} ambiguous-migration "
+                    f"finding(s) — both the legacy and file-relative "
+                    f"resolutions land on existing in-scope files; "
+                    f"the link silently changes target unless reviewed "
+                    f"manually:"
+                )
+                for a in ambiguous_rows:
+                    print(
+                        f"  {a['file_rel']}:{a['line']} "
+                        f"'{a['original']}' "
+                        f"legacy→{a['legacy_target']}  "
+                        f"file-rel→{a['file_rel_target']}"
+                    )
+            if non_path_fails:
+                print(
+                    f"\n{len(non_path_fails)} other FAIL finding(s) — "
+                    f"run validate_skill without --fix for the full "
+                    f"validation report:"
+                )
+                for finding in non_path_fails:
+                    print_error_line(finding)
+            if args.apply and rows:
+                if apply_error is None:
+                    print(f"Modified {modified} file(s).")
+                else:
+                    print(f"Error during apply: {apply_error}")
+        # Exit non-zero when any unfixable path-resolution issue
+        # remains, when an ambiguous-migration finding needs manual
+        # review, when the skill has any other FAIL finding, or when
+        # an apply step failed mid-write.  The ambiguous bucket
+        # gates exit because a silent retargeting is exactly the
+        # class of migration hazard the rule's tooling exists to
+        # surface.
+        sys.exit(0 if fix_success else 1)
 
     errors, passes = validate_skill(skill_path, is_capability, allow_nested_refs)
 
@@ -909,6 +1382,10 @@ def main() -> None:
             },
             "errors": categorize_errors_for_json(errors),
             "yaml_conformance": yaml_conformance_slot,
+            "path_resolution": {
+                "rule_name": PATH_RESOLUTION_RULE_NAME,
+                "documentation_path": PATH_RESOLUTION_DOC_PATH,
+            },
         }
         if verbose:
             result["passes"] = passes

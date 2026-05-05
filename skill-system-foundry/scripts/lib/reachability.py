@@ -29,11 +29,17 @@ from .constants import (
     FILE_SKILL_MD,
     LEVEL_INFO,
     LEVEL_WARN,
+    PATH_RESOLUTION_RULE_NAME,
     RE_BACKTICK_REF,
     RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import strip_frontmatter_for_scan
-from .references import is_within_directory, strip_fragment
+from .references import (
+    is_drive_qualified,
+    is_glob_path,
+    is_within_directory,
+    strip_fragment,
+)
 from .router_table import extract_capability_paths
 
 
@@ -71,6 +77,7 @@ def extract_body_references(
     *,
     include_router_table: bool = False,
     filter_capability_entries: bool = True,
+    dedupe: bool = True,
 ) -> list[str]:
     """Return cleaned reference paths from a markdown body.
 
@@ -86,8 +93,8 @@ def extract_body_references(
     Anchor fragments, queries, and title suffixes are stripped via
     :func:`strip_fragment`.  Template placeholders (containing ``<``
     or ``>``) are dropped.  Order is preserved as the body presents
-    them, with duplicates removed on first sight.  Router-table
-    capability paths follow whatever links were found in prose.
+    them.  Router-table capability paths follow whatever links were
+    found in prose.
 
     *filter_capability_entries* (default True) drops references that
     point at a capability entry point (``capabilities/<name>/capability.md``)
@@ -97,6 +104,15 @@ def extract_body_references(
     consumers (e.g. ``validate_skill._check_references``) need to
     *validate* references to capability entry points, so they pass
     ``filter_capability_entries=False`` to keep those paths in scope.
+
+    *dedupe* (default True) drops duplicate cleaned paths after first
+    sight, which is what graph walkers and validators want — visiting
+    the same target twice gains them nothing.  Conformance metrics
+    that count link occurrences (``total_links``,
+    ``broken_under_standard_semantics``) need every literal link
+    instance, including separate anchored forms that normalize to the
+    same path (``guide.md#a`` vs ``guide.md#b``); those callers pass
+    ``dedupe=False``.
     """
     stripped = _RE_FENCED_BLOCK.sub("", content)
     raw_refs: list[str] = []
@@ -112,9 +128,10 @@ def extract_body_references(
         # audit_skill_system).  Either way, do not treat it as a live
         # load edge.  Nested capability resources like
         # ``capabilities/<name>/references/foo.md`` remain legitimate
-        # — those are skill-root-relative links from within a
-        # capability into its own local references and must stay in
-        # the load graph.
+        # — those are file-relative links from within a capability
+        # into its own local references (resolved from the source
+        # file's directory under the path-resolution rule), and they
+        # must stay in the load graph.
         #
         # Apply ``strip_fragment`` before the shape check so anchored
         # links (``capabilities/foo/capability.md#section``) and
@@ -129,14 +146,58 @@ def extract_body_references(
     seen: set[str] = set()
     cleaned: list[str] = []
     for ref in raw_refs:
+        # Drop template placeholders (``<name>``, ``<...>``).
         if "<" in ref or ">" in ref:
+            continue
+        # Drop glob-style mentions (``capabilities/**/*.md``,
+        # ``references/[abc].md``, ``references/?ref.md``).
+        # ``is_glob_path`` checks metachars in the path portion only,
+        # so a legitimate query-suffixed link like ``foo.md?v=2``
+        # (where ``?`` is a query separator after the file extension,
+        # not a glob inside the path) still reaches the resolver.
+        # Glob discrimination happens *before* ``strip_fragment``
+        # because strip_fragment treats ``?`` as a query separator
+        # and would truncate a path-glob like ``references/?ref.md``
+        # to ``references/`` — losing the glob signal entirely.
+        if is_glob_path(ref):
             continue
         clean = strip_fragment(ref)
         if not clean:
             continue
-        if clean in seen:
+        # Drop role references — those use system-root-relative
+        # paths (``roles/<group>/<name>.md``) per the path-resolution
+        # rule's role exception, not file-relative.  An orchestration
+        # SKILL.md that links a role would otherwise have the link
+        # captured here, resolved file-relative under skill_root, and
+        # surfaced as a broken in-skill path.  Role references are
+        # validated separately by the audit's dependency-direction
+        # rule (``check_upward_references`` with
+        # ``--allow-orchestration``); they are out of scope for
+        # the path-resolution surface.  Strip leading ``./`` or
+        # ``../`` segments before checking the prefix so explicit-
+        # relative spellings like ``./roles/x.md`` are also caught.
+        #
+        # Gate the filter on ``include_router_table`` so the
+        # exception only applies when scanning the SKILL.md entry
+        # — that is the file the role-link convention permits.
+        # Capability bodies and reference files are NOT supposed to
+        # link roles directly; if they do, the link is an
+        # out-of-scope reference that the conformance and validator
+        # surfaces should report.  Without this gate any file under
+        # the skill could hide an invalid out-of-skill link by
+        # spelling it ``../../roles/foo.md``.
+        prefix_stripped = clean
+        while (
+            prefix_stripped.startswith("./")
+            or prefix_stripped.startswith("../")
+        ):
+            prefix_stripped = prefix_stripped.split("/", 1)[1]
+        if include_router_table and prefix_stripped.startswith("roles/"):
             continue
-        seen.add(clean)
+        if dedupe:
+            if clean in seen:
+                continue
+            seen.add(clean)
         cleaned.append(clean)
     return cleaned
 
@@ -186,47 +247,33 @@ def walk_reachable(
       during the walk.  The walk continues past every recoverable
       condition so the caller always receives a complete visited set.
 
-    Refs are resolved against ``skill_root`` only.  Markdown links
-    in skill files follow the foundry's documented convention
-    (see the *Path Convention* section of
-    ``references/directory-structure.md``): paths are written
-    relative to the directory that contains ``SKILL.md`` regardless
-    of which file contains the link.  The walker therefore does not
-    reinterpret refs relative to the source file's directory — a
-    capability body that wants to link its own local references must
-    use the explicit ``capabilities/<name>/references/foo.md`` form,
-    matching how :func:`validate_skill._check_references` validates
-    the same body.  Keeping the walker's resolution aligned with the
-    validator's keeps audit and validation findings consistent.
+    Refs are resolved **file-relative** — every link is interpreted
+    from the directory containing the file the link lives in, using
+    standard markdown semantics.  See ``references/path-resolution.md``
+    for the canonical rule, the per-scope behavior (skill root vs
+    capability root), and the external-reference syntax
+    (``../../<dir>/<file>``).
 
-    This intentionally diverges from
-    :func:`lib.references.resolve_reference`, which tries source-dir
-    first and then falls back to ``system_root``.  That resolver is
-    used only by the bundle / cross-skill graph (where the same path
-    string can target different files depending on the source skill),
-    so source-dir-first is the right default *there*.  Inside a
-    single skill the convention is fixed by
-    ``directory-structure.md``, so adopting source-dir-first here
-    would (a) silently mask the broken-link findings
-    :func:`validate_skill._check_references` already emits against
-    the same body, and (b) let an author write
-    ``references/foo.md`` from a capability and have the walker
-    silently route it to ``capabilities/<name>/references/foo.md`` —
-    a divergence that would compound across files and gradually
-    erode the convention.
+    Parent-traversal segments (``..``) are legal — they are how a
+    capability body reaches into the shared skill root.  The walker
+    follows the resolved path unchanged; the ``is_within_directory``
+    check below is the only boundary that matters.
 
-    Refs that resolve outside *skill_root* are recorded as ``INFO`` and
-    skipped — they are by definition out of scope for an intra-skill
-    orphan check.  Refs that do not resolve to a regular file are
-    recorded as ``WARN``.  Absolute paths and parent-traversal refs
-    are recorded as ``WARN`` (tagged ``[foundry reachability]``) and
-    skipped — ``audit_skill_system`` does not otherwise validate
-    intra-skill reference syntax, so silent skip would let those
-    invalid forms go entirely unreported when the audit runs without
-    ``validate_skill``.  Callers that already run ``validate_skill``
-    on the same tree (e.g. ``validate_skill`` itself, which invokes
-    ``find_orphan_references`` after its own reference check) suppress
-    these via ``surface_walk_warnings=False`` to avoid double counting.
+    Refs that resolve outside *skill_root* are recorded as ``INFO``
+    and skipped — they are by definition out of scope for an
+    intra-skill orphan check.  Refs that do not resolve to a regular
+    file are recorded as ``WARN``.  Absolute paths are recorded as
+    ``WARN`` (tagged ``[path-resolution]``) and skipped —
+    ``audit_skill_system`` does not otherwise validate intra-skill
+    reference syntax, so silent skip would let absolute forms go
+    entirely unreported when the audit runs without ``validate_skill``.
+    File-read failures during the walk are tagged
+    ``[foundry reachability]`` (an operational concern, not a
+    path-resolution rule violation).  Callers that already run
+    ``validate_skill`` on the same tree (e.g. ``validate_skill``
+    itself, which invokes ``find_orphan_references`` after its own
+    reference check) suppress these via
+    ``surface_walk_warnings=False`` to avoid double counting.
     """
     skill_root = os.path.abspath(skill_root)
     visited: set[str] = set()
@@ -263,51 +310,58 @@ def walk_reachable(
         body_only = strip_frontmatter_for_scan(content)
         is_entry = filepath == os.path.abspath(skill_md)
         rel = _to_rel(filepath)
+        source_dir = os.path.dirname(filepath)
 
         for ref in extract_body_references(
             body_only, include_router_table=is_entry,
         ):
-            if os.path.isabs(ref):
+            # Reject absolute and drive-qualified paths.
+            # ``is_drive_qualified`` (lib/references) provides
+            # platform-independent detection of the Windows
+            # drive-relative form (``C:foo.md``) that
+            # ``os.path.isabs`` misses on every platform; using
+            # ``os.path.splitdrive`` would only catch it on Windows
+            # because ``os.path`` is host-dependent.  Without the
+            # check ``os.path.join`` would treat the path as drive-
+            # rooted on Windows and let the reference escape the
+            # skill walk.
+            if os.path.isabs(ref) or is_drive_qualified(ref):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference "
-                    f"'{ref}' in '{rel}' is absolute — reachability "
-                    f"walk skipped it"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' is absolute or "
+                    f"drive-qualified — reachability walk skipped it"
                 )
                 continue
             ref_norm = ref.replace("\\", "/")
-            if ".." in ref_norm.split("/"):
-                warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference "
-                    f"'{ref}' in '{rel}' uses parent traversal "
-                    f"('..') — reachability walk skipped it"
-                )
-                continue
 
-            # Skill-root-only resolution.  See the docstring above
-            # and ``references/directory-structure.md`` for the
-            # convention rationale.
-            ref_abs = os.path.normpath(os.path.join(skill_root, ref_norm))
+            # File-relative resolution per ``path-resolution.md``.
+            # Parent-traversal segments are legal — they are the
+            # canonical way for a capability body to reach into the
+            # shared skill root (``../../references/foo.md``).  The
+            # ``is_within_directory`` check below catches paths that
+            # escape the skill root entirely.
+            ref_abs = os.path.normpath(os.path.join(source_dir, ref_norm))
 
             if not is_within_directory(ref_abs, skill_root):
                 warnings.append(
-                    f"{LEVEL_INFO}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' resolves outside the skill directory — "
-                    f"excluded from reachability"
+                    f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' resolves outside the "
+                    f"skill directory — excluded from reachability"
                 )
                 continue
 
             if not os.path.exists(ref_abs):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' does not exist — reachability walk "
-                    f"skipped it"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' does not exist — "
+                    f"reachability walk skipped it"
                 )
                 continue
             if not os.path.isfile(ref_abs):
                 warnings.append(
-                    f"{LEVEL_WARN}: [foundry reachability] reference '{ref}' "
-                    f"in '{rel}' is not a regular file — reachability walk "
-                    f"skipped it"
+                    f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"reference '{ref}' in '{rel}' is not a regular "
+                    f"file — reachability walk skipped it"
                 )
                 continue
 

@@ -41,11 +41,11 @@ Each rule in this document is tagged with its origin:
 
 Each tool has restrictions and extensions beyond the core spec. See the linked references for full details.
 
-**[platform: Anthropic]** `name` cannot contain "anthropic" or "claude". No XML tags in `name` or `description`. Extends frontmatter with subagent execution, dynamic context, and string substitutions. See [claude-code-extensions.md](references/claude-code-extensions.md).
+**[platform: Anthropic]** `name` cannot contain "anthropic" or "claude". No XML tags in `name` or `description`. Extends frontmatter with subagent execution, dynamic context, and string substitutions. See [claude-code-extensions.md](claude-code-extensions.md).
 
-**[platform: OpenAI]** Only `name` and `description` read for triggering. Supports optional `agents/openai.yaml` for UI metadata, discovery hierarchy, and tool dependencies. See [codex-extensions.md](references/codex-extensions.md).
+**[platform: OpenAI]** Only `name` and `description` read for triggering. Supports optional `agents/openai.yaml` for UI metadata, discovery hierarchy, and tool dependencies. See [codex-extensions.md](codex-extensions.md).
 
-**[platform: Cursor]** Cross-vendor discovery, rules migration, and AGENTS.md integration. See [cursor-extensions.md](references/cursor-extensions.md).
+**[platform: Cursor]** Cross-vendor discovery, rules migration, and AGENTS.md integration. See [cursor-extensions.md](cursor-extensions.md).
 
 ### Name Validation
 
@@ -90,7 +90,9 @@ skill-name/
 See [the reference guide](references/REFERENCE.md) for details.
 ```
 
-**[foundry]** The foundry's shared-resource architecture uses paths that resolve outside the skill directory (e.g., `../../shared/references/file.md`). The validator reports these as INFO for awareness but skips all filesystem checks (existence, readability, nesting) for external paths to avoid acting as an existence oracle.
+**[foundry]** The foundry refines the spec's relative-path requirement into a **file-relative** rule (standard markdown semantics): every link resolves from the directory containing the file the link lives in, with no privileged base. Two scopes own their own subgraph — the skill root and each capability root. A capability reaches the shared skill root via the explicit `../../<dir>/<file>` form. This refinement diverges from the spec text only in framing: the spec's worked example is a `SKILL.md` link (where file-relative and skill-root-relative resolution coincide), and the spec is silent on capabilities (a foundry construct), so the foundry defines their resolution. The full rule, the liftability invariant, and the migration cheat sheet live in [path-resolution.md](path-resolution.md).
+
+**[foundry]** Paths that escape the skill root entirely (e.g., `../../shared/references/file.md` to a true cross-skill resource) are surfaced as INFO and skipped for filesystem checks to avoid acting as an existence oracle.
 
 ### Best Practices [foundry]
 
@@ -105,7 +107,7 @@ skills-ref validate ./skill-name
 
 Available from: https://github.com/agentskills/agentskills/tree/main/skills-ref
 
-> **Note:** `skills-ref` is the official spec validator from the Agent Skills project. Skill System Foundry's [scripts/validate_skill.py](scripts/validate_skill.py) covers the same spec checks plus foundry conventions (third-person voice, semver recommendations, directory conventions, etc.) and platform restrictions (reserved words, XML tags). Use `validate_skill.py` for day-to-day skill system validation; use `skills-ref` for standalone spec conformance.
+> **Note:** `skills-ref` is the official spec validator from the Agent Skills project. Skill System Foundry's [scripts/validate_skill.py](../scripts/validate_skill.py) covers the same spec checks plus foundry conventions (third-person voice, semver recommendations, directory conventions, etc.) and platform restrictions (reserved words, XML tags). Use `validate_skill.py` for day-to-day skill system validation; use `skills-ref` for standalone spec conformance.
 
 ## Foundry Conventions
 

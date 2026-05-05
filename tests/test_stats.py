@@ -228,6 +228,42 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             extract_body_references(body, filter_capability_entries=False),
         )
 
+    def test_glob_inline_code_is_filtered(self) -> None:
+        """Glob-style inline-code mentions like
+        ``capabilities/**/*.md`` are documentation patterns, not
+        rewriteable cross-file references.  The body regex's backtick
+        alternative captures them (the ``[^`]+`` body matches glob
+        metacharacters), but ``extract_body_references`` must drop
+        them post-capture so validation, stats, reachability, and
+        the conformance report do not flag the documentation as a
+        broken-link finding."""
+        body = (
+            "Validate `capabilities/**/*.md` and "
+            "`references/?ref.md` and `assets/{a,b}.md` patterns."
+        )
+        refs = extract_body_references(body)
+        # All three captures are pure glob patterns — none of them
+        # should reach the resolver.  Asserting an empty list pins
+        # the contract; checking only "no glob metachar in returned
+        # refs" would silently pass if a future regression in
+        # ``strip_fragment`` truncated the captures to ``capabilities``
+        # / ``references`` / ``assets`` (no metachar but also no real
+        # target).
+        self.assertEqual(refs, [])
+
+    def test_query_suffixed_link_is_kept(self) -> None:
+        """A markdown link with a query suffix
+        (``[g](references/guide.md?v=2)``) carries ``?`` purely as
+        the standard markdown query separator after the file
+        extension — not as a glob metacharacter.  The glob filter
+        must therefore run on the path portion only; otherwise
+        ``?`` in the query rejects the entire link and the resolver
+        never sees it.  Confirm the link survives the filter and
+        appears in extracted refs in its strip_fragment'd form."""
+        body = "[g](references/guide.md?v=2)"
+        refs = extract_body_references(body, filter_capability_entries=False)
+        self.assertIn("references/guide.md", refs)
+
     def test_capability_link_filtered_with_anchor_fragment(self) -> None:
         """Anchored capability links (``capabilities/foo/capability.md#section``)
         in non-entry bodies are still recognized as entry-point edges
@@ -307,12 +343,41 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             ["references/a.md", "references/b.md"],
         )
 
-    def test_external_path_not_matched_by_patterns(self) -> None:
-        """README.md and similar top-level files are not in scope."""
+    def test_bare_filename_extraction_under_redefined_rule(self) -> None:
+        """Bare-filename links are extracted under the redefined rule.
+
+        The new path-resolution rule (see references/path-resolution.md)
+        uses standard file-relative markdown semantics, so a link like
+        ``[r](README.md)`` is an extraction candidate.  Whether the path
+        resolves to an existing file is a downstream decision made by
+        the resolver in ``lib/reachability.py`` and
+        ``validate_skill._check_references`` — extraction itself is
+        deliberately broad so the resolver sees every candidate.
+        """
         body = "[r](README.md) [g](references/guide.md)"
         refs = extract_body_references(body)
-        self.assertNotIn("README.md", refs)
+        self.assertIn("README.md", refs)
         self.assertIn("references/guide.md", refs)
+
+    def test_hyphenated_bare_filename_extracted(self) -> None:
+        """Bare-sibling links with hyphenated filenames are extracted.
+
+        Pins the regex against the meta-skill's actual filename shapes
+        (``path-resolution.md``, ``anti-patterns.md``,
+        ``claude-code-extensions.md``).  A regression in the leading
+        character class would silently drop these, leaving the resolver
+        blind to references between sibling reference docs — which is
+        the canonical pattern under the new file-relative rule.
+        """
+        body = (
+            "[p](path-resolution.md) "
+            "[a](anti-patterns.md) "
+            "[c](claude-code-extensions.md)"
+        )
+        refs = extract_body_references(body)
+        self.assertIn("path-resolution.md", refs)
+        self.assertIn("anti-patterns.md", refs)
+        self.assertIn("claude-code-extensions.md", refs)
 
     def test_router_table_capability_paths_extracted_when_entry(self) -> None:
         """Bare capability paths in a router-table cell are picked up
@@ -476,7 +541,13 @@ class ComputeStatsGraphTests(unittest.TestCase):
         self.assertEqual(result["load_bytes"], expected_load)
 
     def test_transitive_reference_followed(self) -> None:
-        """Reference files that link to other reference files are followed."""
+        """Reference files that link to other reference files are followed.
+
+        Under the file-relative resolution rule
+        (``references/path-resolution.md``), a sibling link from
+        ``references/a.md`` to ``b.md`` (no ``references/`` prefix)
+        resolves to ``references/b.md`` and is walked.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(
                 tmpdir,
@@ -484,7 +555,7 @@ class ComputeStatsGraphTests(unittest.TestCase):
             )
             write_text(
                 os.path.join(tmpdir, "references", "a.md"),
-                "# A\n\nSee [b](references/b.md).\n",
+                "# A\n\nSee [b](b.md).\n",
             )
             write_text(
                 os.path.join(tmpdir, "references", "b.md"),
@@ -527,7 +598,11 @@ class ComputeStatsGraphTests(unittest.TestCase):
         self.assertEqual(result["load_bytes"], skill_bytes)
 
     def test_multiple_parents_aggregated_and_sorted(self) -> None:
-        """A file referenced from two parents lists both, sorted."""
+        """A file referenced from two parents lists both, sorted.
+
+        Capability bodies reach the shared skill root via the canonical
+        ``../../`` external-reference form (``references/path-resolution.md``).
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(
                 tmpdir,
@@ -537,7 +612,7 @@ class ComputeStatsGraphTests(unittest.TestCase):
                     "and [b](capabilities/b/capability.md).\n"
                 ),
             )
-            shared = "shared body\nlink to [s](references/shared.md)\n"
+            shared = "shared body\nlink to [s](../../references/shared.md)\n"
             write_text(
                 os.path.join(tmpdir, "capabilities", "a", "capability.md"),
                 shared,
@@ -564,7 +639,11 @@ class ComputeStatsGraphTests(unittest.TestCase):
         )
 
     def test_cycle_short_circuits_without_infinite_recursion(self) -> None:
-        """A back-edge to an already-visited file just records the parent."""
+        """A back-edge to an already-visited file just records the parent.
+
+        File-relative siblings: from ``references/a.md`` link to
+        ``b.md``; from ``references/b.md`` link back to ``a.md``.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(
                 tmpdir,
@@ -572,11 +651,11 @@ class ComputeStatsGraphTests(unittest.TestCase):
             )
             write_text(
                 os.path.join(tmpdir, "references", "a.md"),
-                "# A\n\nSee [b](references/b.md).\n",
+                "# A\n\nSee [b](b.md).\n",
             )
             write_text(
                 os.path.join(tmpdir, "references", "b.md"),
-                "# B\n\nSee [a](references/a.md).\n",
+                "# B\n\nSee [a](a.md).\n",
             )
             result = compute_stats(tmpdir)
         a_entry = next(
@@ -918,21 +997,128 @@ class ComputeStatsGraphTests(unittest.TestCase):
             f"expected external-ref INFO finding, got: {infos}",
         )
 
-    def test_parent_traversal_skipped_with_warn(self) -> None:
-        """A `../` in a body reference is rejected as a WARN."""
+    def test_capability_external_reference_followed(self) -> None:
+        """A capability reaching the shared skill root via the canonical
+        ``../../<dir>/<file>`` external-reference form is followed and
+        contributes to ``load_bytes`` exactly once.
+
+        Pins the foundry's primary cross-scope load pattern under the
+        file-relative resolution rule (``references/path-resolution.md``).
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Build the body with a parent-traversal capabilities link
-            # so the body regex still matches it.
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "See [demo](capabilities/demo/capability.md).\n"
+                ),
+            )
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "demo", "capability.md",
+                ),
+                "# Demo\n\n"
+                "See [shared](../../references/shared.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "shared.md"),
+                "# Shared\n",
+            )
+            result = compute_stats(tmpdir)
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertIn("references/shared.md", paths)
+        shared = next(
+            entry for entry in result["files"]
+            if entry["path"] == "references/shared.md"
+        )
+        self.assertEqual(
+            shared["reachable_from"],
+            ["capabilities/demo/capability.md"],
+        )
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warns, [])
+
+    def test_capability_local_reference_followed_via_file_relative(self) -> None:
+        """A capability linking its own local reference uses the bare
+        ``references/<file>.md`` form, which resolves under the
+        capability root (not the skill root) per the file-relative
+        rule (``references/path-resolution.md``)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body=(
+                    "# Skill\n\n"
+                    "See [demo](capabilities/demo/capability.md).\n"
+                ),
+            )
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "demo", "capability.md",
+                ),
+                "# Demo\n\nSee [steps](references/steps.md).\n",
+            )
+            write_text(
+                os.path.join(
+                    tmpdir, "capabilities", "demo", "references", "steps.md",
+                ),
+                "# Steps\n",
+            )
+            result = compute_stats(tmpdir)
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertIn(
+            "capabilities/demo/references/steps.md", paths,
+        )
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warns, [])
+
+    def test_sibling_reference_under_shared_directory_followed(self) -> None:
+        """A reference file linking a sibling under the shared
+        ``references/`` directory uses the bare-filename form (no
+        ``references/`` prefix) and the walker follows it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(
+                tmpdir,
+                body="# Skill\n\nSee [a](references/a.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "a.md"),
+                "# A\n\nSee [sibling](sibling.md).\n",
+            )
+            write_text(
+                os.path.join(tmpdir, "references", "sibling.md"),
+                "# Sibling\n",
+            )
+            result = compute_stats(tmpdir)
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertIn("references/sibling.md", paths)
+        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        self.assertEqual(warns, [])
+
+    def test_parent_traversal_escaping_skill_root_is_external(self) -> None:
+        """A ``../`` chain that escapes the skill root is recorded as an
+        external-reference INFO and excluded from ``load_bytes``.
+
+        Under the file-relative resolution rule
+        (``references/path-resolution.md``), parent-traversal segments
+        are legal — they are how a capability reaches the shared skill
+        root.  Stats only flags the case where the chain leaves the
+        skill directory entirely, matching ``walk_reachable``'s scope
+        semantics.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
             write_text(
                 os.path.join(tmpdir, "SKILL.md"),
                 "---\nname: x\ndescription: triggers when invoked\n---\n"
-                "# Skill\n\n[bad](capabilities/../escape.md)\n",
+                "# Skill\n\n[bad](capabilities/../../escape.md)\n",
             )
             result = compute_stats(tmpdir)
-        warns = [e for e in result["errors"] if e.startswith(LEVEL_WARN)]
+        infos = [e for e in result["errors"] if e.startswith(LEVEL_INFO)]
         self.assertTrue(
-            any("parent traversal" in w for w in warns),
-            f"expected parent-traversal WARN, got: {warns}",
+            any(
+                "resolves outside the skill directory" in i
+                for i in infos
+            ),
+            f"expected external-reference INFO, got: {infos}",
         )
 
 

@@ -120,6 +120,12 @@ class NestedCapabilityReferencesTests(unittest.TestCase):
             )
 
     def test_referenced_capability_local_reference_is_silent(self) -> None:
+        # Under the redefined path-resolution rule
+        # (references/path-resolution.md), capability bodies resolve
+        # links file-relative.  A capability that wants to link its
+        # own local reference uses ``references/<file>.md`` and the
+        # walker resolves it to
+        # ``capabilities/<name>/references/<file>.md``.
         with tempfile.TemporaryDirectory() as tmp:
             skill = os.path.join(tmp, "skill")
             _build_skill(skill)
@@ -128,7 +134,7 @@ class NestedCapabilityReferencesTests(unittest.TestCase):
                 "deploy",
                 body=(
                     "# Deploy\n\n"
-                    "See [setup](capabilities/deploy/references/setup.md).\n"
+                    "See [setup](references/setup.md).\n"
                 ),
             )
             write_text(
@@ -140,19 +146,18 @@ class NestedCapabilityReferencesTests(unittest.TestCase):
             self.assertEqual(find_orphan_references(skill, []), [])
 
 
-class SkillRootOnlyResolutionTests(unittest.TestCase):
-    """The walker resolves refs against the skill root only, matching
-    the foundry's documented path convention
-    (``references/directory-structure.md``): all paths are written
-    relative to the directory containing ``SKILL.md`` regardless of
-    which file contains the link."""
+class FileRelativeResolutionTests(unittest.TestCase):
+    """The walker resolves refs file-relative (standard markdown
+    semantics) per the redefined path-resolution rule
+    (``references/path-resolution.md``).  Each scope (skill root and
+    capability root) owns its own subgraph; capability bodies use
+    ``references/<file>.md`` to reach their own local references and
+    ``../../references/<file>.md`` to reach the shared skill root."""
 
-    def test_capability_local_reference_via_explicit_skill_root_is_reachable(self) -> None:
-        # The foundry convention is that a capability that wants to
-        # link its own local references uses the explicit
-        # ``capabilities/<name>/references/foo.md`` form — same as
-        # how validate_skill resolves the same body.  Pin that the
-        # walker treats this form as reachable.
+    def test_capability_local_reference_via_file_relative_is_reachable(self) -> None:
+        # A capability that wants to link its own local reference uses
+        # the file-relative ``references/<file>.md`` form — the link
+        # resolves under the capability root, not the skill root.
         with tempfile.TemporaryDirectory() as tmp:
             skill = os.path.join(tmp, "skill")
             write_skill_md(
@@ -162,8 +167,7 @@ class SkillRootOnlyResolutionTests(unittest.TestCase):
             cap_dir = os.path.join(skill, "capabilities", "deploy")
             write_text(
                 os.path.join(cap_dir, "capability.md"),
-                "# Deploy\n\nSee [steps]"
-                "(capabilities/deploy/references/steps.md).\n",
+                "# Deploy\n\nSee [steps](references/steps.md).\n",
             )
             write_text(
                 os.path.join(cap_dir, "references", "steps.md"),
@@ -175,13 +179,13 @@ class SkillRootOnlyResolutionTests(unittest.TestCase):
             orphan = [f for f in findings if "is unreferenced" in f]
             self.assertEqual(
                 orphan, [],
-                "explicit skill-root form must reach the capability-"
-                f"local reference; got: {findings!r}",
+                "file-relative form must reach the capability-local "
+                f"reference; got: {findings!r}",
             )
 
-    def test_top_level_reference_resolves_against_skill_root(self) -> None:
-        # Pin the regression direction: a SKILL.md body that links
-        # ``references/foo.md`` resolves to ``<skill>/references/foo.md``.
+    def test_top_level_reference_resolves_from_skill_md(self) -> None:
+        # ``SKILL.md`` sits at the skill root, so file-relative
+        # resolution coincides with skill-root-relative resolution.
         with tempfile.TemporaryDirectory() as tmp:
             skill = os.path.join(tmp, "skill")
             write_skill_md(
@@ -201,18 +205,13 @@ class SkillRootOnlyResolutionTests(unittest.TestCase):
                 f"references/guide.md; got: {findings!r}",
             )
 
-    def test_capability_link_is_not_reinterpreted_relative_to_source_dir(self) -> None:
-        # Negative pin: a capability body that writes
-        # ``references/foo.md`` does NOT mean
-        # ``capabilities/<name>/references/foo.md``.  Per the foundry
-        # convention (directory-structure.md), the link resolves
-        # against the skill root.  When the skill-root path doesn't
-        # exist, the walker must surface a broken-link WARN — and
-        # the actual file at ``capabilities/<name>/references/foo.md``
-        # remains an orphan (no entry-point reaches it via the
-        # documented convention).  Source-dir resolution would mask
-        # both findings and put the walker out of step with how
-        # validate_skill resolves the same link.
+    def test_capability_link_resolves_file_relative_to_capability_dir(self) -> None:
+        # Positive pin: a capability body that writes
+        # ``references/foo.md`` resolves to
+        # ``capabilities/<name>/references/foo.md`` under the
+        # redefined rule (file-relative resolution from the source
+        # directory).  No broken-link WARN — the file is reachable
+        # under the capability scope.
         with tempfile.TemporaryDirectory() as tmp:
             skill = os.path.join(tmp, "skill")
             write_skill_md(
@@ -231,26 +230,42 @@ class SkillRootOnlyResolutionTests(unittest.TestCase):
             findings = find_orphan_references(
                 skill, [], skill_audit_prefix="skill",
             )
-            broken = [
-                f for f in findings
-                if "does not exist" in f
-                and "references/steps.md" in f
-            ]
+            broken = [f for f in findings if "does not exist" in f]
             self.assertEqual(
-                len(broken), 1,
+                broken, [],
                 "capability link 'references/steps.md' must resolve "
-                "against skill root, not the capability dir; expected "
-                f"a broken-link WARN, got: {findings!r}",
+                "file-relative to the capability dir; expected no "
+                f"broken-link findings, got: {findings!r}",
             )
-            orphan = [
-                f for f in findings
-                if "is unreferenced" in f
-                and "capabilities/deploy/references/steps.md" in f
-            ]
+
+    def test_capability_external_reference_via_parent_traversal(self) -> None:
+        # A capability reaching the shared skill root uses
+        # ``../../references/<file>.md`` — two ``..`` segments
+        # (one out of the capability dir, one out of ``capabilities/``)
+        # and the walker follows the link without complaint.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = os.path.join(tmp, "skill")
+            write_skill_md(
+                skill,
+                body="See [deploy](capabilities/deploy/capability.md).\n",
+            )
+            cap_dir = os.path.join(skill, "capabilities", "deploy")
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Deploy\n\n"
+                "See [shared](../../references/shared.md).\n",
+            )
+            write_text(
+                os.path.join(skill, "references", "shared.md"),
+                "# Shared\n",
+            )
+            findings = find_orphan_references(
+                skill, [], skill_audit_prefix="skill",
+            )
             self.assertEqual(
-                len(orphan), 1,
-                "capability-local file unreached by the documented "
-                f"convention must surface as orphan; got: {findings!r}",
+                findings, [],
+                "external reference via '../../references/shared.md' "
+                f"must reach the shared root; got: {findings!r}",
             )
 
 
@@ -486,39 +501,34 @@ class WalkWarningSurfacingTests(unittest.TestCase):
             self.assertIn("skill", broken[0])
             self.assertIn("references/missing.md", broken[0])
 
-    def test_parent_traversal_reference_emits_warn_finding(self) -> None:
-        # ``..`` segments could escape the skill root entirely.  The
-        # walker skips them, but the audit needs the diagnostic to
-        # see them — ``audit_skill_system`` does not otherwise
-        # validate intra-skill reference syntax, so silently skipping
-        # would leave the offending link entirely unreported when the
-        # audit runs without ``validate_skill``.  Surface a
-        # [foundry reachability] WARN.  The ref must start with one
-        # of the body-pattern prefixes (``references/``,
-        # ``capabilities/``, ``scripts/``, ``assets/``) to be picked
-        # up by ``extract_body_references`` at all — a leading
-        # ``../`` alone never reaches the walker.
+    def test_parent_traversal_escaping_skill_root_emits_info_finding(self) -> None:
+        # ``..`` segments are legal under the redefined rule (they are
+        # how a capability reaches the shared skill root).  But a path
+        # that escapes the *skill root* entirely is by definition out
+        # of scope for the intra-skill reachability walk — surfaced as
+        # an INFO finding so the audit can see it without flagging it
+        # as broken.
         with tempfile.TemporaryDirectory() as tmp:
             skill = os.path.join(tmp, "skill")
             _build_skill(
                 skill,
-                body="See [escape](references/../escape.md).\n",
+                body="See [escape](../escape.md).\n",
             )
             findings = find_orphan_references(
                 skill, [], skill_audit_prefix="skill",
             )
-            traversal = [
+            outside = [
                 f for f in findings
-                if "parent traversal" in f
-                and "[foundry reachability]" in f
+                if "outside the skill directory" in f
+                and "[path-resolution]" in f
             ]
             self.assertEqual(
-                len(traversal), 1,
-                f"expected one parent-traversal WARN, got {findings!r}",
+                len(outside), 1,
+                f"expected one out-of-skill INFO, got {findings!r}",
             )
-            self.assertTrue(traversal[0].startswith(LEVEL_WARN + ":"))
-            self.assertIn("skill", traversal[0])
-            self.assertIn("references/../escape.md", traversal[0])
+            self.assertTrue(outside[0].startswith(LEVEL_INFO + ":"))
+            self.assertIn("skill", outside[0])
+            self.assertIn("../escape.md", outside[0])
 
     def test_surface_walk_warnings_false_suppresses_diagnostics(self) -> None:
         # validate_skill passes surface_walk_warnings=False because

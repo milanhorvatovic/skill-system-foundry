@@ -108,6 +108,89 @@ def is_within_directory(filepath: str, directory: str) -> bool:
 # Reference Extraction
 # ===================================================================
 
+_GLOB_METACHARS = "*?[]{}"
+# The boundary regex must recognize ANY extension-shaped suffix —
+# not just the ones configured in
+# ``path_resolution.reference_extensions``.  Directory-anchored
+# captures from ``markdown_link`` (and every ``backtick`` capture)
+# legitimately accept arbitrary extensions for asset and shared-
+# resource links (``assets/logo.svg?v=2``, ``shared/photo.png``).
+# If the boundary regex restricted itself to the configured list,
+# such a link would have no extension match — ``path_part`` would
+# fall back to the whole reference and a query/title ``?`` would
+# be misclassified as a glob, dropping the link from validation,
+# conformance, and ``--fix``.  Match ``.<word-chars>`` followed by
+# the actual suffix boundary (``?``, ``#``, whitespace, or end of
+# string) so the discriminator works on every shape the extractors
+# capture.  ``[A-Za-z0-9_]+`` is broad enough for every realistic
+# extension while still guaranteeing at least one char between the
+# leading ``.`` and the boundary, which prevents matching the bare
+# ``.`` in path segments like ``./foo``.
+_EXT_FRAGMENT_BOUNDARY_RE = re.compile(r"\.[A-Za-z0-9_]+([?#\s]|$)")
+
+
+def is_glob_path(ref: str) -> bool:
+    """Return True when *ref* contains glob metacharacters in its
+    filesystem-path portion.
+
+    Glob metacharacters are ``*``, ``?``, ``[``, ``]``, ``{``, ``}``.
+    ``?`` is the tricky one: it is also a markdown link query
+    separator (``foo.md?v=2``) and can appear inside a markdown link
+    title (``foo.md "Why?"``), both of which the rewriter and the
+    extractor explicitly preserve.  A simple "any ``?`` is glob"
+    rule rejects all three legitimate forms.
+
+    Discriminator: a markdown link's path ends at the first ``?``,
+    ``#``, or whitespace that follows a recognized file extension,
+    or at end of string.  Anything before that boundary is the path;
+    anything after is the suffix (query, anchor, or title
+    annotation).  Glob metachars inside the path portion register;
+    the same characters in the suffix are part of the query/anchor/
+    title and stay benign.
+
+    Examples:
+    - ``references/?ref.md`` — the ``?`` is *before* the extension,
+      so the path portion is the whole string and the ``?`` counts
+      as glob.
+    - ``guide.md?v=2`` — boundary at ``?`` after ``.md``, path is
+      ``guide.md``, no glob metachars.
+    - ``guide.md "Why?"`` — boundary at the space after ``.md``,
+      path is ``guide.md``, no glob metachars (the ``?`` lives in
+      the title and is irrelevant).
+    - ``capabilities/**/*.md`` — extension at end with no boundary
+      character, whole string is path, ``*`` flags as glob.
+    """
+    m = _EXT_FRAGMENT_BOUNDARY_RE.search(ref)
+    path_part = ref[: m.start(1)] if m else ref
+    return any(c in path_part for c in _GLOB_METACHARS)
+
+
+def is_drive_qualified(path: str) -> bool:
+    """Return True when *path* is a Windows drive-qualified path.
+
+    Catches forms like ``C:foo.md``, ``C:/foo.md``, and ``C:\\foo.md``
+    on every platform — ``os.path.splitdrive`` is platform-dependent
+    (returns ``('', '...')`` on POSIX), so a check that relies on it
+    silently misclassifies these references as ordinary relative
+    filenames when validation runs on Linux CI.  The foundry runs on
+    both Ubuntu and Windows in CI, so the drive-qualified check must
+    be platform-independent to keep the validation surface
+    consistent.
+    """
+    if len(path) < 2:
+        return False
+    # Restrict to ASCII ``[A-Za-z]`` to match the markdown-link
+    # extractor's drive-qualified alternative (``[A-Za-z]:...``) and
+    # the Windows drive-letter convention itself.  ``str.isalpha``
+    # accepts non-ASCII letters (``Ω``, ``Ä``, hundreds of Unicode
+    # code points), which would misclassify legitimate relative
+    # filenames like ``Ω:notes.md`` as drive-qualified and emit a
+    # spurious WARN / silent skip.  Drive letters are ASCII only.
+    first = path[0]
+    is_ascii_letter = ("A" <= first <= "Z") or ("a" <= first <= "z")
+    return is_ascii_letter and path[1] == ":"
+
+
 def strip_fragment(ref_path: str) -> str:
     """Strip query/anchor/title wrappers from a reference path.
 
@@ -265,8 +348,12 @@ def resolve_reference(ref_path: str, source_file: str, system_root: str | None =
     """Resolve a reference path to an absolute filesystem path.
 
     Tries in order:
-      1. Relative to the source file's directory
-      2. Relative to the system root (if provided)
+      1. Relative to the source file's directory (the canonical
+         file-relative form per ``references/path-resolution.md``)
+      2. Relative to the system root (transitional fallback for
+         skills that have not yet migrated to file-relative paths;
+         documented as ``--fix``-eligible so the validator can
+         rewrite them to the canonical form)
 
     Rejects absolute references and any resolved path that escapes
     the system root (when provided) to prevent accidentally bundling
@@ -293,12 +380,29 @@ def resolve_reference_with_reason(
       - ``"escapes_system_root"``
       - ``"is_directory"``
       - ``"not_found"``
+
+    Resolution order is source-relative first, then system-root-relative
+    as a transitional fallback.  The two coincide under the redefined
+    path-resolution rule for any file that uses the canonical form;
+    the fallback only exercises for legacy skill-root-relative paths
+    that the bundle should still handle gracefully during integrator
+    migration.
+
+    TODO(post-migration): drop the system-root fallback once integrator
+    skills run ``validate_skill.py --fix`` and pass
+    ``reference_conformance_report.py``.  At that point bundle and
+    validator share a single resolution rule and the fallback below
+    becomes vestigial.
     """
     # Reject absolute and drive-qualified paths — references must be
-    # relative.  On Windows, ``C:foo/bar`` is drive-relative and passes
-    # ``os.path.isabs()``, but ``os.path.join()`` treats it as rooted on
-    # that drive, effectively bypassing the relative-only rule.
-    if os.path.isabs(ref_path) or os.path.splitdrive(ref_path)[0]:
+    # relative.  On Windows, ``C:foo/bar`` is drive-relative and is
+    # *not* caught by ``os.path.isabs()``, but ``os.path.join()``
+    # treats it as rooted on that drive, effectively bypassing the
+    # relative-only rule.  ``is_drive_qualified`` provides
+    # platform-independent detection of the ``C:...`` form;
+    # ``os.path.splitdrive`` would only catch it on Windows because
+    # ``os.path`` is host-dependent.
+    if os.path.isabs(ref_path) or is_drive_qualified(ref_path):
         return None, "absolute_path"
 
     source_dir = os.path.dirname(os.path.abspath(source_file))

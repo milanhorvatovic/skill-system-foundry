@@ -1,6 +1,6 @@
 # Cursor Extensions
 
-Cursor extends the Agent Skills specification (agentskills.io) with cross-vendor skill discovery, a rules system, and AGENTS.md support. This reference covers what is specific to Cursor; see [agentskills-spec.md](references/agentskills-spec.md) for the core specification and [tool-integration.md](references/tool-integration.md) for cross-tool architecture.
+Cursor extends the Agent Skills specification (agentskills.io) with cross-vendor skill discovery, a rules system, and AGENTS.md support. This reference covers what is specific to Cursor; see [agentskills-spec.md](agentskills-spec.md) for the core specification and [tool-integration.md](tool-integration.md) for cross-tool architecture.
 
 ## Discovery Paths
 
@@ -62,6 +62,6 @@ Remote skills can be imported via Settings > Rules > Add Rule > Remote Rule (Git
 
 ## Deployment Pointer
 
-Use `.cursor/skills/<domain>/SKILL.md` for Cursor-native placement. Deployment pointers can be wrapper files or symlinks — Cursor follows symlinked skill directories and files. See [tool-integration.md](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
+Use `.cursor/skills/<domain>/SKILL.md` for Cursor-native placement. Deployment pointers can be wrapper files or symlinks — Cursor follows symlinked skill directories and files. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers) for the decision guide and platform commands.
 
 If canonical content lives in `.claude/skills/` or `.codex/skills/`, no Cursor deployment pointer is needed at all — Cursor discovers it natively.

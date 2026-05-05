@@ -363,5 +363,5 @@ Skills sometimes ship intentional examples of YAML that the in-repo parser would
 
 **Commented-out fences.** HTML comments are not parsed by the extractor — a column-0 ```` ```yaml ```` line inside an `<!-- ... -->` block is still recognised. Wrap it in `<!-- yaml-ignore -->` (one fence per marker) or indent the fence to hide it.
 
-For the parser's supported surface and conformance claims, see [yaml-support.md](references/yaml-support.md).
+For the parser's supported surface and conformance claims, see [yaml-support.md](yaml-support.md).
 

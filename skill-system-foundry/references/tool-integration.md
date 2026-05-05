@@ -64,7 +64,7 @@ Cursor does not scan **project-level** `.agents/skills/` directly. Placing canon
 | Cursor | `.cursor/skills/` | `SKILL.md` |
 | Kiro | `.kiro/skills/` | `SKILL.md` |
 
-> Under the recommended layout (canonical in `.agents/skills/`), Claude Code, Cursor, and Kiro require deployment pointers. If canonical content is in `.claude/skills/` instead, only tools that don't scan that path need pointers. See [directory-structure.md](references/directory-structure.md#alternative-layouts).
+> Under the recommended layout (canonical in `.agents/skills/`), Claude Code, Cursor, and Kiro require deployment pointers. If canonical content is in `.claude/skills/` instead, only tools that don't scan that path need pointers. See [directory-structure.md](directory-structure.md#alternative-layouts).
 
 Capability entry naming (cross-tool): use `capability.md` for capability files.
 
@@ -74,7 +74,7 @@ Capability entry naming (cross-tool): use `capability.md` for capability files.
 
 Discovery: `~/.claude/skills/`, `.claude/skills/`, plugins.
 
-Full details: [claude-code-extensions.md](references/claude-code-extensions.md).
+Full details: [claude-code-extensions.md](claude-code-extensions.md).
 
 ---
 
@@ -84,7 +84,7 @@ Discovery: `.agents/skills/` (hierarchical scan up to repo root), `~/.agents/ski
 
 Supports `agents/openai.yaml` for UI metadata and tool dependencies.
 
-Full details: [codex-extensions.md](references/codex-extensions.md).
+Full details: [codex-extensions.md](codex-extensions.md).
 
 ---
 
@@ -94,7 +94,7 @@ Discovery: Project paths `.cursor/skills/`, `.claude/skills/`, `.codex/skills/`;
 
 Cross-vendor compatible — no deployment pointer needed when canonical content is in `.claude/skills/`.
 
-Full details: [cursor-extensions.md](references/cursor-extensions.md).
+Full details: [cursor-extensions.md](cursor-extensions.md).
 
 ---
 
@@ -283,10 +283,10 @@ Get-Content .claude\skills\my-skill\SKILL.md
 
 | Tool | Symlink support | Evidence |
 |---|---|---|
-| Codex | Confirmed | [`codex-extensions.md`](references/codex-extensions.md) documents symlinked folder support |
+| Codex | Confirmed | [`codex-extensions.md`](codex-extensions.md) documents symlinked folder support |
 | Gemini CLI | Confirmed | `gemini skills link` command (documented in this file and Gemini docs) |
-| Claude Code | Confirmed | Maintainer verification + [`claude-code-extensions.md`](references/claude-code-extensions.md) |
-| Cursor | Confirmed | Maintainer verification + [`cursor-extensions.md`](references/cursor-extensions.md) |
+| Claude Code | Confirmed | Maintainer verification + [`claude-code-extensions.md`](claude-code-extensions.md) |
+| Cursor | Confirmed | Maintainer verification + [`cursor-extensions.md`](cursor-extensions.md) |
 | Windsurf | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
 | Kiro | Expected | Standard filesystem traversal (not explicitly documented by vendor) |
 

@@ -424,26 +424,29 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(broken_warns, [])
 
     def test_capability_chain_warns_when_capability_refs_have_nested_refs(self) -> None:
-        """SKILL.md → capability.md → references/a.md → references/b.md
-        must produce a nested-ref WARN attributed to the capability.
+        """SKILL.md → capability.md → references/a.md → b.md must
+        produce a nested-ref WARN attributed to the capability.
         capability.md is treated as its own entry-point boundary, so
         its referenced files are checked for nesting just as SKILL.md's
         are.  Pins the gap that opened when we exempted capability
-        targets from the parent's own check."""
+        targets from the parent's own check.
+
+        Under the redefined path-resolution rule, the capability
+        reaches the shared skill root via ``../../`` and references
+        within shared ``references/`` use bare-sibling form.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
-            # capability.md links to references/a.md
             write_text(
                 os.path.join(
                     tmpdir, "capabilities", "design", "capability.md"
                 ),
                 "# Design\n\n"
-                "See [primer](references/a.md) for details.\n",
+                "See [primer](../../references/a.md) for details.\n",
             )
-            # references/a.md links to references/b.md (nested)
             write_text(
                 os.path.join(tmpdir, "references", "a.md"),
                 "# A\n\n"
-                "Then see [more](references/b.md) for follow-up.\n",
+                "Then see [more](b.md) for follow-up.\n",
             )
             write_text(
                 os.path.join(tmpdir, "references", "b.md"),
@@ -613,6 +616,43 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(nested_warns, [])
         skip_pass = [p for p in passes if "skipped" in p]
         self.assertEqual(len(skip_pass), 1)
+
+    def test_non_markdown_target_skips_nested_scan(self) -> None:
+        """Non-markdown targets (``.py``, ``.yaml``, etc.) must not be
+        scanned for nested references.
+
+        ``path_resolution.reference_extensions`` legitimately covers
+        scripts and configs.  Their content is not markdown, so
+        feeding it to ``extract_body_references`` would surface
+        spurious nested-reference WARNs whenever a docstring or
+        comment happens to contain a ``[link](path.md)`` snippet.
+        Existence is still checked via the broken-link branch above
+        — this test pins that the read-and-scan stage is skipped
+        once the target's extension is not ``.md``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            scripts_dir = os.path.join(tmpdir, "scripts")
+            # A Python file whose docstring looks like markdown — if
+            # the validator scans it for nested refs, both
+            # ``[guide](references/guide.md)`` and
+            # ``[other](references/other.md)`` would surface.
+            write_text(
+                os.path.join(scripts_dir, "tool.py"),
+                "\"\"\"Helper.\n\n"
+                "See [guide](references/guide.md) and "
+                "[other](references/other.md).\n\"\"\"\n",
+            )
+            body = (
+                "# Skill\n\n"
+                "Run [tool](scripts/tool.py) for details.\n"
+            )
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        nested_warns = [e for e in errors if "nested references" in e]
+        self.assertEqual(nested_warns, [])
 
     def test_broken_ref_detected_with_allow_nested_refs(self) -> None:
         """Broken references are detected even when allow_nested_refs=True."""
@@ -878,16 +918,18 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(fail_errors, [])
 
     def test_path_traversal_returns_info(self) -> None:
-        """A reference escaping the skill directory produces an INFO."""
+        """A reference escaping the skill directory produces an INFO
+        tagged with the path-resolution rule (per
+        ``references/path-resolution.md``)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [escape](references/../../somewhere) for details.\n"
+            body = "# Skill\n\nSee [escape](../../shared/file.md) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        escape_infos = [e for e in info_errors if "outside skill directory" in e]
+        escape_infos = [e for e in info_errors if "outside the skill directory" in e]
         self.assertEqual(len(escape_infos), 1)
-        self.assertIn("[foundry]", escape_infos[0])
+        self.assertIn("[path-resolution]", escape_infos[0])
         # No FAIL errors
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
@@ -896,21 +938,17 @@ class ValidateBodyTests(unittest.TestCase):
         """When all refs are external, 'one level deep' pass does not fire."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            # Use references/../../ paths so the regex matches but they escape the dir
             body = (
                 "# Skill\n\n"
-                "See [a](references/../../shared/a.md) and "
-                "[b](references/../../shared/b.md) for details.\n"
+                "See [a](../../shared/a.md) and "
+                "[b](../../shared/b.md) for details.\n"
             )
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
-        # Should NOT have the "one level deep" pass since no internal refs were checked
         nesting_passes = [p for p in passes if "one level deep" in p]
         self.assertEqual(nesting_passes, [])
-        # Should have the external-only pass instead
         external_passes = [p for p in passes if "external" in p.lower()]
         self.assertEqual(len(external_passes), 1)
-        # External refs skip all filesystem checks (no existence oracle)
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e
@@ -921,18 +959,14 @@ class ValidateBodyTests(unittest.TestCase):
         """External refs skip all filesystem checks to avoid existence oracle."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            # External ref to a nonexistent path — should NOT produce
-            # any broken-ref warning (no filesystem oracle)
             body = (
                 "# Skill\n\n"
-                "See [a](references/../../shared/a.md) for details.\n"
+                "See [a](../../shared/a.md) for details.\n"
             )
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
-        # Should have the INFO for external ref
-        info_errors = [e for e in errors if "outside skill directory" in e]
+        info_errors = [e for e in errors if "outside the skill directory" in e]
         self.assertEqual(len(info_errors), 1)
-        # Should NOT have any broken-ref warning
         broken_warns = [
             e for e in errors
             if e.startswith(LEVEL_WARN) and "does not exist" in e
@@ -1023,8 +1057,19 @@ class ValidateBodyTests(unittest.TestCase):
         skip_passes = [p for p in passes if "skipped" in p]
         self.assertEqual(skip_passes, [])
 
-    def test_binary_ref_file_returns_warn(self) -> None:
-        """A reference to a binary file produces a WARN, not a crash."""
+    def test_binary_ref_file_does_not_emit_cannot_be_read(self) -> None:
+        """A reference to a binary file under a recognized directory
+        (e.g. ``references/image.png``) is treated as a valid file
+        reference: existence + non-directory checks pass, and the
+        UTF-8 read + nested-reference scan is skipped because the
+        target is not markdown.
+
+        The ``cannot be read`` WARN belongs to markdown targets
+        whose body the validator must scan for nested references —
+        binary asset links are not a decode-error class of finding,
+        and the existence branch already covers the broken-link
+        surface.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             ref_dir = os.path.join(tmpdir, "references")
@@ -1038,12 +1083,13 @@ class ValidateBodyTests(unittest.TestCase):
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         read_warns = [e for e in warn_errors if "cannot be read" in e]
-        self.assertEqual(len(read_warns), 1)
-        self.assertIn("references/image.png", read_warns[0])
-        self.assertIn("UnicodeDecodeError", read_warns[0])
-        # No FAIL errors
+        self.assertEqual(read_warns, [])
+        # No FAIL errors and no broken-link finding either — the
+        # file exists and is a regular file.
         fail_errors = [e for e in errors if e.startswith(LEVEL_FAIL)]
         self.assertEqual(fail_errors, [])
+        broken = [e for e in warn_errors if "does not exist" in e]
+        self.assertEqual(broken, [])
 
     def test_non_utf8_ref_file_returns_warn(self) -> None:
         """A reference to a non-UTF8 text file produces a WARN, not a crash."""
@@ -1068,14 +1114,15 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(fail_errors, [])
 
     def test_path_traversal_via_references_dotdot_returns_info(self) -> None:
-        """A reference using references/../.. to escape the skill dir produces an INFO."""
+        """A reference whose ``..`` chain escapes the skill dir
+        produces an INFO under the redefined path-resolution rule."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [escape](references/../../../etc/passwd) for details.\n"
+            body = "# Skill\n\nSee [escape](../../../assets/elsewhere.md) for details.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, os.path.dirname(skill_md))
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        escape_infos = [e for e in info_errors if "outside skill directory" in e]
+        escape_infos = [e for e in info_errors if "outside the skill directory" in e]
         self.assertEqual(len(escape_infos), 1)
 
     def test_directory_ref_with_allow_nested_refs_returns_warn(self) -> None:
@@ -1146,51 +1193,379 @@ class FindSkillRootTests(unittest.TestCase):
 
 
 class ValidateBodySkillRootTests(unittest.TestCase):
-    """Tests for skill-root-relative reference resolution in validate_body."""
+    """Tests for file-relative reference resolution in validate_body
+    under the redefined path-resolution rule
+    (``references/path-resolution.md``).  Two scopes own their own
+    subgraphs (skill root, capability root); refs resolve from the
+    source file's directory using standard markdown semantics."""
 
-    def test_capability_ref_resolves_from_skill_root(self) -> None:
-        """A capability entry referencing references/guide.md resolves from
-        the skill root, not the capability directory."""
+    def test_capability_link_to_capability_local_reference_resolves(self) -> None:
+        """A capability writing ``references/guide.md`` resolves to its
+        own capability-local reference (file-relative under the
+        capability scope)."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Set up skill root with SKILL.md and a reference file
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             write_text(
-                os.path.join(tmpdir, "references", "guide.md"),
+                os.path.join(cap_dir, "references", "guide.md"),
                 "# Guide\n\nContent.\n",
             )
-            # Capability lives in a subdirectory
-            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             cap_md = os.path.join(cap_dir, "capability.md")
             body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
             write_text(cap_md, body)
-            # skill_root is the skill root, not the capability dir
             errors, passes = validate_body(body, cap_md, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
         ref_pass = [p for p in passes if "one level deep" in p]
         self.assertEqual(len(ref_pass), 1)
 
-    def test_capability_ref_without_skill_root_fails(self) -> None:
-        """When skill_root is the capability dir (no SKILL.md found),
-        a skill-root-relative reference is reported as broken."""
+    def test_capability_link_to_shared_root_via_external_form(self) -> None:
+        """A capability reaches the shared skill root via ``../../`` —
+        the canonical external-reference form per
+        ``references/path-resolution.md``."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             write_text(
-                os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nContent.\n",
+                os.path.join(tmpdir, "references", "shared.md"),
+                "# Shared\n",
             )
             cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             cap_md = os.path.join(cap_dir, "capability.md")
-            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            body = (
+                "# Validation\n\n"
+                "See [shared](../../references/shared.md).\n"
+            )
             write_text(cap_md, body)
-            # Pass cap_dir as skill_root (fallback when no SKILL.md found)
-            errors, passes = validate_body(body, cap_md, cap_dir)
+            errors, passes = validate_body(body, cap_md, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        broken = [e for e in warn_errors if "does not exist" in e]
-        self.assertEqual(len(broken), 1)
+        self.assertEqual(warn_errors, [])
 
-    def test_parent_traversal_leading_intra_skill_produces_warn(self) -> None:
-        """A references/../.. style path that still resolves inside the skill
-        root produces a WARN for using parent traversal."""
+    def test_role_references_are_not_captured(self) -> None:
+        """An orchestration ``SKILL.md`` that links a role file uses
+        system-root-relative paths (``roles/<group>/<name>.md``) per
+        the role exception in the path-resolution rule.  The new
+        multi-segment regex captures any path through unrecognized
+        directories, so without an extraction-time filter ``roles/``
+        links would be resolved file-relative under skill_root and
+        surface as broken in-skill paths.  ``extract_body_references``
+        drops them so the path-resolution surface stays focused on
+        in-skill cross-file references; the audit's
+        ``check_upward_references`` rule (``--allow-orchestration``)
+        validates role links separately.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "Role: [reviewer](roles/release/reviewer.md)\n"
+                "Dotted: [r2](./roles/release/reviewer.md)\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [e for e in errors if e.startswith(LEVEL_WARN)]
+        targets = " ".join(broken)
+        # Neither role link should produce a broken-link finding —
+        # both are out-of-scope for the path-resolution rule.
+        self.assertNotIn("roles/release/reviewer.md", targets)
+
+    def test_role_references_in_capability_body_are_still_validated(self) -> None:
+        """The role-link exception applies *only* to orchestration
+        ``SKILL.md`` entries — that is the file the convention
+        permits to use system-root-relative ``roles/...`` links.
+        A capability body or shared reference that contains
+        ``../../roles/foo.md`` is NOT covered by the exception:
+        it is an out-of-scope link that should surface as a
+        broken-link finding.  Without gating the role-link filter
+        on ``include_router_table`` (only True for the SKILL.md
+        scan), any file under the skill could hide an invalid
+        out-of-skill link by spelling it through ``roles/``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(skill_md, "---\nname: test\n---\n# Skill\n")
+            cap_md = os.path.join(
+                tmpdir, "capabilities", "demo", "capability.md",
+            )
+            # A capability body links a role via parent-traversal —
+            # ``extract_body_references`` would previously strip
+            # the ``../../`` prefixes, see ``roles/`` and silently
+            # drop the link before validation could surface it.
+            write_text(
+                cap_md,
+                "---\nname: demo\n---\n# Demo\n"
+                "\n"
+                "See [r](../../roles/release/reviewer.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        # The capability-scoped link must reach the validator and
+        # surface as a broken-link finding.  The role exception
+        # only applies inside the SKILL.md scan.
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "roles/release/reviewer.md" in e
+        ]
+        self.assertEqual(
+            len(broken), 1,
+            msg=f"expected one broken-link finding, got {broken!r}",
+        )
+
+    def test_uri_scheme_links_are_not_captured(self) -> None:
+        """URI-scheme markdown links like ``mailto:guide.md`` end in
+        a recognized extension but are external destinations, not
+        internal file references.  The bare-sibling alternative used
+        to allow ``:`` in its body — ``mailto:guide.md`` slipped
+        through and the validator reported it as a broken file
+        reference.  The fix excludes ``:`` from the bare-sibling
+        character class (matching the multi-segment branch's
+        no-``:`` rule that already keeps ``https://`` URLs out).
+        Pin that the link is dropped and produces no broken-link
+        finding."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "Email: [contact](mailto:guide.md)\n"
+                "Custom: [proto](myproto:foo.md)\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [e for e in errors if e.startswith(LEVEL_WARN)]
+        targets = " ".join(broken)
+        self.assertNotIn("mailto:guide.md", targets)
+        self.assertNotIn("myproto:foo.md", targets)
+
+    def test_absolute_path_link_is_captured_and_warned(self) -> None:
+        """A POSIX absolute markdown link (``[bad](/tmp/foo.md)``) is
+        spec-violating.  Earlier extractor regexes excluded leading
+        ``/`` from every alternative, so absolute links never
+        reached the validator's ``os.path.isabs`` defensive check —
+        the WARN was unreachable and the violation passed silently.
+        The absolute-path alternative now captures these targets so
+        the resolver can emit the intended finding.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [a](/tmp/foo.md) and [b](/foo.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        joined = " ".join(warns)
+        # Both targets must enter the finding stream — absolute paths
+        # are always spec-violating, but the precise finding text is
+        # the resolver's contract (broken link / out-of-skill /
+        # absolute), not this test's.  The extractor's job is just
+        # to surface them.
+        self.assertIn("/tmp/foo.md", joined)
+        self.assertIn("/foo.md", joined)
+
+    def test_drive_qualified_path_link_is_captured_and_warned(self) -> None:
+        """A Windows drive-qualified markdown link (``[bad](C:foo.md)``,
+        ``[bad](C:/foo.md)``) is spec-violating.  Earlier extractor
+        regexes excluded ``:`` from every relative-path alternative,
+        so drive-qualified links never reached the validator's
+        ``is_drive_qualified`` defensive check — the WARN was
+        unreachable.  The drive-qualified alternative now captures
+        these targets while still rejecting URI schemes
+        (``mailto:``, ``myproto:``) because those have multi-letter
+        scheme names and the alternative requires a single letter
+        before the colon.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [a](C:foo.md) and [b](D:/Windows/foo.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        joined = " ".join(warns)
+        self.assertIn("C:foo.md", joined)
+        self.assertIn("D:/Windows/foo.md", joined)
+
+    def test_dot_slash_prefixed_multi_segment_links_are_extracted(self) -> None:
+        """Standard markdown allows the explicit-relative ``./``
+        prefix on every form of relative link, including multi-
+        segment paths through unrecognized child directories
+        (``./guides/setup.md``).  Without ``./`` support on the
+        4th regex alternative, that shape slips past the extractor
+        and a broken ``./guides/setup.md`` link silently passes the
+        conformance gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [g](./guides/setup.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        targets = " ".join(broken)
+        self.assertIn("./guides/setup.md", targets)
+
+    def test_multi_segment_relative_links_are_extracted(self) -> None:
+        """Standard markdown file-relative links can travel through
+        unrecognized child directories — ``guides/setup.md`` from a
+        reference file is a valid link even though ``guides`` is not
+        in the recognized top-level dir list.  Without a fourth
+        regex alternative, those links would slip past validation,
+        stats, reachability, and the conformance report, and a
+        broken ``guides/setup.md`` link would silently pass CI even
+        though a standard markdown reader sees it as broken.
+
+        URLs are kept out by the no-``:`` rule in the new branch
+        — ``https://example.com/foo.md`` contains a ``:`` and so
+        cannot match the multi-segment pattern.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [g](guides/setup.md).\n"
+                "URL: [up](https://example.com/foo.md)\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "does not exist" in e
+        ]
+        targets = " ".join(broken)
+        # The unrecognized-dir relative link must be flagged.
+        self.assertIn("guides/setup.md", targets)
+        # The URL must NOT be flagged — the no-``:`` rule keeps it
+        # out of the regex.
+        self.assertNotIn("https://example.com/foo.md", targets)
+
+    def test_dot_slash_prefixed_links_are_extracted(self) -> None:
+        """Standard markdown treats ``./foo.md`` as equivalent to
+        ``foo.md`` — a valid file-relative link.  The body reference
+        regex must accept the ``./`` prefix in both directory-anchored
+        and bare-sibling forms; without it, a broken anchored sibling
+        like ``./missing.md#section`` would silently slip past
+        validation, stats, reachability, and the conformance report.
+        Pin the explicit-relative-prefix coverage with a missing
+        target so the validator fails the run.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                skill_md,
+                "---\nname: test\n---\n# Skill\n"
+                "\n"
+                "See [bare-sibling](./missing-sibling.md).\n"
+                "See [anchored](./references/missing-anchored.md).\n",
+            )
+            errors, _passes = validate_skill(tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        targets = " ".join(broken)
+        self.assertIn("./missing-sibling.md", targets)
+        self.assertIn("./references/missing-anchored.md", targets)
+
+    def test_capability_to_other_capability_is_not_classified_as_external(self) -> None:
+        """A capability reaching into a sibling capability is an
+        architecture concern, not a lift-rewrite candidate.  After
+        lift, the sibling capability is gone — the link cannot be
+        mechanically inlined as shared content.  The path-resolution
+        rule emits a distinct INFO that names the target capability
+        and points at the audit's capability-isolation rule, so a
+        single-skill ``validate_skill`` run does not silently absorb
+        the architecture violation as a generic ``external reference
+        — recorded for the capability-lift tool``.
+
+        Both the canonical ``../../capabilities/<other>/...`` and the
+        natural file-relative ``../<other>/...`` forms must be caught
+        — the body reference regex has a third alternative that
+        captures any ``(\\.\\./)+`` path ending in a recognized
+        extension, so neither shape can slip past validation.
+        """
+        for body_link, label in (
+            ("../../capabilities/beta/capability.md",
+             "directory-anchored"),
+            ("../beta/capability.md",
+             "natural file-relative sibling"),
+        ):
+            with self.subTest(form=label):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    write_text(
+                        os.path.join(tmpdir, "SKILL.md"),
+                        "---\nname: test\n---\n",
+                    )
+                    cap_a = os.path.join(tmpdir, "capabilities", "alpha")
+                    cap_b = os.path.join(tmpdir, "capabilities", "beta")
+                    write_text(
+                        os.path.join(cap_b, "capability.md"), "# Beta\n",
+                    )
+                    cap_a_md = os.path.join(cap_a, "capability.md")
+                    body = f"# Alpha\n\nSee [beta]({body_link}).\n"
+                    write_text(cap_a_md, body)
+                    errors, _passes = validate_body(body, cap_a_md, tmpdir)
+                info_errors = [
+                    e for e in errors if e.startswith(LEVEL_INFO)
+                ]
+                # Must NOT carry the lift-tool external-reference
+                # message.
+                lift_external = [
+                    e for e in info_errors
+                    if (
+                        "external reference — recorded for the "
+                        "capability-lift tool"
+                    ) in e
+                ]
+                self.assertEqual(lift_external, [])
+                # Must surface a distinct INFO that names the target
+                # capability and points at the capability-isolation
+                # rule.
+                cross_cap = [
+                    e for e in info_errors
+                    if "crosses into capability 'beta'" in e
+                    and "capability-isolation" in e
+                ]
+                self.assertEqual(
+                    len(cross_cap), 1,
+                    msg=f"{label}: expected one cross-cap INFO; got "
+                    f"{info_errors!r}",
+                )
+
+    def test_capability_link_to_missing_local_reference_fails(self) -> None:
+        """A capability link to a non-existent local reference fails —
+        the broken-link finding names the (capability:<n>) scope."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
+            cap_dir = os.path.join(tmpdir, "capabilities", "validation")
+            cap_md = os.path.join(cap_dir, "capability.md")
+            body = "# Validation\n\nSee [missing](references/missing.md).\n"
+            write_text(cap_md, body)
+            errors, passes = validate_body(body, cap_md, tmpdir)
+        broken = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
+        self.assertEqual(len(broken), 1)
+        self.assertIn("scope: capability:validation", broken[0])
+
+    def test_parent_traversal_inside_skill_root_is_legal(self) -> None:
+        """Under the redefined rule, ``..`` segments are legal — they
+        are how a capability reaches the shared skill root.  A ref
+        that uses ``..`` and lands on an existing file inside the
+        skill root produces no findings."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             write_text(
@@ -1202,76 +1577,57 @@ class ValidateBodySkillRootTests(unittest.TestCase):
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal_warns), 1)
+        self.assertEqual(warn_errors, [])
 
-    def test_parent_traversal_midpath_intra_skill_produces_warn(self) -> None:
-        """A mid-path ../ in a reference produces WARN even though normpath
-        would collapse it."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
-            write_text(
-                os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n",
-            )
-            skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [guide](references/../references/guide.md) for info.\n"
-            write_text(skill_md, body)
-            errors, passes = validate_body(body, skill_md, tmpdir)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal_warns), 1)
-
-    def test_parent_traversal_missing_file_produces_both_warns(self) -> None:
-        """A ../ traversal to a missing file produces both the traversal WARN
-        and the broken-link WARN."""
+    def test_parent_traversal_missing_file_produces_broken_warn(self) -> None:
+        """A ``..`` traversal to a missing file inside the skill root
+        produces a broken-link WARN — ``..`` itself is no longer
+        flagged, but the resolved path still must exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [t](references/../assets/missing.md) for info.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, tmpdir)
-        warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal_warns), 1)
-        broken_warns = [e for e in warn_errors if "does not exist" in e]
+        broken_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "does not exist" in e
+        ]
         self.assertEqual(len(broken_warns), 1)
 
-    def test_reference_file_body_resolves_from_skill_root(self) -> None:
-        """When validate_body() is called with a reference file's body and
-        the correct skill_root, root-relative links resolve from the skill
-        root — the same resolution logic applies regardless of file origin."""
+    def test_reference_file_sibling_link_resolves_file_relative(self) -> None:
+        """A reference file linking a sibling uses bare-filename form
+        under the redefined rule — file-relative resolution from the
+        file's directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Skill root with another reference file
             write_text(os.path.join(tmpdir, "SKILL.md"), "---\nname: test\n---\n")
             write_text(
                 os.path.join(tmpdir, "references", "other.md"),
                 "# Other\n\nContent.\n",
             )
-            # A reference file that links to a sibling via root-relative path
             ref_file = os.path.join(tmpdir, "references", "guide.md")
-            body = "# Guide\n\nSee also [other](references/other.md).\n"
+            body = "# Guide\n\nSee also [other](other.md).\n"
             write_text(ref_file, body)
             errors, passes = validate_body(body, ref_file, tmpdir)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         self.assertEqual(warn_errors, [])
-        ref_pass = [p for p in passes if "one level deep" in p]
-        self.assertEqual(len(ref_pass), 1)
 
-    def test_external_parent_traversal_stays_info(self) -> None:
-        """A references/../../ reference escaping the skill root produces
-        INFO (external), not a parent-traversal WARN."""
+    def test_external_path_escaping_skill_root_stays_info(self) -> None:
+        """A reference whose ``..`` chain lands outside the skill root
+        is by definition out of scope — surfaced as INFO, no broken-
+        link WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
-            body = "# Skill\n\nSee [shared](references/../../shared/guide.md) for info.\n"
+            body = "# Skill\n\nSee [shared](../../shared/guide.md) for info.\n"
             write_text(skill_md, body)
             errors, passes = validate_body(body, skill_md, tmpdir)
         info_errors = [e for e in errors if e.startswith(LEVEL_INFO)]
-        external_infos = [e for e in info_errors if "outside skill directory" in e]
+        external_infos = [
+            e for e in info_errors if "outside the skill directory" in e
+        ]
         self.assertEqual(len(external_infos), 1)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal_warns = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(traversal_warns, [])
+        self.assertEqual(warn_errors, [])
 
 
 # ===================================================================
@@ -1284,17 +1640,19 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
 
     def test_capability_auto_detects_skill_root(self) -> None:
         """validate_skill with is_capability=True walks up to find SKILL.md
-        and resolves references from that root."""
+        and resolves references file-relative.  A capability reaching
+        a shared skill-root resource uses the ``../../`` external form."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Skill root
             write_skill_md(tmpdir, body="# Router Skill\n")
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
                 "# Guide\n\nContent.\n",
             )
-            # Capability references a file at the skill root
             cap_dir = os.path.join(tmpdir, "capabilities", "validation")
-            body = "# Validation\n\nSee [guide](references/guide.md) for details.\n"
+            body = (
+                "# Validation\n\n"
+                "See [guide](../../references/guide.md) for details.\n"
+            )
             write_text(os.path.join(cap_dir, "capability.md"), body)
             errors, passes = validate_skill(cap_dir, is_capability=True)
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
@@ -1306,10 +1664,13 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
         not just the capability subtree, catching broken refs elsewhere."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir, body="# Router Skill\n")
-            # Broken ref in a reference file at the skill root (outside capability dir)
+            # Broken sibling ref in a reference file at the skill root
+            # (outside capability dir).  Under the redefined rule,
+            # ``[missing](missing.md)`` from a file in references/
+            # resolves to references/missing.md (file-relative sibling).
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nSee [missing](references/missing.md).\n",
+                "# Guide\n\nSee [missing](missing.md).\n",
             )
             cap_dir = os.path.join(tmpdir, "capabilities", "validation")
             write_text(
@@ -1320,7 +1681,7 @@ class ValidateSkillCapabilityRootTests(unittest.TestCase):
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
         broken = [e for e in warn_errors if "does not exist" in e]
         self.assertEqual(len(broken), 1)
-        self.assertIn("references/missing.md", broken[0])
+        self.assertIn("missing.md", broken[0])
 
 
 # ===================================================================
@@ -1332,7 +1693,12 @@ class ValidateSkillReferencesTests(unittest.TestCase):
     """Tests for validate_skill_references — skill-wide .md file scanning."""
 
     def test_valid_refs_in_reference_file_passes(self) -> None:
-        """A reference file with valid root-relative links produces no warns."""
+        """A reference file with valid file-relative links produces no warns.
+
+        Under the redefined path-resolution rule
+        (``references/path-resolution.md``), a sibling reference uses
+        bare-filename form (``[other](other.md)``), not the redundant
+        ``references/other.md`` form that the old skill-root rule used."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, "---\nname: test\n---\n# Skill\n")
@@ -1342,7 +1708,7 @@ class ValidateSkillReferencesTests(unittest.TestCase):
             )
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nSee also [other](references/other.md).\n",
+                "# Guide\n\nSee also [other](other.md).\n",
             )
             errors, passes = validate_skill_references(
                 tmpdir, tmpdir, skill_md,
@@ -1369,14 +1735,25 @@ class ValidateSkillReferencesTests(unittest.TestCase):
         self.assertEqual(len(broken), 1)
         self.assertIn("references/missing.md", broken[0])
 
-    def test_parent_traversal_in_reference_file_returns_warn(self) -> None:
-        """A reference file using ../ produces a parent-traversal WARN."""
+    def test_parent_traversal_in_reference_file_resolves_legally(self) -> None:
+        """Under the redefined rule (``references/path-resolution.md``),
+        ``..`` segments are legal — a reference file linking
+        ``../assets/other.md`` resolves to a sibling-of-references
+        directory and produces no findings when the target exists.
+
+        The assertion checks the *full* warning list, not just the
+        broken-link subset.  The previous form filtered on
+        ``"does not exist"`` and would have silently passed if a
+        regression reintroduced the legacy ``parent traversal`` WARN —
+        that finding does not contain ``"does not exist"`` and would
+        slip past a narrower filter.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_md = os.path.join(tmpdir, "SKILL.md")
             write_text(skill_md, "---\nname: test\n---\n# Skill\n")
             write_text(
                 os.path.join(tmpdir, "references", "guide.md"),
-                "# Guide\n\nSee [t](references/../assets/other.md).\n",
+                "# Guide\n\nSee [t](../assets/other.md).\n",
             )
             write_text(
                 os.path.join(tmpdir, "assets", "other.md"),
@@ -1386,8 +1763,7 @@ class ValidateSkillReferencesTests(unittest.TestCase):
                 tmpdir, tmpdir, skill_md,
             )
         warn_errors = [e for e in errors if e.startswith(LEVEL_WARN)]
-        traversal = [e for e in warn_errors if "parent traversal" in e]
-        self.assertEqual(len(traversal), 1)
+        self.assertEqual(warn_errors, [])
 
     def test_skips_entry_file(self) -> None:
         """The entry file is skipped (already validated by validate_body)."""
@@ -2076,6 +2452,597 @@ class MainCLITests(unittest.TestCase):
 
 
 # ===================================================================
+# --fix mode (mechanical rewrites + unfixable findings)
+# ===================================================================
+
+
+class FixModeTests(unittest.TestCase):
+    """``--fix`` surfaces both mechanical rewrites and unfixable
+    path-resolution findings, per ``references/path-resolution.md``."""
+
+    def test_fix_dry_run_lists_rewrites_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run([skill_dir, "--fix"], cwd=REPO_ROOT)
+            with open(cap_md, "r", encoding="utf-8") as f:
+                contents_after = f.read()
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertIn("Would apply", proc.stdout)
+        self.assertIn("references/guide.md", proc.stdout)
+        # Dry-run must not modify the source.
+        self.assertIn("[g](references/guide.md)", contents_after)
+
+    def test_fix_apply_writes_rewrites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--apply"], cwd=REPO_ROOT)
+            with open(cap_md, "r", encoding="utf-8") as f:
+                contents_after = f.read()
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        # ``--apply`` now runs the rewrite *before* printing, so the
+        # human banner is past tense ("Applied") rather than "Applying".
+        # The change exists so an I/O failure during apply can be
+        # reflected in the JSON payload instead of arriving after a
+        # success-looking line on stdout.
+        self.assertIn("Applied", proc.stdout)
+        self.assertIn("[g](../../references/guide.md)", contents_after)
+
+    def test_fix_surfaces_unfixable_broken_ref_and_exits_one(self) -> None:
+        """A broken intra-skill ref the rewriter cannot resolve must
+        appear in the ``--fix`` output and force a non-zero exit so
+        CI / scripts gate on it.  Pins the contract documented in
+        ``references/path-resolution.md`` (lines describing
+        ``--fix``: non-mechanical broken paths surface as findings).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [m](references/missing.md).\n",
+            )
+            proc = _run([skill_dir, "--fix"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertIn("references/missing.md", proc.stdout)
+        self.assertIn("path-resolution", proc.stdout)
+
+    def test_fix_json_payload_includes_unfixable_and_doc_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [m](references/missing.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertEqual(payload["mode"], "fix")
+        self.assertEqual(payload["fixes"], [])
+        self.assertTrue(any(
+            "references/missing.md" in f for f in payload["unfixable_findings"]
+        ))
+        # The non-path FAIL gate is exposed in JSON so consumers can
+        # see why the run is failing without re-parsing finding text.
+        self.assertIn("non_path_fails", payload)
+        # ``success`` mirrors the exit code so JSON consumers do not
+        # have to inspect the process status.  An unfixable finding
+        # must surface as ``success: false``.
+        self.assertIn("success", payload)
+        self.assertFalse(payload["success"])
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            payload["path_resolution"]["documentation_path"],
+        )
+
+    def test_fix_json_success_true_on_clean_skill(self) -> None:
+        """A skill with no path-resolution findings, no FAILs, and no
+        ambiguous legacy links must surface ``success: true`` and
+        exit 0 in fix mode.  Pins the success-predicate alignment
+        between the JSON payload and the exit code.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir, body="# Skill\n")
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["fixes"], [])
+        self.assertEqual(payload["unfixable_findings"], [])
+        self.assertEqual(payload["non_path_fails"], [])
+
+    def test_fix_capability_mode_walks_enclosing_skill_root(self) -> None:
+        """``--fix --capability`` must rewrite the whole skill tree, not
+        just the capability subtree.  Otherwise legacy refs in the
+        parent SKILL.md and sibling capabilities would be invisible to
+        the rewriter, and ``file_rel`` labels would be capability-
+        relative instead of skill-root-relative."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            # Two legacy refs — one in the capability under target,
+            # one in a *sibling* capability outside the supplied path.
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            sibling_md = os.path.join(
+                skill_dir, "capabilities", "other", "capability.md",
+            )
+            write_text(
+                sibling_md,
+                "# Other\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run(
+                [cap_dir, "--capability", "--fix", "--json"],
+                cwd=REPO_ROOT,
+            )
+            # Pin the happy-path exit code.  The contract is "fix
+            # mode rewrites the whole skill tree from a capability
+            # subtarget"; that contract includes the CLI returning
+            # success.  Without this assertion a regression that
+            # produced both rewrite rows but exited non-zero (e.g.,
+            # success-predicate drift, an unrelated capability-mode
+            # validation FAIL, an apply error) would still satisfy
+            # the ``files`` assertion below and leave the bug
+            # invisible.
+            self.assertEqual(
+                proc.returncode, 0, msg=proc.stdout + proc.stderr,
+            )
+            payload = json.loads(proc.stdout)
+        files = {row["file"] for row in payload["fixes"]}
+        # Both capabilities must have rewrite rows — proving the
+        # rewriter walked the enclosing skill root, not the capability
+        # subtree alone.
+        self.assertIn("capabilities/demo/capability.md", files)
+        self.assertIn("capabilities/other/capability.md", files)
+
+    def test_fix_surfaces_ambiguous_legacy_links(self) -> None:
+        """An ambiguous legacy link is one whose pre-migration form
+        and post-migration form both resolve to existing in-scope
+        files — but to *different* files.  The link's target
+        silently changes meaning during migration unless reviewed.
+        ``--fix`` must surface it under ``ambiguous_findings`` (not
+        silently treat it as already-valid) and gate the exit code
+        so CI cannot accept the retargeting without manual review.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            # Shared-root foo.md — what the legacy resolution would pick.
+            write_text(
+                os.path.join(skill_dir, "references", "foo.md"),
+                "# Shared-root foo\n",
+            )
+            # Capability-local foo.md — what file-relative picks now.
+            write_text(
+                os.path.join(cap_dir, "references", "foo.md"),
+                "# Capability-local foo\n",
+            )
+            # Capability links references/foo.md — resolves to the
+            # capability-local file under the new rule, but the
+            # legacy form would have selected the shared-root file.
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [f](references/foo.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        # Exit code: 1 — ambiguous findings gate the run.
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        # No rewrite proposed — the rewriter never auto-fixes
+        # ambiguous links.
+        self.assertEqual(payload["fixes"], [])
+        # The ambiguous bucket carries one row with both targets.
+        self.assertEqual(len(payload["ambiguous_findings"]), 1)
+        amb = payload["ambiguous_findings"][0]
+        self.assertEqual(amb["file"], "capabilities/demo/capability.md")
+        self.assertEqual(amb["original"], "references/foo.md")
+        self.assertEqual(amb["legacy_target"], "references/foo.md")
+        self.assertEqual(
+            amb["file_rel_target"],
+            "capabilities/demo/references/foo.md",
+        )
+
+    def test_fix_anchored_legacy_link_is_not_double_reported(self) -> None:
+        """An anchored legacy capability link such as
+        ``[g](references/guide.md#section)`` is mechanically fixable —
+        the rewriter produces a row that preserves the anchor.  The
+        ``--fix`` coverage filter must recognize the same link in
+        ``_check_references`` finding text (which carries the
+        ``strip_fragment``-applied form) so the link does not appear
+        under both ``fixes`` *and* ``unfixable_findings``.  Without
+        this, the run would exit non-zero on a link the rewriter
+        already handled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md#section).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        # The rewriter must have produced a row for the anchored link.
+        self.assertEqual(len(payload["fixes"]), 1)
+        self.assertEqual(
+            payload["fixes"][0]["original"],
+            "references/guide.md#section",
+        )
+        # And the same link must NOT also appear under
+        # unfixable_findings — the coverage filter must match through
+        # the strip_fragment normalization.
+        self.assertEqual(
+            payload["unfixable_findings"], [],
+            msg=str(payload),
+        )
+        # Exit clean: a covered fix is the only finding.
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+
+    def test_fix_apply_json_no_rows_marks_applied_false(self) -> None:
+        """When ``--apply`` is passed on a skill with no legacy refs
+        to rewrite, ``applied`` must be false because nothing was
+        actually written.  The user's intent is preserved in
+        ``apply_requested`` so consumers can still distinguish
+        ``--fix --apply`` against a clean skill from ``--fix``
+        without ``--apply``."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            # Clean skill — nothing for the rewriter to find.
+            write_skill_md(skill_dir)
+            proc = _run([skill_dir, "--fix", "--apply", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertFalse(payload["applied"])
+        self.assertTrue(payload["apply_requested"])
+        self.assertEqual(payload["modified"], 0)
+        self.assertEqual(payload["fixes"], [])
+
+    def test_fix_apply_json_emits_modified_count_after_write(self) -> None:
+        """``--fix --apply --json`` runs the rewrite *before* printing
+        the JSON payload so the result reflects what actually
+        happened: ``modified`` carries the file count, ``applied``
+        is true only on a successful write, and any I/O failure
+        surfaces under ``error`` instead of as a traceback after a
+        success-looking payload on stdout.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            proc = _run([skill_dir, "--fix", "--apply", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+        self.assertTrue(payload["applied"])
+        self.assertEqual(payload["modified"], 1)
+        self.assertNotIn("error", payload)
+
+    def test_fix_in_process_covers_main_branch(self) -> None:
+        """Run ``validate_skill.main()`` with ``--fix`` in-process so
+        the fix-mode block contributes to coverage measurement.  The
+        existing FixMode tests use a subprocess via ``_run`` and
+        therefore do not feed the parent's coverage session — the
+        whole fix branch shows up as uncovered even though it is
+        exercised end-to-end.  Pin one happy-path and one error-path
+        invocation here so the per-file branch coverage threshold
+        catches future drift."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            # Happy path — dry run, JSON.
+            code, out, _err = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(len(payload["fixes"]), 1)
+        self.assertEqual(payload["unfixable_findings"], [])
+        # Cover the human-output branch and the apply path.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir)
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(
+                cap_md,
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            code, out, _err = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("Applied", out)
+
+    def test_fix_with_foundry_self_runs_prose_yaml_check(self) -> None:
+        """``--foundry-self`` is documented to imply the prose-YAML
+        check.  Before this fix the ``--fix`` branch exited from
+        ``main()`` before the prose-YAML block ran, so
+        ``--foundry-self --fix`` silently skipped that gate while
+        the same command without ``--fix`` would surface the
+        finding.  Build a skill with a prose-YAML fence the
+        validator flags (an unquoted value that starts with a flow
+        indicator — strict parsers misread it as a flow
+        collection) and pin that ``--fix --foundry-self`` exits
+        non-zero with the finding visible in ``non_path_fails``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            ref_md = os.path.join(skill_dir, "references", "y.md")
+            # ``a: [unclosed`` is a strict-parser hazard the
+            # prose-YAML check surfaces as a FAIL.
+            write_text(
+                ref_md,
+                "# Y\n\n```yaml\na: [unclosed\n```\n",
+            )
+            proc = _run(
+                [skill_dir, "--fix", "--foundry-self", "--json"],
+                cwd=REPO_ROOT,
+            )
+            payload = json.loads(proc.stdout)
+        # The flagged YAML must surface in non_path_fails — the
+        # broader-validity gate that ``--fix`` reads for its exit
+        # decision.
+        prose_fails = [
+            f for f in payload["non_path_fails"]
+            if "flow" in f.lower() or "[spec]" in f
+        ]
+        self.assertGreater(
+            len(prose_fails), 0,
+            msg=f"expected prose-YAML failure in non_path_fails; "
+                f"got: {payload['non_path_fails']!r}",
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+
+    def test_fix_capability_mode_validates_enclosing_skill_root(self) -> None:
+        """When ``--fix --capability`` rewrites the parent skill tree,
+        it must also *validate* that same tree.  Otherwise unfixable
+        findings or FAILs in SKILL.md or sibling capabilities would not
+        show up in ``unfixable_findings`` / ``non_path_fails`` and the
+        command could exit 0 after applying whole-tree rewrites while
+        the skill remains non-conformant."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            # Parent SKILL.md has a broken intra-skill ref the rewriter
+            # cannot resolve mechanically — the supplied --capability
+            # path is the *capability*, not the skill, so the previous
+            # behavior would never see this finding.
+            write_skill_md(
+                skill_dir,
+                body="# Skill\n\nSee [m](references/missing.md).\n",
+            )
+            write_text(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n",
+            )
+            proc = _run(
+                [cap_dir, "--capability", "--fix", "--json"],
+                cwd=REPO_ROOT,
+            )
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertTrue(any(
+            "references/missing.md" in f
+            for f in payload["unfixable_findings"]
+        ), msg=str(payload))
+
+    def test_fix_capability_mode_without_skill_root_errors(self) -> None:
+        """When ``--capability`` is given but no SKILL.md sits above
+        the supplied directory, ``--fix`` must refuse rather than
+        silently scan only the capability subtree.  The error JSON
+        carries the same ``path_resolution`` block as the success
+        payload so consumers can navigate to the canonical rule
+        without special-casing the failure schema."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No SKILL.md anywhere — just a bare capability.md.
+            cap_dir = os.path.join(tmpdir, "lonely")
+            write_text(
+                os.path.join(cap_dir, "capability.md"), "# Lonely\n",
+            )
+            proc = _run(
+                [cap_dir, "--capability", "--fix", "--json"],
+                cwd=REPO_ROOT,
+            )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload.get("success", True))
+        self.assertIn("skill root", payload["error"])
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            payload["path_resolution"]["documentation_path"],
+        )
+
+    def test_fix_exits_one_on_non_path_fail(self) -> None:
+        """A skill missing SKILL.md is not conformant; ``--fix`` must
+        not exit 0 just because there are no path-resolution
+        findings.  The broader-validity gate carries that signal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            empty_dir = os.path.join(tmpdir, "not-a-skill")
+            os.makedirs(empty_dir)
+            proc = _run([empty_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertIn("non_path_fails", payload)
+        self.assertTrue(len(payload["non_path_fails"]) >= 1)
+
+    def test_fix_lists_fixable_and_unfixable_independently(self) -> None:
+        """Fixable rewrites and unfixable findings surface in their
+        own respective output slots without interfering.
+
+        Pins the contract that a rewriter row covering its own source's
+        finding does not leak into the unfixable bucket, and that an
+        unrelated unfixable broken ref survives the filter even when
+        the two source paths share a substring (one path is a prefix
+        of the other under POSIX form).
+
+        Concrete setup: a fixable rewrite originates from
+        ``references/sibling.md`` (links ``references/peer.md``,
+        rewriteable to ``peer.md``).  Independently a capability-local
+        file at ``capabilities/demo/references/sibling.md`` links a
+        broken intra-scope path the rewriter cannot resolve.  Note:
+        this exercises the *integration* — the unfixable finding's
+        ``original`` ref differs from the rewriter row's, so the
+        coverage predicate short-circuits on the original-ref check
+        and never reaches the position-bounded source-path branch.
+        That branch is exercised separately by
+        ``test_fix_filter_marker_matches_check_references_output``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            # Fixable: shared-root ``references/sibling.md`` carries a
+            # link to ``references/peer.md``; the legacy form resolves
+            # to ``<skill>/references/peer.md`` (which exists), so the
+            # rewriter offers ``peer.md``.
+            write_text(
+                os.path.join(skill_dir, "references", "peer.md"),
+                "# Peer\n",
+            )
+            write_text(
+                os.path.join(skill_dir, "references", "sibling.md"),
+                "# Sibling\n\nSee [p](references/peer.md).\n",
+            )
+            # Unfixable: capability-local file with a broken intra-scope
+            # link the rewriter cannot resolve (no target exists under
+            # the legacy skill-root form either).
+            cap_local = os.path.join(
+                skill_dir, "capabilities", "demo", "references", "sibling.md",
+            )
+            write_text(
+                cap_local,
+                "# Cap-local Sibling\n\nSee [m](references/missing.md).\n",
+            )
+            # Capability entry — required for the audit walker to enter
+            # the capability scope.
+            write_text(
+                os.path.join(
+                    skill_dir, "capabilities", "demo", "capability.md",
+                ),
+                "# Demo\n",
+            )
+            proc = _run([skill_dir, "--fix", "--json"], cwd=REPO_ROOT)
+            payload = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        # The fixable rewrite is reported.
+        fixable_originals = {f["original"] for f in payload["fixes"]}
+        self.assertIn("references/peer.md", fixable_originals)
+        # The capability-local unfixable finding survives the filter.
+        self.assertTrue(
+            any(
+                "references/missing.md" in f
+                and "capabilities/demo/references/sibling.md" in f
+                for f in payload["unfixable_findings"]
+            ),
+            msg=(
+                "Unfixable finding for the longer-pathed capability-local "
+                "file was wrongly filtered as covered by the rewriter "
+                f"row whose file_rel is a substring. Payload: {payload}"
+            ),
+        )
+
+    def test_fix_filter_marker_matches_check_references_output(self) -> None:
+        """The ``--fix`` coverage filter constructs a position-bounded
+        marker (``" referenced in <file_rel> (scope:"``) that must
+        match the actual finding text emitted by ``_check_references``.
+        Pin the contract: emit a real broken-reference finding, then
+        assert the marker substring appears in it.
+
+        Without this contract test, a future rephrase of the
+        ``_check_references`` finding text (e.g. changing "referenced
+        in" to "referenced by", or dropping the parenthetical scope
+        tag) would silently break ``--fix`` coverage — every finding
+        would leak to ``unfixable_findings`` and the run would exit 1
+        on conformant skills.
+        """
+        from validate_skill import _check_references  # noqa: E402
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo-skill")
+            write_skill_md(skill_dir)
+            cap_md = os.path.join(
+                skill_dir, "capabilities", "demo", "capability.md",
+            )
+            body = "# Demo\n\nSee [m](references/missing.md).\n"
+            write_text(cap_md, body)
+            errors, _passes = _check_references(
+                body, cap_md, skill_dir, allow_nested_refs=True,
+                source_label="capabilities/demo/capability.md",
+            )
+        warn_errors = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN) and "[path-resolution]" in e
+            and "does not exist" in e
+        ]
+        self.assertEqual(len(warn_errors), 1, msg=str(errors))
+        # The marker the --fix filter constructs from a rewriter row
+        # must appear verbatim in the emitted finding text.
+        marker = " referenced in capabilities/demo/capability.md (scope:"
+        self.assertIn(
+            marker,
+            warn_errors[0],
+            msg=(
+                "validate_skill --fix's _is_covered_by_rewriter "
+                "constructs this marker; if _check_references rephrases "
+                "its output, the filter silently stops covering "
+                "rewriter rows. Update both call sites in lockstep."
+            ),
+        )
+
+
+# ===================================================================
 # _check_references tail branches
 # ===================================================================
 
@@ -2182,6 +3149,16 @@ class MainInProcessTests(unittest.TestCase):
         self.assertEqual(payload["tool"], "validate_skill")
         self.assertFalse(payload["success"])
         self.assertIn("is not a directory", payload["error"])
+        # Every --json exit must include the path_resolution block
+        # so consumers can navigate to the canonical rule from any
+        # output stream — success, failure, or early exit.
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            payload["path_resolution"]["documentation_path"],
+        )
 
     def test_valid_skill_text_mode_prints_all_passed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3189,13 +4166,25 @@ class CodexFindingsJsonSchemaTests(unittest.TestCase):
         self.assertIn("errors", data)
         # Schema preserved: known top-level keys plus the additive
         # ``yaml_conformance`` slot (always present, zero sentinel when
-        # checks did not run).
+        # checks did not run) and ``path_resolution`` block (rule_name
+        # + documentation_path so consumers can navigate to the rule).
         self.assertEqual(
             set(data.keys()),
             {
                 "tool", "path", "type", "success", "summary",
                 "errors", "version", "yaml_conformance",
+                "path_resolution",
             },
+        )
+        # Block contents must be populated — guards against silently
+        # degrading to ``{}`` if a future loader stops threading the
+        # constants into the JSON shape.
+        self.assertEqual(
+            data["path_resolution"]["rule_name"], "path-resolution",
+        )
+        self.assertIn(
+            "path-resolution.md",
+            data["path_resolution"]["documentation_path"],
         )
         codex_fails = [
             entry for entry in data["errors"].get("failures", [])
@@ -3694,9 +4683,9 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 len(broken), 1,
                 "misspelled router-table cell must produce a "
-                f"[spec] broken-link WARN; got: {errors!r}",
+                f"[path-resolution] broken-link WARN; got: {errors!r}",
             )
-            self.assertIn("[spec]", broken[0])
+            self.assertIn("[path-resolution]", broken[0])
 
     def test_broken_link_is_not_double_reported(self) -> None:
         # validate_skill_references already emits broken-reference
@@ -3704,8 +4693,8 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
         # walks the same graph, so without gating it would re-emit
         # equivalent diagnostics and double the WARN count.  Pin the
         # gating: a single broken intra-skill link produces exactly
-        # one "does not exist" finding from the spec rule, and zero
-        # from the orphan rule's reachability walk.
+        # one "does not exist" finding from the path-resolution rule,
+        # and zero from the orphan rule's reachability walk.
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = os.path.join(tmp, "demo-skill")
             write_skill_md(
@@ -3718,7 +4707,7 @@ class ValidateSkillOrphanReferencesIntegrationTests(unittest.TestCase):
                 len(broken), 1,
                 f"expected exactly one broken-link finding, got {broken!r}",
             )
-            self.assertIn("[spec]", broken[0])
+            self.assertIn("[path-resolution]", broken[0])
 
 
 class CapabilityAggregationIntegrationTests(unittest.TestCase):
