@@ -33,6 +33,7 @@ from .constants import (
 )
 from .frontmatter import split_frontmatter, strip_frontmatter_for_scan
 from .references import is_drive_qualified, is_glob_path, is_within_directory
+from .reporting import to_posix
 
 
 # ===================================================================
@@ -391,7 +392,7 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                         line_no = idx
                         break
                 rows.append({
-                    "file": filepath,
+                    "file": to_posix(filepath),
                     "file_rel": file_rel,
                     "original": ref,
                     "replacement": replacement,
@@ -494,15 +495,15 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                         line_no = idx
                         break
                 rows.append({
-                    "file": filepath,
+                    "file": to_posix(filepath),
                     "file_rel": file_rel,
                     "original": ref,
-                    "legacy_target": os.path.relpath(
-                        legacy_target, skill_root,
-                    ).replace(os.sep, "/"),
-                    "file_rel_target": os.path.relpath(
-                        file_rel_target, skill_root,
-                    ).replace(os.sep, "/"),
+                    "legacy_target": to_posix(
+                        os.path.relpath(legacy_target, skill_root)
+                    ),
+                    "file_rel_target": to_posix(
+                        os.path.relpath(file_rel_target, skill_root)
+                    ),
                     "line": line_no,
                 })
     return rows

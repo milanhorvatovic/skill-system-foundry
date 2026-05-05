@@ -49,6 +49,14 @@ _SEVERITY_TO_LOWER = {
 def to_posix(path: str) -> str:
     """Return *path* with path separators rewritten as ``/``.
 
+    Single chokepoint for any path that crosses a UI boundary — JSON
+    output payloads, FAIL/WARN/INFO finding strings, and human-mode
+    diagnostic lines that quote a filename.  Internal data structures
+    consumed only by other library modules (e.g. zip arcname maps,
+    reference rewrite tables) keep their native form because the
+    consumer relies on identity comparisons against ``os.path``-built
+    keys.
+
     Used to keep the ``file`` field of structured findings consistent
     across Linux, macOS, and Windows runners.  Both Windows-style
     backslashes and the native ``os.sep`` are normalised so callers get

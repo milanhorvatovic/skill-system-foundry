@@ -33,6 +33,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.discovery import load_capability_data
 from lib.validation import (
@@ -1082,7 +1083,7 @@ def main() -> None:
             # error path.
             print(to_json_output({
                 "tool": "validate_skill",
-                "path": os.path.abspath(skill_path),
+                "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
                 "path_resolution": {

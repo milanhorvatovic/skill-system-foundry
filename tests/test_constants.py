@@ -121,6 +121,8 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "    format_pattern: ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$\n"
             "    reserved_words:\n"
             "      - anthropic\n"
+            "    windows_reserved_names:\n"
+            "      - CON\n"
             "  description:\n"
             "    max_length: 1024\n"
             "    xml_tag_pattern: <[^>]+>\n"
@@ -240,6 +242,12 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "  default_target: claude\n"
             "  exclude_patterns:\n"
             "    - .git\n"
+            "  long_path:\n"
+            "    threshold: 260\n"
+            "    user_prefix_budget: 80\n"
+            "stats:\n"
+            "  line_endings:\n"
+            "    enabled: true\n"
         )
 
         import builtins

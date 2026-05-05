@@ -51,6 +51,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.stats import compute_stats
 
@@ -218,7 +219,7 @@ def main() -> None:
         if json_output:
             print(to_json_output({
                 "tool": "stats",
-                "path": os.path.abspath(skill_path),
+                "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
             }))
@@ -232,7 +233,7 @@ def main() -> None:
     if json_output:
         payload = {
             "tool": "stats",
-            "path": os.path.abspath(skill_path),
+            "path": to_posix(os.path.abspath(skill_path)),
             "success": len(fails) == 0,
             "skill": result["skill"],
             "metric": result["metric"],
