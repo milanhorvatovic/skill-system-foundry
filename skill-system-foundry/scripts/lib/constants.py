@@ -757,9 +757,18 @@ if "line_endings" not in _stats:
         "'stats.line_endings'; update your checkout."
     )
 _stats_le = _stats["line_endings"]
-STATS_LINE_ENDINGS_ENABLED = (
-    str(_stats_le.get("enabled", "true")).strip().lower() == "true"
-)
+_stats_le_enabled = str(
+    _stats_le.get("enabled", "true")
+).strip().lower()
+if _stats_le_enabled not in ("true", "false"):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        f"'stats.line_endings.enabled': expected 'true' or 'false', "
+        f"got {_stats_le.get('enabled')!r}.  Other truthy spellings "
+        "(yes, on, 1) are not accepted — they would silently disable "
+        "the rule on a typo."
+    )
+STATS_LINE_ENDINGS_ENABLED = _stats_le_enabled == "true"
 
 # --- Prose YAML Validation ---
 # Fail-fast: a stale checkout missing this section produces a clear
