@@ -32,11 +32,31 @@ _PRODUCTION_DIRS: tuple[str, ...] = (
 )
 
 
-# Match ``open(...)`` calls that include ``"w"`` or ``"a"`` (text-mode
-# writes) and ``encoding="utf-8"``.  Captures the full call so the
-# matcher can re-check for the ``newline=`` keyword.
+# Match ``open(<path>, "<mode>", ..., encoding="utf-8", ...)`` where
+# ``<mode>`` is a text-mode write flag.  The pattern requires the
+# mode literal to follow the first positional argument (the path)
+# and a comma — production code uses positional mode exclusively, so
+# this shape avoids false positives from quoted strings appearing
+# elsewhere inside the open call (e.g. ``encoding="utf-8"``).
+#
+# The mode capture accepts ``w`` or ``a`` followed by zero or more
+# of ``t`` / ``+`` so the lint covers ``"w"``, ``"wt"``, ``"w+"``,
+# ``"wt+"``, ``"a"``, ``"at"``, ``"a+"``, and ``"at+"`` — every
+# text-mode write Python accepts.  Binary modes (``"wb"``, ``"ab"``,
+# ``"wb+"``, etc.) are excluded by the absence of ``b`` from the
+# trailing class so the lint does not falsely flag binary writes,
+# which never need the ``newline="\n"`` keyword.  Read modes
+# (``"r"``, ``"rb"``, ``"r+"``) are excluded because their first
+# character is ``r``, not in ``[wa]``.
+#
+# A previous pattern used ``\b["']([wa])["']`` which silently
+# matched nothing — between a space and a quote there is no word
+# boundary, so production calls like ``open(p, "w", encoding=…)``
+# never tripped the regex.  The lint passed trivially with zero
+# matches.  This shape captures the real pattern explicitly.
 _RE_TEXT_WRITE_OPEN = re.compile(
-    r"open\(\s*[^)]*?\b[\"']([wa])[\"'][^)]*?\bencoding\s*=\s*[\"']utf-8[\"'][^)]*?\)",
+    r'open\([^,)]+,\s*["\']([wa][t+]*)["\']'
+    r'[^)]*?encoding\s*=\s*["\']utf-8["\'][^)]*?\)',
     re.DOTALL,
 )
 
@@ -79,6 +99,54 @@ class TextWriteNewlineLintTests(unittest.TestCase):
                 "Sites:\n  " + "\n  ".join(offenders)
             ),
         )
+
+
+class LintRegexCoverageTests(unittest.TestCase):
+    """The lint regex catches every text-mode flavour Python accepts.
+
+    Pinned regression: the previous regex used ``[\"']([wa])[\"']``
+    and silently exempted multi-character text modes (``"w+"``,
+    ``"a+"``, ``"wt"``, ``"at+"``).  Production code does not use
+    those forms today, but the lint's docstring claimed coverage of
+    "every text-mode write" so the gap mattered for future-proofing.
+    Binary modes (``"wb"`` etc.) must still be excluded because they
+    never need the ``newline="\\n"`` keyword.
+    """
+
+    def test_text_modes_match(self) -> None:
+        for mode in ("w", "wt", "w+", "wt+", "a", "at", "a+", "at+"):
+            sample = f"open(p, \"{mode}\", encoding=\"utf-8\")"
+            self.assertRegex(
+                sample,
+                _RE_TEXT_WRITE_OPEN,
+                msg=f"text mode '{mode}' not matched",
+            )
+
+    def test_binary_modes_do_not_match(self) -> None:
+        for mode in ("wb", "ab", "wb+", "ab+", "rb"):
+            sample = f"open(p, \"{mode}\", encoding=\"utf-8\")"
+            self.assertNotRegex(
+                sample,
+                _RE_TEXT_WRITE_OPEN,
+                msg=f"binary mode '{mode}' incorrectly matched",
+            )
+
+    def test_lint_actually_flags_a_violation(self) -> None:
+        """The lint regex matches a real violator without ``newline=``.
+
+        Pinned regression for the silent-no-op bug — the previous
+        regex's ``\\b["']`` requirement landed between two non-word
+        characters (space and quote) and so never matched any
+        production open call.  This test proves the new regex finds
+        a violator that the lint loop would then report.
+        """
+        sample = (
+            "with open(filepath, \"w\", encoding=\"utf-8\") as fh:\n"
+            "    fh.write('x')\n"
+        )
+        match = _RE_TEXT_WRITE_OPEN.search(sample)
+        self.assertIsNotNone(match)
+        self.assertNotIn("newline=", match.group(0))
 
 
 if __name__ == "__main__":

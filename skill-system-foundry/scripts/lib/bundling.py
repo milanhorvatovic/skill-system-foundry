@@ -66,6 +66,17 @@ def check_long_paths(
     Returns ``(errors, passes)`` per the standard validator contract.
     A skill that contains no offending paths reports a single pass
     line summarising the budget so consumers see the rule ran.
+
+    Filter note: ``BUNDLE_EXCLUDE_PATTERNS`` is reused here as the
+    skip list — the same patterns that would omit a file from a
+    bundle (``.git``, ``*.pyc``, ``$RECYCLE.BIN``, ``*.lnk`` …) are
+    also exempt from the long-path check, because a path that is
+    never bundled cannot reach the user's filesystem under MAX_PATH.
+    The reuse is deliberate, but it couples the rules together: if
+    a future change tightens ``BUNDLE_EXCLUDE_PATTERNS`` for
+    bundling alone, the validator's blind spot widens silently.
+    Any caller that wants a different "exempt" set should pass an
+    explicit one rather than mutate the bundle constant in place.
     """
     errors: list[str] = []
     passes: list[str] = []
