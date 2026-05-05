@@ -50,6 +50,7 @@ def check_long_paths(
     user_prefix_budget: int = LONG_PATH_USER_PREFIX_BUDGET,
     severity: str = LEVEL_FAIL,
     arcname_root: str | None = None,
+    boundary: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Pre-flight check for paths that risk Windows MAX_PATH on extract.
 
@@ -101,6 +102,17 @@ def check_long_paths(
         arcname_root_abs = os.path.dirname(abs_root) or abs_root
     else:
         arcname_root_abs = os.path.abspath(arcname_root)
+    # Boundary defaults to the skill itself; bundle.py passes the
+    # *system root* when one is available so symlinks targeting
+    # files under ``roles/``, sibling capabilities, or other
+    # system-root subtrees (which the bundler bundles via
+    # ``_copy_skill``) are inspected too.  Without the override an
+    # in-tree symlink to a file outside ``skill_path`` but inside
+    # the broader system root would be skipped here even though the
+    # archive includes it.
+    boundary_abs = (
+        os.path.abspath(boundary) if boundary is not None else abs_root
+    )
     available = threshold - user_prefix_budget
     longest = 0
     longest_rel = ""
@@ -122,7 +134,7 @@ def check_long_paths(
     for dirpath, fname in walk_skill_files(
         abs_root,
         BUNDLE_EXCLUDE_PATTERNS,
-        boundary=abs_root,
+        boundary=boundary_abs,
         boundary_violations=boundary_violations,
     ):
         file_count += 1
@@ -156,6 +168,7 @@ def check_reserved_path_components(
     skill_path: str,
     *,
     severity: str = LEVEL_FAIL,
+    boundary: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Flag bundled path components that match a Windows reserved name.
 
@@ -181,6 +194,17 @@ def check_reserved_path_components(
     if not os.path.isdir(skill_path):
         return errors, passes
     abs_root = os.path.abspath(skill_path)
+    # Measure rel-paths against the parent directory so the skill
+    # basename is the FIRST component checked — the basename is the
+    # archive's top-level entry, and Windows refuses to extract a
+    # zip whose root directory is ``con/``, ``aux/``, etc., even if
+    # the frontmatter ``name`` is legal.  Falling back to ``abs_root``
+    # when ``dirname`` is empty (filesystem root case) keeps the
+    # walk well-defined.
+    arcname_root_abs = os.path.dirname(abs_root) or abs_root
+    boundary_abs = (
+        os.path.abspath(boundary) if boundary is not None else abs_root
+    )
     file_count = 0
     seen: set[tuple[str, str]] = set()
     # Reuse the bundler's actual walker so the rule fires on
@@ -192,12 +216,12 @@ def check_reserved_path_components(
     for dirpath, fname in walk_skill_files(
         abs_root,
         BUNDLE_EXCLUDE_PATTERNS,
-        boundary=abs_root,
+        boundary=boundary_abs,
         boundary_violations=boundary_violations,
     ):
         file_count += 1
         full = os.path.join(dirpath, fname)
-        rel = os.path.relpath(full, abs_root).replace(os.sep, "/")
+        rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
         # Check every component of the relative path — directory
         # AND filename — exactly once per (component-path, stem).
         # ``walk_skill_files`` yields a (root, filename) pair per

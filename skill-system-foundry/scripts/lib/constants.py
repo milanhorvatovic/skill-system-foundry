@@ -373,6 +373,92 @@ PATH_RESOLUTION_REFERENCE_EXTENSIONS: tuple[str, ...] = tuple(
 )
 del _raw_extensions, _normalized_extensions, _seen_extensions
 
+# --- Degraded-symlink shim heuristic ---
+# ``looks_like_degraded_symlink`` (and its companion
+# ``looks_like_ambiguous_one_line_shim``) inspect a file for the
+# Git-degraded-symlink shape: small file, valid UTF-8, single-line
+# content matching a relative-path pattern with one of the
+# foundry's text extensions.  The byte cap and extension allow-list
+# live in YAML so integrators can audit and tune the rule from the
+# single source of truth.
+if "degraded_symlink" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'path_resolution.degraded_symlink'; update your checkout."
+    )
+_degraded_symlink_cfg = _path_resolution["degraded_symlink"]
+if "max_bytes" not in _degraded_symlink_cfg:
+    raise RuntimeError(
+        "configuration.yaml is missing "
+        "'path_resolution.degraded_symlink.max_bytes'."
+    )
+DEGRADED_SYMLINK_MAX_BYTES = int(_degraded_symlink_cfg["max_bytes"])
+if DEGRADED_SYMLINK_MAX_BYTES <= 0:
+    raise RuntimeError(
+        "configuration.yaml has invalid "
+        "'path_resolution.degraded_symlink.max_bytes': "
+        f"{DEGRADED_SYMLINK_MAX_BYTES} (must be positive)."
+    )
+if "foundry_extensions" not in _degraded_symlink_cfg:
+    raise RuntimeError(
+        "configuration.yaml is missing "
+        "'path_resolution.degraded_symlink.foundry_extensions'."
+    )
+_raw_shim_exts = _degraded_symlink_cfg["foundry_extensions"]
+if not isinstance(_raw_shim_exts, list) or not _raw_shim_exts:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'path_resolution.degraded_symlink.foundry_extensions': "
+        f"expected a non-empty list, got {_raw_shim_exts!r}."
+    )
+_normalized_shim_exts: list[str] = []
+_seen_shim_exts: set[str] = set()
+for _ext in _raw_shim_exts:
+    if not isinstance(_ext, str):
+        raise RuntimeError(
+            "configuration.yaml has a non-string entry in "
+            f"'path_resolution.degraded_symlink.foundry_extensions': "
+            f"{_ext!r}."
+        )
+    _candidate_shim_ext = _ext.strip()
+    if not _candidate_shim_ext or _candidate_shim_ext.startswith("."):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            "'path_resolution.degraded_symlink.foundry_extensions': "
+            f"{_ext!r}.  Entries must be bare non-empty extensions "
+            "without a leading '.'."
+        )
+    if _candidate_shim_ext in _seen_shim_exts:
+        raise RuntimeError(
+            f"configuration.yaml has a duplicate entry '{_ext}' in "
+            "'path_resolution.degraded_symlink.foundry_extensions'."
+        )
+    _seen_shim_exts.add(_candidate_shim_ext)
+    _normalized_shim_exts.append(_candidate_shim_ext)
+DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS: tuple[str, ...] = tuple(
+    _normalized_shim_exts
+)
+# Compile the shim-shape regex from the validated extension list so
+# the Python pattern and the YAML list share a single source of
+# truth.  Pattern shape (optional dot-relative prefix, multi-
+# component, single-line) stays in code because it is structural
+# rather than tunable; the byte cap and extension list above are
+# the genuinely-tunable knobs.
+_ext_alt_for_shim = "|".join(
+    re.escape(ext) for ext in DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS
+)
+RE_DEGRADED_SYMLINK = re.compile(
+    r"^(?:\.{1,2}[\\/])?[^\r\n\\/]+(?:[\\/][^\r\n\\/]+)*"
+    rf"\.(?:{_ext_alt_for_shim})$"
+)
+del (
+    _degraded_symlink_cfg,
+    _raw_shim_exts,
+    _normalized_shim_exts,
+    _seen_shim_exts,
+    _ext_alt_for_shim,
+)
+
 # Skill body constraints
 _skill_body = _skill["body"]
 MAX_BODY_LINES = int(_skill_body["max_lines"])

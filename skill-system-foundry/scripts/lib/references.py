@@ -19,8 +19,10 @@ from .constants import (
     BUNDLE_MAX_REFERENCE_DEPTH,
     BUNDLE_EXCLUDE_PATTERNS,
     BUNDLE_INFER_MAX_WALK_DEPTH,
+    DEGRADED_SYMLINK_MAX_BYTES,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
+    RE_DEGRADED_SYMLINK,
 )
 
 # ===================================================================
@@ -255,16 +257,13 @@ def is_dangling_symlink(path: str) -> bool:
 # 0-2 — a path like ``/missing.md`` that happens to live in a
 # small file is left to the existing broken-link diagnostic.
 #
-# The trailing extension alternation is restricted to the file types
-# the foundry actually ships (markdown, yaml, json, txt, sh, py,
-# toml).  This shrinks the false-positive surface to exactly the
-# extensions real shims would carry — a one-line note ending in
-# ``.exe`` or ``.dll`` cannot accidentally trip the heuristic.
-_DEGRADED_SYMLINK_MAX_BYTES = 512
-_DEGRADED_SYMLINK_PATTERN = re.compile(
-    r"^(?:\.{1,2}[\\/])?[^\r\n\\/]+(?:[\\/][^\r\n\\/]+)*"
-    r"\.(?:md|yaml|yml|json|txt|sh|py|toml)$"
-)
+# Tunables (``max_bytes`` and the trailing extension allow-list)
+# live in ``configuration.yaml`` under
+# ``path_resolution.degraded_symlink``; ``constants.py`` validates
+# and exposes them as ``DEGRADED_SYMLINK_MAX_BYTES`` and
+# ``RE_DEGRADED_SYMLINK``.  The pattern shape (optional dot-relative
+# prefix, multi-component, single-line) stays in code because it is
+# structural rather than tunable.
 
 
 def looks_like_degraded_symlink(path: str) -> bool:
@@ -273,8 +272,8 @@ def looks_like_degraded_symlink(path: str) -> bool:
     Two-stage heuristic:
 
     1. Shape match — *path* must be a small file (<=
-       ``_DEGRADED_SYMLINK_MAX_BYTES``), valid UTF-8, with single-line
-       content matching ``_DEGRADED_SYMLINK_PATTERN`` (see the
+       ``DEGRADED_SYMLINK_MAX_BYTES``), valid UTF-8, with single-line
+       content matching ``RE_DEGRADED_SYMLINK`` (see the
        constant for the recognised shim shapes and the foundry
        extension allow-list).
     2. Broken-target confirmation — the captured path, resolved
@@ -321,7 +320,7 @@ def looks_like_degraded_symlink(path: str) -> bool:
         size = os.path.getsize(path)
     except OSError:
         return False
-    if size == 0 or size > _DEGRADED_SYMLINK_MAX_BYTES:
+    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
         return False
     try:
         with open(path, "rb") as fh:
@@ -335,7 +334,7 @@ def looks_like_degraded_symlink(path: str) -> bool:
     body = text.strip()
     if not body or "\n" in body or "\r" in body:
         return False
-    if not _DEGRADED_SYMLINK_PATTERN.match(body):
+    if not RE_DEGRADED_SYMLINK.match(body):
         return False
     # Broken-target confirmation: a real degraded symlink's captured
     # path does not resolve to an existing file (the symlink was
@@ -355,7 +354,7 @@ def looks_like_ambiguous_one_line_shim(path: str) -> bool:
 
     The companion to ``looks_like_degraded_symlink``: same shape
     gate (small file, valid UTF-8, single-line content matching
-    ``_DEGRADED_SYMLINK_PATTERN``), but the captured target *does*
+    ``RE_DEGRADED_SYMLINK``), but the captured target *does*
     resolve to an existing file.  Two causes are byte-identical:
 
     1. A Git-degraded symlink shim where the target also happens
@@ -382,7 +381,7 @@ def looks_like_ambiguous_one_line_shim(path: str) -> bool:
         size = os.path.getsize(path)
     except OSError:
         return False
-    if size == 0 or size > _DEGRADED_SYMLINK_MAX_BYTES:
+    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
         return False
     try:
         with open(path, "rb") as fh:
@@ -396,7 +395,7 @@ def looks_like_ambiguous_one_line_shim(path: str) -> bool:
     body = text.strip()
     if not body or "\n" in body or "\r" in body:
         return False
-    if not _DEGRADED_SYMLINK_PATTERN.match(body):
+    if not RE_DEGRADED_SYMLINK.match(body):
         return False
     parent = os.path.dirname(os.path.abspath(path))
     candidate = os.path.normpath(

@@ -557,6 +557,31 @@ path_resolution:
     - json
     - toml
     - txt
+  # Degraded-symlink shim heuristic — see
+  # ``looks_like_degraded_symlink`` in ``lib/references.py``.  Two
+  # tunables live in YAML so integrators can audit and adjust the
+  # rule without code changes:
+  #
+  # * ``max_bytes`` — files larger than this are not considered
+  #   shim candidates regardless of content.  Git symlink shims
+  #   are always tiny (the bytes of a relative path), so this is
+  #   a cheap pre-filter that bounds the read cost.
+  # * ``foundry_extensions`` — the trailing-extension allow-list
+  #   used by the shape regex.  Restricting to file types the
+  #   foundry actually ships shrinks the false-positive surface;
+  #   integrators with skills that ship additional text formats
+  #   can extend the list.
+  degraded_symlink:
+    max_bytes: 512
+    foundry_extensions:
+      - md
+      - yaml
+      - yml
+      - json
+      - txt
+      - sh
+      - py
+      - toml
 
 # ============================================================
 # Bundle Packaging

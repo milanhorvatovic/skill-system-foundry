@@ -480,9 +480,25 @@ def compute_stats(skill_path: str) -> dict:
             )
             return
 
+        # Line-ending detection only applies to text-shaped files.
+        # ``compute_line_endings`` counts ``\r\n`` byte pairs in the
+        # raw file, but a binary load-budget contributor (PDF, image,
+        # zip, etc. referenced from ``references/``) can contain
+        # arbitrary ``\r\n`` byte pairs in its content that are NOT
+        # line terminators — counting them as CRLFs would reduce
+        # ``load_bytes_lf`` and emit a bogus ``line_endings`` value
+        # even though the file is byte-identical across platforms.
+        # The set covers the foundry's load-budget text categories;
+        # extensions outside this list keep ``line_endings`` absent
+        # and contribute their raw byte count to both ``load_bytes``
+        # and ``load_bytes_lf`` (which is correct — there is no
+        # newline-translation surface to normalise).
         line_endings_mode: str | None = None
         crlf_count = 0
-        if STATS_LINE_ENDINGS_ENABLED:
+        is_text_for_line_endings = filepath.lower().endswith(
+            (".md", ".yaml", ".yml", ".json", ".txt", ".sh", ".py", ".toml")
+        )
+        if STATS_LINE_ENDINGS_ENABLED and is_text_for_line_endings:
             try:
                 line_endings_mode, crlf_count, _ = compute_line_endings(
                     filepath,

@@ -233,6 +233,10 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "  reference_extensions:\n"
             "    - md\n"
             "    - py\n"
+            "  degraded_symlink:\n"
+            "    max_bytes: 512\n"
+            "    foundry_extensions:\n"
+            "      - md\n"
             "bundle:\n"
             "  max_reference_depth: 25\n"
             "  description_max_length: 200\n"
@@ -1140,8 +1144,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - md\n    - \"\"\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - md\n    - \"\"\n",
                 )
             )
         message = str(ctx.exception)
@@ -1154,8 +1158,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - .md\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - .md\n",
                 )
             )
         message = str(ctx.exception)
@@ -1168,8 +1172,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - 'md txt'\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - 'md txt'\n",
                 )
             )
         message = str(ctx.exception)
@@ -1182,8 +1186,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - md\n    - md\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - md\n    - md\n",
                 )
             )
         message = str(ctx.exception)

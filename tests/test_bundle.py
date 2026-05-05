@@ -1939,6 +1939,29 @@ class CheckReservedPathComponentsTests(unittest.TestCase):
             )
             self.assertTrue(errors[0].startswith(LEVEL_WARN))
 
+    def test_skill_basename_is_checked(self) -> None:
+        """A skill directory named ``con`` fails the rule.
+
+        Pinned regression: the previous implementation measured
+        components relative to the skill root, which stripped the
+        skill basename before splitting.  A skill directory named
+        ``con`` (with a legal frontmatter ``name``) would slip past
+        the reserved-name check even though its basename becomes the
+        archive's top-level entry — and Windows refuses to extract
+        a zip whose root directory is a reserved device name.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "con")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            con_errors = [e for e in errors if "CON" in e]
+            self.assertGreaterEqual(len(con_errors), 1)
+            # The error names the directory by its archive form
+            # (the skill basename is now component 0 of the
+            # measured rel-path).
+            self.assertIn("'con'", con_errors[0])
+
     def test_com0_and_lpt0_are_legal(self) -> None:
         # Pinned regression: only COM1-COM9 / LPT1-LPT9 are
         # reserved on Windows.  ``com0.md`` / ``lpt0.md`` must NOT

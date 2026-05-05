@@ -1720,6 +1720,54 @@ class ComputeStatsLineEndingFieldsTests(unittest.TestCase):
         # smaller — this assertion would have failed under the bug.
 
 
+class LineEndingsTextOnlyTests(unittest.TestCase):
+    """``compute_stats`` only inspects line endings on text-shaped files.
+
+    Pinned regression: an earlier implementation called
+    ``compute_line_endings`` on every load-budget contributor,
+    including binary references (PDFs, images, zips).  Those files
+    can contain arbitrary ``\\r\\n`` byte pairs in their content
+    that are NOT line terminators, so the previous code reduced
+    ``load_bytes_lf`` and emitted a bogus ``line_endings`` value
+    for files that are byte-identical across platforms.
+    """
+
+    def test_binary_reference_has_no_line_endings(self) -> None:
+        # Build a skill whose SKILL.md links to a tiny binary file
+        # (a PNG-magic-like byte sequence containing CRLFs).  The
+        # binary file must contribute its raw byte count to both
+        # ``load_bytes`` and ``load_bytes_lf`` without a
+        # ``line_endings`` field.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            binary_path = os.path.join(ref_dir, "asset.png")
+            # 16 bytes total; contains two ``\r\n`` pairs that are
+            # NOT line terminators (just bytes inside an image).
+            with open(binary_path, "wb") as fh:
+                fh.write(b"\x89PNG\r\n\x1a\nfoo\r\nbar")
+            with open(
+                os.path.join(tmpdir, "SKILL.md"),
+                "w", encoding="utf-8", newline="\n",
+            ) as fh:
+                fh.write(
+                    "---\nname: t\ndescription: triggers when run\n---\n"
+                    "# T\n\nSee [a](references/asset.png).\n"
+                )
+            result = compute_stats(tmpdir)
+        png_rows = [
+            e for e in result["files"]
+            if e["path"].endswith("asset.png")
+        ]
+        self.assertEqual(len(png_rows), 1)
+        # The binary file is in the load graph...
+        self.assertGreater(png_rows[0]["bytes"], 0)
+        # ...but no ``line_endings`` field was assigned.
+        self.assertNotIn("line_endings", png_rows[0])
+        # And its raw bytes were NOT subtracted from load_bytes_lf.
+        self.assertEqual(result["load_bytes_lf"], result["load_bytes"])
+
+
 class LineEndingsToggleDisabledTests(unittest.TestCase):
     """``*_lf`` keys and ``line_endings`` rows omitted when toggle off.
 

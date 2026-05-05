@@ -379,14 +379,23 @@ def main() -> None:
     # Long-path pre-flight: any arcname whose worst-case extracted
     # path on Windows would exceed MAX_PATH is a FAIL before we spend
     # time assembling the bundle.  Same rule fires from validate_skill
-    # at WARN severity during authoring.
-    long_path_errors, _ = check_long_paths(skill_path)
+    # at WARN severity during authoring.  Pass *system_root* as the
+    # walker boundary when one is available so symlinks targeting
+    # files under ``roles/`` or sibling capabilities (which
+    # ``_copy_skill`` includes in the archive) are inspected here
+    # instead of slipping through to the post-flight only.
+    long_path_errors, _ = check_long_paths(
+        skill_path, boundary=system_root,
+    )
     # Reserved-name pre-flight: every bundled path component's stem
     # must be legal on NTFS, not just the skill's frontmatter name.
     # validate_skill emits this at WARN; bundle FAILs because once
     # we ship a zip with ``references/con.md``, a Windows user can
-    # never extract it.
-    reserved_name_errors, _ = check_reserved_path_components(skill_path)
+    # never extract it.  Same boundary widening as the long-path
+    # rule above.
+    reserved_name_errors, _ = check_reserved_path_components(
+        skill_path, boundary=system_root,
+    )
     errors = list(errors) + long_path_errors + reserved_name_errors
     # In JSON mode, merge early warnings (e.g. missing system root)
     # with prevalidation warnings so they appear in the JSON output.

@@ -163,6 +163,22 @@ jobs:
     # pipeline on both runners so cross-platform regressions in path
     # handling, long-path arcnames, and case semantics surface here
     # rather than at user-extract time on a Windows machine.
+    #
+    # Scope: this is a *pipeline-integrity* smoke test.  It does NOT
+    # exercise specific rule firings (long-path FAIL, case-collision
+    # FAIL, reserved-name FAIL, degraded-symlink WARN) — those
+    # rules' on/off behaviour is covered exhaustively by unit tests
+    # under ``tests/`` (``CheckLongPathsTests``,
+    # ``ResolveCaseExactTests``, ``CheckReservedPathComponentsTests``,
+    # ``LooksLikeDegradedSymlinkTests``, etc.) which run on every
+    # matrix entry alongside this job.  The smoke job's role is to
+    # confirm that scaffold → bundle → extract → validate stays
+    # green end-to-end on both runners; rule-specific regressions
+    # would surface in the unit-test job before this smoke job had a
+    # chance to fail.  Adding negative fixtures here (an over-budget
+    # path, a case-collision tree) would fork the workflow into
+    # success+failure modes; keep the integration test focused on
+    # the happy path.
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
