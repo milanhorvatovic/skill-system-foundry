@@ -2972,6 +2972,25 @@ class LooksLikeDegradedSymlinkTests(unittest.TestCase):
             write_text(p, "/missing.md")
             self.assertFalse(looks_like_degraded_symlink(p))
 
+    def test_drive_qualified_path_does_not_match(self) -> None:
+        """A Windows-absolute body (``C:\\foo.md``) is not a shim.
+
+        Pinned regression: the regex's first-component class
+        accepts ``:`` and treats ``\\`` as a separator, so a small
+        file containing ``C:\\missing.md`` (or ``C:foo.md``,
+        ``D:/bar.md``) would otherwise pass the shape gate and
+        produce a misleading "Windows-without-DevMode degraded
+        symlink" WARN telling the author to enable Developer Mode
+        when the file is just authored content.  Git symlinks
+        always store *relative* targets, so any drive-qualified
+        body must be rejected.
+        """
+        for body in ("C:\\missing.md", "C:foo.md", "d:/bar.md"):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmpdir:
+                p = os.path.join(tmpdir, "shim.md")
+                write_text(p, body)
+                self.assertFalse(looks_like_degraded_symlink(p))
+
 
 class LooksLikeAmbiguousOneLineShimTests(unittest.TestCase):
     """The companion ambiguous-shim heuristic.

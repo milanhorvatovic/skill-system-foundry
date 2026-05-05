@@ -334,6 +334,15 @@ def looks_like_degraded_symlink(path: str) -> bool:
     body = text.strip()
     if not body or "\n" in body or "\r" in body:
         return False
+    # Reject drive-qualified absolute paths (``C:foo.md``,
+    # ``C:\foo.md``) before the shape regex.  Git symlinks are
+    # stored as relative targets, so a Windows-absolute path is
+    # never a real shim — but the regex's first-component class
+    # accepts ``:`` and treats ``\`` as a separator, so a small
+    # file containing ``C:\missing.md`` would otherwise pass the
+    # shape gate and produce a misleading WARN.
+    if is_drive_qualified(body):
+        return False
     if not RE_DEGRADED_SYMLINK.match(body):
         return False
     # Broken-target confirmation: a real degraded symlink's captured
@@ -394,6 +403,11 @@ def looks_like_ambiguous_one_line_shim(path: str) -> bool:
         return False
     body = text.strip()
     if not body or "\n" in body or "\r" in body:
+        return False
+    # Reject drive-qualified absolute paths for the same reason as
+    # ``looks_like_degraded_symlink`` — see that helper for the
+    # rationale.
+    if is_drive_qualified(body):
         return False
     if not RE_DEGRADED_SYMLINK.match(body):
         return False

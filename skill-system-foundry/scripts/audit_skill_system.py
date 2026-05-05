@@ -634,9 +634,15 @@ def audit_skill_system(
     # common local-audit-self shape.  Capabilities are excluded
     # because they are part of their parent skill's archive and
     # would double-report.
+    #
+    # Boundary widening: pass *system_root* so the walker inspects
+    # symlinks targeting sibling roles/skills the bundler would
+    # ship.  Without it, the audit's default ``boundary=skill_path``
+    # would silently skip those targets and miss problems that
+    # ``bundle.py`` will FAIL on at packaging time.
     for skill in aggregation_targets:
         lp_errors, lp_passes = check_long_paths(
-            skill["path"], severity=LEVEL_WARN,
+            skill["path"], severity=LEVEL_WARN, boundary=system_root,
         )
         for finding in lp_errors:
             level, _, detail = finding.partition(": ")
@@ -649,7 +655,7 @@ def audit_skill_system(
         print("\n== Reserved Names ==")
     for skill in aggregation_targets:
         rn_errors, _rn_passes = check_reserved_path_components(
-            skill["path"], severity=LEVEL_WARN,
+            skill["path"], severity=LEVEL_WARN, boundary=system_root,
         )
         for finding in rn_errors:
             level, _, detail = finding.partition(": ")

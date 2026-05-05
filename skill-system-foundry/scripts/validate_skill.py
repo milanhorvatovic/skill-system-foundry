@@ -22,6 +22,7 @@ if _scripts_dir not in sys.path:
 from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.references import (
+    infer_system_root,
     is_dangling_symlink,
     is_drive_qualified,
     is_within_directory,
@@ -921,8 +922,20 @@ def validate_skill(
     # at authoring time so the FAIL at bundle time is never the first
     # place an author hears about the issue.  The bundler reuses the
     # same helper at FAIL severity from the same configuration.
+    #
+    # Boundary widening: bundle.py passes ``boundary=system_root`` to
+    # the same helpers so symlinks targeting sibling roles/skills the
+    # bundler ships are inspected.  validate_skill mirrors that
+    # widening when ``infer_system_root`` finds a system root above
+    # the skill — without it, a long-path or reserved-name problem
+    # reachable via in-skill symlink to system-root content would
+    # pass authoring-time validation here and only fail later at
+    # bundle pre-flight.  Falling back to the skill itself when no
+    # system root can be inferred keeps standalone-skill validation
+    # well-defined.
+    inferred_system_root = infer_system_root(skill_path) or skill_path
     lp_errors, lp_passes = check_long_paths(
-        skill_path, severity=LEVEL_WARN,
+        skill_path, severity=LEVEL_WARN, boundary=inferred_system_root,
     )
     errors.extend(lp_errors)
     passes.extend(lp_passes)
@@ -933,9 +946,10 @@ def validate_skill(
     # skill containing ``references/con.md`` would scaffold and
     # validate cleanly today and only fail when extracted on
     # Windows.  Walk the tree at WARN severity so the bundler's
-    # FAIL is never the first signal an author hears.
+    # FAIL is never the first signal an author hears.  Same
+    # boundary-widening rationale as the long-path rule above.
     rn_errors, rn_passes = check_reserved_path_components(
-        skill_path, severity=LEVEL_WARN,
+        skill_path, severity=LEVEL_WARN, boundary=inferred_system_root,
     )
     errors.extend(rn_errors)
     passes.extend(rn_passes)
