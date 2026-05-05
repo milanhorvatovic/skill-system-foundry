@@ -107,11 +107,22 @@ def compute_line_endings(filepath: str) -> tuple[str, int, int]:
 def discovery_bytes_of(markdown_path: str) -> int:
     """Return the byte count of a markdown file's YAML frontmatter block.
 
-    The block runs from the opening ``---`` line through the closing
-    ``---`` line, inclusive of both fences and the newlines that
-    terminate them.  Returns ``0`` when the file does not start with a
-    ``---`` opener or has no closing ``---`` — those cases are
-    surfaced as findings by ``compute_stats``.
+    Thin wrapper around :func:`discovery_window_of` that returns only
+    the byte count.  Kept for backward compatibility with callers that
+    do not need the CRLF breakdown (today: ``compute_stats`` for the
+    aggregate count and the test suite's parser-agreement check).
+    """
+    byte_count, _ = discovery_window_of(markdown_path)
+    return byte_count
+
+
+def discovery_window_of(markdown_path: str) -> tuple[int, int]:
+    """Return ``(byte_count, crlf_in_window)`` for the discovery prefix.
+
+    The discovery window runs from the opening ``---`` line through
+    the closing ``---`` line, inclusive of both fences and the
+    newlines that terminate them.  Returns ``(0, 0)`` when the file
+    does not start with a ``---`` opener or has no closing ``---``.
 
     Counted from raw on-disk bytes (CRLF preserved).  Reads in UTF-8
     text mode with ``newline=""`` so carriage returns are not
@@ -120,16 +131,20 @@ def discovery_bytes_of(markdown_path: str) -> int:
     ``encoding="utf-8"`` convention without losing the CRLF byte cost
     that Windows checkouts genuinely pay at discovery time.
 
+    The ``crlf_in_window`` count is the number of ``\\r\\n`` pairs
+    *inside* the discovery window — strictly less than or equal to
+    the file's total CRLF count.  Callers use it to compute a
+    precise LF-normalised discovery byte count without re-walking
+    the file.
+
     Deliberately walks the bytes rather than reusing
     ``frontmatter.split_frontmatter`` — the parser normalizes CRLF to
     LF before splitting, which would also lose those carriage returns.
-    The two implementations are kept in sync by the
-    ``DiscoveryBoundaryAgreementTests`` assertion in test_stats.py.
     """
     with open(markdown_path, "r", encoding="utf-8", newline="") as f:
         data = f.read().encode("utf-8")
     if not data.startswith(b"---"):
-        return 0
+        return 0, 0
     # Walk line by line to find the closing fence.  Track the byte
     # offset where the closing fence's terminator ends so the count
     # includes both fences and the newline that follows the closer.
@@ -146,12 +161,13 @@ def discovery_bytes_of(markdown_path: str) -> int:
             terminator_end = newline + 1
         stripped = line.rstrip(b"\r")
         if line_index > 0 and stripped == b"---":
-            return terminator_end
+            window = data[:terminator_end]
+            return terminator_end, window.count(b"\r\n")
         if line_index == 0 and stripped != b"---":
-            return 0
+            return 0, 0
         offset = terminator_end
         line_index += 1
-    return 0
+    return 0, 0
 
 
 # ===================================================================
@@ -199,7 +215,7 @@ def is_capability_entry(rel_path: str) -> bool:
 
 def _compute_capability_discovery(
     visited: dict[str, dict],
-) -> tuple[dict[str, int], list[str]]:
+) -> tuple[dict[str, tuple[int, int]], list[str]]:
     """Walk capability entries and compute their discovery contributions.
 
     Iterates *visited* in path-alphabetical order so the emitted
@@ -210,27 +226,28 @@ def _compute_capability_discovery(
     Returns ``(discovery_by_filepath, errors)``:
 
     * ``discovery_by_filepath`` maps the absolute path of every
-      capability entry to its frontmatter byte count.  A capability
-      that is silent on frontmatter contributes ``0``; a capability
-      whose frontmatter could not be read also contributes ``0`` but
-      raises a finding in *errors*.
+      capability entry to ``(byte_count, crlf_in_window)``.  A
+      capability silent on frontmatter contributes ``(0, 0)``; a
+      capability whose frontmatter could not be read also contributes
+      ``(0, 0)`` but raises a finding in *errors*.  The CRLF-in-window
+      count is what the caller subtracts to derive a precise
+      LF-normalised discovery aggregate without re-walking the file.
     * ``errors`` is the list of new finding strings the caller should
       append to the run-level error list.  Two finding shapes are
-      possible: an I/O-failure WARN when ``discovery_bytes_of``
+      possible: an I/O-failure WARN when ``discovery_window_of``
       raises, and a parse-error WARN when ``load_frontmatter``
       returns a ``_parse_error`` dict.  The parse-error case covers
       *both* the unclosed-fence shape (``---`` opener with no
-      closing fence — ``discovery_bytes_of`` reports this as 0
-      bytes because the boundary is undetectable) *and* the
-      valid-fences-with-invalid-YAML-body shape.  A capability
-      silent on frontmatter (no ``---`` opener at all) produces no
-      finding.  ``cap_discovery == 0`` therefore is not a reliable
-      "silent capability" predicate — the byte scan returns 0 for
-      both legitimate silent and malformed unclosed-fence shapes,
-      so the parse probe must run unconditionally to distinguish
-      them.
+      closing fence — the byte scan reports this as 0 bytes because
+      the boundary is undetectable) *and* the valid-fences-with-
+      invalid-YAML-body shape.  A capability silent on frontmatter
+      (no ``---`` opener at all) produces no finding.  ``cap_bytes ==
+      0`` therefore is not a reliable "silent capability" predicate
+      — the byte scan returns 0 for both legitimate silent and
+      malformed unclosed-fence shapes, so the parse probe must run
+      unconditionally to distinguish them.
     """
-    discovery_by_filepath: dict[str, int] = {}
+    discovery_by_filepath: dict[str, tuple[int, int]] = {}
     errors: list[str] = []
     sorted_items = sorted(
         visited.items(), key=lambda item: item[1]["path"],
@@ -239,16 +256,16 @@ def _compute_capability_discovery(
         if not is_capability_entry(state["path"]):
             continue
         try:
-            cap_discovery = discovery_bytes_of(filepath)
+            cap_bytes, cap_crlf = discovery_window_of(filepath)
         except (OSError, UnicodeError) as exc:
             errors.append(
                 f"{LEVEL_WARN}: [foundry] cannot scan '{state['path']}' "
                 f"frontmatter ({exc.__class__.__name__}: {exc}) — "
                 f"discovery_bytes recorded as 0"
             )
-            discovery_by_filepath[filepath] = 0
+            discovery_by_filepath[filepath] = (0, 0)
             continue
-        discovery_by_filepath[filepath] = cap_discovery
+        discovery_by_filepath[filepath] = (cap_bytes, cap_crlf)
         # Always probe the parse layer even when ``cap_discovery``
         # is zero: ``discovery_bytes_of`` returns 0 both for silent
         # capabilities (no ``---`` opener at all) and for malformed
@@ -403,7 +420,7 @@ def compute_stats(skill_path: str) -> dict:
         result["skill"] = str(frontmatter["name"])
 
     try:
-        discovery_count = discovery_bytes_of(skill_md)
+        discovery_count, discovery_crlf = discovery_window_of(skill_md)
     except (OSError, UnicodeError) as exc:
         result["errors"].append(
             f"{LEVEL_FAIL}: [foundry] cannot scan {FILE_SKILL_MD} "
@@ -603,21 +620,14 @@ def compute_stats(skill_path: str) -> dict:
     )
     result["errors"].extend(capability_errors)
 
-    # Build the sorted file list and total load_bytes.  ``visited``
-    # already excludes scripts/assets thanks to the early-return in
+    # Build the sorted file list and totals.  ``visited`` already
+    # excludes scripts/assets thanks to the early-return in
     # ``_visit``, so this loop is an unconditional aggregator.  The
     # discovery aggregate folds in SKILL.md (already in
-    # ``discovery_count``) plus every capability entry's contribution.
-    # Skill-md line-ending detection for the discovery aggregate.  The
-    # capability layer carries its own per-row CRLF count via the
-    # visited dict that we already populated in ``_visit``.
-    skill_md_crlf = 0
-    if STATS_LINE_ENDINGS_ENABLED:
-        try:
-            _, skill_md_crlf, _ = compute_line_endings(skill_md)
-        except OSError:
-            skill_md_crlf = 0
-
+    # ``discovery_count``) plus every capability entry's
+    # contribution; the LF aggregate subtracts the CRLFs that fall
+    # *within* each discovery window — ``discovery_window_of`` returns
+    # those counts directly so no second walk is needed.
     entries: list[dict] = []
     load_total = 0
     load_total_lf = 0
@@ -633,7 +643,7 @@ def compute_stats(skill_path: str) -> dict:
         if filepath == skill_md_abs:
             entry["discovery_bytes"] = discovery_count
         elif filepath in capability_discovery:
-            entry["discovery_bytes"] = capability_discovery[filepath]
+            entry["discovery_bytes"] = capability_discovery[filepath][0]
         entries.append(entry)
         load_total += state["bytes"]
         load_total_lf += state["bytes"] - state.get("crlf_count", 0)
@@ -644,20 +654,15 @@ def compute_stats(skill_path: str) -> dict:
     result["load_bytes_lf"] = (
         load_total_lf if STATS_LINE_ENDINGS_ENABLED else load_total
     )
+    discovery_total_crlf = discovery_crlf + sum(
+        crlf for _, crlf in capability_discovery.values()
+    )
     result["discovery_bytes"] = discovery_count + sum(
-        capability_discovery.values()
+        cap_bytes for cap_bytes, _ in capability_discovery.values()
     )
     if STATS_LINE_ENDINGS_ENABLED:
-        # The discovery LF count subtracts only the SKILL.md CRLFs
-        # that fall *within* the discovery window.  ``compute_line_endings``
-        # counts CRLFs across the whole file; the discovery block is a
-        # prefix that contains a known fraction.  For simplicity we
-        # approximate by capping the subtracted CRLFs at the
-        # frontmatter LF count — a tighter calculation would re-walk
-        # the bytes, and the metric is documented as an approximation
-        # tracking authoring decisions over time.
-        result["discovery_bytes_lf"] = result["discovery_bytes"] - min(
-            skill_md_crlf, result["discovery_bytes"],
+        result["discovery_bytes_lf"] = (
+            result["discovery_bytes"] - discovery_total_crlf
         )
     else:
         result["discovery_bytes_lf"] = result["discovery_bytes"]

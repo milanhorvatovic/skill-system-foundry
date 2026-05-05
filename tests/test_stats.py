@@ -1684,6 +1684,37 @@ class ComputeStatsLineEndingFieldsTests(unittest.TestCase):
         self.assertEqual(len(crlf_rows), 1)
         self.assertEqual(crlf_rows[0]["path"], "SKILL.md")
 
+    def test_discovery_lf_subtracts_only_in_window_crlfs(self) -> None:
+        """``discovery_bytes_lf`` must subtract only frontmatter CRLFs.
+
+        Pinned regression: the previous implementation capped the
+        subtraction at the whole-file CRLF count, which collapses to
+        nonsense when the body contains many more CRLFs than the
+        frontmatter.  The corrected implementation reads ``\\r\\n``
+        counts inside the discovery window directly.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Frontmatter has 4 CRLFs; body has many more.  The
+            # discovery byte count includes only the frontmatter
+            # window, so the LF normalised discovery count must
+            # subtract exactly 4 (the in-window CRLFs).
+            data = (
+                b"---\r\nname: x\r\ndescription: triggers when run\r\n---\r\n"
+                + (b"line of body\r\n" * 50)
+            )
+            with open(skill_md, "wb") as fh:
+                fh.write(data)
+            result = compute_stats(tmpdir)
+        # Expected: discovery_bytes_lf = discovery_bytes - 4
+        self.assertEqual(
+            result["discovery_bytes_lf"],
+            result["discovery_bytes"] - 4,
+        )
+        # The previous (incorrect) impl would have computed
+        # discovery_bytes - min(54, discovery_bytes), which is much
+        # smaller — this assertion would have failed under the bug.
+
 
 if __name__ == "__main__":
     unittest.main()
