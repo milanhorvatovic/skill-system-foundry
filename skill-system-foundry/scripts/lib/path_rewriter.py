@@ -614,7 +614,7 @@ def apply_fixes(rows: list[dict]) -> int:
         new_content = "".join(parts)
 
         if new_content != content:
-            with open(filepath, "w", encoding="utf-8") as f:
+            with open(filepath, "w", encoding="utf-8", newline="\n") as f:
                 f.write(new_content)
             changed += 1
     return changed

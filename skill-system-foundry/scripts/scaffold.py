@@ -179,7 +179,7 @@ def read_template(template_name: str) -> str:
 def write_file(path: str, content: str, *, quiet: bool = False) -> None:
     """Write content to a file, creating directories as needed."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
     if not quiet:
         print(f"  Created: {path}")
@@ -195,7 +195,7 @@ def create_dir_with_gitkeep(path: str) -> str:
     os.makedirs(path, exist_ok=True)
     gitkeep = os.path.join(path, FILE_GITKEEP)
     if not os.path.exists(gitkeep):
-        with open(gitkeep, "w", encoding="utf-8") as f:
+        with open(gitkeep, "w", encoding="utf-8", newline="\n") as f:
             pass
     return gitkeep
 
