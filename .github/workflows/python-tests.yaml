@@ -156,11 +156,76 @@ jobs:
         env:
           PYTHONUTF8: "1"
 
+  bundle-extract-smoke:
+    # Build a synthetic minimal skill, bundle it, extract the
+    # resulting zip into a fresh location, and validate the
+    # extracted tree.  Exercises the full bundle.py + validate_skill.py
+    # pipeline on both runners so cross-platform regressions in path
+    # handling, long-path arcnames, and case semantics surface here
+    # rather than at user-extract time on a Windows machine.
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # @v5 as 5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Scaffold a synthetic skill
+        # Uses scaffold.py to build a complete minimal skill in a
+        # work directory outside the repo so the bundle pipeline
+        # exercises a layout with no foundry-specific quirks.
+        run: |
+          python skill-system-foundry/scripts/scaffold.py skill demo --root smoke-work
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Bundle the synthetic skill
+        # ``--target generic`` skips the Claude.ai-specific 200-char
+        # description cap.  The scaffolded SKILL.md ships with a
+        # placeholder description longer than that limit and the
+        # smoke test is about pipeline mechanics, not the consumer-
+        # platform tightenings.
+        run: |
+          python skill-system-foundry/scripts/bundle.py smoke-work/skills/demo --output smoke-bundle.zip --target generic
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Extract the bundle
+        # Use Python's stdlib zipfile so the same step runs on both
+        # runners without depending on a host unzip implementation.
+        run: |
+          python -c "import zipfile; zipfile.ZipFile('smoke-bundle.zip').extractall('smoke-extracted')"
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Validate the extracted bundle
+        # Walks the extracted tree.  bundle.py emits the skill under
+        # its own basename inside the archive, so we resolve the
+        # discovered SKILL.md and validate from there.
+        run: |
+          python -c "import os, sys, subprocess; root='smoke-extracted'; cand=[os.path.join(root, n) for n in os.listdir(root)]; skill_dir=next((d for d in cand if os.path.isfile(os.path.join(d, 'SKILL.md'))), None); sys.exit(subprocess.call([sys.executable, 'skill-system-foundry/scripts/validate_skill.py', skill_dir]))"
+        env:
+          PYTHONUTF8: "1"
+
   update-badge:
     needs:
       - test
       - validate-examples
       - reference-conformance
+      - bundle-extract-smoke
     # Restrict to genuine pushes to main; this skips reusable
     # workflow_call invocations (e.g. release-prep.yml) where
     # github.event_name is the caller's event (workflow_dispatch) and
