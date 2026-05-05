@@ -315,7 +315,7 @@ def main() -> None:
         system_root = infer_system_root(skill_path)
         if system_root:
             if not json_output:
-                print(f"Inferred system root: {system_root}")
+                print(f"Inferred system root: {to_posix(system_root)}")
         else:
             _no_root_warn = (
                 f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
@@ -359,8 +359,8 @@ def main() -> None:
         os.makedirs(output_parent, exist_ok=True)
 
     if not json_output:
-        print(f"Bundling: {skill_path}")
-        print(f"Output:   {output_path}")
+        print(f"Bundling: {to_posix(skill_path)}")
+        print(f"Output:   {to_posix(output_path)}")
         print("=" * SEPARATOR_WIDTH)
 
     inline_skills = args.inline_orchestrated_skills
@@ -546,7 +546,7 @@ def main() -> None:
         sys.exit(0)
 
     print(f"\n{'=' * SEPARATOR_WIDTH}")
-    print(f"\u2713 Bundle created: {output_path}")
+    print(f"\u2713 Bundle created: {to_posix(output_path)}")
     print(f"  Skill:          {stats['skill_name']}")
     print(f"  Files:          {stats['file_count']}")
     print(f"  Uncompressed:   {_format_size(stats['total_size'])}")

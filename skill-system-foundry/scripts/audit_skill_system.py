@@ -495,7 +495,10 @@ def audit_skill_system(
             # skill-root entry that the router-table rule will audit.
             # Surface it explicitly so the verbose header agrees with
             # the findings about to be emitted.
-            print(f"Skill-root mode: also auditing skill at {system_root}")
+            print(
+                "Skill-root mode: also auditing skill at "
+                f"{to_posix(system_root)}"
+            )
         print()
 
     # Partial-audit WARN fires only when the audit cannot reach any
