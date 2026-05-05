@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Rewrite a scaffolded SKILL.md frontmatter to a bundle-able stub.
+
+The bundle-extract-smoke CI job scaffolds a synthetic skill via
+``scaffold.py`` and then needs a frontmatter shape that fits the
+Claude.ai 200-char description cap so ``bundle.py --target claude``
+can package it.  The scaffolded SKILL.md ships with a folded-scalar
+description that exceeds the cap, so an in-place line replacement
+would leave the YAML malformed.
+
+Replacing the whole frontmatter wholesale is the right approach.
+Doing it in a multi-line ``run:`` step is the wrong approach: shell
+escaping for ``\\"\\"`` (the YAML empty-string literal) and embedded
+``\\n`` differs between bash on ubuntu and PowerShell on
+windows-latest, so a quoted one-liner is brittle and hard to verify
+without running the workflow on both runners.
+
+This helper does the rewrite in plain Python with no shell-escape
+surface, and pins the frontmatter fields the validator surface
+actually exercises:
+
+* ``name`` and ``description`` — spec-required.
+* ``allowed-tools: ""`` — documented opt-out the tool-coherence rule
+  keys off.
+* ``compatibility`` — exercises the optional-string check.
+* ``license`` — exercises the SPDX recognition.
+* ``metadata.version`` — exercises semver validation.
+
+``metadata.author`` is intentionally omitted; the validator surface
+it covers is a string-length check the other fields already
+exercise.
+
+Usage::
+
+    python .github/scripts/smoke-rewrite-frontmatter.py <path-to-SKILL.md>
+"""
+
+import argparse
+import os
+import sys
+
+
+_STUB_FRONTMATTER = (
+    "---\n"
+    "name: demo\n"
+    "description: triggers when the demo runs\n"
+    "allowed-tools: \"\"\n"
+    "compatibility: smoke test\n"
+    "license: MIT\n"
+    "metadata:\n"
+    "  version: 1.0.0\n"
+    "---\n"
+)
+
+
+def rewrite(skill_md_path: str) -> int:
+    """Replace *skill_md_path*'s frontmatter with the smoke-test stub.
+
+    Returns 0 on success, 1 if the file is missing or unreadable.
+    """
+    if not os.path.isfile(skill_md_path):
+        print(
+            f"FAIL: '{skill_md_path}' is not a file",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        with open(skill_md_path, "r", encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError as exc:
+        print(
+            f"FAIL: cannot read '{skill_md_path}': {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    # Strip the existing frontmatter block so the body alone remains.
+    # ``str.split`` with maxsplit=2 yields ``["", "<frontmatter>",
+    # "<body>"]`` for a file that starts with ``---``; otherwise
+    # ``body == src`` and no frontmatter is dropped.
+    if src.startswith("---"):
+        parts = src.split("---", 2)
+        body = parts[2] if len(parts) >= 3 else ""
+    else:
+        body = src
+    new_content = _STUB_FRONTMATTER + body.lstrip()
+    try:
+        with open(skill_md_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(new_content)
+    except OSError as exc:
+        print(
+            f"FAIL: cannot write '{skill_md_path}': {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Rewrite a scaffolded SKILL.md frontmatter to a stub the "
+            "bundle pipeline can package under --target claude."
+        ),
+    )
+    parser.add_argument(
+        "skill_md",
+        help="Path to the SKILL.md file to rewrite.",
+    )
+    args = parser.parse_args(argv)
+    return rewrite(args.skill_md)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
