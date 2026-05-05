@@ -93,9 +93,32 @@ def is_within_directory(filepath: str, directory: str) -> bool:
     case so differing drive-letter casing on Windows doesn't cause
     false negatives.  Handles filesystem roots correctly (``/`` on
     POSIX, ``C:\\`` on Windows).
+
+    Dangling-symlink note: on Windows, ``os.path.realpath`` cannot
+    fully canonicalise a path whose final component is a symlink to
+    a non-existent target — Python falls back to a partially
+    resolved string that still contains the unexpanded short-name
+    component (e.g. ``RUNNER~1``), while ``realpath(directory)`` for
+    an existing directory expands to the long-name form
+    (``runneradmin``).  The two paths then diverge under
+    ``normcase`` and ``commonpath`` returns a shallow parent, so the
+    function would falsely classify a dangling symlink inside the
+    directory as external.  Detect that case explicitly: a path
+    that is a dangling symlink is judged by its own literal
+    abspath, not its (unreachable) target — both *filepath* and
+    *directory* are compared in ``abspath`` form so they share the
+    same level of canonicalisation.
     """
-    filepath_norm = os.path.normcase(os.path.realpath(filepath))
-    directory_norm = os.path.normcase(os.path.realpath(directory))
+    if os.path.islink(filepath) and not os.path.exists(filepath):
+        # Dangling symlink — judge by the link's literal location
+        # rather than the partially-resolved target.  Use
+        # ``abspath`` on both sides so neither side is more
+        # canonicalised than the other.
+        filepath_norm = os.path.normcase(os.path.abspath(filepath))
+        directory_norm = os.path.normcase(os.path.abspath(directory))
+    else:
+        filepath_norm = os.path.normcase(os.path.realpath(filepath))
+        directory_norm = os.path.normcase(os.path.realpath(directory))
     try:
         common = os.path.commonpath([filepath_norm, directory_norm])
     except ValueError:

@@ -1592,6 +1592,33 @@ class IsWithinDirectoryTests(unittest.TestCase):
             result = is_within_directory("/some/path", "/other/path")
         self.assertFalse(result)
 
+    def test_dangling_symlink_inside_directory_returns_true(self) -> None:
+        """A dangling symlink inside *directory* is judged by its location.
+
+        Pinned regression: ``os.path.realpath`` on Windows cannot fully
+        canonicalise a path whose final component is a symlink to a
+        non-existent target — Python falls back to a partially
+        resolved string that retains the unexpanded short-name
+        component (``RUNNER~1``) while ``realpath(directory)`` for an
+        existing directory expands to the long-name form.  The two
+        paths then diverge under ``normcase`` and the function would
+        falsely classify a dangling symlink inside the directory as
+        external.  This test exercises the dangling-link branch
+        directly so the rule is locked in on every host.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            link = os.path.join(ref_dir, "guide.md")
+            target = os.path.join(tmpdir, "missing-target.md")
+            write_text(target, "x")
+            try:
+                os.symlink(target, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            os.unlink(target)
+            self.assertTrue(is_within_directory(link, tmpdir))
+
 
 # ===================================================================
 # extract_references
