@@ -68,6 +68,36 @@ def _build_minimal_skill(root: str) -> str:
     return skill_dir
 
 
+def _build_minimal_system_root(root: str) -> str:
+    """Build a minimal deployed-system layout: ``<root>/skills/demo/SKILL.md``.
+
+    Used to exercise ``audit_skill_system.py``'s system-root mode, where
+    the audit walks ``skills/<name>/SKILL.md`` rather than a single
+    skill root.  The skill body is the same as ``_build_minimal_skill``
+    so audit findings are predictably clean.
+    """
+    skills_dir = os.path.join(root, "skills")
+    skill_dir = os.path.join(skills_dir, "demo")
+    os.makedirs(os.path.join(skill_dir, "references"))
+    with open(
+        os.path.join(skill_dir, "SKILL.md"),
+        "w", encoding="utf-8", newline="\n",
+    ) as fh:
+        fh.write(
+            "---\n"
+            "name: demo\n"
+            "description: triggers when the demo runs\n"
+            "---\n"
+            "# Demo\n\nSee [guide](references/guide.md).\n"
+        )
+    with open(
+        os.path.join(skill_dir, "references", "guide.md"),
+        "w", encoding="utf-8", newline="\n",
+    ) as fh:
+        fh.write("# Guide\n\nbody\n")
+    return root
+
+
 class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
     """No backslash in any JSON string emitted by validate_skill."""
 
@@ -123,6 +153,62 @@ class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
                 offenders, [],
                 msg=(
                     "Backslashes leaked into stats JSON payload.  "
+                    "Offenders:\n  " + "\n  ".join(offenders)
+                ),
+            )
+
+    def test_audit_skill_system_json_payload_is_posix_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = _build_minimal_system_root(tmpdir)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(SCRIPTS_DIR, "audit_skill_system.py"),
+                    system_root,
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONUTF8": "1"},
+            )
+            payload = json.loads(result.stdout)
+            offenders = [
+                s for s in _walk_strings(payload) if "\\" in s
+            ]
+            self.assertEqual(
+                offenders, [],
+                msg=(
+                    "Backslashes leaked into audit_skill_system JSON "
+                    "payload.  Offenders:\n  " + "\n  ".join(offenders)
+                ),
+            )
+
+    def test_bundle_json_payload_is_posix_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = _build_minimal_skill(tmpdir)
+            output_path = os.path.join(tmpdir, "demo.zip")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(SCRIPTS_DIR, "bundle.py"),
+                    skill_dir,
+                    "--output", output_path,
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONUTF8": "1"},
+            )
+            payload = json.loads(result.stdout)
+            offenders = [
+                s for s in _walk_strings(payload) if "\\" in s
+            ]
+            self.assertEqual(
+                offenders, [],
+                msg=(
+                    "Backslashes leaked into bundle JSON payload.  "
                     "Offenders:\n  " + "\n  ".join(offenders)
                 ),
             )

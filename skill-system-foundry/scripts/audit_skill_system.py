@@ -66,6 +66,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.discovery import (
     find_skill_dirs,
@@ -1121,7 +1122,7 @@ def main() -> None:
         if json_output:
             print(to_json_output({
                 "tool": "audit_skill_system",
-                "path": os.path.abspath(system_root),
+                "path": to_posix(os.path.abspath(system_root)),
                 "success": False,
                 "error": f"'{system_root}' is not a directory",
             }))
@@ -1193,7 +1194,7 @@ def main() -> None:
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "audit_skill_system",
-            "path": os.path.abspath(system_root),
+            "path": to_posix(os.path.abspath(system_root)),
             "success": len(fails) == 0,
             "counts": counts,
             "summary": {

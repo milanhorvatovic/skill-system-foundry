@@ -57,6 +57,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 
 
@@ -216,7 +217,7 @@ def main() -> None:
         """Print a JSON failure blob and exit 1."""
         print(to_json_output({
             "tool": "bundle",
-            "path": skill_path,
+            "path": to_posix(skill_path),
             "success": False,
             "error": error,
         }))
@@ -394,7 +395,7 @@ def main() -> None:
             all_issues = list(errors) + list(warnings)
             print(to_json_output({
                 "tool": "bundle",
-                "path": skill_path,
+                "path": to_posix(skill_path),
                 "success": False,
                 "phase": "pre-validation",
                 "errors": categorize_errors_for_json(all_issues),
@@ -469,7 +470,7 @@ def main() -> None:
             if json_output:
                 print(to_json_output({
                     "tool": "bundle",
-                    "path": skill_path,
+                    "path": to_posix(skill_path),
                     "success": False,
                     "phase": "post-validation",
                     "errors": categorize_errors_for_json(post_errors),
@@ -523,9 +524,9 @@ def main() -> None:
     if json_output:
         result: dict = {
             "tool": "bundle",
-            "path": skill_path,
+            "path": to_posix(skill_path),
             "success": True,
-            "output": output_path,
+            "output": to_posix(output_path),
             "stats": {
                 "skill_name": stats["skill_name"],
                 "file_count": stats["file_count"],

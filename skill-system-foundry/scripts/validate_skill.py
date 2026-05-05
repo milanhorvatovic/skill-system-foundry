@@ -1444,7 +1444,7 @@ def main() -> None:
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "validate_skill",
-            "path": os.path.abspath(skill_path),
+            "path": to_posix(os.path.abspath(skill_path)),
             "type": "capability" if is_capability else "registered skill",
             "success": len(fails) == 0,
             "summary": {
