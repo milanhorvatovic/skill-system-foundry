@@ -105,62 +105,44 @@ def check_long_paths(
     longest = 0
     longest_rel = ""
     file_count = 0
-    # ``followlinks=True`` mirrors ``walk_skill_files`` (the bundler's
-    # actual walker) — paths reachable only through an in-skill
-    # symlink would otherwise be invisible to the pre-flight and
-    # surface only at user-extract time on Windows.  Cycle protection
-    # tracks per-walk *ancestry* rather than a global visited set:
-    # two symlinks pointing at the same directory under different
-    # lexical paths produce two distinct arcnames in the bundle, so
-    # both must be walked.  A pure-realpath visited set would skip
-    # the second alias and miss long paths the bundler would still
-    # ship.  Ancestry only collapses true cycles (a symlink whose
-    # realpath is already in the chain from the walk root to itself).
-    root_ancestors: dict[str, frozenset[str]] = {
-        abs_root: frozenset({os.path.realpath(abs_root)}),
-    }
-    for dirpath, dirnames, filenames in os.walk(
-        abs_root, followlinks=True,
+    # Use the bundler's actual walker (``walk_skill_files``) so the
+    # pre-flight inspects exactly the same files ``create_bundle``
+    # would copy: same exclude-pattern filtering on entries AND on
+    # symlink targets, same ancestry-based cycle protection that
+    # preserves non-cyclical aliases, same boundary enforcement
+    # against in-skill symlinks that escape the skill tree.
+    # Without this, a raw ``os.walk(followlinks=True)`` would
+    # inspect boundary-escaping symlink targets and excluded target
+    # trees that the bundler deliberately skips, producing
+    # findings for files the bundle would never include.
+    # ``boundary_violations=[]`` opts into the non-raising mode so
+    # an out-of-boundary symlink is silently skipped here (the
+    # bundler enforces the boundary strictly at packaging time).
+    boundary_violations: list = []
+    for dirpath, fname in walk_skill_files(
+        abs_root,
+        BUNDLE_EXCLUDE_PATTERNS,
+        boundary=abs_root,
+        boundary_violations=boundary_violations,
     ):
-        ancestors = root_ancestors.get(
-            dirpath, frozenset({os.path.realpath(dirpath)}),
-        )
-        dirnames[:] = [
-            d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
-        ]
-        # Filter out cyclical symlink descents while preserving non-
-        # cyclical aliases.  ``os.walk`` re-enters the dirnames list
-        # when descending, so we update its in-place to skip cycles.
-        kept_dirs: list[str] = []
-        for d in dirnames:
-            child_path = os.path.join(dirpath, d)
-            real_target = os.path.realpath(child_path)
-            if os.path.islink(child_path) and real_target in ancestors:
-                continue  # cycle — skip recursion into this branch
-            root_ancestors[child_path] = ancestors | frozenset({real_target})
-            kept_dirs.append(d)
-        dirnames[:] = kept_dirs
-        for fname in filenames:
-            if should_exclude(fname, BUNDLE_EXCLUDE_PATTERNS):
-                continue
-            file_count += 1
-            full = os.path.join(dirpath, fname)
-            rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
-            arcname_len = len(rel)
-            if arcname_len > longest:
-                longest = arcname_len
-                longest_rel = rel
-            if arcname_len > available:
-                errors.append(
-                    f"{severity}: '{rel}' exceeds the long-path budget "
-                    f"({user_prefix_budget} prefix + {arcname_len} arcname "
-                    f"= {user_prefix_budget + arcname_len} > {threshold} "
-                    "threshold) — Windows checkouts under a typical user "
-                    "directory may fail to extract this path.  Shorten "
-                    "the path or raise bundle.long_path.threshold in "
-                    "configuration.yaml after auditing the integrator's "
-                    "install location."
-                )
+        file_count += 1
+        full = os.path.join(dirpath, fname)
+        rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
+        arcname_len = len(rel)
+        if arcname_len > longest:
+            longest = arcname_len
+            longest_rel = rel
+        if arcname_len > available:
+            errors.append(
+                f"{severity}: '{rel}' exceeds the long-path budget "
+                f"({user_prefix_budget} prefix + {arcname_len} arcname "
+                f"= {user_prefix_budget + arcname_len} > {threshold} "
+                "threshold) — Windows checkouts under a typical user "
+                "directory may fail to extract this path.  Shorten "
+                "the path or raise bundle.long_path.threshold in "
+                "configuration.yaml after auditing the integrator's "
+                "install location."
+            )
     if not errors and file_count:
         passes.append(
             f"long-path: longest arcname '{longest_rel}' ({longest} chars) "
@@ -201,65 +183,57 @@ def check_reserved_path_components(
     abs_root = os.path.abspath(skill_path)
     file_count = 0
     seen: set[tuple[str, str]] = set()
-    # ``followlinks=True`` for symmetry with ``walk_skill_files`` —
-    # see ``check_long_paths`` for the rationale and the ancestry-
-    # based cycle-protection pattern (which preserves non-cyclical
-    # aliases the bundler still ships).
-    root_ancestors: dict[str, frozenset[str]] = {
-        abs_root: frozenset({os.path.realpath(abs_root)}),
-    }
-    for dirpath, dirnames, filenames in os.walk(
-        abs_root, followlinks=True,
+    # Reuse the bundler's actual walker so the rule fires on
+    # exactly the path components ``create_bundle`` would write
+    # into the archive (same exclude-pattern filtering, same
+    # boundary enforcement, same alias-preserving cycle
+    # protection).  See ``check_long_paths`` for the rationale.
+    boundary_violations: list = []
+    for dirpath, fname in walk_skill_files(
+        abs_root,
+        BUNDLE_EXCLUDE_PATTERNS,
+        boundary=abs_root,
+        boundary_violations=boundary_violations,
     ):
-        ancestors = root_ancestors.get(
-            dirpath, frozenset({os.path.realpath(dirpath)}),
-        )
-        dirnames[:] = [
-            d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
-        ]
-        kept_dirs: list[str] = []
-        for d in dirnames:
-            child_path = os.path.join(dirpath, d)
-            real_target = os.path.realpath(child_path)
-            if os.path.islink(child_path) and real_target in ancestors:
+        file_count += 1
+        full = os.path.join(dirpath, fname)
+        rel = os.path.relpath(full, abs_root).replace(os.sep, "/")
+        # Check every component of the relative path — directory
+        # AND filename — exactly once per (component-path, stem).
+        # ``walk_skill_files`` yields a (root, filename) pair per
+        # eligible file; the directory components are encoded in
+        # the file's relative path, so a single pass over each
+        # rel-path covers both surfaces and cannot double-count
+        # a directory shared by multiple files.
+        components = rel.split("/")
+        component_path_parts: list[str] = []
+        for component in components:
+            component_path_parts.append(component)
+            component_rel = "/".join(component_path_parts)
+            stem = component.split(".", 1)[0].upper()
+            if stem not in WINDOWS_RESERVED_NAMES:
                 continue
-            root_ancestors[child_path] = ancestors | frozenset({real_target})
-            kept_dirs.append(d)
-        dirnames[:] = kept_dirs
-        # Check directory components introduced at this level — every
-        # remaining ``dirnames`` entry is part of an arcname the
-        # bundler will write, so its stem must not match a reserved
-        # device name.  Report once per (rel-path, stem).
-        for dname in dirnames:
-            dir_full = os.path.join(dirpath, dname)
-            dir_rel = os.path.relpath(dir_full, abs_root).replace(os.sep, "/")
-            stem = dname.split(".", 1)[0].upper()
-            if stem in WINDOWS_RESERVED_NAMES and (dir_rel, stem) not in seen:
-                seen.add((dir_rel, stem))
+            if (component_rel, stem) in seen:
+                continue
+            seen.add((component_rel, stem))
+            is_file = component_rel == rel
+            if is_file:
                 errors.append(
                     f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"directory '{dir_rel}' has a path component "
-                    f"('{dname}') whose stem matches a Windows "
-                    f"reserved device name ({stem}) — illegal on "
-                    "NTFS regardless of host platform; rename to "
-                    "keep the bundle extractable on Windows."
-                )
-        for fname in filenames:
-            if should_exclude(fname, BUNDLE_EXCLUDE_PATTERNS):
-                continue
-            file_count += 1
-            full = os.path.join(dirpath, fname)
-            rel = os.path.relpath(full, abs_root).replace(os.sep, "/")
-            stem = fname.split(".", 1)[0].upper()
-            if stem in WINDOWS_RESERVED_NAMES and (rel, stem) not in seen:
-                seen.add((rel, stem))
-                errors.append(
-                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"'{rel}' has a basename ('{fname}') whose "
+                    f"'{rel}' has a basename ('{component}') whose "
                     f"stem matches a Windows reserved device name "
                     f"({stem}) — illegal on NTFS regardless of host "
                     "platform; rename to keep the bundle extractable "
                     "on Windows."
+                )
+            else:
+                errors.append(
+                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"directory '{component_rel}' has a path "
+                    f"component ('{component}') whose stem matches a "
+                    f"Windows reserved device name ({stem}) — illegal "
+                    "on NTFS regardless of host platform; rename to "
+                    "keep the bundle extractable on Windows."
                 )
     if not errors and file_count:
         passes.append(

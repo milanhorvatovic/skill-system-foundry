@@ -1847,6 +1847,12 @@ class CheckLongPathsTests(unittest.TestCase):
             self.assertIn(f"{self.SKILL_NAME}/x.md", errors[0])
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Cannot create reserved-name files (CON/AUX/NUL/...) on Windows; "
+    "the rule under test is OS-independent and is verified on the "
+    "ubuntu and macOS matrix runners instead.",
+)
 class CheckReservedPathComponentsTests(unittest.TestCase):
     """``check_reserved_path_components`` flags reserved NTFS names.
 
@@ -1855,6 +1861,15 @@ class CheckReservedPathComponentsTests(unittest.TestCase):
     every path component.  This helper walks the tree and FAILs when
     any directory or file name's stem matches one of the reserved
     names case-insensitively.
+
+    Windows-runner skip note: Windows itself rejects creating
+    ``CON``/``AUX``/``NUL`` files at the filesystem layer, so the
+    fixture-construction calls below would error out before
+    ``check_reserved_path_components`` is invoked.  The rule's
+    logic does not depend on the host OS — it walks names against
+    a configured list — so the matrix's ubuntu and macOS runs
+    cover the behaviour, and the Windows skip avoids a false
+    test failure that has nothing to do with the rule itself.
     """
 
     def _build(self, root: str, arcname: str) -> None:

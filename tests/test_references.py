@@ -2675,6 +2675,83 @@ class ResolveCaseExactTests(unittest.TestCase):
                 ["references/Foo.md", "references/foo.md"],
             )
 
+    def test_exact_match_with_mocked_collision_returns_collision(self) -> None:
+        """Same case-collision rule, exercised via mocked listdir.
+
+        Companion to ``test_exact_match_with_case_collision_returns_collision``
+        that runs on every host — case-insensitive filesystems can't
+        represent the collision on disk, so a fixture-driven test
+        skips there.  Mocking ``os.listdir`` directly drives the
+        function with a synthetic directory listing that includes
+        both ``Foo.md`` and ``foo.md``, so the collision logic is
+        verified on macOS / Windows runners too.
+        """
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            real_listdir = os.listdir
+            def fake_listdir(path: str) -> list[str]:
+                if os.path.basename(path) == "references":
+                    return ["Foo.md", "foo.md"]
+                return real_listdir(path)
+            with mock.patch(
+                "lib.references.os.listdir", side_effect=fake_listdir,
+            ):
+                ok, suggested, collisions = resolve_case_exact(tmpdir, target)
+        self.assertFalse(ok)
+        self.assertIsNone(suggested)
+        self.assertEqual(
+            collisions,
+            ["references/Foo.md", "references/foo.md"],
+        )
+
+    def test_exact_match_with_case_collision_returns_collision(self) -> None:
+        """An exact match alongside a case-different sibling is still a collision.
+
+        Pinned regression: an earlier ``resolve_case_exact`` returned
+        ``(True, None, None)`` as soon as ``part in entries`` matched
+        the requested spelling exactly, so a Linux directory
+        containing both ``Foo.md`` and ``foo.md`` validated cleanly
+        when the reference pointed at ``foo.md`` — even though the
+        bundle cannot be extracted on Windows or default macOS.
+        Move the case-insensitive collection BEFORE the exact-match
+        fast path so the collision surfaces regardless of which
+        spelling the reference uses.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            try:
+                write_text(
+                    os.path.join(tmpdir, "references", "Foo.md"), "1"
+                )
+                write_text(
+                    os.path.join(tmpdir, "references", "foo.md"), "2"
+                )
+            except OSError:
+                self.skipTest(
+                    "case-insensitive filesystem cannot represent "
+                    "the collision"
+                )
+            entries = os.listdir(os.path.join(tmpdir, "references"))
+            if len([e for e in entries if e.lower() == "foo.md"]) < 2:
+                self.skipTest(
+                    "case-insensitive filesystem coalesced the two "
+                    "case variants — collision cannot be exercised"
+                )
+            # Reference points at the EXACT spelling that exists.
+            # The exact-match fast path would return (True, None,
+            # None) without the collision check; the corrected
+            # implementation surfaces the collision instead.
+            target = os.path.join(tmpdir, "references", "foo.md")
+            ok, suggested, collisions = resolve_case_exact(tmpdir, target)
+            self.assertFalse(ok)
+            self.assertIsNone(suggested)
+            self.assertEqual(
+                collisions,
+                ["references/Foo.md", "references/foo.md"],
+            )
+
     def test_dotdot_prefixed_filename_is_in_tree(self) -> None:
         """A filename that starts with ``..`` is not an outside-root path.
 

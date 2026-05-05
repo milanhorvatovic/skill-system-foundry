@@ -502,21 +502,19 @@ def resolve_case_exact(
                 return False, None, None
             if listdir_cache is not None:
                 listdir_cache[cursor] = entries
-        if part in entries:
-            suggested_parts.append(part)
-            cursor = os.path.join(cursor, part)
-            continue
-        # Case-insensitive collection: collect EVERY entry whose
-        # lowercased form matches the requested part.  A
+        # Collect every entry that matches case-insensitively.  Done
+        # BEFORE the exact-match fast path because an exact match
+        # alongside a case-different sibling (legal on Linux) is
+        # still a collision the bundle cannot represent on
+        # Windows/macOS — accepting the exact spelling here would
+        # let an unrepresentable tree pass validation.  A
         # case-insensitive filesystem (Windows, macOS default) by
-        # definition cannot have multiple matches; this branch
-        # therefore only fires on case-sensitive Linux when the
-        # author has authored sibling files differing only in case.
+        # definition cannot have multiple matches, so this branch
+        # only fires on case-sensitive Linux when the author has
+        # written sibling files differing only in case.
         actual_matches = [
             e for e in entries if e.lower() == part.lower()
         ]
-        if not actual_matches:
-            return False, None, None
         if len(actual_matches) > 1:
             # Surface the collision as a separate return shape so
             # the caller can render a deterministic finding rather
@@ -527,6 +525,13 @@ def resolve_case_exact(
                 for m in actual_matches
             )
             return False, None, collision_candidates
+        if part in entries:
+            # Exact match with no case-different siblings — fast path.
+            suggested_parts.append(part)
+            cursor = os.path.join(cursor, part)
+            continue
+        if not actual_matches:
+            return False, None, None
         actual = actual_matches[0]
         suggested_parts.append(actual)
         cursor = os.path.join(cursor, actual)

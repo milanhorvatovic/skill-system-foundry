@@ -93,6 +93,22 @@ class RewriteTests(unittest.TestCase):
                 1,
             )
 
+    def test_non_utf8_content_returns_one(self) -> None:
+        """A SKILL.md with non-UTF-8 bytes returns the documented exit 1.
+
+        Pinned regression: ``open(..., encoding="utf-8")`` raises
+        ``UnicodeDecodeError`` (not ``OSError``) on undecodable
+        bytes, so an earlier helper that caught only ``OSError``
+        crashed with a traceback instead of exiting cleanly.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Write bytes that are invalid UTF-8 (lone continuation
+            # byte 0x80 is never a valid start byte).
+            with open(skill_md, "wb") as fh:
+                fh.write(b"\x80\x80\x80")
+            self.assertEqual(smoke_rewrite.rewrite(skill_md), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

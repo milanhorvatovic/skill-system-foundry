@@ -73,6 +73,17 @@ def rewrite(skill_md_path: str) -> int:
             file=sys.stderr,
         )
         return 1
+    except UnicodeDecodeError as exc:
+        # ``open(..., encoding="utf-8")`` raises this when the body
+        # contains non-UTF-8 bytes.  Surfacing it as the documented
+        # exit-1 ("unreadable file") keeps the smoke job's failure
+        # mode predictable instead of crashing with a traceback that
+        # the caller's status handling does not expect.
+        print(
+            f"FAIL: cannot decode '{skill_md_path}' as UTF-8: {exc}",
+            file=sys.stderr,
+        )
+        return 1
     # Strip the existing frontmatter block so the body alone remains.
     # ``str.split`` with maxsplit=2 yields ``["", "<frontmatter>",
     # "<body>"]`` for a file that starts with ``---``; otherwise
