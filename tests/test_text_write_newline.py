@@ -54,10 +54,13 @@ _PRODUCTION_DIRS: tuple[str, ...] = (
 # boundary, so production calls like ``open(p, "w", encoding=…)``
 # never tripped the regex.  The lint passed trivially with zero
 # matches.  This shape captures the real pattern explicitly.
+# No ``re.DOTALL`` flag — the pattern uses no ``.`` token, so
+# DOTALL would be a no-op.  The newline-traversal across multi-line
+# ``open()`` calls comes from ``[^,)]+``, ``[^)]*?``, and ``\s``,
+# none of which depend on ``.``'s line-anchored default.
 _RE_TEXT_WRITE_OPEN = re.compile(
     r'open\([^,)]+,\s*["\']([wa][t+]*)["\']'
     r'[^)]*?encoding\s*=\s*["\']utf-8["\'][^)]*?\)',
-    re.DOTALL,
 )
 
 

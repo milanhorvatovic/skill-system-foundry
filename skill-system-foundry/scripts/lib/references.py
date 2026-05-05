@@ -243,8 +243,10 @@ def looks_like_degraded_symlink(path: str) -> bool:
     Two-stage heuristic:
 
     1. Shape match — *path* must be a small file (<=
-       ``_DEGRADED_SYMLINK_MAX_BYTES``), valid UTF-8, single-line
-       content matching ``^\\.{0,2}[\\/][^\\r\\n]+\\.[A-Za-z0-9]+$``.
+       ``_DEGRADED_SYMLINK_MAX_BYTES``), valid UTF-8, with single-line
+       content matching ``_DEGRADED_SYMLINK_PATTERN`` (see the
+       constant for the recognised shim shapes and the foundry
+       extension allow-list).
     2. Broken-target confirmation — the captured path, resolved
        relative to *path*'s parent directory, must NOT point to an
        existing file.

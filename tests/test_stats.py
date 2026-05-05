@@ -1131,7 +1131,11 @@ class ComputeStatsGraphTests(unittest.TestCase):
 class ComputeStatsSchemaTests(unittest.TestCase):
     """Verify the returned dict matches the documented schema."""
 
-    def test_top_level_keys(self) -> None:
+    def test_top_level_keys_with_line_endings_enabled(self) -> None:
+        # YAML default is ``stats.line_endings.enabled: true``; the
+        # ``*_lf`` keys are part of the schema in this branch.  The
+        # toggle-off branch is pinned by
+        # ``LineEndingsToggleDisabledTests.test_top_level_keys_with_line_endings_disabled``.
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir)
             result = compute_stats(tmpdir)
@@ -1743,6 +1747,28 @@ class LineEndingsToggleDisabledTests(unittest.TestCase):
         self.assertNotIn("load_bytes_lf", result)
         for entry in result["files"]:
             self.assertNotIn("line_endings", entry)
+
+    def test_top_level_keys_with_line_endings_disabled(self) -> None:
+        """Pin the exact key set when detection is disabled.
+
+        Companion to
+        ``ComputeStatsSchemaTests.test_top_level_keys_with_line_endings_enabled``
+        — together they assert both schema branches so a future
+        addition of a third optional key cannot slip past the
+        contract by being absent from one branch's assertion.
+        """
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            with patch("lib.stats.STATS_LINE_ENDINGS_ENABLED", False):
+                result = compute_stats(tmpdir)
+        self.assertEqual(
+            set(result.keys()),
+            {
+                "skill", "metric", "discovery_bytes", "load_bytes",
+                "files", "errors",
+            },
+        )
 
 
 if __name__ == "__main__":
