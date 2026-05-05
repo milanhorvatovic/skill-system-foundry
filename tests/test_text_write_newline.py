@@ -107,12 +107,25 @@ def _extract_open_kwargs(call: ast.Call) -> dict[str, ast.expr]:
 
 
 def _is_text_mode_write(mode: str) -> bool:
-    """Return True for text-mode writes (``w``, ``a``, ``w+``, ``at`` …)."""
+    """Return True for text-mode writes.
+
+    Covers the three Python file-mode prefixes that produce a
+    writable text stream:
+
+    * ``w`` — open for writing, truncating first.
+    * ``a`` — open for writing, appending.
+    * ``x`` — open for exclusive creation, failing if the path exists.
+
+    All three honour newline translation in text mode, so each
+    requires ``newline="\\n"`` to keep output deterministic on
+    Windows.  Binary modes (those containing ``b``) are exempt
+    because they bypass newline translation entirely.
+    """
     if not mode:
         return False
     if "b" in mode:  # binary writes are exempt
         return False
-    if mode[0] not in ("w", "a"):  # read/exclusive modes don't apply
+    if mode[0] not in ("w", "a", "x"):  # read modes don't apply
         return False
     return True
 
@@ -225,8 +238,14 @@ class LintCoverageTests(unittest.TestCase):
 
     def test_multi_char_text_mode_is_matched(self) -> None:
         # ``"w+"`` and friends are text-mode writes; the lint must
-        # flag them when ``newline="\n"`` is absent.
-        for mode in ("w+", "wt", "wt+", "a+", "at", "at+"):
+        # flag them when ``newline="\n"`` is absent.  ``x`` /
+        # ``x+`` / ``xt`` (exclusive-create text writes) are also
+        # text-mode and must be covered.
+        for mode in (
+            "w+", "wt", "wt+",
+            "a+", "at", "at+",
+            "x", "x+", "xt", "xt+",
+        ):
             with self.subTest(mode=mode):
                 source = (
                     f"with open('p', '{mode}', encoding='utf-8') as fh:\n"
@@ -236,8 +255,9 @@ class LintCoverageTests(unittest.TestCase):
 
     def test_binary_mode_is_skipped(self) -> None:
         # Binary writes never need ``newline="\n"`` and must not be
-        # flagged.
-        for mode in ("wb", "ab", "wb+", "rb"):
+        # flagged.  Includes ``xb`` (exclusive-create binary) for
+        # completeness alongside ``x`` text-mode coverage.
+        for mode in ("wb", "ab", "wb+", "rb", "xb", "xb+"):
             with self.subTest(mode=mode):
                 source = (
                     f"with open('p', '{mode}', encoding='utf-8') as fh:\n"

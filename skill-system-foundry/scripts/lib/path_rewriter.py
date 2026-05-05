@@ -392,7 +392,15 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                         line_no = idx
                         break
                 rows.append({
-                    "file": to_posix(filepath),
+                    # ``file`` keeps the native filesystem path
+                    # because ``apply_fixes`` opens it directly to
+                    # rewrite content.  POSIX permits ``\`` as a
+                    # legal filename character, so passing it
+                    # through ``to_posix`` could rewrite it to ``/``
+                    # and silently target the wrong file.  ``file_rel``
+                    # is the POSIX-form skill-relative form for JSON
+                    # consumers and human messages.
+                    "file": filepath,
                     "file_rel": file_rel,
                     "original": ref,
                     "replacement": replacement,
@@ -495,7 +503,14 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                         line_no = idx
                         break
                 rows.append({
-                    "file": to_posix(filepath),
+                    # ``file`` keeps the native form for symmetry
+                    # with ``find_fixable_references`` (see the
+                    # comment there).  ``file_rel`` and the two
+                    # ``*_target`` fields are POSIX-normalised for
+                    # JSON consumers because they are skill-relative
+                    # display strings, not paths a caller would
+                    # ``open()`` directly.
+                    "file": filepath,
                     "file_rel": file_rel,
                     "original": ref,
                     "legacy_target": to_posix(
