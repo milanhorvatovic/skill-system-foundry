@@ -90,7 +90,7 @@ def check_long_paths(
             if arcname_len > longest:
                 longest = arcname_len
                 longest_rel = rel
-            if user_prefix_budget + arcname_len > threshold:
+            if arcname_len > available:
                 errors.append(
                     f"{severity}: '{rel}' exceeds the long-path budget "
                     f"({user_prefix_budget} prefix + {arcname_len} arcname "
@@ -104,8 +104,8 @@ def check_long_paths(
     if not errors and file_count:
         passes.append(
             f"long-path: longest arcname '{longest_rel}' ({longest} chars) "
-            f"fits within the {threshold - user_prefix_budget}-char arcname "
-            f"budget (threshold {threshold}, prefix {user_prefix_budget})"
+            f"fits within the {available}-char arcname budget "
+            f"(threshold {threshold}, prefix {user_prefix_budget})"
         )
     return errors, passes
 
