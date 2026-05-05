@@ -23,6 +23,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BUNDLE_SCRIPT = os.path.join(SCRIPTS_DIR, "bundle.py")
 
 import bundle
+from lib.reporting import to_posix
 from lib.constants import (
     BUNDLE_DESCRIPTION_MAX_LENGTH,
     LEVEL_FAIL,
@@ -1365,7 +1366,10 @@ class JsonOutputTests(unittest.TestCase):
             result = json.loads(stdout.getvalue())
             self.assertTrue(result["success"])
             self.assertIn("stats", result)
-            self.assertEqual(result["output"], output_path)
+            # ``bundle.py`` routes ``output`` through ``to_posix`` so
+            # the JSON payload is consistent across hosts (the field
+            # has backslashes on Windows otherwise).
+            self.assertEqual(result["output"], to_posix(output_path))
             self.assertTrue(
                 os.path.exists(output_path),
                 "Archive file should exist after successful JSON bundle",

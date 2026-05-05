@@ -5022,10 +5022,31 @@ class DanglingSymlinkReferenceTests(unittest.TestCase):
             ref_dir = os.path.join(tmpdir, "references")
             os.makedirs(ref_dir)
             link = os.path.join(ref_dir, "guide.md")
+            target = os.path.join(tmpdir, "missing-target.md")
+            # Pre-create the target so ``os.symlink`` unambiguously
+            # produces a file symlink (Windows determines link type
+            # from the target at creation time; pointing at a
+            # non-existent path leads to platform-dependent
+            # behaviour).  Then remove the target to make the link
+            # dangling, which is the state under test.
+            write_text(target, "x")
             try:
-                os.symlink(os.path.join(tmpdir, "missing-target.md"), link)
+                os.symlink(target, link)
             except (OSError, NotImplementedError):
                 self.skipTest("symlinks not supported on this host")
+            os.unlink(target)
+            # Sanity check: the precondition must hold before the
+            # assertion below is meaningful.  If the host produced
+            # something other than a true dangling symlink (e.g., a
+            # junction, a copy, a non-symlink reparse point), skip
+            # rather than fail — the test exercises the validator,
+            # not the OS's symlink semantics.
+            if not (os.path.islink(link) and not os.path.exists(link)):
+                self.skipTest(
+                    "host did not produce a dangling symlink "
+                    f"(islink={os.path.islink(link)}, "
+                    f"exists={os.path.exists(link)})"
+                )
             skill_md = os.path.join(tmpdir, "SKILL.md")
             body = "# Skill\n\nSee [g](references/guide.md).\n"
             write_text(skill_md, "---\nname: test\n---\n" + body)
