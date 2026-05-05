@@ -24,6 +24,7 @@ from lib.references import (
     is_dangling_symlink,
     is_drive_qualified,
     is_within_directory,
+    looks_like_degraded_symlink,
     resolve_case_exact,
     strip_fragment,
 )
@@ -179,6 +180,7 @@ def _check_references(
     allow_nested_refs: bool = False,
     include_router_table: bool = False,
     source_label: str | None = None,
+    listdir_cache: dict[str, list[str]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check markdown references in *body* using file-relative resolution.
 
@@ -342,6 +344,26 @@ def _check_references(
             )
             continue
 
+        # Windows-without-Developer-Mode degraded form: the would-be
+        # symlink exists as a small text file containing the relative
+        # target.  ``os.path.islink`` returns False so the dangling
+        # branch above missed it; the existence check below would
+        # otherwise pass silently and the *parent* reference would
+        # be reported as the failing one.  Detecting the shape here
+        # surfaces an actionable WARN naming the same fix as the true
+        # dangling case.
+        if looks_like_degraded_symlink(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "looks like a Windows-without-DevMode degraded symlink "
+                "(small file whose content is a single relative path) — "
+                "enable Developer Mode or set core.symlinks=true and "
+                "re-clone so git materialises the link"
+            )
+            continue
+
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
@@ -351,7 +373,9 @@ def _check_references(
             )
             continue
 
-        case_ok, suggested = resolve_case_exact(skill_root, ref_path)
+        case_ok, suggested = resolve_case_exact(
+            skill_root, ref_path, listdir_cache=listdir_cache,
+        )
         if not case_ok and suggested is not None:
             broken_found = True
             errors.append(
@@ -572,6 +596,12 @@ def validate_skill_references(
     passes: list[str] = []
     entry_abs = os.path.abspath(entry_file)
     files_checked = 0
+    # Listdir cache shared across every file's reference resolution
+    # in this pass.  A skill with N references M components deep
+    # without the cache costs N*M listdirs; with it the worst case
+    # is one listdir per unique directory the reference graph
+    # touches.  Lifetime is the duration of this single call.
+    listdir_cache: dict[str, list[str]] = {}
 
     for dirpath, _dirnames, filenames in os.walk(skill_path):
         for fname in sorted(filenames):
@@ -615,6 +645,7 @@ def validate_skill_references(
             file_errors, _file_passes = _check_references(
                 content, filepath, skill_root, file_allow_nested,
                 source_label=rel_label,
+                listdir_cache=listdir_cache,
             )
 
             files_checked += 1

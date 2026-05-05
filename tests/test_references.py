@@ -25,6 +25,7 @@ from lib.references import (
     is_drive_qualified,
     is_glob_path,
     is_within_directory,
+    looks_like_degraded_symlink,
     resolve_case_exact,
     resolve_reference,
     resolve_reference_with_reason,
@@ -2611,6 +2612,99 @@ class ResolveCaseExactTests(unittest.TestCase):
             # without applying the case-exact rule.
             self.assertTrue(ok)
             self.assertIsNone(suggested)
+
+
+class ResolveCaseExactCacheTests(unittest.TestCase):
+    """``resolve_case_exact`` memoises listdir when given a cache."""
+
+    def test_cache_amortises_listdir_across_resolutions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            for name in ("a.md", "b.md", "c.md"):
+                write_text(os.path.join(tmpdir, "references", name), "x")
+            cache: dict[str, list[str]] = {}
+            from unittest import mock
+            with mock.patch(
+                "lib.references.os.listdir",
+                wraps=os.listdir,
+            ) as spy:
+                for name in ("a.md", "b.md", "c.md"):
+                    target = os.path.join(tmpdir, "references", name)
+                    ok, _ = resolve_case_exact(
+                        tmpdir, target, listdir_cache=cache,
+                    )
+                    self.assertTrue(ok)
+                # 3 resolutions, 2 components each = 6 listdir calls
+                # without cache.  With the cache, only 2 unique
+                # directories (root + references) are inspected.
+                self.assertEqual(spy.call_count, 2)
+
+    def test_no_cache_keeps_per_resolution_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            for name in ("a.md", "b.md"):
+                write_text(os.path.join(tmpdir, "references", name), "x")
+            from unittest import mock
+            with mock.patch(
+                "lib.references.os.listdir",
+                wraps=os.listdir,
+            ) as spy:
+                for name in ("a.md", "b.md"):
+                    target = os.path.join(tmpdir, "references", name)
+                    resolve_case_exact(tmpdir, target)
+                # 2 resolutions * 2 components = 4 listdir calls
+                # without the cache.
+                self.assertEqual(spy.call_count, 4)
+
+
+class LooksLikeDegradedSymlinkTests(unittest.TestCase):
+    """The Windows-without-DevMode degraded-symlink heuristic."""
+
+    def test_relative_path_text_file_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "../../target/foo.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_dot_relative_path_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "./target/foo.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_real_markdown_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "real.md")
+            write_text(p, "# Heading\n\nSome body content here.\n")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_oversize_file_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "big.md")
+            # 600-byte file with a path-shaped first line — still
+            # rejected because the size exceeds the heuristic ceiling.
+            write_text(p, ("../../target/foo.md\n" + "x" * 600))
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_empty_file_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "empty.md")
+            write_text(p, "")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_missing_file_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertFalse(
+                looks_like_degraded_symlink(
+                    os.path.join(tmpdir, "missing.md")
+                )
+            )
+
+    def test_multiline_path_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "../target/foo.md\n../target/bar.md\n")
+            self.assertFalse(looks_like_degraded_symlink(p))
 
 
 class IsDanglingSymlinkTests(unittest.TestCase):

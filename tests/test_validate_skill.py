@@ -4946,6 +4946,38 @@ class CaseExactReferenceTests(unittest.TestCase):
             self.assertEqual(case_fails, [])
 
 
+class DegradedSymlinkReferenceTests(unittest.TestCase):
+    """Windows-without-DevMode degraded form produces a tailored WARN."""
+
+    def test_degraded_text_file_emits_dedicated_warn(self) -> None:
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            # Simulate Windows-without-DevMode: a small text file
+            # whose entire body is a relative target.
+            shim = os.path.join(ref_dir, "guide.md")
+            write_text(shim, "../../target/guide.md")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [g](references/guide.md).\n"
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            degraded = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "degraded symlink" in e
+            ]
+            self.assertEqual(len(degraded), 1)
+            self.assertIn("Developer Mode", degraded[0])
+            # The generic broken-ref WARN must NOT also fire — the
+            # degraded branch short-circuits before the existence
+            # check would run.
+            generic = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            self.assertEqual(generic, [])
+
+
 class DanglingSymlinkReferenceTests(unittest.TestCase):
     """Dangling symlinks produce dedicated findings, not generic 'missing'."""
 

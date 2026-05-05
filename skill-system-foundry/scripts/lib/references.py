@@ -194,24 +194,74 @@ def is_drive_qualified(path: str) -> bool:
 def is_dangling_symlink(path: str) -> bool:
     """Return True when *path* is a symlink whose target does not exist.
 
-    On Windows without Developer Mode (and on git checkouts that
-    materialised a symlink as a literal text file containing the
-    target path), the validator must distinguish a dangling symlink
-    from a never-created file so the finding can point the author at
-    the right fix.  A dangling link is reported with a dedicated
-    message that names the link and its missing target; a missing
-    plain file gets the generic "does not exist" message.
-
-    ``os.path.islink`` is host-aware: on Linux/macOS it returns True
-    for actual symlinks; on Windows it also recognises symbolic
-    links and reparse points.  The companion existence check uses
-    ``os.path.exists`` so a link to a present file still returns
-    False here even when the target is reached via the link.
+    On Linux/macOS a real symlink whose target was deleted falls
+    here.  ``os.path.islink`` returns True for the link, but
+    ``os.path.exists`` follows the link and reports False — the
+    classic dangling-symlink shape.  The companion existence check
+    keeps a live link (target present) out of the True branch.
     """
     return os.path.islink(path) and not os.path.exists(path)
 
 
-def resolve_case_exact(skill_root: str, ref_path: str) -> tuple[bool, str | None]:
+# Windows-without-Developer-Mode degraded-symlink heuristic.  A git
+# checkout on Windows that lacks symlink support stores the would-be
+# symlink as a small plain text file whose entire body is the
+# relative target the link would have resolved to.  The validator
+# cannot use ``os.path.islink`` to detect this — the file is a real
+# regular file by then.  Instead, we recognise the shape: small file,
+# valid UTF-8, content is a single relative-looking path with one of
+# the foundry's reference extensions.  Recognised forms produce the
+# same actionable WARN as a true dangling symlink so the integrator
+# is pointed at the right fix (Developer Mode or core.symlinks=true)
+# instead of the generic "file does not exist" diagnostic.
+_DEGRADED_SYMLINK_MAX_BYTES = 512
+_DEGRADED_SYMLINK_PATTERN = re.compile(
+    r"^\.{0,2}[\\/][^\r\n]+\.[A-Za-z0-9]+$"
+)
+
+
+def looks_like_degraded_symlink(path: str) -> bool:
+    """Return True when *path* looks like a Windows-without-DevMode shim.
+
+    The function is a heuristic — it does not resolve the path it
+    finds inside the file, only checks the shape.  Callers pair it
+    with the existence check so a real markdown file that happens to
+    contain a single relative-looking path is not misclassified
+    (real markdown content has at least one non-path line, or
+    multiple lines, or formatting characters).
+
+    Returns False on read failures, on files larger than
+    ``_DEGRADED_SYMLINK_MAX_BYTES``, on files whose body is not
+    valid UTF-8, and on files whose content does not match the
+    single-relative-path shape.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+    if size == 0 or size > _DEGRADED_SYMLINK_MAX_BYTES:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return False
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    body = text.strip()
+    if not body or "\n" in body or "\r" in body:
+        return False
+    return bool(_DEGRADED_SYMLINK_PATTERN.match(body))
+
+
+def resolve_case_exact(
+    skill_root: str,
+    ref_path: str,
+    *,
+    listdir_cache: dict[str, list[str]] | None = None,
+) -> tuple[bool, str | None]:
     """Resolve *ref_path* against *skill_root* with byte-exact case.
 
     On case-insensitive filesystems (NTFS, default macOS HFS+/APFS)
@@ -230,6 +280,15 @@ def resolve_case_exact(skill_root: str, ref_path: str) -> tuple[bool, str | None
       directory with the reference target and normpath-ing the
       result.  The helper does not normalise here; callers pass the
       same path they would otherwise pass to ``os.path.exists``.
+    - *listdir_cache* — optional dict that callers can pass in to
+      amortise ``os.listdir`` calls across many resolutions in the
+      same validation pass.  When supplied, the helper consults the
+      cache (keyed by absolute directory path) before issuing a
+      syscall and stores the result for subsequent lookups.  A skill
+      with N references M components deep without the cache costs
+      N·M listdirs; with the cache it costs at most one listdir per
+      unique directory the reference graph touches.  The cache is
+      not read concurrently; safe to share within a single pass.
 
     Returns ``(True, None)`` when the path resolves with byte-exact
     case at every component; returns ``(False, suggested_path)`` when
@@ -260,10 +319,15 @@ def resolve_case_exact(skill_root: str, ref_path: str) -> tuple[bool, str | None
     suggested_parts: list[str] = []
     case_diverged = False
     for part in parts:
-        try:
-            entries = os.listdir(cursor)
-        except OSError:
-            return False, None
+        if listdir_cache is not None and cursor in listdir_cache:
+            entries = listdir_cache[cursor]
+        else:
+            try:
+                entries = os.listdir(cursor)
+            except OSError:
+                return False, None
+            if listdir_cache is not None:
+                listdir_cache[cursor] = entries
         if part in entries:
             suggested_parts.append(part)
             cursor = os.path.join(cursor, part)
