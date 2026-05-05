@@ -24,6 +24,8 @@ from .constants import (
     LEVEL_WARN,
     LONG_PATH_THRESHOLD,
     LONG_PATH_USER_PREFIX_BUDGET,
+    PATH_RESOLUTION_RULE_NAME,
+    WINDOWS_RESERVED_NAMES,
 )
 from .frontmatter import load_frontmatter
 from .references import (
@@ -103,7 +105,22 @@ def check_long_paths(
     longest = 0
     longest_rel = ""
     file_count = 0
-    for dirpath, dirnames, filenames in os.walk(abs_root):
+    # ``followlinks=True`` mirrors ``walk_skill_files`` (the bundler's
+    # actual walker) — paths reachable only through an in-skill
+    # symlink would otherwise be invisible to the pre-flight and
+    # surface only at user-extract time on Windows.  ``os.walk``'s
+    # built-in symlink-cycle protection only handles plain reentries
+    # of the same name; track real paths explicitly so a symlink
+    # chain (``a -> b/`` and ``b -> a/``) can't loop forever.
+    visited_real: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(
+        abs_root, followlinks=True,
+    ):
+        real_dir = os.path.realpath(dirpath)
+        if real_dir in visited_real:
+            dirnames[:] = []
+            continue
+        visited_real.add(real_dir)
         dirnames[:] = [
             d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
         ]
@@ -133,6 +150,95 @@ def check_long_paths(
             f"long-path: longest arcname '{longest_rel}' ({longest} chars) "
             f"fits within the {available}-char arcname budget "
             f"(threshold {threshold}, prefix {user_prefix_budget})"
+        )
+    return errors, passes
+
+
+def check_reserved_path_components(
+    skill_path: str,
+    *,
+    severity: str = LEVEL_FAIL,
+) -> tuple[list[str], list[str]]:
+    """Flag bundled path components that match a Windows reserved name.
+
+    The frontmatter ``name`` rule (in ``validate_name``) catches the
+    skill's own basename, but Windows reserves device names for
+    *every* path component, not just the top-level one.  A skill
+    that contains ``references/con.md`` or
+    ``capabilities/aux/capability.md`` would scaffold and validate
+    cleanly today and only fail when a Windows user tried to extract
+    the bundle.
+
+    Walk the skill tree (using the same exclude patterns the bundler
+    skips) and inspect every directory and file basename's stem,
+    case-insensitively, against ``WINDOWS_RESERVED_NAMES``.  Findings
+    are reported at *severity* (FAIL by default; the validator
+    surfaces the rule at WARN at authoring time so the bundler's
+    FAIL is never the first signal).  The relative path emitted in
+    finding text uses forward slashes regardless of host so
+    diagnostics are byte-identical on every runner.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not os.path.isdir(skill_path):
+        return errors, passes
+    abs_root = os.path.abspath(skill_path)
+    file_count = 0
+    seen: set[tuple[str, str]] = set()
+    # ``followlinks=True`` for symmetry with ``walk_skill_files`` —
+    # see ``check_long_paths`` for the rationale and the cycle-
+    # protection pattern.
+    visited_real: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(
+        abs_root, followlinks=True,
+    ):
+        real_dir = os.path.realpath(dirpath)
+        if real_dir in visited_real:
+            dirnames[:] = []
+            continue
+        visited_real.add(real_dir)
+        dirnames[:] = [
+            d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
+        ]
+        # Check directory components introduced at this level — every
+        # remaining ``dirnames`` entry is part of an arcname the
+        # bundler will write, so its stem must not match a reserved
+        # device name.  Report once per (rel-path, stem).
+        for dname in dirnames:
+            dir_full = os.path.join(dirpath, dname)
+            dir_rel = os.path.relpath(dir_full, abs_root).replace(os.sep, "/")
+            stem = dname.split(".", 1)[0].upper()
+            if stem in WINDOWS_RESERVED_NAMES and (dir_rel, stem) not in seen:
+                seen.add((dir_rel, stem))
+                errors.append(
+                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"directory '{dir_rel}' has a path component "
+                    f"('{dname}') whose stem matches a Windows "
+                    f"reserved device name ({stem}) — illegal on "
+                    "NTFS regardless of host platform; rename to "
+                    "keep the bundle extractable on Windows."
+                )
+        for fname in filenames:
+            if should_exclude(fname, BUNDLE_EXCLUDE_PATTERNS):
+                continue
+            file_count += 1
+            full = os.path.join(dirpath, fname)
+            rel = os.path.relpath(full, abs_root).replace(os.sep, "/")
+            stem = fname.split(".", 1)[0].upper()
+            if stem in WINDOWS_RESERVED_NAMES and (rel, stem) not in seen:
+                seen.add((rel, stem))
+                errors.append(
+                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"'{rel}' has a basename ('{fname}') whose "
+                    f"stem matches a Windows reserved device name "
+                    f"({stem}) — illegal on NTFS regardless of host "
+                    "platform; rename to keep the bundle extractable "
+                    "on Windows."
+                )
+    if not errors and file_count:
+        passes.append(
+            "windows-reserved-names: every path component is legal "
+            "on NTFS"
         )
     return errors, passes
 

@@ -93,7 +93,7 @@ from lib.constants import (
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
-from lib.bundling import check_long_paths
+from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.router_table import audit_router_table
 from lib.validation import (
     validate_description_triggers,
@@ -625,7 +625,16 @@ def audit_skill_system(
     # --- Long-path pre-flight (cross-platform) ---
     if verbose:
         print("\n== Long-Path Budget ==")
-    for skill in skills:
+    # Iterate ``aggregation_targets`` rather than ``skills`` so the
+    # rule covers both deployed-system layouts (registered skills
+    # under ``skills/<name>/``) AND skill-root mode (the synthetic
+    # top-level entry produced by ``top_level_skill_entry``).
+    # ``find_skill_dirs`` does not surface the top-level SKILL.md
+    # in skill-root mode, so iterating it alone would skip the most
+    # common local-audit-self shape.  Capabilities are excluded
+    # because they are part of their parent skill's archive and
+    # would double-report.
+    for skill in aggregation_targets:
         lp_errors, lp_passes = check_long_paths(
             skill["path"], severity=LEVEL_WARN,
         )
@@ -634,6 +643,19 @@ def audit_skill_system(
             errors.append(f"{level}: {skill['name']}: {detail}")
         if not lp_errors and verbose:
             print(f"  ✓ {skill['name']}: long-path clean")
+
+    # --- Reserved-name path-component check (cross-platform) ---
+    if verbose:
+        print("\n== Reserved Names ==")
+    for skill in aggregation_targets:
+        rn_errors, _rn_passes = check_reserved_path_components(
+            skill["path"], severity=LEVEL_WARN,
+        )
+        for finding in rn_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']}: {detail}")
+        if not rn_errors and verbose:
+            print(f"  ✓ {skill['name']}: no reserved-name path components")
 
     # --- Capabilities should not be registered ---
     if verbose:

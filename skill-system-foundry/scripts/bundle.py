@@ -34,6 +34,7 @@ from lib.bundling import (
     postvalidate,
     create_zip,
     check_long_paths,
+    check_reserved_path_components,
 )
 from lib.constants import (
     BUNDLE_DEFAULT_TARGET,
@@ -380,7 +381,13 @@ def main() -> None:
     # time assembling the bundle.  Same rule fires from validate_skill
     # at WARN severity during authoring.
     long_path_errors, _ = check_long_paths(skill_path)
-    errors = list(errors) + long_path_errors
+    # Reserved-name pre-flight: every bundled path component's stem
+    # must be legal on NTFS, not just the skill's frontmatter name.
+    # validate_skill emits this at WARN; bundle FAILs because once
+    # we ship a zip with ``references/con.md``, a Windows user can
+    # never extract it.
+    reserved_name_errors, _ = check_reserved_path_components(skill_path)
+    errors = list(errors) + long_path_errors + reserved_name_errors
     # In JSON mode, merge early warnings (e.g. missing system root)
     # with prevalidation warnings so they appear in the JSON output.
     # In human mode, early warnings were already printed inline, so
@@ -478,7 +485,18 @@ def main() -> None:
             bundle_dir,
             arcname_root=os.path.dirname(bundle_dir),
         )
-        post_errors = list(post_errors) + long_path_post_errors
+        # Reserved-name post-flight: same parity reason — externals
+        # and inlined skills are added here, so a path component
+        # like ``references/aux.md`` introduced through inlining
+        # would slip past the pre-flight.
+        reserved_name_post_errors, _ = check_reserved_path_components(
+            bundle_dir,
+        )
+        post_errors = (
+            list(post_errors)
+            + long_path_post_errors
+            + reserved_name_post_errors
+        )
 
         if post_errors:
             if json_output:

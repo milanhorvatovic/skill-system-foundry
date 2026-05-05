@@ -2587,7 +2587,7 @@ class ResolveCaseExactTests(unittest.TestCase):
             os.makedirs(os.path.join(tmpdir, "references"))
             target = os.path.join(tmpdir, "references", "foo.md")
             write_text(target, "x")
-            ok, suggested = resolve_case_exact(tmpdir, target)
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, target)
             self.assertTrue(ok)
             self.assertIsNone(suggested)
 
@@ -2597,7 +2597,7 @@ class ResolveCaseExactTests(unittest.TestCase):
             target = os.path.join(tmpdir, "references", "foo.md")
             write_text(target, "x")
             wrong = os.path.join(tmpdir, "References", "foo.md")
-            ok, suggested = resolve_case_exact(tmpdir, wrong)
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
             self.assertFalse(ok)
             self.assertEqual(suggested, "references/foo.md")
 
@@ -2607,7 +2607,7 @@ class ResolveCaseExactTests(unittest.TestCase):
             target = os.path.join(tmpdir, "references", "foo.md")
             write_text(target, "x")
             wrong = os.path.join(tmpdir, "references", "FOO.md")
-            ok, suggested = resolve_case_exact(tmpdir, wrong)
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
             # On case-sensitive Linux the file does not exist at all;
             # the helper returns (False, None) in that case.  On
             # case-insensitive macOS / NTFS the file exists under a
@@ -2622,9 +2622,57 @@ class ResolveCaseExactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "references"))
             wrong = os.path.join(tmpdir, "references", "missing.md")
-            ok, suggested = resolve_case_exact(tmpdir, wrong)
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
             self.assertFalse(ok)
             self.assertIsNone(suggested)
+
+    def test_case_collision_returns_candidate_list(self) -> None:
+        """Two siblings differing only by case surface as a collision.
+
+        Pinned regression: the previous implementation built a
+        ``{e.lower(): e}`` map, so when a directory contained
+        ``Foo.md`` and ``foo.md`` (legal on Linux) the map kept an
+        arbitrary survivor and the caller received a nondeterministic
+        "actual path is …" suggestion that could point at the wrong
+        file.  Surface the collision via the third return slot so
+        the caller can render a deterministic finding listing every
+        candidate.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            # Try to create both case variants.  Case-insensitive
+            # filesystems (Windows, macOS default) cannot create the
+            # second; skip the test there since the collision is
+            # impossible.
+            try:
+                write_text(
+                    os.path.join(tmpdir, "references", "Foo.md"), "1"
+                )
+                write_text(
+                    os.path.join(tmpdir, "references", "foo.md"), "2"
+                )
+            except OSError:
+                self.skipTest(
+                    "case-insensitive filesystem cannot represent "
+                    "the collision"
+                )
+            entries = os.listdir(os.path.join(tmpdir, "references"))
+            if len([e for e in entries if e.lower() == "foo.md"]) < 2:
+                self.skipTest(
+                    "case-insensitive filesystem coalesced the two "
+                    "case variants — collision cannot be exercised"
+                )
+            wrong = os.path.join(tmpdir, "references", "FOO.md")
+            ok, suggested, collisions = resolve_case_exact(tmpdir, wrong)
+            self.assertFalse(ok)
+            self.assertIsNone(suggested)
+            self.assertIsNotNone(collisions)
+            # Sorted candidate list, slash-joined under the
+            # already-resolved prefix.
+            self.assertEqual(
+                collisions,
+                ["references/Foo.md", "references/foo.md"],
+            )
 
     def test_path_outside_root_falls_back_to_existence(self) -> None:
         with tempfile.TemporaryDirectory() as outer:
@@ -2634,7 +2682,7 @@ class ResolveCaseExactTests(unittest.TestCase):
             os.makedirs(sibling)
             target = os.path.join(sibling, "ref.md")
             write_text(target, "x")
-            ok, suggested = resolve_case_exact(inner, target)
+            ok, suggested, _collisions = resolve_case_exact(inner, target)
             # Outside the skill root, the helper defers to existence
             # without applying the case-exact rule.
             self.assertTrue(ok)
@@ -2657,7 +2705,7 @@ class ResolveCaseExactCacheTests(unittest.TestCase):
             ) as spy:
                 for name in ("a.md", "b.md", "c.md"):
                     target = os.path.join(tmpdir, "references", name)
-                    ok, _ = resolve_case_exact(
+                    ok, _suggested, _collisions = resolve_case_exact(
                         tmpdir, target, listdir_cache=cache,
                     )
                     self.assertTrue(ok)

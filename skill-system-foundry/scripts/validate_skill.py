@@ -19,7 +19,7 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
-from lib.bundling import check_long_paths
+from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.references import (
     is_dangling_symlink,
@@ -345,9 +345,27 @@ def _check_references(
         # every host, so emit the FAIL here before the
         # exists/dangling/degraded checks have a chance to fire a
         # less-actionable diagnostic.
-        case_ok, suggested = resolve_case_exact(
+        case_ok, suggested, collisions = resolve_case_exact(
             skill_root, ref_path, listdir_cache=listdir_cache,
         )
+        if not case_ok and collisions is not None:
+            # Case-collision: the on-disk tree has two or more
+            # siblings differing only by case at the same component.
+            # Legal on Linux but impossible on Windows/macOS default,
+            # so the bundle cannot extract on either.  Emit a
+            # dedicated FAIL listing every candidate so the author
+            # can resolve the ambiguity rather than receive an
+            # arbitrary "actual path is …" suggestion.
+            broken_found = True
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "matches multiple on-disk paths that differ only by "
+                f"case ({', '.join(collisions)}) — Windows/macOS "
+                "default filesystems cannot represent this; rename "
+                "one of the colliding files to a case-distinct form."
+            )
+            continue
         if not case_ok and suggested is not None:
             broken_found = True
             errors.append(
@@ -883,6 +901,19 @@ def validate_skill(
     )
     errors.extend(lp_errors)
     passes.extend(lp_passes)
+
+    # Reserved-name path-component check: the frontmatter ``name``
+    # rule (validate_name) catches the skill's own basename, but
+    # Windows reserves device names for *every* path component.  A
+    # skill containing ``references/con.md`` would scaffold and
+    # validate cleanly today and only fail when extracted on
+    # Windows.  Walk the tree at WARN severity so the bundler's
+    # FAIL is never the first signal an author hears.
+    rn_errors, rn_passes = check_reserved_path_components(
+        skill_path, severity=LEVEL_WARN,
+    )
+    errors.extend(rn_errors)
+    passes.extend(rn_passes)
 
     # Bottom-up aggregation — parent SKILL.md ``allowed-tools`` must be
     # a superset of the union of capability-declared sets.  Layered on

@@ -23,6 +23,7 @@ from lib.bundling import (
     _rewrite_markdown_paths,
     _rewrite_reference_target,
     check_long_paths,
+    check_reserved_path_components,
     create_bundle,
     postvalidate,
     prevalidate,
@@ -1789,6 +1790,97 @@ class CheckLongPathsTests(unittest.TestCase):
             # Error message names the prefixed arcname, not the
             # bare-from-skill-root form.
             self.assertIn(f"{self.SKILL_NAME}/x.md", errors[0])
+
+
+class CheckReservedPathComponentsTests(unittest.TestCase):
+    """``check_reserved_path_components`` flags reserved NTFS names.
+
+    The frontmatter ``name`` rule (``validate_name``) catches the
+    skill's own basename, but Windows reserves device names for
+    every path component.  This helper walks the tree and FAILs when
+    any directory or file name's stem matches one of the reserved
+    names case-insensitively.
+    """
+
+    def _build(self, root: str, arcname: str) -> None:
+        full = os.path.join(root, *arcname.split("/"))
+        os.makedirs(os.path.dirname(full) or root, exist_ok=True)
+        with open(full, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("body")
+
+    def test_clean_skill_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/guide.md")
+            errors, passes = check_reserved_path_components(skill_dir)
+            self.assertEqual(errors, [])
+            self.assertEqual(len(passes), 1)
+
+    def test_reserved_basename_fails(self) -> None:
+        # A bundled file named ``con.md`` has stem ``CON`` —
+        # illegal on NTFS regardless of host.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/con.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(errors[0].startswith(LEVEL_FAIL))
+            self.assertIn("references/con.md", errors[0])
+            self.assertIn("CON", errors[0])
+
+    def test_reserved_directory_component_fails(self) -> None:
+        # A directory named ``aux`` is illegal on NTFS too.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "capabilities/aux/capability.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            # One FAIL for the ``aux`` directory; the file's own
+            # stem (``capability``) is legal.
+            aux_errors = [e for e in errors if "AUX" in e]
+            self.assertEqual(len(aux_errors), 1)
+            self.assertIn("capabilities/aux", aux_errors[0])
+
+    def test_case_insensitive_match(self) -> None:
+        # The match is case-insensitive — ``Nul.md`` is just as
+        # illegal as ``nul.md`` or ``NUL.md``.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/Nul.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("NUL", errors[0])
+
+    def test_severity_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/con.md")
+            errors, _ = check_reserved_path_components(
+                skill_dir, severity=LEVEL_WARN,
+            )
+            self.assertTrue(errors[0].startswith(LEVEL_WARN))
+
+    def test_com0_and_lpt0_are_legal(self) -> None:
+        # Pinned regression: only COM1-COM9 / LPT1-LPT9 are
+        # reserved on Windows.  ``com0.md`` / ``lpt0.md`` must NOT
+        # fire.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/com0.md")
+            self._build(skill_dir, "references/lpt0.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

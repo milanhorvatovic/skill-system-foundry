@@ -291,11 +291,26 @@ def looks_like_degraded_symlink(path: str) -> bool:
     ``./full-content.md`` would be misclassified as a degraded
     symlink even though the pointer is intact.
 
+    Trade-off: a Windows-without-DevMode shim whose target is also
+    present on disk (e.g. ``CLAUDE.md`` whose body is ``AGENTS.md``
+    when ``AGENTS.md`` exists alongside) flows through the
+    "deliberate one-line note" branch and is NOT flagged.  This is
+    a deliberate choice — without an external signal (git history,
+    a per-file ``core.symlinks`` flag) there is no way to tell a
+    real degraded shim apart from a one-line content reference.
+    Reviewers have surfaced the case (e.g. PR #139, Codex Review on
+    ``references.py:327``); the current verdict is that
+    false-positives on deliberate one-line references would be
+    worse than false-negatives on a narrow degraded-shim shape that
+    the validator's other rules (broken-link, case-exact, long-
+    path) already handle when the integrator edits the shim's
+    content or moves files.
+
     Returns False on read failures, on files larger than the size
     cap, on files whose body is not valid UTF-8, on files whose
     content does not match the single-relative-path shape, and on
     files where the captured path resolves to an existing file
-    (i.e., real one-line markdown notes).
+    (i.e., real one-line markdown notes — see the trade-off above).
     """
     try:
         size = os.path.getsize(path)
@@ -335,7 +350,7 @@ def resolve_case_exact(
     ref_path: str,
     *,
     listdir_cache: dict[str, list[str]] | None = None,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, list[str] | None]:
     """Resolve *ref_path* against *skill_root* with byte-exact case.
 
     On case-insensitive filesystems (NTFS, default macOS HFS+/APFS)
@@ -371,12 +386,25 @@ def resolve_case_exact(
       is less effective on skills that lean on internal-symlink
       aliases for naming.
 
-    Returns ``(True, None)`` when the path resolves with byte-exact
-    case at every component; returns ``(False, suggested_path)`` when
-    the basename matches case-insensitively but the on-disk casing
-    differs — *suggested_path* is the on-disk-correct form so the
-    finding can name the fix; returns ``(False, None)`` when the
-    path does not exist under any casing.
+    Returns a ``(case_ok, suggested, collisions)`` triple:
+
+    * ``(True, None, None)`` — path resolves with byte-exact case at
+      every component.
+    * ``(False, suggested_path, None)`` — basename matches
+      case-insensitively at every component and there is exactly
+      one on-disk candidate per component; *suggested_path* is the
+      on-disk-correct form so the finding can name the fix.
+    * ``(False, None, candidates)`` — at some component, multiple
+      on-disk entries match case-insensitively (legal on Linux,
+      impossible on Windows/macOS default).  The previous
+      implementation kept an arbitrary survivor by overwriting a
+      ``{e.lower(): e}`` map during iteration; the resulting
+      "actual path is …" suggestion was nondeterministic and could
+      point at the wrong file.  Surface the collision instead by
+      returning the candidate list (sorted, slash-joined to that
+      component) so the caller can render a deterministic finding.
+    * ``(False, None, None)`` — path does not exist under any
+      casing.
 
     Symlinks are treated as case-significant for their own basename
     (the link itself must match exactly) and the helper does not
@@ -390,12 +418,12 @@ def resolve_case_exact(
     except ValueError:
         # Different drives on Windows — not under skill_root, so we
         # cannot apply the case rule meaningfully; defer to existence.
-        return os.path.exists(abs_ref), None
+        return os.path.exists(abs_ref), None, None
     if rel.startswith(".."):
-        return os.path.exists(abs_ref), None
+        return os.path.exists(abs_ref), None, None
     parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
     if not parts:
-        return True, None
+        return True, None, None
     cursor = abs_root
     suggested_parts: list[str] = []
     case_diverged = False
@@ -406,23 +434,41 @@ def resolve_case_exact(
             try:
                 entries = os.listdir(cursor)
             except OSError:
-                return False, None
+                return False, None, None
             if listdir_cache is not None:
                 listdir_cache[cursor] = entries
         if part in entries:
             suggested_parts.append(part)
             cursor = os.path.join(cursor, part)
             continue
-        lowered = {e.lower(): e for e in entries}
-        actual = lowered.get(part.lower())
-        if actual is None:
-            return False, None
+        # Case-insensitive collection: collect EVERY entry whose
+        # lowercased form matches the requested part.  A
+        # case-insensitive filesystem (Windows, macOS default) by
+        # definition cannot have multiple matches; this branch
+        # therefore only fires on case-sensitive Linux when the
+        # author has authored sibling files differing only in case.
+        actual_matches = [
+            e for e in entries if e.lower() == part.lower()
+        ]
+        if not actual_matches:
+            return False, None, None
+        if len(actual_matches) > 1:
+            # Surface the collision as a separate return shape so
+            # the caller can render a deterministic finding rather
+            # than an arbitrary "actual path is …" suggestion.
+            collision_prefix = "/".join(suggested_parts)
+            collision_candidates = sorted(
+                f"{collision_prefix}/{m}" if collision_prefix else m
+                for m in actual_matches
+            )
+            return False, None, collision_candidates
+        actual = actual_matches[0]
         suggested_parts.append(actual)
         cursor = os.path.join(cursor, actual)
         case_diverged = True
     if not case_diverged:
-        return True, None
-    return False, "/".join(suggested_parts)
+        return True, None, None
+    return False, "/".join(suggested_parts), None
 
 
 def strip_fragment(ref_path: str) -> str:
