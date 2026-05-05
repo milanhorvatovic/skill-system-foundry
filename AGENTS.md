@@ -125,6 +125,7 @@ These constraints are non-negotiable across the entire codebase:
 - **`os.path` only** — do not use `pathlib`. Do not mix the two.
 - **Type hints on all function signatures** — use builtin generics (`list`, `dict`, `tuple`) and `X | None`.
 - **`encoding="utf-8"` on all `open()` calls.**
+- **`newline="\n"` on every production text-mode write** — without it Python translates `\n` to `\r\n` on Windows, so files authored on a Windows runner pick up CRLF terminators that diverge from LF on POSIX. The `tests/test_text_write_newline.py` lint enforces the rule across the meta-skill and repo-infrastructure scripts.
 - **Error levels from constants** — use `LEVEL_FAIL`, `LEVEL_WARN`, `LEVEL_INFO` from `lib/constants.py`, never hardcode strings.
 - **Validation functions return `(errors, passes)` tuples** — never raise exceptions for validation failures.
 - **Shell scripts use `set -euo pipefail`** and validate environment variables at the top with `${VAR:?}`.
@@ -132,6 +133,10 @@ These constraints are non-negotiable across the entire codebase:
 - **Meta-skill script entry points support `--json`** — entry points under `skill-system-foundry/scripts/` must provide machine-readable output via `to_json_output()` from `lib/reporting.py`. Repo-infrastructure scripts under the top-level `scripts/` tree (e.g., `scripts/generate_changelog.py`) are exempt: their output is consumed directly by humans during maintenance tasks, and line-oriented stderr diagnostics already cover the tooling surface.
 
 ## Development Workflow
+
+### Contributor Setup on Windows
+
+The repository uses symlinks for the dev-cycle layout — `CLAUDE.md` points at `AGENTS.md` and every entry under `.claude/skills/` points into `.agents/skills/`. Cloning on Windows without Developer Mode (or without `core.symlinks=true` in the local git config) materialises those links as plain text files containing the target path, which breaks the contributor experience. Either enable Developer Mode before cloning (`Settings → Privacy & Security → For developers`) or set `git config --global core.symlinks true` and re-clone. The same Windows precondition is documented in `README.md`'s "Windows Setup" section for the user-facing skill-deployment workflow.
 
 ### Running Tests
 
@@ -183,6 +188,8 @@ python scripts/stats.py . --json
 ```
 
 `stats.py` reports two byte-based proxies for a skill's context cost: `discovery_bytes` (the sum of every YAML frontmatter block the harness reads at discovery time — `SKILL.md` plus each `capabilities/<name>/capability.md` that declares one) and `load_bytes` (SKILL.md plus every capability and reference file reachable through markdown links, backticks, and bare router-table path cells). Every discovery-relevant `files[]` row — `SKILL.md` and each `capabilities/<name>/capability.md` — carries a `discovery_bytes` key with its own contribution (`0` when the file is silent on frontmatter); non-discovery rows (capability-local references and shared references) omit the key entirely. Consumers can reconstruct the breakdown without re-reading any files, and the human-readable report shows the breakdown directly when at least one capability declares frontmatter. Files under `scripts/` and `assets/` are excluded — they are not loaded into the model's context during skill use. Bytes are not tokens and are not comparable across models or tokenizers; treat the number as a deterministic on-disk signal for tracking the relative cost of authoring decisions over time. Counts are taken from raw on-disk UTF-8 bytes, so CRLF terminators on Windows checkouts produce higher numbers than the same content on POSIX checkouts.
+
+For cross-platform comparability, `stats.py` also reports `discovery_bytes_lf` and `load_bytes_lf` alongside the raw counts, plus a per-row `line_endings` field on every load-budget contributor (`lf` / `crlf` / `mixed`). The `*_lf` numbers subtract one byte per detected `\r\n` so a CRLF checkout and an LF checkout of the same content produce equal normalized totals; the raw counts continue to be the deterministic on-disk signal. The human-readable report only shows the normalized line when it diverges from the raw count, so existing LF-only checkouts see no extra noise. Detection is gated by `stats.line_endings.enabled` in `configuration.yaml` for integrators who want a pure raw-byte view.
 
 A missing or unreadable `SKILL.md` is a FAIL — that includes the file not existing, an I/O error during read, or invalid UTF-8 in either the frontmatter scan or the body. Everything else recovers: broken references, parent-traversal attempts, external references, undecodable referenced files, and frontmatter parse errors (in `SKILL.md` or in any capability entry) are surfaced as WARN/INFO findings while the run still emits a usable metric. A capability that is silent on frontmatter is legal and produces no finding — its per-row `discovery_bytes` is simply `0`.
 

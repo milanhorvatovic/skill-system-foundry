@@ -99,6 +99,17 @@ See [the reference guide](references/REFERENCE.md) for details.
 - Use forward slashes only (not backslashes) for cross-platform compatibility
 - Use descriptive filenames: `form-validation-rules.md` not `doc2.md`
 
+### Cross-Platform Reference Rules
+
+These rules are enforced by `validate_skill.py` regardless of host platform so a skill that passes on one OS cannot silently break on another. They are foundry conventions; the agentskills.io specification does not constrain them, but each addresses a real divergence between Linux, macOS, and Windows behaviour.
+
+- **Reserved Windows base names:** Skill names whose stem (case-insensitive) matches one of `CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, or `LPT0`–`LPT9` FAIL the validator. These names cannot exist on NTFS regardless of extension or case, so a skill named `con` would scaffold on POSIX and break on Windows. The list lives at `skill.name.windows_reserved_names` in `configuration.yaml`.
+- **Case-exact reference resolution:** Markdown links must match the on-disk casing byte-for-byte at every path component. On Windows and on default macOS HFS+/APFS the filesystem is case-insensitive so `os.path.exists` returns True for any case, but the same link 404s on Linux. The validator walks each component against `os.listdir` and FAILs when the basename matches case-insensitively but differs in case, naming the on-disk-correct form in the diagnostic.
+- **Dangling symlinks surface as a dedicated finding:** A symlink that exists in the working copy but whose target does not (the typical Windows-without-Developer-Mode failure mode) produces a WARN that names the link and explains the failure mode, rather than the generic "does not exist" message that hides the symlink semantics.
+- **Long-path budget:** Every file's relative path from the skill root is checked against `bundle.long_path.threshold` minus `bundle.long_path.user_prefix_budget` in `configuration.yaml`. Skills surface a WARN at validate time and a FAIL at bundle time so the Windows MAX_PATH (260) failure mode is caught before extraction. Default threshold and prefix budget model a representative `C:\Users\<name>\<repo>\` install location; integrators can tune the YAML for unusually long paths.
+- **Forward slashes in JSON output and findings:** Every `--json` payload field that names a path and every FAIL/WARN/INFO message that quotes a path is normalised to forward slashes via `to_posix()` regardless of host. Internal data structures consumed only by other library modules keep their native form.
+- **LF newlines on text writes:** Every production text-mode `open(..., "w")` declares `newline="\n"` so manifests, scaffolded skills, rewritten markdown, and CI helper output stay LF-terminated even when authored on a Windows runner. A lint test enforces the rule across the meta-skill and repo-infrastructure scripts.
+
 ## Validation
 
 ```bash
