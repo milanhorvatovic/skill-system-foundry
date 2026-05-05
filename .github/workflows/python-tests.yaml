@@ -198,13 +198,18 @@ jobs:
         env:
           PYTHONUTF8: "1"
 
-      - name: Shrink scaffolded description to fit Claude.ai cap
-        # Replaces the entire ``description: …`` line in the
-        # scaffolded SKILL.md so the smoke skill is bundle-able
-        # under the default Claude.ai target.  Uses Python so the
-        # step runs identically on Linux and Windows runners.
+      - name: Replace scaffolded frontmatter with bundle-able stub
+        # The scaffolded SKILL.md uses a YAML folded scalar for the
+        # description (``description: >`` plus indented continuation
+        # lines), so an in-place line replacement would leave the
+        # continuation lines orphaned and produce a malformed
+        # frontmatter block.  Rewrite the whole frontmatter as a
+        # known-good stub instead — the smoke skill's frontmatter
+        # is throw-away; only its shape (parses cleanly, fits under
+        # the Claude.ai 200-char description cap) matters for
+        # exercising the bundle pipeline.
         run: |
-          python -c "import os; p=os.path.join('smoke-work','skills','demo','SKILL.md'); t=open(p,'r',encoding='utf-8').read(); lines=[('description: triggers when the demo runs') if l.startswith('description:') else l for l in t.splitlines()]; open(p,'w',encoding='utf-8',newline='\n').write('\n'.join(lines)+'\n')"
+          python -c "import os; p=os.path.join('smoke-work','skills','demo','SKILL.md'); src=open(p,'r',encoding='utf-8').read(); body=src.split('---',2)[2] if src.startswith('---') else src; fm='---\nname: demo\ndescription: triggers when the demo runs\nlicense: MIT\nmetadata:\n  version: 1.0.0\n---\n'; open(p,'w',encoding='utf-8',newline='\n').write(fm+body.lstrip())"
         env:
           PYTHONUTF8: "1"
 
