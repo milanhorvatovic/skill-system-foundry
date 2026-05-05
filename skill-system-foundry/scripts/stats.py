@@ -112,6 +112,20 @@ def _print_human(result: dict, verbose: bool) -> None:
         f"Load:      {_format_bytes(result['load_bytes'])} "
         f"({len(result['files'])} files)"
     )
+    # Surface the LF-normalized aggregates whenever they diverge from
+    # the raw counts so a CRLF-checkout reader can see both numbers
+    # without re-running the tool with --json.
+    if (
+        result.get("load_bytes_lf", result["load_bytes"])
+        != result["load_bytes"]
+        or result.get("discovery_bytes_lf", result["discovery_bytes"])
+        != result["discovery_bytes"]
+    ):
+        print(
+            f"Normalized (LF-only):  "
+            f"discovery={_format_bytes(result['discovery_bytes_lf'])}  "
+            f"load={_format_bytes(result['load_bytes_lf'])}"
+        )
     print("-" * SEPARATOR_WIDTH)
 
     if result["files"]:

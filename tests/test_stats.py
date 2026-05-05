@@ -25,6 +25,7 @@ if SCRIPTS_DIR not in sys.path:
 
 from lib.stats import (
     category_of,
+    compute_line_endings,
     compute_stats,
     discovery_bytes_of,
     extract_body_references,
@@ -1136,18 +1137,24 @@ class ComputeStatsSchemaTests(unittest.TestCase):
             result = compute_stats(tmpdir)
         self.assertEqual(
             set(result.keys()),
-            {"skill", "metric", "discovery_bytes", "load_bytes",
-             "files", "errors"},
+            {
+                "skill", "metric", "discovery_bytes", "load_bytes",
+                "discovery_bytes_lf", "load_bytes_lf",
+                "files", "errors",
+            },
         )
         self.assertEqual(result["metric"], "bytes")
         self.assertIsInstance(result["discovery_bytes"], int)
         self.assertIsInstance(result["load_bytes"], int)
+        self.assertIsInstance(result["discovery_bytes_lf"], int)
+        self.assertIsInstance(result["load_bytes_lf"], int)
         self.assertIsInstance(result["files"], list)
         self.assertIsInstance(result["errors"], list)
 
     def test_file_entry_keys(self) -> None:
-        """Required keys are always present; ``discovery_bytes`` is
-        optional and only appears on discovery-relevant rows."""
+        """Required keys are always present; ``discovery_bytes`` and
+        ``line_endings`` are optional — the former only on discovery-
+        relevant rows, the latter whenever line-ending detection ran."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir)
             result = compute_stats(tmpdir)
@@ -1159,13 +1166,15 @@ class ComputeStatsSchemaTests(unittest.TestCase):
             )
             extra = set(entry.keys()) - required_keys
             self.assertTrue(
-                extra <= {"discovery_bytes"},
+                extra <= {"discovery_bytes", "line_endings"},
                 f"unexpected keys on {entry['path']}: {extra}",
             )
             self.assertIsInstance(entry["bytes"], int)
             self.assertIsInstance(entry["reachable_from"], list)
             if "discovery_bytes" in entry:
                 self.assertIsInstance(entry["discovery_bytes"], int)
+            if "line_endings" in entry:
+                self.assertIn(entry["line_endings"], ("lf", "crlf", "mixed"))
 
 
 # ============================================================
@@ -1590,6 +1599,90 @@ class CapabilityDiscoveryBytesTests(unittest.TestCase):
                 "capabilities/zeta/capability.md",
             ],
         )
+
+
+class ComputeLineEndingsTests(unittest.TestCase):
+    """``compute_line_endings`` distinguishes LF / CRLF / mixed files."""
+
+    def _write(self, path: str, data: bytes) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+
+    def test_lf_only_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"line one\nline two\n")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "lf")
+            self.assertEqual(crlf, 0)
+            self.assertEqual(lf, 2)
+
+    def test_crlf_only_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"line one\r\nline two\r\n")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "crlf")
+            self.assertEqual(crlf, 2)
+            self.assertEqual(lf, 0)
+
+    def test_mixed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"line one\r\nline two\nline three\r\n")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "mixed")
+            self.assertEqual(crlf, 2)
+            self.assertEqual(lf, 1)
+
+    def test_empty_file_is_lf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "lf")
+            self.assertEqual(crlf, 0)
+            self.assertEqual(lf, 0)
+
+
+class ComputeStatsLineEndingFieldsTests(unittest.TestCase):
+    """``compute_stats`` produces *_lf companions and per-file line_endings."""
+
+    def test_lf_skill_lf_counts_match_raw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            result = compute_stats(tmpdir)
+        # No CRLF in this fixture — normalized counts match raw.
+        self.assertEqual(
+            result["load_bytes_lf"], result["load_bytes"],
+        )
+        self.assertEqual(
+            result["discovery_bytes_lf"], result["discovery_bytes"],
+        )
+        for entry in result["files"]:
+            if "line_endings" in entry:
+                self.assertEqual(entry["line_endings"], "lf")
+
+    def test_crlf_skill_lf_count_is_smaller(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            crlf_body = (
+                b"---\r\nname: x\r\ndescription: triggers when run\r\n---\r\n"
+                b"# Skill\r\n\r\nbody body body\r\n"
+            )
+            with open(skill_md, "wb") as fh:
+                fh.write(crlf_body)
+            result = compute_stats(tmpdir)
+        # CRLF terminators inflate the raw count; the LF count
+        # subtracts every \r\n -> \n collapse.
+        self.assertLess(result["load_bytes_lf"], result["load_bytes"])
+        crlf_rows = [
+            e for e in result["files"]
+            if e.get("line_endings") == "crlf"
+        ]
+        self.assertEqual(len(crlf_rows), 1)
+        self.assertEqual(crlf_rows[0]["path"], "SKILL.md")
 
 
 if __name__ == "__main__":
