@@ -4896,6 +4896,13 @@ class CaseExactReferenceTests(unittest.TestCase):
         from both surfaces; exercising the entry-file path keeps the
         test independent of ``validate_skill_references`` selection
         rules.
+
+        Pinned regression: an earlier validator order ran
+        ``os.path.exists`` before ``resolve_case_exact``, so on
+        case-sensitive Linux a wrong-cased link returned False from
+        ``exists`` and emitted the generic broken-ref WARN before
+        the case-exact FAIL had a chance to fire.  The contract is
+        host-independent, so the FAIL must fire on every host.
         """
         from validate_skill import validate_body
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4914,16 +4921,20 @@ class CaseExactReferenceTests(unittest.TestCase):
                 if e.startswith(LEVEL_FAIL)
                 and "differs from the on-disk casing" in e
             ]
+            self.assertEqual(
+                len(case_fails), 1,
+                msg=(
+                    "Expected a host-independent case-exact FAIL on "
+                    f"every platform; got errors={errors}"
+                ),
+            )
+            # The generic broken-ref WARN must NOT fire — that would
+            # mean the validator chose the less-actionable path.
             broken = [
                 e for e in errors
                 if e.startswith(LEVEL_WARN) and "does not exist" in e
             ]
-            # On case-insensitive filesystems the FAIL fires; on
-            # case-sensitive Linux the broken-ref WARN fires instead.
-            self.assertEqual(
-                len(case_fails) + len(broken), 1,
-                msg=f"errors={errors}",
-            )
+            self.assertEqual(broken, [])
 
     def test_correct_case_link_passes(self) -> None:
         from validate_skill import validate_body

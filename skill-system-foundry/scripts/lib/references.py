@@ -248,6 +248,13 @@ def is_dangling_symlink(path: str) -> bool:
 #   3. Multi-component relative target — ``ln -s sub/dir/foo.md``
 #      stores as ``sub/dir/foo.md`` (forward or back slashes).
 #
+# Absolute-looking paths (``/foo.md``) are intentionally NOT
+# accepted: git symlinks are stored as relative targets, so a
+# leading slash with no dots indicates a non-shim file.  The
+# optional prefix therefore requires 1-2 dots before the slash, not
+# 0-2 — a path like ``/missing.md`` that happens to live in a
+# small file is left to the existing broken-link diagnostic.
+#
 # The trailing extension alternation is restricted to the file types
 # the foundry actually ships (markdown, yaml, json, txt, sh, py,
 # toml).  This shrinks the false-positive surface to exactly the
@@ -255,7 +262,7 @@ def is_dangling_symlink(path: str) -> bool:
 # ``.exe`` or ``.dll`` cannot accidentally trip the heuristic.
 _DEGRADED_SYMLINK_MAX_BYTES = 512
 _DEGRADED_SYMLINK_PATTERN = re.compile(
-    r"^(?:\.{0,2}[\\/])?[^\r\n\\/]+(?:[\\/][^\r\n\\/]+)*"
+    r"^(?:\.{1,2}[\\/])?[^\r\n\\/]+(?:[\\/][^\r\n\\/]+)*"
     r"\.(?:md|yaml|yml|json|txt|sh|py|toml)$"
 )
 

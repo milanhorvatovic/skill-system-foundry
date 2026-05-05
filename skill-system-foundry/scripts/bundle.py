@@ -466,6 +466,20 @@ def main() -> None:
             print("-" * SEPARATOR_WIDTH)
         post_errors = postvalidate(bundle_dir)
 
+        # Long-path post-flight: the pre-flight covered the skill
+        # tree itself, but ``create_bundle`` also inlines external
+        # references and orchestrated skills under the bundle root.
+        # Walk the assembled tree so a bundle whose externals push a
+        # path past MAX_PATH FAILs here rather than at user-extract
+        # time.  ``arcname_root`` is the bundle base directory so
+        # arcnames are namespaced under the bundle's own basename
+        # (the form the zip stores).
+        long_path_post_errors, _ = check_long_paths(
+            bundle_dir,
+            arcname_root=os.path.dirname(bundle_dir),
+        )
+        post_errors = list(post_errors) + long_path_post_errors
+
         if post_errors:
             if json_output:
                 print(to_json_output({

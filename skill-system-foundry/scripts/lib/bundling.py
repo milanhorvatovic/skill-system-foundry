@@ -47,15 +47,25 @@ def check_long_paths(
     threshold: int = LONG_PATH_THRESHOLD,
     user_prefix_budget: int = LONG_PATH_USER_PREFIX_BUDGET,
     severity: str = LEVEL_FAIL,
+    arcname_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Pre-flight check for paths that risk Windows MAX_PATH on extract.
 
     Walks every file under *skill_path* (excluding patterns the bundler
     already skips) and computes the worst-case extracted path length:
     ``user_prefix_budget + len(arcname)`` where the arcname is the
-    file's relative path from the skill root, normalised to forward
+    file's relative path from *arcname_root*, normalised to forward
     slashes.  Any path whose total exceeds *threshold* is reported as
     a finding at *severity*.
+
+    *arcname_root* defaults to ``os.path.dirname(skill_path)`` so the
+    arcname includes the skill's own basename as the top-level
+    component — that is what ``create_bundle`` writes into the zip
+    and what an integrator extracts.  Pass an explicit value to walk
+    a pre-assembled bundle directory whose arcnames are already
+    namespaced under a parent (i.e., ``bundle_base`` in the bundler):
+    set ``arcname_root=os.path.dirname(bundle_dir)`` and the helper
+    measures the same paths the zip will store.
 
     The helper is callable from validators (WARN at authoring time)
     and from the bundler (FAIL at packaging time) so the same rule
@@ -83,6 +93,12 @@ def check_long_paths(
     if not os.path.isdir(skill_path):
         return errors, passes
     abs_root = os.path.abspath(skill_path)
+    if arcname_root is None:
+        # Default: arcnames are namespaced under the skill's own
+        # basename (matches how ``create_bundle`` writes the zip).
+        arcname_root_abs = os.path.dirname(abs_root) or abs_root
+    else:
+        arcname_root_abs = os.path.abspath(arcname_root)
     available = threshold - user_prefix_budget
     longest = 0
     longest_rel = ""
@@ -96,7 +112,7 @@ def check_long_paths(
                 continue
             file_count += 1
             full = os.path.join(dirpath, fname)
-            rel = os.path.relpath(full, abs_root).replace(os.sep, "/")
+            rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
             arcname_len = len(rel)
             if arcname_len > longest:
                 longest = arcname_len

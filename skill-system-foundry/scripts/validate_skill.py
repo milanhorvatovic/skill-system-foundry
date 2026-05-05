@@ -334,6 +334,32 @@ def _check_references(
 
         internal_checked += 1
 
+        # Case-exact resolution runs first so the host-independent
+        # FAIL fires regardless of the filesystem's case sensitivity.
+        # If we deferred to ``os.path.exists`` first, a wrong-cased
+        # link on Linux (case-sensitive) would return False and emit
+        # the generic "does not exist" WARN — masking the real bug
+        # and producing a finding the integrator can't act on without
+        # already knowing the on-disk casing.  ``resolve_case_exact``
+        # walks ``os.listdir`` directly and detects the divergence on
+        # every host, so emit the FAIL here before the
+        # exists/dangling/degraded checks have a chance to fire a
+        # less-actionable diagnostic.
+        case_ok, suggested = resolve_case_exact(
+            skill_root, ref_path, listdir_cache=listdir_cache,
+        )
+        if not case_ok and suggested is not None:
+            broken_found = True
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"differs from the on-disk casing — actual path is "
+                f"'{suggested}'.  Case-insensitive filesystems "
+                "(Windows, default macOS) accept the link but it "
+                "404s on Linux."
+            )
+            continue
+
         if is_dangling_symlink(ref_path):
             broken_found = True
             errors.append(
@@ -373,21 +399,6 @@ def _check_references(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "
                 "does not exist"
-            )
-            continue
-
-        case_ok, suggested = resolve_case_exact(
-            skill_root, ref_path, listdir_cache=listdir_cache,
-        )
-        if not case_ok and suggested is not None:
-            broken_found = True
-            errors.append(
-                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
-                f"referenced in {source_label} (scope: {scope_tag}) "
-                f"differs from the on-disk casing — actual path is "
-                f"'{suggested}'.  Case-insensitive filesystems "
-                "(Windows, default macOS) accept the link but it "
-                "404s on Linux."
             )
             continue
 

@@ -510,6 +510,28 @@ class ValidateNameWindowsReservedTests(unittest.TestCase):
         self.assertEqual(len(fail_errors), 1)
         self.assertIn("NUL", fail_errors[0])
 
+    def test_com0_and_lpt0_are_not_reserved(self) -> None:
+        """``com0`` and ``lpt0`` must NOT trigger the reserved-name rule.
+
+        Pinned regression: an earlier configuration listed ``COM0`` and
+        ``LPT0`` alongside the genuine ``COM1``-``COM9`` /
+        ``LPT1``-``LPT9`` ranges, which made otherwise-legal skill
+        names fail validation on every host.  Windows only reserves
+        the 1-9 forms; the zero-suffixed forms must remain legal.
+        """
+        for name in ("com0", "lpt0"):
+            with self.subTest(name=name):
+                errors, _ = validate_name(name, name)
+                fail_errors = [
+                    e for e in errors
+                    if e.startswith(LEVEL_FAIL) and "Windows reserved" in e
+                ]
+                self.assertEqual(
+                    fail_errors, [],
+                    f"'{name}' is not a Windows reserved name and must "
+                    f"not trigger the rule; got errors={errors}",
+                )
+
 
 # ===================================================================
 # Valid Names (Happy Path)

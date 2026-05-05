@@ -2797,6 +2797,23 @@ class LooksLikeDegradedSymlinkTests(unittest.TestCase):
             write_text(p, "../target/payload.exe")
             self.assertFalse(looks_like_degraded_symlink(p))
 
+    def test_absolute_looking_path_does_not_match(self) -> None:
+        """A one-line file whose body starts with ``/`` is not a shim.
+
+        Pinned regression: an earlier pattern accepted
+        ``\\.{0,2}[\\\\/]`` — i.e., zero to two dots followed by a
+        slash — which let absolute-looking paths like
+        ``/missing.md`` trip the degraded-symlink diagnostic.  Git
+        symlinks store relative targets, never absolute paths, so a
+        leading slash without dots is not a shim shape.  A small
+        file containing such a path is left to the existing
+        broken-link diagnostic instead.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "/missing.md")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
 
 class IsDanglingSymlinkTests(unittest.TestCase):
     """``is_dangling_symlink`` reports symlinks whose target is missing."""

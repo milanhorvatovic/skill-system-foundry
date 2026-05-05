@@ -1,13 +1,13 @@
 # Repository-wide line-ending policy.
 #
-# Authored text files are pinned to LF on commit so a Windows
-# contributor's working-copy CRLF terminators are normalised back to
-# LF when they land in git history.  The byte counts emitted by
-# ``stats.py`` and the prose-yaml validator therefore see consistent
-# input regardless of which OS authored the file.  Working-copy
-# terminators on Windows checkouts remain whatever git is configured
-# to produce locally (``core.autocrlf``); the repository representation
-# is the deterministic boundary.
+# Authored text files are pinned to LF on commit AND on checkout: the
+# ``eol=lf`` directive on every text-pattern rule below overrides a
+# contributor's local ``core.autocrlf`` setting, so a Windows working
+# copy gets LF terminators regardless of how the user has configured
+# their git client.  The byte counts emitted by ``stats.py`` and the
+# prose-yaml validator therefore see consistent input on every host,
+# and the contributor avoids producing diff noise when their editor
+# happens to write CRLF.
 #
 # Specific patterns under ``tests/fixtures/yaml-conformance/`` keep
 # the historical ``-text`` override so the LF / CRLF / mixed corpus

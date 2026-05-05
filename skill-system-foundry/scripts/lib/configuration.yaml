@@ -23,12 +23,16 @@ skill:
     # cross-platform contract consistent.  Match is case-insensitive
     # and applies to the path component before any extension (NTFS
     # rejects ``con.txt`` the same way it rejects ``CON``).
+    #
+    # Range note: Windows reserves ``COM1``-``COM9`` and ``LPT1``-
+    # ``LPT9``.  The zero-suffixed forms (``COM0``, ``LPT0``) are
+    # NOT reserved on Windows; including them here would falsely
+    # reject otherwise-legal names like ``com0`` on every platform.
     windows_reserved_names:
       - CON
       - PRN
       - AUX
       - NUL
-      - COM0
       - COM1
       - COM2
       - COM3
@@ -38,7 +42,6 @@ skill:
       - COM7
       - COM8
       - COM9
-      - LPT0
       - LPT1
       - LPT2
       - LPT3
