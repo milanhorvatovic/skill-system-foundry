@@ -25,6 +25,7 @@ from lib.references import (
     is_drive_qualified,
     is_glob_path,
     is_within_directory,
+    looks_like_ambiguous_one_line_shim,
     looks_like_degraded_symlink,
     resolve_case_exact,
     resolve_reference,
@@ -2674,6 +2675,38 @@ class ResolveCaseExactTests(unittest.TestCase):
                 ["references/Foo.md", "references/foo.md"],
             )
 
+    def test_dotdot_prefixed_filename_is_in_tree(self) -> None:
+        """A filename that starts with ``..`` is not an outside-root path.
+
+        Pinned regression: an earlier implementation tested
+        ``rel.startswith("..")`` on the full relative path string,
+        which falsely classified an in-tree path like
+        ``..hidden/guide.md`` (a legitimate dot-prefixed filename)
+        as escaping the skill root and bypassed the case-exact
+        rule.  The escape check must inspect the first PATH
+        SEGMENT, not the first two characters of the string.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "..hidden"))
+            target = os.path.join(tmpdir, "..hidden", "guide.md")
+            write_text(target, "x")
+            ok, suggested, collisions = resolve_case_exact(tmpdir, target)
+            self.assertTrue(ok)
+            self.assertIsNone(suggested)
+            self.assertIsNone(collisions)
+            # And the wrong-case form still produces a case
+            # divergence finding (proves the rule actually ran on
+            # this in-tree path instead of being short-circuited).
+            wrong = os.path.join(tmpdir, "..HIDDEN", "guide.md")
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
+            # On case-sensitive Linux the wrong case file does not
+            # exist; the helper returns (False, None, None).  On
+            # case-insensitive macOS / NTFS it should produce a
+            # case-divergence suggestion.
+            self.assertFalse(ok)
+            if suggested is not None:
+                self.assertEqual(suggested, "..hidden/guide.md")
+
     def test_path_outside_root_falls_back_to_existence(self) -> None:
         with tempfile.TemporaryDirectory() as outer:
             inner = os.path.join(outer, "skill")
@@ -2861,6 +2894,59 @@ class LooksLikeDegradedSymlinkTests(unittest.TestCase):
             p = os.path.join(tmpdir, "shim.md")
             write_text(p, "/missing.md")
             self.assertFalse(looks_like_degraded_symlink(p))
+
+
+class LooksLikeAmbiguousOneLineShimTests(unittest.TestCase):
+    """The companion ambiguous-shim heuristic.
+
+    Same shape gate as ``looks_like_degraded_symlink`` but the
+    captured target *does* exist.  Two byte-identical causes — a
+    Git-degraded symlink whose target also happens to exist, or a
+    deliberate one-line content reference — are surfaced together
+    so the validator can emit an INFO inviting the author to
+    verify intent without false-positive WARN-ing legitimate
+    one-line references.
+    """
+
+    def test_shape_match_with_existing_target_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "full-content.md")
+            write_text(target, "# real content\n")
+            note = os.path.join(tmpdir, "see-also.md")
+            write_text(note, "./full-content.md")
+            self.assertTrue(looks_like_ambiguous_one_line_shim(note))
+
+    def test_bare_name_with_existing_target_returns_true(self) -> None:
+        # The most common foundry shim shape: bare-name target
+        # (``CLAUDE.md`` shim containing ``AGENTS.md``).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "real.md")
+            write_text(target, "# real content\n")
+            shim = os.path.join(tmpdir, "shim.md")
+            write_text(shim, "real.md")
+            self.assertTrue(looks_like_ambiguous_one_line_shim(shim))
+
+    def test_shape_match_with_missing_target_returns_false(self) -> None:
+        # Missing target is the ``looks_like_degraded_symlink``
+        # branch — the ambiguous helper must NOT also fire there.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            note = os.path.join(tmpdir, "shim.md")
+            write_text(note, "./missing.md")
+            self.assertFalse(looks_like_ambiguous_one_line_shim(note))
+
+    def test_real_markdown_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "real.md")
+            write_text(p, "# Heading\n\nbody body body.\n")
+            self.assertFalse(looks_like_ambiguous_one_line_shim(p))
+
+    def test_non_foundry_extension_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "payload.exe")
+            write_text(target, "x")
+            note = os.path.join(tmpdir, "shim.md")
+            write_text(note, "./payload.exe")
+            self.assertFalse(looks_like_ambiguous_one_line_shim(note))
 
 
 class IsDanglingSymlinkTests(unittest.TestCase):

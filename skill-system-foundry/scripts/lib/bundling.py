@@ -108,22 +108,38 @@ def check_long_paths(
     # ``followlinks=True`` mirrors ``walk_skill_files`` (the bundler's
     # actual walker) — paths reachable only through an in-skill
     # symlink would otherwise be invisible to the pre-flight and
-    # surface only at user-extract time on Windows.  ``os.walk``'s
-    # built-in symlink-cycle protection only handles plain reentries
-    # of the same name; track real paths explicitly so a symlink
-    # chain (``a -> b/`` and ``b -> a/``) can't loop forever.
-    visited_real: set[str] = set()
+    # surface only at user-extract time on Windows.  Cycle protection
+    # tracks per-walk *ancestry* rather than a global visited set:
+    # two symlinks pointing at the same directory under different
+    # lexical paths produce two distinct arcnames in the bundle, so
+    # both must be walked.  A pure-realpath visited set would skip
+    # the second alias and miss long paths the bundler would still
+    # ship.  Ancestry only collapses true cycles (a symlink whose
+    # realpath is already in the chain from the walk root to itself).
+    root_ancestors: dict[str, frozenset[str]] = {
+        abs_root: frozenset({os.path.realpath(abs_root)}),
+    }
     for dirpath, dirnames, filenames in os.walk(
         abs_root, followlinks=True,
     ):
-        real_dir = os.path.realpath(dirpath)
-        if real_dir in visited_real:
-            dirnames[:] = []
-            continue
-        visited_real.add(real_dir)
+        ancestors = root_ancestors.get(
+            dirpath, frozenset({os.path.realpath(dirpath)}),
+        )
         dirnames[:] = [
             d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
         ]
+        # Filter out cyclical symlink descents while preserving non-
+        # cyclical aliases.  ``os.walk`` re-enters the dirnames list
+        # when descending, so we update its in-place to skip cycles.
+        kept_dirs: list[str] = []
+        for d in dirnames:
+            child_path = os.path.join(dirpath, d)
+            real_target = os.path.realpath(child_path)
+            if os.path.islink(child_path) and real_target in ancestors:
+                continue  # cycle — skip recursion into this branch
+            root_ancestors[child_path] = ancestors | frozenset({real_target})
+            kept_dirs.append(d)
+        dirnames[:] = kept_dirs
         for fname in filenames:
             if should_exclude(fname, BUNDLE_EXCLUDE_PATTERNS):
                 continue
@@ -186,20 +202,30 @@ def check_reserved_path_components(
     file_count = 0
     seen: set[tuple[str, str]] = set()
     # ``followlinks=True`` for symmetry with ``walk_skill_files`` —
-    # see ``check_long_paths`` for the rationale and the cycle-
-    # protection pattern.
-    visited_real: set[str] = set()
+    # see ``check_long_paths`` for the rationale and the ancestry-
+    # based cycle-protection pattern (which preserves non-cyclical
+    # aliases the bundler still ships).
+    root_ancestors: dict[str, frozenset[str]] = {
+        abs_root: frozenset({os.path.realpath(abs_root)}),
+    }
     for dirpath, dirnames, filenames in os.walk(
         abs_root, followlinks=True,
     ):
-        real_dir = os.path.realpath(dirpath)
-        if real_dir in visited_real:
-            dirnames[:] = []
-            continue
-        visited_real.add(real_dir)
+        ancestors = root_ancestors.get(
+            dirpath, frozenset({os.path.realpath(dirpath)}),
+        )
         dirnames[:] = [
             d for d in dirnames if not should_exclude(d, BUNDLE_EXCLUDE_PATTERNS)
         ]
+        kept_dirs: list[str] = []
+        for d in dirnames:
+            child_path = os.path.join(dirpath, d)
+            real_target = os.path.realpath(child_path)
+            if os.path.islink(child_path) and real_target in ancestors:
+                continue
+            root_ancestors[child_path] = ancestors | frozenset({real_target})
+            kept_dirs.append(d)
+        dirnames[:] = kept_dirs
         # Check directory components introduced at this level — every
         # remaining ``dirnames`` entry is part of an arcname the
         # bundler will write, so its stem must not match a reserved

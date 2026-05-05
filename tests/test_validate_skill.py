@@ -4990,12 +4990,16 @@ class DegradedSymlinkReferenceTests(unittest.TestCase):
             self.assertEqual(generic, [])
 
     def test_one_line_note_pointing_at_real_file_passes(self) -> None:
-        """A small file whose content is a path that resolves is NOT a shim.
+        """A small file whose content is a path that resolves emits INFO.
 
-        Pinned regression for the false-positive risk identified in
-        critique: a deliberate one-line ``see-also.md`` whose body is
-        a relative path pointing at an existing sibling must not be
-        classified as a Windows-without-DevMode degraded symlink.
+        Pinned regression for the false-positive / false-negative
+        trade-off: a deliberate one-line ``see-also.md`` whose body
+        is a relative path pointing at an existing sibling is NOT a
+        FAIL or WARN — but it IS shape-identical to a Git-degraded
+        symlink shim whose target also exists, so the validator
+        emits a dedicated INFO inviting the author to verify the
+        intent.  The WARN-level "degraded symlink" finding must
+        NOT fire here.
         """
         from validate_skill import validate_body
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5017,11 +5021,21 @@ class DegradedSymlinkReferenceTests(unittest.TestCase):
             )
             write_text(skill_md, "---\nname: test\n---\n" + body)
             errors, _ = validate_body(body, skill_md, tmpdir)
-            degraded = [
+            # No WARN-level degraded-symlink finding (target exists).
+            degraded_warns = [
                 e for e in errors
                 if e.startswith(LEVEL_WARN) and "degraded symlink" in e
             ]
-            self.assertEqual(degraded, [])
+            self.assertEqual(degraded_warns, [])
+            # But the ambiguous-shim INFO must fire so the author
+            # can verify the shape was intentional.
+            ambiguous = [
+                e for e in errors
+                if e.startswith(LEVEL_INFO)
+                and "deliberate one-line content reference" in e
+            ]
+            self.assertEqual(len(ambiguous), 1)
+            self.assertIn("references/see-also.md", ambiguous[0])
 
 
 class DanglingSymlinkReferenceTests(unittest.TestCase):

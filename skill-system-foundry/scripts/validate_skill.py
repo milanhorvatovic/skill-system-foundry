@@ -25,6 +25,7 @@ from lib.references import (
     is_dangling_symlink,
     is_drive_qualified,
     is_within_directory,
+    looks_like_ambiguous_one_line_shim,
     looks_like_degraded_symlink,
     resolve_case_exact,
     strip_fragment,
@@ -419,6 +420,30 @@ def _check_references(
                 "does not exist"
             )
             continue
+
+        # Ambiguous one-line shim: the file's content is a single
+        # relative-path string AND the captured target also exists
+        # on disk.  Two byte-identical causes — a Git-degraded
+        # symlink shim whose target happens to be present, or an
+        # authored one-line content reference — that the validator
+        # cannot distinguish without an out-of-band signal.  Surface
+        # at INFO so the author investigates without forcing a
+        # false-positive WARN on legitimate one-line references.
+        # The rule fires only on regular files (broken symlinks and
+        # the dangling-target case of degraded symlinks have
+        # already short-circuited above).
+        if looks_like_ambiguous_one_line_shim(ref_path):
+            errors.append(
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "is a small file whose entire content is a single "
+                "relative-path string pointing at an existing target — "
+                "this could be either a deliberate one-line content "
+                "reference OR a Windows-without-DevMode degraded "
+                "symlink shim whose target happens to also exist on "
+                "disk.  Verify on a fresh checkout that the file is "
+                "the shape you intended."
+            )
 
         # Handle directory references gracefully — and short-circuit
         # before the cross-scope INFO emission below.  A capability

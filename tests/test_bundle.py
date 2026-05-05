@@ -1760,6 +1760,61 @@ class CheckLongPathsTests(unittest.TestCase):
             self.assertNotIn("\\", errors[0])
             self.assertIn("deeply/nested/", errors[0])
 
+    def test_symlink_aliases_to_same_dir_are_each_walked(self) -> None:
+        """Two symlinks pointing at the same directory both get checked.
+
+        Pinned regression: an earlier ``check_long_paths`` used a
+        single realpath visited-set as cycle protection, so the
+        second symlink alias to a directory was silently skipped.
+        ``walk_skill_files`` (the bundler's actual walker) copies
+        both aliases into the archive under their lexical names —
+        skipping one here would let a long path under that alias
+        pass the pre-flight and only fail at user-extract time.
+        Switch to ancestry-based cycle protection so the helper
+        walks every alias while still cutting off true cycles.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            shared_dir = os.path.join(skill_dir, "shared")
+            os.makedirs(shared_dir)
+            # arcname budget = threshold(60) - prefix(5) = 55.
+            # Skill basename "demo-skill/" = 11 chars, then
+            # ``shared/`` = 7 chars, then the filename.  40 x's +
+            # ``.md`` (43) → ``demo-skill/shared/<40-x>.md`` is 61
+            # chars, comfortably over the budget for every alias.
+            self._build_skill_with_arcname(
+                skill_dir, "shared/" + "x" * 40 + ".md",
+            )
+            # Create two sibling symlinks pointing at the same
+            # ``shared/`` directory under different names.  Skip
+            # the test if the host can't make symlinks (Windows
+            # without DevMode etc.).
+            try:
+                os.symlink(
+                    shared_dir, os.path.join(skill_dir, "alias-a"),
+                    target_is_directory=True,
+                )
+                os.symlink(
+                    shared_dir, os.path.join(skill_dir, "alias-b"),
+                    target_is_directory=True,
+                )
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            # threshold/budget chosen so the bare ``shared/x...md``
+            # arcname fits but the alias-prefixed forms don't.
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=5,
+            )
+            # The actual file appears at three lexical locations:
+            # ``shared/<file>``, ``alias-a/<file>``, ``alias-b/<file>``.
+            # All three must be reported (not deduped to one).
+            shared_errors = [e for e in errors if "shared/" in e]
+            alias_a_errors = [e for e in errors if "alias-a/" in e]
+            alias_b_errors = [e for e in errors if "alias-b/" in e]
+            self.assertGreaterEqual(len(shared_errors), 1)
+            self.assertGreaterEqual(len(alias_a_errors), 1)
+            self.assertGreaterEqual(len(alias_b_errors), 1)
+
     def test_arcname_includes_skill_basename(self) -> None:
         """Pinned regression: the basename must be counted.
 

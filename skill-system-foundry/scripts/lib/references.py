@@ -311,6 +311,11 @@ def looks_like_degraded_symlink(path: str) -> bool:
     content does not match the single-relative-path shape, and on
     files where the captured path resolves to an existing file
     (i.e., real one-line markdown notes — see the trade-off above).
+
+    The companion ``looks_like_ambiguous_one_line_shim`` returns
+    True for the inverse case (shape match + target exists), so
+    the validator can surface an INFO inviting the author to
+    verify on a fresh Windows-without-DevMode clone.
     """
     try:
         size = os.path.getsize(path)
@@ -343,6 +348,61 @@ def looks_like_degraded_symlink(path: str) -> bool:
     if os.path.exists(candidate):
         return False
     return True
+
+
+def looks_like_ambiguous_one_line_shim(path: str) -> bool:
+    """Return True when *path* matches a shim shape AND target exists.
+
+    The companion to ``looks_like_degraded_symlink``: same shape
+    gate (small file, valid UTF-8, single-line content matching
+    ``_DEGRADED_SYMLINK_PATTERN``), but the captured target *does*
+    resolve to an existing file.  Two causes are byte-identical:
+
+    1. A Git-degraded symlink shim where the target also happens
+       to exist on disk (e.g. ``CLAUDE.md`` shim containing
+       ``AGENTS.md`` when ``AGENTS.md`` is a sibling).  The
+       checkout has a regular file where a symlink was expected.
+    2. A deliberate one-line content reference (e.g.
+       ``references/see-also.md`` whose body is
+       ``./full-content.md``).  Authored content, not a shim.
+
+    Without an out-of-band signal (git history, a
+    ``core.symlinks`` per-file marker) the validator cannot
+    distinguish (1) from (2).  Surface the case at INFO severity
+    so the author investigates without the validator forcing a
+    false-positive WARN on legitimate one-line references.
+
+    Returns False on the same conditions as
+    ``looks_like_degraded_symlink`` (read failure, oversize, bad
+    UTF-8, multi-line, non-shim shape) AND on files whose
+    captured target does NOT exist (those are handled by the
+    "broken-target" branch of the degraded check).
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+    if size == 0 or size > _DEGRADED_SYMLINK_MAX_BYTES:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return False
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    body = text.strip()
+    if not body or "\n" in body or "\r" in body:
+        return False
+    if not _DEGRADED_SYMLINK_PATTERN.match(body):
+        return False
+    parent = os.path.dirname(os.path.abspath(path))
+    candidate = os.path.normpath(
+        os.path.join(parent, body.replace("\\", "/"))
+    )
+    return os.path.exists(candidate)
 
 
 def resolve_case_exact(
@@ -419,9 +479,14 @@ def resolve_case_exact(
         # Different drives on Windows — not under skill_root, so we
         # cannot apply the case rule meaningfully; defer to existence.
         return os.path.exists(abs_ref), None, None
-    if rel.startswith(".."):
-        return os.path.exists(abs_ref), None, None
     parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
+    # Out-of-root check: only treat the path as escaping when the
+    # FIRST segment is exactly ``..`` — a string-prefix
+    # ``rel.startswith("..")`` test would falsely reject in-tree
+    # paths whose first component happens to start with the two
+    # characters (``..hidden/guide.md``).
+    if parts and parts[0] == "..":
+        return os.path.exists(abs_ref), None, None
     if not parts:
         return True, None, None
     cursor = abs_root
