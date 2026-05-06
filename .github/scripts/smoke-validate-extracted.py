@@ -56,6 +56,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.constants import LEVEL_FAIL  # noqa: E402  (path injected above)
+from lib.reporting import to_posix  # noqa: E402  (path injected above)
 
 
 def find_skill_dirs(extracted_root: str) -> list[str]:
@@ -115,6 +116,14 @@ def main(argv: list[str] | None = None) -> int:
         return subprocess.call(
             [sys.executable, args.validator_path, matches[0]]
         )
+    # Normalise every path that crosses the diagnostic boundary so
+    # finding text is byte-identical across runners.  Without this,
+    # the multi-match branch (which renders the candidate list via
+    # ``repr``) emits double-escaped ``\\`` sequences on Windows
+    # that downstream substring assertions and log-grep filters
+    # would not match.  ``to_posix`` is the established chokepoint
+    # for any path crossing a UI boundary in this repo.
+    extracted_root_posix = to_posix(args.extracted_root)
     if len(matches) > 1:
         # A multi-match is itself a regression worth surfacing — the
         # bundler's contract is one top-level <skill-name>/ entry
@@ -122,11 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         # alphabetically-first hit and validated it, which would
         # silently mask a duplicated-namespace regression.  Listing
         # every candidate makes the failure self-explanatory.
+        matches_posix = [to_posix(m) for m in matches]
         print(
-            f"{LEVEL_FAIL}: '{args.extracted_root}' contains "
-            f"{len(matches)} top-level directories with a SKILL.md "
-            f"({matches!r}) — bundle extraction must produce exactly "
-            "one <skill-name>/SKILL.md layout",
+            f"{LEVEL_FAIL}: '{extracted_root_posix}' contains "
+            f"{len(matches_posix)} top-level directories with a SKILL.md "
+            f"({matches_posix!r}) — bundle extraction must produce "
+            "exactly one <skill-name>/SKILL.md layout",
             file=sys.stderr,
         )
         return 1
@@ -140,13 +150,13 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(
             f"{LEVEL_FAIL}: cannot list extracted root "
-            f"'{args.extracted_root}': {exc}",
+            f"'{extracted_root_posix}': {exc}",
             file=sys.stderr,
         )
         return 1
     print(
         f"{LEVEL_FAIL}: no top-level directory under "
-        f"'{args.extracted_root}' contains a SKILL.md "
+        f"'{extracted_root_posix}' contains a SKILL.md "
         f"(entries: {entries!r}) — bundle extraction did not "
         "produce the expected <skill-name>/SKILL.md layout",
         file=sys.stderr,

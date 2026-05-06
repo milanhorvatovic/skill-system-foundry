@@ -104,6 +104,12 @@ class MainTests(unittest.TestCase):
     """``main`` propagates validator exit code and surfaces clear errors."""
 
     def test_missing_layout_emits_clear_error_and_exits_non_zero(self) -> None:
+        # The helper renders every path through ``to_posix`` so
+        # finding text is byte-identical across Windows and POSIX
+        # runners.  Compare on the ``to_posix``-normalised side too,
+        # otherwise this assertion would pass on Linux/macOS but
+        # fail on windows-latest where ``tmpdir`` carries native
+        # backslashes the rendered message no longer contains.
         with tempfile.TemporaryDirectory() as tmpdir:
             stderr = StringIO()
             with redirect_stderr(stderr):
@@ -113,7 +119,7 @@ class MainTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             msg = stderr.getvalue()
             self.assertIn("no top-level directory", msg)
-            self.assertIn(tmpdir, msg)
+            self.assertIn(smoke_validate.to_posix(tmpdir), msg)
             self.assertIn("SKILL.md", msg)
 
     def test_missing_extracted_root_emits_clear_error(self) -> None:
@@ -130,7 +136,7 @@ class MainTests(unittest.TestCase):
             self.assertEqual(rc, 1)
             msg = stderr.getvalue()
             self.assertIn("cannot list extracted root", msg)
-            self.assertIn(missing, msg)
+            self.assertIn(smoke_validate.to_posix(missing), msg)
 
     def test_multi_match_layout_fails_without_invoking_validator(self) -> None:
         """Two top-level <skill-name>/SKILL.md entries fail loudly.
@@ -142,6 +148,14 @@ class MainTests(unittest.TestCase):
         every candidate and must NOT invoke the validator at all
         (otherwise a green validator on the picked entry would
         report success).
+
+        Pinned regression (windows-latest, 3.12 CI run 25461377074):
+        the previous implementation rendered the candidate list via
+        ``{matches!r}``, which on Windows escapes every backslash so
+        the message contained ``\\\\`` sequences while
+        ``os.path.join`` produced single ``\\`` paths — substring
+        assertions failed.  ``to_posix`` normalises both sides so
+        the assertion is byte-identical regardless of host.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             _write(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
@@ -159,8 +173,12 @@ class MainTests(unittest.TestCase):
             msg = stderr.getvalue()
             self.assertIn("2 top-level directories", msg)
             self.assertIn("exactly one", msg)
-            self.assertIn(os.path.join(tmpdir, "alpha"), msg)
-            self.assertIn(os.path.join(tmpdir, "beta"), msg)
+            self.assertIn(
+                smoke_validate.to_posix(os.path.join(tmpdir, "alpha")), msg,
+            )
+            self.assertIn(
+                smoke_validate.to_posix(os.path.join(tmpdir, "beta")), msg,
+            )
 
     def test_propagates_validator_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
