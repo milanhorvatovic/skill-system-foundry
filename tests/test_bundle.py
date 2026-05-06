@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,9 @@ from lib.bundling import (
     _rewrite_markdown_content,
     _rewrite_markdown_paths,
     _rewrite_reference_target,
+    check_external_arcnames,
+    check_long_paths,
+    check_reserved_path_components,
     create_bundle,
     postvalidate,
     prevalidate,
@@ -1646,6 +1650,526 @@ class PostValidateCoverageTests(unittest.TestCase):
         ]
         self.assertEqual(len(unresolved), 1)
         self.assertIn(LEVEL_FAIL, unresolved[0])
+
+
+class CheckLongPathsTests(unittest.TestCase):
+    """``check_long_paths`` flags arcnames that exceed the budget.
+
+    Arcname measurement includes the skill's own basename as the
+    top-level component (matching ``create_bundle``'s zip layout),
+    so each test builds the skill inside a known-name subdirectory
+    and accounts for ``len(skill_name) + 1`` in the threshold maths.
+    """
+
+    SKILL_NAME = "demo-skill"  # 10 chars; +1 for the slash → +11
+
+    def _build_skill_with_arcname(
+        self, skill_dir: str, arcname: str
+    ) -> None:
+        full = os.path.join(skill_dir, *arcname.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("body")
+
+    def _make_skill_dir(self, root: str) -> str:
+        skill_dir = os.path.join(root, self.SKILL_NAME)
+        os.makedirs(skill_dir)
+        return skill_dir
+
+    def test_under_threshold_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            self._build_skill_with_arcname(skill_dir, "SKILL.md")
+            errors, passes = check_long_paths(
+                skill_dir, threshold=260, user_prefix_budget=80,
+            )
+            self.assertEqual(errors, [])
+            self.assertEqual(len(passes), 1)
+            self.assertIn("long-path", passes[0])
+            # Pass message names the on-disk arcname including the
+            # skill basename (verifies the prefix is part of the
+            # measurement).
+            self.assertIn(f"{self.SKILL_NAME}/SKILL.md", passes[0])
+
+    def test_arcname_at_threshold_passes(self) -> None:
+        # threshold(60) - prefix(10) = 50.  The arcname is
+        # ``demo-skill/<file>`` (11 chars + filename).  Pick a
+        # filename that brings the total to <= 50.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            # 50 - len("demo-skill/") = 39; "a"*36 + ".md" = 39 chars.
+            arcname = "a" * 36 + ".md"
+            self._build_skill_with_arcname(skill_dir, arcname)
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=10,
+            )
+            self.assertEqual(errors, [])
+
+    def test_arcname_over_threshold_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            arcname = "a" * 50 + ".md"  # 53 chars; +11 prefix = 64
+            self._build_skill_with_arcname(skill_dir, arcname)
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=10,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(errors[0].startswith(LEVEL_FAIL))
+            self.assertIn(arcname, errors[0])
+            # Error names the basename-prefixed form too.
+            self.assertIn(f"{self.SKILL_NAME}/", errors[0])
+
+    def test_severity_override_emits_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            arcname = "a" * 50 + ".md"
+            self._build_skill_with_arcname(skill_dir, arcname)
+            errors, _ = check_long_paths(
+                skill_dir,
+                threshold=60,
+                user_prefix_budget=10,
+                severity=LEVEL_WARN,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(errors[0].startswith(LEVEL_WARN))
+
+    def test_excluded_pattern_not_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            self._build_skill_with_arcname(skill_dir, "SKILL.md")
+            self._build_skill_with_arcname(
+                skill_dir, ".git/" + "x" * 200,
+            )
+            errors, _ = check_long_paths(
+                skill_dir, threshold=100, user_prefix_budget=10,
+            )
+            # The .git/ entry would exceed the threshold but is
+            # excluded from the walk by the bundler's exclude
+            # patterns, so no FAIL fires.
+            self.assertEqual(errors, [])
+
+    def test_finding_uses_forward_slashes(self) -> None:
+        # The reported path must always be POSIX-form so the message
+        # is identical on every runner.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            arcname = "deeply/nested/" + "x" * 50 + ".md"
+            self._build_skill_with_arcname(skill_dir, arcname)
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=5,
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertNotIn("\\", errors[0])
+            self.assertIn("deeply/nested/", errors[0])
+
+    def test_symlink_aliases_to_same_dir_are_each_walked(self) -> None:
+        """Two symlinks pointing at the same directory both get checked.
+
+        Pinned regression: an earlier ``check_long_paths`` used a
+        single realpath visited-set as cycle protection, so the
+        second symlink alias to a directory was silently skipped.
+        ``walk_skill_files`` (the bundler's actual walker) copies
+        both aliases into the archive under their lexical names —
+        skipping one here would let a long path under that alias
+        pass the pre-flight and only fail at user-extract time.
+        Switch to ancestry-based cycle protection so the helper
+        walks every alias while still cutting off true cycles.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            shared_dir = os.path.join(skill_dir, "shared")
+            os.makedirs(shared_dir)
+            # arcname budget = threshold(60) - prefix(5) = 55.
+            # Skill basename "demo-skill/" = 11 chars, then
+            # ``shared/`` = 7 chars, then the filename.  40 x's +
+            # ``.md`` (43) → ``demo-skill/shared/<40-x>.md`` is 61
+            # chars, comfortably over the budget for every alias.
+            self._build_skill_with_arcname(
+                skill_dir, "shared/" + "x" * 40 + ".md",
+            )
+            # Create two sibling symlinks pointing at the same
+            # ``shared/`` directory under different names.  Skip
+            # the test if the host can't make symlinks (Windows
+            # without DevMode etc.).
+            try:
+                os.symlink(
+                    shared_dir, os.path.join(skill_dir, "alias-a"),
+                    target_is_directory=True,
+                )
+                os.symlink(
+                    shared_dir, os.path.join(skill_dir, "alias-b"),
+                    target_is_directory=True,
+                )
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            # threshold/budget chosen so the bare ``shared/x...md``
+            # arcname fits but the alias-prefixed forms don't.
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=5,
+            )
+            # The actual file appears at three lexical locations:
+            # ``shared/<file>``, ``alias-a/<file>``, ``alias-b/<file>``.
+            # All three must be reported (not deduped to one).
+            shared_errors = [e for e in errors if "shared/" in e]
+            alias_a_errors = [e for e in errors if "alias-a/" in e]
+            alias_b_errors = [e for e in errors if "alias-b/" in e]
+            self.assertGreaterEqual(len(shared_errors), 1)
+            self.assertGreaterEqual(len(alias_a_errors), 1)
+            self.assertGreaterEqual(len(alias_b_errors), 1)
+
+    def test_arcname_includes_skill_basename(self) -> None:
+        """Pinned regression: the basename must be counted.
+
+        Reviewer finding: the previous implementation measured paths
+        relative to the skill root only, so a path that exactly fit
+        the budget would still exceed Windows MAX_PATH after
+        extraction once the skill basename was prepended.  Verify
+        that the basename does count toward the measured length.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            # File whose path-from-skill-root is short enough to fit
+            # the budget if the basename were *not* counted, but
+            # exceeds it once the basename prefix is added.
+            #
+            # threshold=20, prefix=2 → available=18.
+            # bare arcname "x.md" = 4 chars (would pass).
+            # with basename: "demo-skill/x.md" = 15 chars (still fits!).
+            # We need a file that fits w/o basename but exceeds with.
+            # threshold=14, prefix=2 → available=12.
+            # bare arcname "x.md" = 4 chars (would pass).
+            # with basename: "demo-skill/x.md" = 15 chars (FAILs).
+            self._build_skill_with_arcname(skill_dir, "x.md")
+            errors, _ = check_long_paths(
+                skill_dir, threshold=14, user_prefix_budget=2,
+            )
+            self.assertEqual(len(errors), 1)
+            # Error message names the prefixed arcname, not the
+            # bare-from-skill-root form.
+            self.assertIn(f"{self.SKILL_NAME}/x.md", errors[0])
+
+    def test_findings_emitted_in_lexicographic_order(self) -> None:
+        """Pinned regression: findings are sorted by POSIX rel-path.
+
+        ``walk_skill_files`` inherits ``os.walk`` / ``os.listdir``
+        ordering, which varies across filesystems and runners.  The
+        helper sorts candidate rel-paths before emitting findings so
+        finding text is byte-identical across hosts and downstream
+        tests can assert full error lists without flaking.  Without
+        this invariant, a future refactor that reverts to walker
+        order would silently regress on the ubuntu-only matrix
+        entry, since ext4 happens to yield in alphabetical-ish order
+        on many trees.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            # Build over-budget files across multiple subdirectories;
+            # the basenames are intentionally a mix so the sort
+            # must compare across siblings, not just within a
+            # single directory.
+            arcnames = (
+                "z_subdir/" + "a" * 50 + ".md",
+                "a_subdir/" + "z" * 50 + ".md",
+                "m_subdir/" + "m" * 50 + ".md",
+                "z_subdir/" + "b" * 50 + ".md",
+                "a_subdir/" + "y" * 50 + ".md",
+            )
+            for arcname in arcnames:
+                self._build_skill_with_arcname(skill_dir, arcname)
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=5,
+            )
+            self.assertEqual(len(errors), 5)
+            # Extract the rel-path each finding names; the format is
+            # ``LEVEL_FAIL: '<rel>' exceeds...`` so the rel sits
+            # between the first pair of single quotes.
+            rels = [re.search(r"'([^']+)'", e).group(1) for e in errors]
+            self.assertEqual(
+                rels,
+                sorted(rels),
+                msg=(
+                    "check_long_paths must emit findings in "
+                    "lexicographic POSIX-rel order — order observed "
+                    "was " + repr(rels)
+                ),
+            )
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Cannot create reserved-name files (CON/AUX/NUL/...) on Windows; "
+    "the rule under test is OS-independent and is verified on the "
+    "ubuntu-latest matrix runner instead.",
+)
+class CheckReservedPathComponentsTests(unittest.TestCase):
+    """``check_reserved_path_components`` flags reserved NTFS names.
+
+    The frontmatter ``name`` rule (``validate_name``) catches the
+    skill's own basename, but Windows reserves device names for
+    every path component.  This helper walks the tree and FAILs when
+    any directory or file name's stem matches one of the reserved
+    names case-insensitively.
+
+    Windows-runner skip note: Windows itself rejects creating
+    ``CON``/``AUX``/``NUL`` files at the filesystem layer, so the
+    fixture-construction calls below would error out before
+    ``check_reserved_path_components`` is invoked.  The rule's
+    logic does not depend on the host OS — it walks names against
+    a configured list — so the matrix's ubuntu-latest run covers
+    the behaviour, and the Windows skip avoids a false
+    test failure that has nothing to do with the rule itself.
+    """
+
+    def _build(self, root: str, arcname: str) -> None:
+        full = os.path.join(root, *arcname.split("/"))
+        os.makedirs(os.path.dirname(full) or root, exist_ok=True)
+        with open(full, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("body")
+
+    def test_clean_skill_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/guide.md")
+            errors, passes = check_reserved_path_components(skill_dir)
+            self.assertEqual(errors, [])
+            self.assertEqual(len(passes), 1)
+
+    def test_reserved_basename_fails(self) -> None:
+        # A bundled file named ``con.md`` has stem ``CON`` —
+        # illegal on NTFS regardless of host.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/con.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(errors[0].startswith(LEVEL_FAIL))
+            self.assertIn("references/con.md", errors[0])
+            self.assertIn("CON", errors[0])
+
+    def test_reserved_directory_component_fails(self) -> None:
+        # A directory named ``aux`` is illegal on NTFS too.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "capabilities/aux/capability.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            # One FAIL for the ``aux`` directory; the file's own
+            # stem (``capability``) is legal.
+            aux_errors = [e for e in errors if "AUX" in e]
+            self.assertEqual(len(aux_errors), 1)
+            self.assertIn("capabilities/aux", aux_errors[0])
+
+    def test_case_insensitive_match(self) -> None:
+        # The match is case-insensitive — ``Nul.md`` is just as
+        # illegal as ``nul.md`` or ``NUL.md``.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/Nul.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("NUL", errors[0])
+
+    def test_severity_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/con.md")
+            errors, _ = check_reserved_path_components(
+                skill_dir, severity=LEVEL_WARN,
+            )
+            self.assertTrue(errors[0].startswith(LEVEL_WARN))
+
+    def test_skill_basename_is_checked(self) -> None:
+        """A skill directory named ``con`` fails the rule.
+
+        Pinned regression: the previous implementation measured
+        components relative to the skill root, which stripped the
+        skill basename before splitting.  A skill directory named
+        ``con`` (with a legal frontmatter ``name``) would slip past
+        the reserved-name check even though its basename becomes the
+        archive's top-level entry — and Windows refuses to extract
+        a zip whose root directory is a reserved device name.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "con")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            con_errors = [e for e in errors if "CON" in e]
+            self.assertGreaterEqual(len(con_errors), 1)
+            # The error names the directory by its archive form
+            # (the skill basename is now component 0 of the
+            # measured rel-path).
+            self.assertIn("'con'", con_errors[0])
+
+    def test_com0_and_lpt0_are_legal(self) -> None:
+        # Pinned regression: only COM1-COM9 / LPT1-LPT9 are
+        # reserved on Windows.  ``com0.md`` / ``lpt0.md`` must NOT
+        # fire.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            self._build(skill_dir, "references/com0.md")
+            self._build(skill_dir, "references/lpt0.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(errors, [])
+
+    def test_trailing_space_or_dot_is_flagged(self) -> None:
+        """Components like ``con `` / ``aux.`` are reserved on Windows.
+
+        Windows trims trailing spaces and dots from path components
+        before comparing against the device-name list, so a zip that
+        carries ``con `` (legal on POSIX) cannot be extracted on
+        Windows — it materialises as ``CON``.  The reserved-name
+        check normalises components the same way so the pre-flight
+        catches the shape on every host.
+        """
+        cases = (
+            ("references/con .md", "CON"),
+            ("references/aux..md", "AUX"),
+            ("references/nul . .md", "NUL"),
+        )
+        for relpath, stem in cases:
+            with self.subTest(relpath=relpath, stem=stem):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    skill_dir = os.path.join(tmpdir, "demo")
+                    os.makedirs(skill_dir)
+                    self._build(skill_dir, "SKILL.md")
+                    self._build(skill_dir, relpath)
+                    errors, _ = check_reserved_path_components(skill_dir)
+                    matched = [e for e in errors if stem in e]
+                    self.assertEqual(
+                        len(matched), 1,
+                        msg=(
+                            f"expected one {stem} finding for {relpath}; "
+                            f"got errors={errors}"
+                        ),
+                    )
+
+    def test_findings_emitted_in_lexicographic_order(self) -> None:
+        """Pinned regression: findings are sorted by POSIX rel-path.
+
+        Same invariant as ``CheckLongPathsTests``: collecting and
+        sorting candidate rel-paths before emitting findings makes
+        the output byte-identical across runners.  The dedup ``seen``
+        set folds duplicate (component, stem) pairs so reported
+        findings still match between hosts even when the underlying
+        walk order differs.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            # Three reserved-name files in distinct sibling
+            # directories so dedup does not collapse the findings.
+            # Lexicographic order is determined by the POSIX rel
+            # path (with the skill basename prefix), so the expected
+            # order is ``demo/a/...``, ``demo/m/...``, ``demo/z/...``.
+            self._build(skill_dir, "z_subdir/nul.md")
+            self._build(skill_dir, "a_subdir/con.md")
+            self._build(skill_dir, "m_subdir/aux.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(len(errors), 3)
+            # Each finding text contains the offending POSIX rel
+            # path between the first pair of single quotes.
+            rels = [re.search(r"'([^']+)'", e).group(1) for e in errors]
+            self.assertEqual(
+                rels,
+                sorted(rels),
+                msg=(
+                    "check_reserved_path_components must emit "
+                    "findings in lexicographic POSIX-rel order — "
+                    "order observed was " + repr(rels)
+                ),
+            )
+
+
+class CheckExternalArcnamesTests(unittest.TestCase):
+    """``check_external_arcnames`` runs the long-path and reserved-name
+    rules against pre-computed arcname strings so the bundle pre-flight
+    can verify externals BEFORE ``create_bundle`` copies them.
+    """
+
+    def test_empty_input_is_clean(self) -> None:
+        errors, passes = check_external_arcnames([])
+        self.assertEqual(errors, [])
+        self.assertEqual(passes, [])
+
+    def test_under_threshold_passes(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/SKILL.md", "demo/references/guide.md"],
+            threshold=260,
+            user_prefix_budget=80,
+        )
+        self.assertEqual(errors, [])
+
+    def test_over_threshold_fails(self) -> None:
+        long_arcname = "demo/" + ("x" * 80) + ".md"
+        errors, _ = check_external_arcnames(
+            [long_arcname], threshold=60, user_prefix_budget=10,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn(long_arcname, errors[0])
+
+    def test_reserved_basename_fails(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/references/con.md"],
+        )
+        con_errors = [e for e in errors if "CON" in e]
+        self.assertEqual(len(con_errors), 1)
+
+    def test_reserved_directory_fails(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/aux/inner/file.md"],
+        )
+        aux_errors = [e for e in errors if "AUX" in e]
+        self.assertEqual(len(aux_errors), 1)
+
+    def test_severity_override(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/" + ("x" * 80) + ".md"],
+            threshold=60,
+            user_prefix_budget=10,
+            severity=LEVEL_WARN,
+        )
+        self.assertTrue(errors[0].startswith(LEVEL_WARN))
+
+    def test_trailing_space_or_dot_is_flagged(self) -> None:
+        """External arcnames with trailing spaces/dots are also flagged.
+
+        Mirrors the same NTFS normalisation as
+        ``check_reserved_path_components`` — Windows trims trailing
+        spaces and dots before comparing path components against the
+        device-name list, so a bundled external named ``con `` becomes
+        ``CON`` on extraction.  Both pre-flight helpers must agree so
+        an external arcname slipped past the directory walk does not
+        bypass the check.
+        """
+        cases = (
+            ("demo/references/con .md", "CON"),
+            ("demo/references/aux..md", "AUX"),
+            ("demo/nul ./inner/file.md", "NUL"),
+        )
+        for arcname, stem in cases:
+            with self.subTest(arcname=arcname, stem=stem):
+                errors, _ = check_external_arcnames([arcname])
+                matched = [e for e in errors if stem in e]
+                self.assertEqual(
+                    len(matched), 1,
+                    msg=(
+                        f"expected one {stem} finding for {arcname}; "
+                        f"got errors={errors}"
+                    ),
+                )
 
 
 if __name__ == "__main__":

@@ -33,6 +33,9 @@ from lib.bundling import (
     create_bundle,
     postvalidate,
     create_zip,
+    check_external_arcnames,
+    check_long_paths,
+    check_reserved_path_components,
 )
 from lib.constants import (
     BUNDLE_DEFAULT_TARGET,
@@ -47,6 +50,7 @@ from lib.constants import (
     LEVEL_WARN,
 )
 from lib.references import (
+    compute_bundle_path,
     infer_system_root,
     is_within_directory,
 )
@@ -56,6 +60,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 
 
@@ -211,14 +216,25 @@ def main() -> None:
     # system root) so they can be included in JSON output.
     early_warnings: list[str] = []
 
-    def _json_fail(error: str) -> None:
+    def _json_fail(
+        error: str,
+        warnings_list: list[str] | None = None,
+    ) -> None:
         """Print a JSON failure blob and exit 1."""
-        print(to_json_output({
+        result: dict = {
             "tool": "bundle",
-            "path": skill_path,
+            "path": to_posix(skill_path),
             "success": False,
             "error": error,
-        }))
+        }
+        if warnings_list:
+            result["warnings"] = [
+                w[len(LEVEL_WARN) + 2:]
+                if w.startswith(LEVEL_WARN + ": ")
+                else w
+                for w in warnings_list
+            ]
+        print(to_json_output(result))
         sys.exit(1)
 
     # Validate input
@@ -313,7 +329,7 @@ def main() -> None:
         system_root = infer_system_root(skill_path)
         if system_root:
             if not json_output:
-                print(f"Inferred system root: {system_root}")
+                print(f"Inferred system root: {to_posix(system_root)}")
         else:
             _no_root_warn = (
                 f"{LEVEL_WARN}: Could not infer system root. Bundling will fail "
@@ -357,8 +373,8 @@ def main() -> None:
         os.makedirs(output_parent, exist_ok=True)
 
     if not json_output:
-        print(f"Bundling: {skill_path}")
-        print(f"Output:   {output_path}")
+        print(f"Bundling: {to_posix(skill_path)}")
+        print(f"Output:   {to_posix(output_path)}")
         print("=" * SEPARATOR_WIDTH)
 
     inline_skills = args.inline_orchestrated_skills
@@ -373,21 +389,105 @@ def main() -> None:
         inline_orchestrated_skills=inline_skills,
         bundle_target=bundle_target,
     )
+    # Long-path pre-flight: any arcname whose worst-case extracted
+    # path on Windows would exceed MAX_PATH is a FAIL before we spend
+    # time assembling the bundle.  Same rule fires from validate_skill
+    # at WARN severity during authoring.  Pass *system_root* as the
+    # walker boundary when one is available so symlinks targeting
+    # files under ``roles/`` or sibling capabilities (which
+    # ``_copy_skill`` includes in the archive) are inspected here
+    # instead of slipping through to the post-flight only.
+    long_path_errors, _ = check_long_paths(
+        skill_path, boundary=system_root,
+    )
+    # Reserved-name pre-flight: every bundled path component's stem
+    # must be legal on NTFS, not just the skill's frontmatter name.
+    # validate_skill emits this at WARN; bundle FAILs because once
+    # we ship a zip with ``references/con.md``, a Windows user can
+    # never extract it.  Same boundary widening as the long-path
+    # rule above.
+    reserved_name_errors, _ = check_reserved_path_components(
+        skill_path, boundary=system_root,
+    )
+    # External-arcname pre-flight: ``check_long_paths`` /
+    # ``check_reserved_path_components`` walk the skill tree but
+    # external files (referenced via ``../../shared/...`` and the
+    # like) only land in the bundle after ``create_bundle``.  Their
+    # arcnames are deterministic given ``compute_bundle_path``, so
+    # check them up-front instead of waiting for post-flight to
+    # walk the assembled tree.  Skill basename is the archive root
+    # — ``create_bundle`` writes externals at
+    # ``<bundle_dir>/<bundle_rel>`` and the zip's arcname is
+    # ``<skill_basename>/<bundle_rel>``.
+    skill_basename = os.path.basename(os.path.abspath(skill_path))
+    external_arcnames: list[str] = []
+    external_arcname_warns: list[str] = []
+    if scan_result is not None:
+        for ext_file in sorted(scan_result.get("external_files", set())):
+            try:
+                bundle_rel = compute_bundle_path(ext_file, system_root)
+            except ValueError as exc:
+                # ``compute_bundle_path`` -> ``os.path.relpath`` raises
+                # ``ValueError`` when the external path is on a
+                # different Windows drive than ``system_root``.
+                # Surface the path explicitly instead of silently
+                # skipping — the bundler would otherwise hit the
+                # same error later in ``_copy_external_files``, but
+                # at that point the user has already paid for
+                # skill-tree walking and copying.  Emit at WARN
+                # severity (non-blocking) so the user sees the
+                # path here while any eventual concrete failure is
+                # produced by a later bundle phase, where the error
+                # message can name the OS-level cause precisely.
+                # Routed to the *warnings* bucket — the pre-flight
+                # ``errors`` list is reserved for blocking FAILs
+                # (long-path, reserved-name).
+                external_arcname_warns.append(
+                    f"{LEVEL_WARN}: external file '{to_posix(ext_file)}' "
+                    f"could not be resolved to a bundle path "
+                    f"({exc.__class__.__name__}: {exc}); skipped from "
+                    "long-path / reserved-name pre-flight — a later "
+                    "bundle phase will report any concrete failure"
+                )
+                continue
+            external_arcnames.append(
+                f"{skill_basename}/{bundle_rel.replace(os.sep, '/')}"
+            )
+    # ``check_external_arcnames`` returns FAIL-level findings (the
+    # rule's default severity); those flow through the blocking
+    # ``errors`` list alongside ``check_long_paths`` and
+    # ``check_reserved_path_components`` outputs.
+    arcname_errors, _ = check_external_arcnames(external_arcnames)
+    errors = (
+        list(errors)
+        + long_path_errors
+        + reserved_name_errors
+        + arcname_errors
+    )
     # In JSON mode, merge early warnings (e.g. missing system root)
     # with prevalidation warnings so they appear in the JSON output.
     # In human mode, early warnings were already printed inline, so
     # only include prevalidation warnings to avoid duplication.
+    # ``external_arcname_warns`` (cosmetic ValueError diagnostics
+    # from ``compute_bundle_path``) flow through this bucket too —
+    # they're informational and let the bundle proceed to creation
+    # so any eventual concrete failure surfaces with the precise
+    # OS-level error.
     if json_output:
-        warnings = early_warnings + list(prevalidate_warnings)
+        warnings = (
+            early_warnings
+            + list(prevalidate_warnings)
+            + external_arcname_warns
+        )
     else:
-        warnings = list(prevalidate_warnings)
+        warnings = list(prevalidate_warnings) + external_arcname_warns
 
     if errors:
         if json_output:
             all_issues = list(errors) + list(warnings)
             print(to_json_output({
                 "tool": "bundle",
-                "path": skill_path,
+                "path": to_posix(skill_path),
                 "success": False,
                 "phase": "pre-validation",
                 "errors": categorize_errors_for_json(all_issues),
@@ -458,11 +558,36 @@ def main() -> None:
             print("-" * SEPARATOR_WIDTH)
         post_errors = postvalidate(bundle_dir)
 
+        # Long-path post-flight: the pre-flight covered the skill
+        # tree itself, but ``create_bundle`` also inlines external
+        # references and orchestrated skills under the bundle root.
+        # Walk the assembled tree so a bundle whose externals push a
+        # path past MAX_PATH FAILs here rather than at user-extract
+        # time.  ``arcname_root`` is the bundle base directory so
+        # arcnames are namespaced under the bundle's own basename
+        # (the form the zip stores).
+        long_path_post_errors, _ = check_long_paths(
+            bundle_dir,
+            arcname_root=os.path.dirname(bundle_dir),
+        )
+        # Reserved-name post-flight: same parity reason — externals
+        # and inlined skills are added here, so a path component
+        # like ``references/aux.md`` introduced through inlining
+        # would slip past the pre-flight.
+        reserved_name_post_errors, _ = check_reserved_path_components(
+            bundle_dir,
+        )
+        post_errors = (
+            list(post_errors)
+            + long_path_post_errors
+            + reserved_name_post_errors
+        )
+
         if post_errors:
             if json_output:
                 print(to_json_output({
                     "tool": "bundle",
-                    "path": skill_path,
+                    "path": to_posix(skill_path),
                     "success": False,
                     "phase": "post-validation",
                     "errors": categorize_errors_for_json(post_errors),
@@ -482,7 +607,7 @@ def main() -> None:
 
     except ValueError as exc:
         if json_output:
-            _json_fail(str(exc))
+            _json_fail(str(exc), warnings)
         _print_failure_block(
             f"{phase_name} error",
             [f"{LEVEL_FAIL}: {exc}"],
@@ -493,7 +618,8 @@ def main() -> None:
         if json_output:
             _json_fail(
                 f"Unexpected error during {phase_name}: "
-                f"{exc.__class__.__name__}: {exc}."
+                f"{exc.__class__.__name__}: {exc}.",
+                warnings,
             )
         failure = (
             f"{LEVEL_FAIL}: Unexpected error during {phase_name}: "
@@ -516,9 +642,9 @@ def main() -> None:
     if json_output:
         result: dict = {
             "tool": "bundle",
-            "path": skill_path,
+            "path": to_posix(skill_path),
             "success": True,
-            "output": output_path,
+            "output": to_posix(output_path),
             "stats": {
                 "skill_name": stats["skill_name"],
                 "file_count": stats["file_count"],
@@ -538,7 +664,7 @@ def main() -> None:
         sys.exit(0)
 
     print(f"\n{'=' * SEPARATOR_WIDTH}")
-    print(f"\u2713 Bundle created: {output_path}")
+    print(f"\u2713 Bundle created: {to_posix(output_path)}")
     print(f"  Skill:          {stats['skill_name']}")
     print(f"  Files:          {stats['file_count']}")
     print(f"  Uncompressed:   {_format_size(stats['total_size'])}")

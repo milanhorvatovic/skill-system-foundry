@@ -66,6 +66,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.discovery import (
     find_skill_dirs,
@@ -92,6 +93,7 @@ from lib.constants import (
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
+from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.router_table import audit_router_table
 from lib.validation import (
     validate_description_triggers,
@@ -493,7 +495,10 @@ def audit_skill_system(
             # skill-root entry that the router-table rule will audit.
             # Surface it explicitly so the verbose header agrees with
             # the findings about to be emitted.
-            print(f"Skill-root mode: also auditing skill at {system_root}")
+            print(
+                "Skill-root mode: also auditing skill at "
+                f"{to_posix(system_root)}"
+            )
         print()
 
     # Partial-audit WARN fires only when the audit cannot reach any
@@ -616,6 +621,91 @@ def audit_skill_system(
                 errors.append(f"{level}: {skill['name']}: {detail}")
         if not agg_errors and verbose:
             print(f"  ✓ {skill['name']}: aggregation clean")
+
+    # --- Long-path pre-flight (cross-platform) ---
+    if verbose:
+        print("\n== Long-Path Budget ==")
+    # Iterate ``aggregation_targets`` rather than ``skills`` so the
+    # rule covers both deployed-system layouts (registered skills
+    # under ``skills/<name>/``) AND skill-root mode (the synthetic
+    # top-level entry produced by ``top_level_skill_entry``).
+    # ``find_skill_dirs`` does not surface the top-level SKILL.md
+    # in skill-root mode, so iterating it alone would skip the most
+    # common local-audit-self shape.  Capabilities are excluded
+    # because they are part of their parent skill's archive and
+    # would double-report.
+    #
+    # Boundary widening: pass *system_root* so the walker inspects
+    # symlinks targeting sibling roles/skills the bundler would
+    # ship.  Without it, the audit's default ``boundary=skill_path``
+    # would silently skip those targets and miss problems that
+    # ``bundle.py`` will FAIL on at packaging time.
+    for skill in aggregation_targets:
+        lp_errors, lp_passes = check_long_paths(
+            skill["path"], severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in lp_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']}: {detail}")
+        if not lp_errors and verbose:
+            print(f"  ✓ {skill['name']}: long-path clean")
+
+    # --- Reserved-name path-component check (cross-platform) ---
+    if verbose:
+        print("\n== Reserved Names ==")
+    for skill in aggregation_targets:
+        rn_errors, _rn_passes = check_reserved_path_components(
+            skill["path"], severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in rn_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']}: {detail}")
+        if not rn_errors and verbose:
+            print(f"  ✓ {skill['name']}: no reserved-name path components")
+
+    # System-root content outside ``aggregation_targets`` (which
+    # only contains registered skills + the synthetic top-level
+    # skill entry) but reachable through the bundler's reference
+    # graph: ``roles/``, plus any shared ``references/``,
+    # ``assets/``, or ``scripts/`` directories the skill system
+    # exposes at the system root.  The bundler can copy those into
+    # an archive when they appear in a skill's reference graph;
+    # walking them at audit time surfaces reserved-name and
+    # long-path problems that would otherwise only fail later in
+    # bundle post-validation.
+    #
+    # Measurement caveat for the long-path rule: each system-root
+    # subtree is walked with ``arcname_root`` defaulting to the
+    # system root itself, so the rule sees arcnames like
+    # ``roles/<file>`` rather than the precise per-bundle form
+    # ``<skill-name>/roles/<file>``.  The audit's check is
+    # therefore approximate — a long path here is definitely a
+    # problem, but a path that fits at audit time may still
+    # overflow MAX_PATH once a particular skill's basename is
+    # prepended at bundle time.  ``bundle.py`` runs the precise
+    # per-skill calculation as part of pre-flight, so the
+    # approximate audit signal is the right shape: catch obvious
+    # offenders early, defer the per-skill arithmetic to packaging.
+    for shared_dirname in ("roles", "references", "assets", "scripts"):
+        shared_dir = os.path.join(system_root, shared_dirname)
+        if not os.path.isdir(shared_dir):
+            continue
+        shared_lp_errors, _shared_lp_passes = check_long_paths(
+            shared_dir, severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in shared_lp_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {shared_dirname}/: {detail}")
+        if not shared_lp_errors and verbose:
+            print(f"  ✓ {shared_dirname}/: long-path clean")
+        shared_rn_errors, _shared_rn_passes = check_reserved_path_components(
+            shared_dir, severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in shared_rn_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {shared_dirname}/: {detail}")
+        if not shared_rn_errors and verbose:
+            print(f"  ✓ {shared_dirname}/: no reserved-name path components")
 
     # --- Capabilities should not be registered ---
     if verbose:
@@ -1107,7 +1197,7 @@ def main() -> None:
         if json_output:
             print(to_json_output({
                 "tool": "audit_skill_system",
-                "path": os.path.abspath(system_root),
+                "path": to_posix(os.path.abspath(system_root)),
                 "success": False,
                 "error": f"'{system_root}' is not a directory",
             }))
@@ -1179,7 +1269,7 @@ def main() -> None:
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "audit_skill_system",
-            "path": os.path.abspath(system_root),
+            "path": to_posix(os.path.abspath(system_root)),
             "success": len(fails) == 0,
             "counts": counts,
             "summary": {

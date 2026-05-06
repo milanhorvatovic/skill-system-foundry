@@ -19,14 +19,25 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
+from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.frontmatter import load_frontmatter, count_body_lines
-from lib.references import is_drive_qualified, is_within_directory, strip_fragment
+from lib.references import (
+    infer_system_root,
+    is_dangling_symlink,
+    is_drive_qualified,
+    is_within_directory,
+    looks_like_ambiguous_one_line_shim,
+    looks_like_degraded_symlink,
+    resolve_case_exact,
+    strip_fragment,
+)
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.discovery import load_capability_data
 from lib.validation import (
@@ -172,6 +183,8 @@ def _check_references(
     allow_nested_refs: bool = False,
     include_router_table: bool = False,
     source_label: str | None = None,
+    listdir_cache: dict[str, list[str]] | None = None,
+    case_check_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check markdown references in *body* using file-relative resolution.
 
@@ -272,6 +285,60 @@ def _check_references(
             continue
         seen_paths.add(ref_path)
 
+        # Case-exact resolution runs FIRST — before the
+        # ``is_external`` short-circuit — so the host-independent
+        # FAIL fires for external references too.  Wrong-cased
+        # ``../../shared/foo.md`` from a capability still resolves
+        # on Windows / default macOS but 404s on Linux, so external
+        # references are exactly the kind that benefit from this
+        # rule.  ``case_check_root`` defaults to ``skill_root``
+        # when the caller did not infer a wider root; with no
+        # wider root, external refs short-circuit through the
+        # existing ``..``-prefix branch in ``resolve_case_exact``
+        # (which falls back to ``os.path.exists``) so behaviour
+        # for standalone-skill validation is preserved.
+        effective_case_root = case_check_root or skill_root
+        case_ok, suggested, collisions = resolve_case_exact(
+            effective_case_root, ref_path, listdir_cache=listdir_cache,
+        )
+        if not case_ok and collisions is not None:
+            broken_found = True
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "matches multiple on-disk paths that differ only by "
+                f"case ({', '.join(collisions)}) — Windows/macOS "
+                "default filesystems cannot represent this; rename "
+                "one of the colliding files to a case-distinct form."
+            )
+            continue
+        if not case_ok and suggested is not None:
+            broken_found = True
+            # ``suggested`` is the on-disk casing relative to
+            # ``effective_case_root`` (often the inferred system root
+            # under a deployed layout — e.g.
+            # ``skills/<name>/references/foo.md``).  That string is
+            # not a valid link target from the source file, so an
+            # author copy/pasting it would re-break the link.  Render
+            # the corrected reference in the same coordinate system
+            # as the original: relative to the source file's own
+            # directory, with forward slashes.  Keep the on-disk path
+            # in the message too so the author can also see the
+            # filesystem location the validator found.
+            corrected_abs = os.path.join(effective_case_root, suggested)
+            corrected_ref = os.path.relpath(
+                corrected_abs, source_dir,
+            ).replace(os.sep, "/")
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"differs from the on-disk casing — corrected reference "
+                f"is '{corrected_ref}' (on-disk path: '{suggested}').  "
+                "Case-insensitive filesystems (Windows, default macOS) "
+                "accept the link but it 404s on Linux."
+            )
+            continue
+
         # Out-of-skill paths: a ``..`` chain that lands outside
         # ``skill_root`` is by definition out of scope for intra-skill
         # validation.  Surfaced as INFO and skipped — acceptable for
@@ -324,6 +391,39 @@ def _check_references(
 
         internal_checked += 1
 
+        if is_dangling_symlink(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "is a dangling symlink — the link exists but its "
+                "target is missing (on Windows this often indicates a "
+                "checkout without Developer Mode or core.symlinks=true)"
+            )
+            continue
+
+        # Windows-without-Developer-Mode degraded form: the would-be
+        # symlink exists as a small text file containing the relative
+        # target.  ``os.path.islink`` returns False so the dangling
+        # branch above missed it; the existence check below would
+        # otherwise pass silently and the *parent* reference would
+        # be reported as the failing one.  Detecting the shape here
+        # surfaces an actionable WARN naming the same fix as the true
+        # dangling case.
+        if looks_like_degraded_symlink(ref_path):
+            broken_found = True
+            errors.append(
+                f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "looks like a Windows-without-DevMode degraded symlink "
+                "(small file whose content is a single relative path "
+                "to a missing target) — if you cloned on Windows, "
+                "enable Developer Mode or set core.symlinks=true and "
+                "re-clone so git materialises the link; otherwise "
+                "create the missing target file or remove the stub"
+            )
+            continue
+
         if not os.path.exists(ref_path):
             broken_found = True
             errors.append(
@@ -332,6 +432,30 @@ def _check_references(
                 "does not exist"
             )
             continue
+
+        # Ambiguous one-line shim: the file's content is a single
+        # relative-path string AND the captured target also exists
+        # on disk.  Two byte-identical causes — a Git-degraded
+        # symlink shim whose target happens to be present, or an
+        # authored one-line content reference — that the validator
+        # cannot distinguish without an out-of-band signal.  Surface
+        # at INFO so the author investigates without forcing a
+        # false-positive WARN on legitimate one-line references.
+        # The rule fires only on regular files (broken symlinks and
+        # the dangling-target case of degraded symlinks have
+        # already short-circuited above).
+        if looks_like_ambiguous_one_line_shim(ref_path):
+            errors.append(
+                f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "is a small file whose entire content is a single "
+                "relative-path string pointing at an existing target — "
+                "this could be either a deliberate one-line content "
+                "reference OR a Windows-without-DevMode degraded "
+                "symlink shim whose target happens to also exist on "
+                "disk.  Verify on a fresh checkout that the file is "
+                "the shape you intended."
+            )
 
         # Handle directory references gracefully — and short-circuit
         # before the cross-scope INFO emission below.  A capability
@@ -462,6 +586,7 @@ def _check_references(
 def validate_body(
     body: str, entry_abs_path: str, skill_root: str,
     allow_nested_refs: bool = False,
+    case_check_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Validate skill or capability entry point body.
 
@@ -504,6 +629,7 @@ def validate_body(
     ref_errors, ref_passes = _check_references(
         body, entry_abs_path, skill_root, allow_nested_refs,
         include_router_table=(entry_filename == FILE_SKILL_MD),
+        case_check_root=case_check_root,
     )
     errors.extend(ref_errors)
     passes.extend(ref_passes)
@@ -514,6 +640,7 @@ def validate_body(
 def validate_skill_references(
     skill_path: str, skill_root: str, entry_file: str,
     allow_nested_refs: bool = False,
+    case_check_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
@@ -541,6 +668,12 @@ def validate_skill_references(
     passes: list[str] = []
     entry_abs = os.path.abspath(entry_file)
     files_checked = 0
+    # Listdir cache shared across every file's reference resolution
+    # in this pass.  A skill with N references M components deep
+    # without the cache costs N*M listdirs; with it the worst case
+    # is one listdir per unique directory the reference graph
+    # touches.  Lifetime is the duration of this single call.
+    listdir_cache: dict[str, list[str]] = {}
 
     for dirpath, _dirnames, filenames in os.walk(skill_path):
         for fname in sorted(filenames):
@@ -584,6 +717,8 @@ def validate_skill_references(
             file_errors, _file_passes = _check_references(
                 content, filepath, skill_root, file_allow_nested,
                 source_label=rel_label,
+                listdir_cache=listdir_cache,
+                case_check_root=case_check_root,
             )
 
             files_checked += 1
@@ -682,16 +817,61 @@ def validate_skill(
         )
         errors.extend(sof_errors)
         passes.extend(sof_passes)
-        body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
+        # Use the inferred system root as the case-exact root so
+        # external references (capability → ``../../shared/foo.md``)
+        # also get the host-independent FAIL when the on-disk
+        # casing differs.  Falls back to ``skill_root`` when no
+        # system root can be inferred (standalone-skill validation).
+        cap_case_check_root = (
+            infer_system_root(skill_path) or skill_root
+        )
+        body_errors, body_passes = validate_body(
+            body, skill_md, skill_root, allow_nested_refs,
+            case_check_root=cap_case_check_root,
+        )
         errors.extend(body_errors)
         passes.extend(body_passes)
         # Validate references in all .md files across the skill tree
         # (walk skill_root, not skill_path, so the entire skill is scanned)
         ref_errors, ref_passes = validate_skill_references(
             skill_root, skill_root, skill_md, allow_nested_refs,
+            case_check_root=cap_case_check_root,
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
+        # Cross-platform pre-flight in capability mode: the bundler
+        # writes capability files under ``<parent-skill>/capabilities
+        # /<cap>/...``, so the long-path and reserved-name rules need
+        # an ``arcname_root`` that produces those exact arcnames
+        # (``dirname(skill_root)`` is the dir above the parent
+        # skill).  Walk the capability subtree itself rather than the
+        # whole parent so findings stay scoped to the directory the
+        # user invoked validation against.  Boundary widens to the
+        # parent skill root so an in-cap symlink targeting sibling
+        # capabilities or the parent's ``references/`` is inspected
+        # too.
+        cap_arcname_root = os.path.dirname(skill_root) or skill_root
+        cap_lp_errors, cap_lp_passes = check_long_paths(
+            skill_path,
+            severity=LEVEL_WARN,
+            arcname_root=cap_arcname_root,
+            boundary=skill_root,
+        )
+        errors.extend(cap_lp_errors)
+        passes.extend(cap_lp_passes)
+        # Pass the same ``arcname_root`` to the reserved-name rule
+        # so a parent-skill basename like ``con`` (which appears in
+        # the actual bundle path ``con/capabilities/<cap>/...``) is
+        # checked, not just the components inside the capability
+        # subtree.
+        cap_rn_errors, cap_rn_passes = check_reserved_path_components(
+            skill_path,
+            severity=LEVEL_WARN,
+            arcname_root=cap_arcname_root,
+            boundary=skill_root,
+        )
+        errors.extend(cap_rn_errors)
+        passes.extend(cap_rn_passes)
         # Tool coherence is owned by the skill-level invocation (the
         # rule's scope is the whole skill tree, not a single
         # capability), so this branch deliberately does not run it.
@@ -759,8 +939,21 @@ def validate_skill(
     errors.extend(key_errors)
     passes.extend(key_passes)
 
+    # Use the inferred system root as the case-exact root so
+    # external references (e.g. ``../../shared/foo.md``) get the
+    # host-independent FAIL when the on-disk casing differs.  Falls
+    # back to ``skill_root`` when no system root can be inferred
+    # (standalone-skill validation), which preserves the
+    # within-skill-only behaviour for that case.
+    skill_case_check_root = (
+        infer_system_root(skill_path) or skill_root
+    )
+
     # Validate body
-    body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
+    body_errors, body_passes = validate_body(
+        body, skill_md, skill_root, allow_nested_refs,
+        case_check_root=skill_case_check_root,
+    )
     errors.extend(body_errors)
     passes.extend(body_passes)
 
@@ -772,6 +965,7 @@ def validate_skill(
     # Validate references in all other .md files in the skill tree
     sref_errors, sref_passes = validate_skill_references(
         skill_path, skill_root, skill_md, allow_nested_refs,
+        case_check_root=skill_case_check_root,
     )
     errors.extend(sref_errors)
     passes.extend(sref_passes)
@@ -797,6 +991,42 @@ def validate_skill(
     )
     errors.extend(coh_errors)
     passes.extend(coh_passes)
+
+    # Long-path pre-flight at WARN — surfaces arcname-length problems
+    # at authoring time so the FAIL at bundle time is never the first
+    # place an author hears about the issue.  The bundler reuses the
+    # same helper at FAIL severity from the same configuration.
+    #
+    # Boundary widening: bundle.py passes ``boundary=system_root`` to
+    # the same helpers so symlinks targeting sibling roles/skills the
+    # bundler ships are inspected.  validate_skill mirrors that
+    # widening when ``infer_system_root`` finds a system root above
+    # the skill — without it, a long-path or reserved-name problem
+    # reachable via in-skill symlink to system-root content would
+    # pass authoring-time validation here and only fail later at
+    # bundle pre-flight.  Falling back to the skill itself when no
+    # system root can be inferred keeps standalone-skill validation
+    # well-defined.
+    inferred_system_root = infer_system_root(skill_path) or skill_path
+    lp_errors, lp_passes = check_long_paths(
+        skill_path, severity=LEVEL_WARN, boundary=inferred_system_root,
+    )
+    errors.extend(lp_errors)
+    passes.extend(lp_passes)
+
+    # Reserved-name path-component check: the frontmatter ``name``
+    # rule (validate_name) catches the skill's own basename, but
+    # Windows reserves device names for *every* path component.  A
+    # skill containing ``references/con.md`` would scaffold and
+    # validate cleanly today and only fail when extracted on
+    # Windows.  Walk the tree at WARN severity so the bundler's
+    # FAIL is never the first signal an author hears.  Same
+    # boundary-widening rationale as the long-path rule above.
+    rn_errors, rn_passes = check_reserved_path_components(
+        skill_path, severity=LEVEL_WARN, boundary=inferred_system_root,
+    )
+    errors.extend(rn_errors)
+    passes.extend(rn_passes)
 
     # Bottom-up aggregation — parent SKILL.md ``allowed-tools`` must be
     # a superset of the union of capability-declared sets.  Layered on
@@ -1041,7 +1271,7 @@ def main() -> None:
             # error path.
             print(to_json_output({
                 "tool": "validate_skill",
-                "path": os.path.abspath(skill_path),
+                "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
                 "path_resolution": {
@@ -1371,7 +1601,7 @@ def main() -> None:
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "validate_skill",
-            "path": os.path.abspath(skill_path),
+            "path": to_posix(os.path.abspath(skill_path)),
             "type": "capability" if is_capability else "registered skill",
             "success": len(fails) == 0,
             "summary": {

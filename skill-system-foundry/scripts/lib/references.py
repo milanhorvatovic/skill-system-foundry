@@ -19,8 +19,10 @@ from .constants import (
     BUNDLE_MAX_REFERENCE_DEPTH,
     BUNDLE_EXCLUDE_PATTERNS,
     BUNDLE_INFER_MAX_WALK_DEPTH,
+    DEGRADED_SYMLINK_MAX_BYTES,
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
+    RE_DEGRADED_SYMLINK,
 )
 
 # ===================================================================
@@ -93,9 +95,32 @@ def is_within_directory(filepath: str, directory: str) -> bool:
     case so differing drive-letter casing on Windows doesn't cause
     false negatives.  Handles filesystem roots correctly (``/`` on
     POSIX, ``C:\\`` on Windows).
+
+    Dangling-symlink note: on Windows, ``os.path.realpath`` cannot
+    fully canonicalise a path whose final component is a symlink to
+    a non-existent target — Python falls back to a partially
+    resolved string that still contains the unexpanded short-name
+    component (e.g. ``RUNNER~1``), while ``realpath(directory)`` for
+    an existing directory expands to the long-name form
+    (``runneradmin``).  The two paths then diverge under
+    ``normcase`` and ``commonpath`` returns a shallow parent, so the
+    function would falsely classify a dangling symlink inside the
+    directory as external.  Detect that case explicitly: a path
+    that is a dangling symlink is judged by its own literal
+    abspath, not its (unreachable) target — both *filepath* and
+    *directory* are compared in ``abspath`` form so they share the
+    same level of canonicalisation.
     """
-    filepath_norm = os.path.normcase(os.path.realpath(filepath))
-    directory_norm = os.path.normcase(os.path.realpath(directory))
+    if os.path.islink(filepath) and not os.path.exists(filepath):
+        # Dangling symlink — judge by the link's literal location
+        # rather than the partially-resolved target.  Use
+        # ``abspath`` on both sides so neither side is more
+        # canonicalised than the other.
+        filepath_norm = os.path.normcase(os.path.abspath(filepath))
+        directory_norm = os.path.normcase(os.path.abspath(directory))
+    else:
+        filepath_norm = os.path.normcase(os.path.realpath(filepath))
+        directory_norm = os.path.normcase(os.path.realpath(directory))
     try:
         common = os.path.commonpath([filepath_norm, directory_norm])
     except ValueError:
@@ -189,6 +214,344 @@ def is_drive_qualified(path: str) -> bool:
     first = path[0]
     is_ascii_letter = ("A" <= first <= "Z") or ("a" <= first <= "z")
     return is_ascii_letter and path[1] == ":"
+
+
+def is_dangling_symlink(path: str) -> bool:
+    """Return True when *path* is a symlink whose target does not exist.
+
+    On Linux/macOS a real symlink whose target was deleted falls
+    here.  ``os.path.islink`` returns True for the link, but
+    ``os.path.exists`` follows the link and reports False — the
+    classic dangling-symlink shape.  The companion existence check
+    keeps a live link (target present) out of the True branch.
+    """
+    return os.path.islink(path) and not os.path.exists(path)
+
+
+# Windows-without-Developer-Mode degraded-symlink heuristic.  A git
+# checkout on Windows that lacks symlink support stores the would-be
+# symlink as a small plain text file whose entire body is the
+# relative target the link would have resolved to.  The validator
+# cannot use ``os.path.islink`` to detect this — the file is a real
+# regular file by then.  Instead, we recognise the shape: small file,
+# valid UTF-8, content is a single relative-looking path ending in
+# one of the foundry's reference extensions.  Recognised forms
+# produce the same actionable WARN as a true dangling symlink so the
+# integrator is pointed at the right fix (Developer Mode or
+# core.symlinks=true) instead of the generic "file does not exist"
+# diagnostic.
+#
+# The pattern accepts three shim shapes git produces:
+#   1. Bare-name target — ``ln -s sibling.md link.md`` stores
+#      ``sibling.md`` verbatim (no leading slash or dot).  This is
+#      the most common foundry shape (e.g., ``CLAUDE.md → AGENTS.md``).
+#   2. Dot-relative target — ``ln -s ./bar.md`` and
+#      ``ln -s ../bar.md`` store with the explicit dot prefix.
+#   3. Multi-component relative target — ``ln -s sub/dir/foo.md``
+#      stores as ``sub/dir/foo.md`` (forward or back slashes).
+#
+# Absolute-looking paths (``/foo.md``) are intentionally NOT
+# accepted: git symlinks are stored as relative targets, so a
+# leading slash with no dots indicates a non-shim file.  The
+# optional prefix therefore requires 1-2 dots before the slash, not
+# 0-2 — a path like ``/missing.md`` that happens to live in a
+# small file is left to the existing broken-link diagnostic.
+#
+# Tunables (``max_bytes`` and the trailing extension allow-list)
+# live in ``configuration.yaml`` under
+# ``path_resolution.degraded_symlink``; ``constants.py`` validates
+# and exposes them as ``DEGRADED_SYMLINK_MAX_BYTES`` and
+# ``RE_DEGRADED_SYMLINK``.  The pattern shape (optional dot-relative
+# prefix, multi-component, single-line) stays in code because it is
+# structural rather than tunable.
+
+
+def looks_like_degraded_symlink(path: str) -> bool:
+    """Return True when *path* looks like a Windows-without-DevMode shim.
+
+    Two-stage heuristic:
+
+    1. Shape match — *path* must be a small file (<=
+       ``DEGRADED_SYMLINK_MAX_BYTES``), valid UTF-8, with single-line
+       content matching ``RE_DEGRADED_SYMLINK`` (see the
+       constant for the recognised shim shapes and the foundry
+       extension allow-list).
+    2. Broken-target confirmation — the captured path, resolved
+       relative to *path*'s parent directory, must NOT point to an
+       existing file.
+
+    The second stage is what distinguishes a Windows-without-DevMode
+    shim (where git stored the would-be link's target as a small text
+    file because the underlying symlink could not be created, so the
+    target is not actually present) from a deliberate one-line
+    markdown note (where the captured path resolves to a real file
+    the author wanted to point at).  Without it, a stub
+    ``references/see-also.md`` containing nothing but
+    ``./full-content.md`` would be misclassified as a degraded
+    symlink even though the pointer is intact.
+
+    Trade-off: a Windows-without-DevMode shim whose target is also
+    present on disk (e.g. ``CLAUDE.md`` whose body is ``AGENTS.md``
+    when ``AGENTS.md`` exists alongside) flows through the
+    "deliberate one-line note" branch and is NOT flagged.  This is
+    a deliberate choice — without an external signal (git history,
+    a per-file ``core.symlinks`` flag) there is no way to tell a
+    real degraded shim apart from a one-line content reference.
+    Reviewers have surfaced the case (e.g. PR #139, Codex Review on
+    ``references.py:327``); the current verdict is that
+    false-positives on deliberate one-line references would be
+    worse than false-negatives on a narrow degraded-shim shape that
+    the validator's other rules (broken-link, case-exact, long-
+    path) already handle when the integrator edits the shim's
+    content or moves files.
+
+    Returns False on read failures, on files larger than the size
+    cap, on files whose body is not valid UTF-8, on files whose
+    content does not match the single-relative-path shape, and on
+    files where the captured path resolves to an existing file
+    (i.e., real one-line markdown notes — see the trade-off above).
+
+    The companion ``looks_like_ambiguous_one_line_shim`` returns
+    True for the inverse case (shape match + target exists), so
+    the validator can surface an INFO inviting the author to
+    verify on a fresh Windows-without-DevMode clone.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return False
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    body = text.strip()
+    if not body or "\n" in body or "\r" in body:
+        return False
+    # Reject drive-qualified absolute paths (``C:foo.md``,
+    # ``C:\foo.md``) before the shape regex.  Git symlinks are
+    # stored as relative targets, so a Windows-absolute path is
+    # never a real shim — but the regex's first-component class
+    # accepts ``:`` and treats ``\`` as a separator, so a small
+    # file containing ``C:\missing.md`` would otherwise pass the
+    # shape gate and produce a misleading WARN.
+    if is_drive_qualified(body):
+        return False
+    if not RE_DEGRADED_SYMLINK.match(body):
+        return False
+    # Broken-target confirmation: a real degraded symlink's captured
+    # path does not resolve to an existing file (the symlink was
+    # never materialised).  A deliberate one-line note's captured
+    # path does resolve — keep that case out of the True branch.
+    parent = os.path.dirname(os.path.abspath(path))
+    candidate = os.path.normpath(
+        os.path.join(parent, body.replace("\\", "/"))
+    )
+    if os.path.exists(candidate):
+        return False
+    return True
+
+
+def looks_like_ambiguous_one_line_shim(path: str) -> bool:
+    """Return True when *path* matches a shim shape AND target exists.
+
+    The companion to ``looks_like_degraded_symlink``: same shape
+    gate (small file, valid UTF-8, single-line content matching
+    ``RE_DEGRADED_SYMLINK``), but the captured target *does*
+    resolve to an existing file.  Two causes are byte-identical:
+
+    1. A Git-degraded symlink shim where the target also happens
+       to exist on disk (e.g. ``CLAUDE.md`` shim containing
+       ``AGENTS.md`` when ``AGENTS.md`` is a sibling).  The
+       checkout has a regular file where a symlink was expected.
+    2. A deliberate one-line content reference (e.g.
+       ``references/see-also.md`` whose body is
+       ``./full-content.md``).  Authored content, not a shim.
+
+    Without an out-of-band signal (git history, a
+    ``core.symlinks`` per-file marker) the validator cannot
+    distinguish (1) from (2).  Surface the case at INFO severity
+    so the author investigates without the validator forcing a
+    false-positive WARN on legitimate one-line references.
+
+    Returns False on the same conditions as
+    ``looks_like_degraded_symlink`` (read failure, oversize, bad
+    UTF-8, multi-line, non-shim shape) AND on files whose
+    captured target does NOT exist (those are handled by the
+    "broken-target" branch of the degraded check).
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return False
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    body = text.strip()
+    if not body or "\n" in body or "\r" in body:
+        return False
+    # Reject drive-qualified absolute paths for the same reason as
+    # ``looks_like_degraded_symlink`` — see that helper for the
+    # rationale.
+    if is_drive_qualified(body):
+        return False
+    if not RE_DEGRADED_SYMLINK.match(body):
+        return False
+    parent = os.path.dirname(os.path.abspath(path))
+    candidate = os.path.normpath(
+        os.path.join(parent, body.replace("\\", "/"))
+    )
+    return os.path.exists(candidate)
+
+
+def resolve_case_exact(
+    skill_root: str,
+    ref_path: str,
+    *,
+    listdir_cache: dict[str, list[str]] | None = None,
+) -> tuple[bool, str | None, list[str] | None]:
+    """Resolve *ref_path* against *skill_root* with byte-exact case.
+
+    On case-insensitive filesystems (NTFS, default macOS HFS+/APFS)
+    ``os.path.exists`` returns True for any case match — a markdown
+    link that points to ``References/foo.md`` resolves on Windows and
+    on macOS, but 404s on Linux.  This helper walks the path
+    component-by-component, listing each parent directory and
+    requiring an exact match against the on-disk basename so the
+    case-divergence bug is caught at validation time on every host.
+
+    Parameters:
+
+    - *skill_root* — absolute path to the skill root the reference is
+      anchored against.  Must already exist.
+    - *ref_path* — absolute path produced by joining the source file
+      directory with the reference target and normpath-ing the
+      result.  The helper does not normalise here; callers pass the
+      same path they would otherwise pass to ``os.path.exists``.
+    - *listdir_cache* — optional dict that callers can pass in to
+      amortise ``os.listdir`` calls across many resolutions in the
+      same validation pass.  When supplied, the helper consults the
+      cache (keyed by absolute directory path) before issuing a
+      syscall and stores the result for subsequent lookups.  A skill
+      with N references M components deep without the cache costs
+      N·M listdirs; with the cache it costs at most one listdir per
+      unique directory the reference graph touches.  The cache is
+      not read concurrently; safe to share within a single pass.
+      Cache keys are absolute path strings as composed by
+      ``os.path.join``; aliases reached via different symlink paths
+      produce different cache entries even when they resolve to the
+      same physical directory.  The redundancy does not affect
+      correctness — both keys list the same content — but the cache
+      is less effective on skills that lean on internal-symlink
+      aliases for naming.
+
+    Returns a ``(case_ok, suggested, collisions)`` triple:
+
+    * ``(True, None, None)`` — path resolves with byte-exact case at
+      every component.
+    * ``(False, suggested_path, None)`` — basename matches
+      case-insensitively at every component and there is exactly
+      one on-disk candidate per component; *suggested_path* is the
+      on-disk-correct form so the finding can name the fix.
+    * ``(False, None, candidates)`` — at some component, multiple
+      on-disk entries match case-insensitively (legal on Linux,
+      impossible on Windows/macOS default).  The previous
+      implementation kept an arbitrary survivor by overwriting a
+      ``{e.lower(): e}`` map during iteration; the resulting
+      "corrected reference" suggestion was nondeterministic and
+      could point at the wrong file.  Surface the collision instead
+      by returning the candidate list (sorted, slash-joined to that
+      component) so the caller can render a deterministic finding.
+    * ``(False, None, None)`` — path does not exist under any
+      casing.
+
+    Symlinks are treated as case-significant for their own basename
+    (the link itself must match exactly) and the helper does not
+    follow them; the caller's existence check decides whether a
+    matching link with a missing target is reported as dangling.
+    """
+    abs_root = os.path.abspath(skill_root)
+    abs_ref = os.path.abspath(ref_path)
+    try:
+        rel = os.path.relpath(abs_ref, abs_root)
+    except ValueError:
+        # Different drives on Windows — not under skill_root, so we
+        # cannot apply the case rule meaningfully; defer to existence.
+        return os.path.exists(abs_ref), None, None
+    parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
+    # Out-of-root check: only treat the path as escaping when the
+    # FIRST segment is exactly ``..`` — a string-prefix
+    # ``rel.startswith("..")`` test would falsely reject in-tree
+    # paths whose first component happens to start with the two
+    # characters (``..hidden/guide.md``).
+    if parts and parts[0] == "..":
+        return os.path.exists(abs_ref), None, None
+    if not parts:
+        return True, None, None
+    cursor = abs_root
+    suggested_parts: list[str] = []
+    case_diverged = False
+    for part in parts:
+        if listdir_cache is not None and cursor in listdir_cache:
+            entries = listdir_cache[cursor]
+        else:
+            try:
+                entries = os.listdir(cursor)
+            except OSError:
+                return False, None, None
+            if listdir_cache is not None:
+                listdir_cache[cursor] = entries
+        # Collect every entry that matches case-insensitively.  Done
+        # BEFORE the exact-match fast path because an exact match
+        # alongside a case-different sibling (legal on Linux) is
+        # still a collision the bundle cannot represent on
+        # Windows/macOS — accepting the exact spelling here would
+        # let an unrepresentable tree pass validation.  A
+        # case-insensitive filesystem (Windows, macOS default) by
+        # definition cannot have multiple matches, so this branch
+        # only fires on case-sensitive Linux when the author has
+        # written sibling files differing only in case.
+        actual_matches = [
+            e for e in entries if e.lower() == part.lower()
+        ]
+        if len(actual_matches) > 1:
+            # Surface the collision as a separate return shape so
+            # the caller can render a deterministic finding rather
+            # than an arbitrary "corrected reference" suggestion.
+            collision_prefix = "/".join(suggested_parts)
+            collision_candidates = sorted(
+                f"{collision_prefix}/{m}" if collision_prefix else m
+                for m in actual_matches
+            )
+            return False, None, collision_candidates
+        if part in entries:
+            # Exact match with no case-different siblings — fast path.
+            suggested_parts.append(part)
+            cursor = os.path.join(cursor, part)
+            continue
+        if not actual_matches:
+            return False, None, None
+        actual = actual_matches[0]
+        suggested_parts.append(actual)
+        cursor = os.path.join(cursor, actual)
+        case_diverged = True
+    if not case_diverged:
+        return True, None, None
+    return False, "/".join(suggested_parts), None
 
 
 def strip_fragment(ref_path: str) -> str:

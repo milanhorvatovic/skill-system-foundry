@@ -21,9 +21,13 @@ from lib.references import (
     extract_references,
     find_containing_skill,
     infer_system_root,
+    is_dangling_symlink,
     is_drive_qualified,
     is_glob_path,
     is_within_directory,
+    looks_like_ambiguous_one_line_shim,
+    looks_like_degraded_symlink,
+    resolve_case_exact,
     resolve_reference,
     resolve_reference_with_reason,
     scan_references,
@@ -1589,6 +1593,33 @@ class IsWithinDirectoryTests(unittest.TestCase):
             result = is_within_directory("/some/path", "/other/path")
         self.assertFalse(result)
 
+    def test_dangling_symlink_inside_directory_returns_true(self) -> None:
+        """A dangling symlink inside *directory* is judged by its location.
+
+        Pinned regression: ``os.path.realpath`` on Windows cannot fully
+        canonicalise a path whose final component is a symlink to a
+        non-existent target — Python falls back to a partially
+        resolved string that retains the unexpanded short-name
+        component (``RUNNER~1``) while ``realpath(directory)`` for an
+        existing directory expands to the long-name form.  The two
+        paths then diverge under ``normcase`` and the function would
+        falsely classify a dangling symlink inside the directory as
+        external.  This test exercises the dangling-link branch
+        directly so the rule is locked in on every host.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            link = os.path.join(ref_dir, "guide.md")
+            target = os.path.join(tmpdir, "missing-target.md")
+            write_text(target, "x")
+            try:
+                os.symlink(target, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            os.unlink(target)
+            self.assertTrue(is_within_directory(link, tmpdir))
+
 
 # ===================================================================
 # extract_references
@@ -2547,6 +2578,501 @@ class ScanReferencesTextDetectedRecursionTests(unittest.TestCase):
         # The file appears exactly once in external_files (set deduplication)
         self.assertIn(os.path.abspath(shared), result["external_files"])
         self.assertEqual(result["errors"], [])
+
+
+class ResolveCaseExactTests(unittest.TestCase):
+    """``resolve_case_exact`` enforces byte-exact case at every component."""
+
+    def test_exact_case_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            write_text(target, "x")
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, target)
+            self.assertTrue(ok)
+            self.assertIsNone(suggested)
+
+    def test_wrong_case_in_directory_component_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            write_text(target, "x")
+            wrong = os.path.join(tmpdir, "References", "foo.md")
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
+            self.assertFalse(ok)
+            self.assertEqual(suggested, "references/foo.md")
+
+    def test_wrong_case_in_filename_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            write_text(target, "x")
+            wrong = os.path.join(tmpdir, "references", "FOO.md")
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
+            # On case-sensitive Linux the file does not exist at all;
+            # the helper returns (False, None) in that case.  On
+            # case-insensitive macOS / NTFS the file exists under a
+            # different case and the helper produces a suggestion.
+            if suggested is None:
+                self.assertFalse(ok)
+            else:
+                self.assertFalse(ok)
+                self.assertEqual(suggested, "references/foo.md")
+
+    def test_missing_file_returns_false_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            wrong = os.path.join(tmpdir, "references", "missing.md")
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
+            self.assertFalse(ok)
+            self.assertIsNone(suggested)
+
+    def test_case_collision_returns_candidate_list(self) -> None:
+        """Two siblings differing only by case surface as a collision.
+
+        Pinned regression: the previous implementation built a
+        ``{e.lower(): e}`` map, so when a directory contained
+        ``Foo.md`` and ``foo.md`` (legal on Linux) the map kept an
+        arbitrary survivor and the caller received a nondeterministic
+        "corrected reference" suggestion that could point at the
+        wrong file.  Surface the collision via the third return
+        slot so the caller can render a deterministic finding
+        listing every candidate.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            # Try to create both case variants.  Case-insensitive
+            # filesystems (Windows, macOS default) cannot create the
+            # second; skip the test there since the collision is
+            # impossible.
+            try:
+                write_text(
+                    os.path.join(tmpdir, "references", "Foo.md"), "1"
+                )
+                write_text(
+                    os.path.join(tmpdir, "references", "foo.md"), "2"
+                )
+            except OSError:
+                self.skipTest(
+                    "case-insensitive filesystem cannot represent "
+                    "the collision"
+                )
+            entries = os.listdir(os.path.join(tmpdir, "references"))
+            if len([e for e in entries if e.lower() == "foo.md"]) < 2:
+                self.skipTest(
+                    "case-insensitive filesystem coalesced the two "
+                    "case variants — collision cannot be exercised"
+                )
+            wrong = os.path.join(tmpdir, "references", "FOO.md")
+            ok, suggested, collisions = resolve_case_exact(tmpdir, wrong)
+            self.assertFalse(ok)
+            self.assertIsNone(suggested)
+            self.assertIsNotNone(collisions)
+            # Sorted candidate list, slash-joined under the
+            # already-resolved prefix.
+            self.assertEqual(
+                collisions,
+                ["references/Foo.md", "references/foo.md"],
+            )
+
+    def test_exact_match_with_mocked_collision_returns_collision(self) -> None:
+        """Same case-collision rule, exercised via mocked listdir.
+
+        Companion to ``test_exact_match_with_case_collision_returns_collision``
+        that runs on every host — case-insensitive filesystems can't
+        represent the collision on disk, so a fixture-driven test
+        skips there.  Mocking ``os.listdir`` directly drives the
+        function with a synthetic directory listing that includes
+        both ``Foo.md`` and ``foo.md``, so the collision logic is
+        verified on macOS / Windows runners too.
+        """
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            target = os.path.join(tmpdir, "references", "foo.md")
+            real_listdir = os.listdir
+            def fake_listdir(path: str) -> list[str]:
+                if os.path.basename(path) == "references":
+                    return ["Foo.md", "foo.md"]
+                return real_listdir(path)
+            with mock.patch(
+                "lib.references.os.listdir", side_effect=fake_listdir,
+            ):
+                ok, suggested, collisions = resolve_case_exact(tmpdir, target)
+        self.assertFalse(ok)
+        self.assertIsNone(suggested)
+        self.assertEqual(
+            collisions,
+            ["references/Foo.md", "references/foo.md"],
+        )
+
+    def test_exact_match_with_case_collision_returns_collision(self) -> None:
+        """An exact match alongside a case-different sibling is still a collision.
+
+        Pinned regression: an earlier ``resolve_case_exact`` returned
+        ``(True, None, None)`` as soon as ``part in entries`` matched
+        the requested spelling exactly, so a Linux directory
+        containing both ``Foo.md`` and ``foo.md`` validated cleanly
+        when the reference pointed at ``foo.md`` — even though the
+        bundle cannot be extracted on Windows or default macOS.
+        Move the case-insensitive collection BEFORE the exact-match
+        fast path so the collision surfaces regardless of which
+        spelling the reference uses.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            try:
+                write_text(
+                    os.path.join(tmpdir, "references", "Foo.md"), "1"
+                )
+                write_text(
+                    os.path.join(tmpdir, "references", "foo.md"), "2"
+                )
+            except OSError:
+                self.skipTest(
+                    "case-insensitive filesystem cannot represent "
+                    "the collision"
+                )
+            entries = os.listdir(os.path.join(tmpdir, "references"))
+            if len([e for e in entries if e.lower() == "foo.md"]) < 2:
+                self.skipTest(
+                    "case-insensitive filesystem coalesced the two "
+                    "case variants — collision cannot be exercised"
+                )
+            # Reference points at the EXACT spelling that exists.
+            # The exact-match fast path would return (True, None,
+            # None) without the collision check; the corrected
+            # implementation surfaces the collision instead.
+            target = os.path.join(tmpdir, "references", "foo.md")
+            ok, suggested, collisions = resolve_case_exact(tmpdir, target)
+            self.assertFalse(ok)
+            self.assertIsNone(suggested)
+            self.assertEqual(
+                collisions,
+                ["references/Foo.md", "references/foo.md"],
+            )
+
+    def test_dotdot_prefixed_filename_is_in_tree(self) -> None:
+        """A filename that starts with ``..`` is not an outside-root path.
+
+        Pinned regression: an earlier implementation tested
+        ``rel.startswith("..")`` on the full relative path string,
+        which falsely classified an in-tree path like
+        ``..hidden/guide.md`` (a legitimate dot-prefixed filename)
+        as escaping the skill root and bypassed the case-exact
+        rule.  The escape check must inspect the first PATH
+        SEGMENT, not the first two characters of the string.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "..hidden"))
+            target = os.path.join(tmpdir, "..hidden", "guide.md")
+            write_text(target, "x")
+            ok, suggested, collisions = resolve_case_exact(tmpdir, target)
+            self.assertTrue(ok)
+            self.assertIsNone(suggested)
+            self.assertIsNone(collisions)
+            # And the wrong-case form still produces a case
+            # divergence finding (proves the rule actually ran on
+            # this in-tree path instead of being short-circuited).
+            wrong = os.path.join(tmpdir, "..HIDDEN", "guide.md")
+            ok, suggested, _collisions = resolve_case_exact(tmpdir, wrong)
+            # On case-sensitive Linux the wrong case file does not
+            # exist; the helper returns (False, None, None).  On
+            # case-insensitive macOS / NTFS it should produce a
+            # case-divergence suggestion.
+            self.assertFalse(ok)
+            if suggested is not None:
+                self.assertEqual(suggested, "..hidden/guide.md")
+
+    def test_path_outside_root_falls_back_to_existence(self) -> None:
+        with tempfile.TemporaryDirectory() as outer:
+            inner = os.path.join(outer, "skill")
+            sibling = os.path.join(outer, "sibling")
+            os.makedirs(inner)
+            os.makedirs(sibling)
+            target = os.path.join(sibling, "ref.md")
+            write_text(target, "x")
+            ok, suggested, _collisions = resolve_case_exact(inner, target)
+            # Outside the skill root, the helper defers to existence
+            # without applying the case-exact rule.
+            self.assertTrue(ok)
+            self.assertIsNone(suggested)
+
+
+class ResolveCaseExactCacheTests(unittest.TestCase):
+    """``resolve_case_exact`` memoises listdir when given a cache."""
+
+    def test_cache_amortises_listdir_across_resolutions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            for name in ("a.md", "b.md", "c.md"):
+                write_text(os.path.join(tmpdir, "references", name), "x")
+            cache: dict[str, list[str]] = {}
+            from unittest import mock
+            with mock.patch(
+                "lib.references.os.listdir",
+                wraps=os.listdir,
+            ) as spy:
+                for name in ("a.md", "b.md", "c.md"):
+                    target = os.path.join(tmpdir, "references", name)
+                    ok, _suggested, _collisions = resolve_case_exact(
+                        tmpdir, target, listdir_cache=cache,
+                    )
+                    self.assertTrue(ok)
+                # 3 resolutions, 2 components each = 6 listdir calls
+                # without cache.  With the cache, only 2 unique
+                # directories (root + references) are inspected.
+                self.assertEqual(spy.call_count, 2)
+
+    def test_no_cache_keeps_per_resolution_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "references"))
+            for name in ("a.md", "b.md"):
+                write_text(os.path.join(tmpdir, "references", name), "x")
+            from unittest import mock
+            with mock.patch(
+                "lib.references.os.listdir",
+                wraps=os.listdir,
+            ) as spy:
+                for name in ("a.md", "b.md"):
+                    target = os.path.join(tmpdir, "references", name)
+                    resolve_case_exact(tmpdir, target)
+                # 2 resolutions * 2 components = 4 listdir calls
+                # without the cache.
+                self.assertEqual(spy.call_count, 4)
+
+
+class LooksLikeDegradedSymlinkTests(unittest.TestCase):
+    """The Windows-without-DevMode degraded-symlink heuristic.
+
+    The heuristic has two stages: shape match (small file, single
+    relative-path line) and broken-target confirmation (the captured
+    path does not resolve to an existing file).  Both stages must
+    pass for the helper to return True so a deliberate one-line
+    note that points at a real file is not misclassified.
+    """
+
+    def test_shape_match_with_missing_target_returns_true(self) -> None:
+        # shim.md content is "../../target/foo.md"; that target does
+        # not exist, so the helper recognises the degraded shape.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "../../target/foo.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_dot_relative_with_missing_target_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            # ``./target/foo.md`` resolves to ``<tmpdir>/target/foo.md``
+            # which does not exist; the degraded shape applies.
+            write_text(p, "./target/foo.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_one_line_note_pointing_at_real_file_does_not_match(self) -> None:
+        # Real one-line markdown note whose body is a relative path
+        # that DOES resolve.  This is the false-positive case the
+        # broken-target stage protects against — the file is
+        # deliberate content, not a degraded symlink.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "full-content.md")
+            write_text(target, "# Full content\n")
+            note = os.path.join(tmpdir, "see-also.md")
+            write_text(note, "./full-content.md")
+            self.assertFalse(looks_like_degraded_symlink(note))
+
+    def test_real_markdown_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "real.md")
+            write_text(p, "# Heading\n\nSome body content here.\n")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_oversize_file_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "big.md")
+            # 600-byte file with a path-shaped first line — still
+            # rejected because the size exceeds the heuristic ceiling.
+            write_text(p, ("../../target/foo.md\n" + "x" * 600))
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_empty_file_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "empty.md")
+            write_text(p, "")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_missing_file_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertFalse(
+                looks_like_degraded_symlink(
+                    os.path.join(tmpdir, "missing.md")
+                )
+            )
+
+    def test_multiline_path_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "../target/foo.md\n../target/bar.md\n")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_bare_name_with_missing_target_returns_true(self) -> None:
+        # Git stores ``ln -s sibling.md link.md`` as the literal
+        # string ``sibling.md`` with no leading slash or dot.  This
+        # is the most common foundry shim shape (e.g.,
+        # ``CLAUDE.md → AGENTS.md``); the regex must catch it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "missing-sibling.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_multi_component_bare_target_with_missing_target_returns_true(
+        self,
+    ) -> None:
+        # ``ln -s sub/dir/foo.md link.md`` stores as
+        # ``sub/dir/foo.md`` — multi-component, no leading dot or
+        # slash.  Still a valid shim shape.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "sub/dir/missing.md")
+            self.assertTrue(looks_like_degraded_symlink(p))
+
+    def test_bare_name_pointing_at_real_file_does_not_match(self) -> None:
+        # The bare-name shape only triggers when the target is
+        # missing.  A one-line note whose bare-name target resolves
+        # to a real sibling is deliberate content.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "real-target.md")
+            write_text(target, "# Real\n")
+            shim = os.path.join(tmpdir, "see.md")
+            write_text(shim, "real-target.md")
+            self.assertFalse(looks_like_degraded_symlink(shim))
+
+    def test_non_foundry_extension_does_not_match(self) -> None:
+        # The pattern restricts the trailing extension to file types
+        # the foundry actually ships.  A one-line file ending in
+        # ``.exe`` cannot accidentally trip the heuristic.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "../target/payload.exe")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_absolute_looking_path_does_not_match(self) -> None:
+        """A one-line file whose body starts with ``/`` is not a shim.
+
+        Pinned regression: an earlier pattern accepted
+        ``\\.{0,2}[\\\\/]`` — i.e., zero to two dots followed by a
+        slash — which let absolute-looking paths like
+        ``/missing.md`` trip the degraded-symlink diagnostic.  Git
+        symlinks store relative targets, never absolute paths, so a
+        leading slash without dots is not a shim shape.  A small
+        file containing such a path is left to the existing
+        broken-link diagnostic instead.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "shim.md")
+            write_text(p, "/missing.md")
+            self.assertFalse(looks_like_degraded_symlink(p))
+
+    def test_drive_qualified_path_does_not_match(self) -> None:
+        """A Windows-absolute body (``C:\\foo.md``) is not a shim.
+
+        Pinned regression: the regex's first-component class
+        accepts ``:`` and treats ``\\`` as a separator, so a small
+        file containing ``C:\\missing.md`` (or ``C:foo.md``,
+        ``D:/bar.md``) would otherwise pass the shape gate and
+        produce a misleading "Windows-without-DevMode degraded
+        symlink" WARN telling the author to enable Developer Mode
+        when the file is just authored content.  Git symlinks
+        always store *relative* targets, so any drive-qualified
+        body must be rejected.
+        """
+        for body in ("C:\\missing.md", "C:foo.md", "d:/bar.md"):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmpdir:
+                p = os.path.join(tmpdir, "shim.md")
+                write_text(p, body)
+                self.assertFalse(looks_like_degraded_symlink(p))
+
+
+class LooksLikeAmbiguousOneLineShimTests(unittest.TestCase):
+    """The companion ambiguous-shim heuristic.
+
+    Same shape gate as ``looks_like_degraded_symlink`` but the
+    captured target *does* exist.  Two byte-identical causes — a
+    Git-degraded symlink whose target also happens to exist, or a
+    deliberate one-line content reference — are surfaced together
+    so the validator can emit an INFO inviting the author to
+    verify intent without false-positive WARN-ing legitimate
+    one-line references.
+    """
+
+    def test_shape_match_with_existing_target_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "full-content.md")
+            write_text(target, "# real content\n")
+            note = os.path.join(tmpdir, "see-also.md")
+            write_text(note, "./full-content.md")
+            self.assertTrue(looks_like_ambiguous_one_line_shim(note))
+
+    def test_bare_name_with_existing_target_returns_true(self) -> None:
+        # The most common foundry shim shape: bare-name target
+        # (``CLAUDE.md`` shim containing ``AGENTS.md``).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "real.md")
+            write_text(target, "# real content\n")
+            shim = os.path.join(tmpdir, "shim.md")
+            write_text(shim, "real.md")
+            self.assertTrue(looks_like_ambiguous_one_line_shim(shim))
+
+    def test_shape_match_with_missing_target_returns_false(self) -> None:
+        # Missing target is the ``looks_like_degraded_symlink``
+        # branch — the ambiguous helper must NOT also fire there.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            note = os.path.join(tmpdir, "shim.md")
+            write_text(note, "./missing.md")
+            self.assertFalse(looks_like_ambiguous_one_line_shim(note))
+
+    def test_real_markdown_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "real.md")
+            write_text(p, "# Heading\n\nbody body body.\n")
+            self.assertFalse(looks_like_ambiguous_one_line_shim(p))
+
+    def test_non_foundry_extension_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "payload.exe")
+            write_text(target, "x")
+            note = os.path.join(tmpdir, "shim.md")
+            write_text(note, "./payload.exe")
+            self.assertFalse(looks_like_ambiguous_one_line_shim(note))
+
+
+class IsDanglingSymlinkTests(unittest.TestCase):
+    """``is_dangling_symlink`` reports symlinks whose target is missing."""
+
+    def test_link_to_existing_file_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real = os.path.join(tmpdir, "real.md")
+            write_text(real, "x")
+            link = os.path.join(tmpdir, "link.md")
+            try:
+                os.symlink(real, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            self.assertFalse(is_dangling_symlink(link))
+
+    def test_link_to_missing_target_returns_true(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            link = os.path.join(tmpdir, "link.md")
+            try:
+                os.symlink(os.path.join(tmpdir, "missing.md"), link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            self.assertTrue(is_dangling_symlink(link))
+
+    def test_plain_missing_file_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertFalse(
+                is_dangling_symlink(os.path.join(tmpdir, "missing.md"))
+            )
 
 
 if __name__ == "__main__":
