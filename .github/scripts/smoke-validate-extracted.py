@@ -12,11 +12,22 @@ extraction produced no top-level directory containing a ``SKILL.md``
 ``None`` propagated into ``subprocess.call`` and crashed with a
 ``TypeError`` that obscured the actual problem.
 
-This helper replaces the one-liner.  It surfaces a clear failure
-message when the expected ``<skill-name>/SKILL.md`` layout is
-missing, propagates the validator's exit code on success, and keeps
-the cross-shell escape surface flat — bash on ubuntu and PowerShell
-on windows-latest both invoke it the same way.
+This helper replaces the one-liner.  ``bundle.py``'s contract is
+exactly one top-level ``<skill-name>/`` entry per archive, and the
+helper enforces that contract on three branches:
+
+* zero top-level directories contain a ``SKILL.md`` → FAIL with the
+  extracted-root listing (the previous traceback case);
+* exactly one match → invoke the validator and propagate its exit
+  code (happy path);
+* two or more matches → FAIL with every candidate listed, without
+  invoking the validator (a previous "first match wins"
+  implementation would have silently picked the alphabetically-
+  first entry and let a duplicated-namespace regression slip past
+  the smoke step).
+
+The helper keeps the cross-shell escape surface flat — bash on
+ubuntu and PowerShell on windows-latest both invoke it the same way.
 
 Usage::
 
@@ -66,7 +77,10 @@ def main(argv: list[str] | None = None) -> int:
             "Locate the extracted skill directory and validate it. "
             "Exits non-zero with a clear message when no top-level "
             "directory inside the extracted root contains a "
-            "SKILL.md, instead of crashing with a TypeError."
+            "SKILL.md, or when more than one does (the bundler's "
+            "contract is exactly one such entry per archive), "
+            "instead of crashing with a TypeError or silently "
+            "validating an alphabetically-picked candidate."
         )
     )
     parser.add_argument(
