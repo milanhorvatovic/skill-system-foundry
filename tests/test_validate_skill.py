@@ -5028,6 +5028,32 @@ class CaseExactReferenceTests(unittest.TestCase):
                     "broken-ref WARN; got both"
                 ),
             )
+            # Pinned regression: the rendered finding must name the
+            # corrected reference in the same coordinate system the
+            # author wrote the original ref in (relative to the
+            # source file's directory, forward slashes), not the
+            # on-disk path relative to ``case_check_root``.  The
+            # latter — e.g. ``shared/references/guide.md`` — would be
+            # an unusable copy/paste target from a SKILL.md two
+            # levels deeper than the system root.
+            self.assertIn(
+                "corrected reference is "
+                "'../../shared/references/guide.md'",
+                case_fails[0],
+                msg=(
+                    "expected the corrected reference to be relative "
+                    f"to the source file; got {case_fails[0]!r}"
+                ),
+            )
+            self.assertIn(
+                "on-disk path: 'shared/references/guide.md'",
+                case_fails[0],
+                msg=(
+                    "expected the on-disk path (relative to "
+                    "case_check_root) to appear as a secondary "
+                    f"breadcrumb; got {case_fails[0]!r}"
+                ),
+            )
 
     def test_external_wrong_case_without_case_check_root_skips(self) -> None:
         """Without ``case_check_root``, external wrong-case refs short-circuit.
