@@ -105,11 +105,12 @@ def check_long_paths(
     bundle (``.git``, ``*.pyc``, ``$RECYCLE.BIN``, ``*.lnk`` …) are
     also exempt from the long-path check, because a path that is
     never bundled cannot reach the user's filesystem under MAX_PATH.
-    The reuse is deliberate, but it couples the rules together: if
-    a future change tightens ``BUNDLE_EXCLUDE_PATTERNS`` for
-    bundling alone, the validator's blind spot widens silently.
-    Any caller that wants a different "exempt" set should pass an
-    explicit one rather than mutate the bundle constant in place.
+    The reuse is deliberate but couples the two rules: if a future
+    change tightens ``BUNDLE_EXCLUDE_PATTERNS`` for bundling alone,
+    the validator's blind spot widens silently.  The helper does
+    not currently expose an exempt-list override — splitting the
+    constant into bundler-only and shared sets is the correct
+    extension point if a future caller needs to diverge.
     """
     errors: list[str] = []
     passes: list[str] = []
