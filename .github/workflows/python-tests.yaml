@@ -253,10 +253,16 @@ jobs:
 
       - name: Validate the extracted bundle
         # Walks the extracted tree.  bundle.py emits the skill under
-        # its own basename inside the archive, so we resolve the
-        # discovered SKILL.md and validate from there.
+        # its own basename inside the archive, so the helper
+        # resolves the discovered SKILL.md and validates from
+        # there.  The Python helper avoids cross-shell escaping
+        # in a multi-statement ``python -c`` block (bash on
+        # ubuntu vs. PowerShell on windows-latest) and surfaces a
+        # clear failure when no top-level directory contains a
+        # SKILL.md, instead of crashing with a ``TypeError`` from
+        # passing ``None`` into ``subprocess.call``.
         run: |
-          python -c "import os, sys, subprocess; root='smoke-extracted'; cand=[os.path.join(root, n) for n in os.listdir(root)]; skill_dir=next((d for d in cand if os.path.isfile(os.path.join(d, 'SKILL.md'))), None); sys.exit(subprocess.call([sys.executable, 'skill-system-foundry/scripts/validate_skill.py', skill_dir]))"
+          python .github/scripts/smoke-validate-extracted.py smoke-extracted skill-system-foundry/scripts/validate_skill.py
         env:
           PYTHONUTF8: "1"
 
