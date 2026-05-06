@@ -1,0 +1,22 @@
+.github/scripts/smoke-validate-extracted.py
+  s_b25d3a22fb7ffb::t_8598e29bfbb491 62-75,167
+tests/test_smoke_validate_extracted.py
+  s_b25d3a22fb7ffb::t_c0b151e08a74ac 141-155,162-169
+  s_b25d3a22fb7ffb::t_124dfceb93b1af 156-161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "f883180a97a71d410860f7354d20124f048856e9",
+  "prompts": {},
+  "sessions": {
+    "s_b25d3a22fb7ffb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dfeff-bc0b-7b41-96df-820453fb2fb2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
