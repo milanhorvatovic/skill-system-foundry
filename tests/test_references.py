@@ -2634,10 +2634,10 @@ class ResolveCaseExactTests(unittest.TestCase):
         ``{e.lower(): e}`` map, so when a directory contained
         ``Foo.md`` and ``foo.md`` (legal on Linux) the map kept an
         arbitrary survivor and the caller received a nondeterministic
-        "actual path is …" suggestion that could point at the wrong
-        file.  Surface the collision via the third return slot so
-        the caller can render a deterministic finding listing every
-        candidate.
+        "corrected reference" suggestion that could point at the
+        wrong file.  Surface the collision via the third return
+        slot so the caller can render a deterministic finding
+        listing every candidate.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "references"))

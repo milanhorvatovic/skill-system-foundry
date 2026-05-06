@@ -472,9 +472,9 @@ def resolve_case_exact(
       impossible on Windows/macOS default).  The previous
       implementation kept an arbitrary survivor by overwriting a
       ``{e.lower(): e}`` map during iteration; the resulting
-      "actual path is …" suggestion was nondeterministic and could
-      point at the wrong file.  Surface the collision instead by
-      returning the candidate list (sorted, slash-joined to that
+      "corrected reference" suggestion was nondeterministic and
+      could point at the wrong file.  Surface the collision instead
+      by returning the candidate list (sorted, slash-joined to that
       component) so the caller can render a deterministic finding.
     * ``(False, None, None)`` — path does not exist under any
       casing.
@@ -531,7 +531,7 @@ def resolve_case_exact(
         if len(actual_matches) > 1:
             # Surface the collision as a separate return shape so
             # the caller can render a deterministic finding rather
-            # than an arbitrary "actual path is …" suggestion.
+            # than an arbitrary "corrected reference" suggestion.
             collision_prefix = "/".join(suggested_parts)
             collision_candidates = sorted(
                 f"{collision_prefix}/{m}" if collision_prefix else m
