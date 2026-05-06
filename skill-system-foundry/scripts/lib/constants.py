@@ -160,6 +160,46 @@ MIN_NAME_CHARS = int(_skill_name["min_length"])
 RE_NAME_FORMAT = re.compile(_skill_name["format_pattern"])
 RESERVED_NAMES = _skill_name["reserved_words"]
 
+# Windows / NTFS reserved names — illegal on every host because a
+# skill that scaffolds cleanly on POSIX and breaks on Windows is a
+# silent cross-platform bug.  Stored upper-case for readable
+# diagnostics; consumers compare case-insensitively against the path
+# stem.  Empty / whitespace-only entries are rejected at load time so
+# a config edit accident cannot silently drop names from the rule.
+if "windows_reserved_names" not in _skill_name:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.name.windows_reserved_names'; update your checkout "
+        "or restore the full configuration file."
+    )
+_raw_windows_reserved = _skill_name["windows_reserved_names"]
+if not isinstance(_raw_windows_reserved, list) or not _raw_windows_reserved:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.name.windows_reserved_names': expected a non-empty "
+        f"list, got {_raw_windows_reserved!r}."
+    )
+_normalized_windows_reserved: list[str] = []
+_seen_windows_reserved: set[str] = set()
+for _reserved in _raw_windows_reserved:
+    _candidate_reserved = str(_reserved).strip().upper()
+    if not _candidate_reserved:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry "
+            "in 'skill.name.windows_reserved_names'; remove the entry "
+            "or replace it with a real reserved name."
+        )
+    if _candidate_reserved in _seen_windows_reserved:
+        raise RuntimeError(
+            f"configuration.yaml has a duplicate entry '{_reserved}' "
+            f"(normalized: '{_candidate_reserved}') in "
+            "'skill.name.windows_reserved_names'; remove the redundant "
+            "entry."
+        )
+    _seen_windows_reserved.add(_candidate_reserved)
+    _normalized_windows_reserved.append(_candidate_reserved)
+WINDOWS_RESERVED_NAMES = frozenset(_normalized_windows_reserved)
+
 # Skill description constraints
 _skill_desc = _skill["description"]
 MAX_DESCRIPTION_CHARS = int(_skill_desc["max_length"])
@@ -332,6 +372,92 @@ PATH_RESOLUTION_REFERENCE_EXTENSIONS: tuple[str, ...] = tuple(
     _normalized_extensions
 )
 del _raw_extensions, _normalized_extensions, _seen_extensions
+
+# --- Degraded-symlink shim heuristic ---
+# ``looks_like_degraded_symlink`` (and its companion
+# ``looks_like_ambiguous_one_line_shim``) inspect a file for the
+# Git-degraded-symlink shape: small file, valid UTF-8, single-line
+# content matching a relative-path pattern with one of the
+# foundry's text extensions.  The byte cap and extension allow-list
+# live in YAML so integrators can audit and tune the rule from the
+# single source of truth.
+if "degraded_symlink" not in _path_resolution:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'path_resolution.degraded_symlink'; update your checkout."
+    )
+_degraded_symlink_cfg = _path_resolution["degraded_symlink"]
+if "max_bytes" not in _degraded_symlink_cfg:
+    raise RuntimeError(
+        "configuration.yaml is missing "
+        "'path_resolution.degraded_symlink.max_bytes'."
+    )
+DEGRADED_SYMLINK_MAX_BYTES = int(_degraded_symlink_cfg["max_bytes"])
+if DEGRADED_SYMLINK_MAX_BYTES <= 0:
+    raise RuntimeError(
+        "configuration.yaml has invalid "
+        "'path_resolution.degraded_symlink.max_bytes': "
+        f"{DEGRADED_SYMLINK_MAX_BYTES} (must be positive)."
+    )
+if "foundry_extensions" not in _degraded_symlink_cfg:
+    raise RuntimeError(
+        "configuration.yaml is missing "
+        "'path_resolution.degraded_symlink.foundry_extensions'."
+    )
+_raw_shim_exts = _degraded_symlink_cfg["foundry_extensions"]
+if not isinstance(_raw_shim_exts, list) or not _raw_shim_exts:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'path_resolution.degraded_symlink.foundry_extensions': "
+        f"expected a non-empty list, got {_raw_shim_exts!r}."
+    )
+_normalized_shim_exts: list[str] = []
+_seen_shim_exts: set[str] = set()
+for _ext in _raw_shim_exts:
+    if not isinstance(_ext, str):
+        raise RuntimeError(
+            "configuration.yaml has a non-string entry in "
+            f"'path_resolution.degraded_symlink.foundry_extensions': "
+            f"{_ext!r}."
+        )
+    _candidate_shim_ext = _ext.strip()
+    if not _candidate_shim_ext or _candidate_shim_ext.startswith("."):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            "'path_resolution.degraded_symlink.foundry_extensions': "
+            f"{_ext!r}.  Entries must be bare non-empty extensions "
+            "without a leading '.'."
+        )
+    if _candidate_shim_ext in _seen_shim_exts:
+        raise RuntimeError(
+            f"configuration.yaml has a duplicate entry '{_ext}' in "
+            "'path_resolution.degraded_symlink.foundry_extensions'."
+        )
+    _seen_shim_exts.add(_candidate_shim_ext)
+    _normalized_shim_exts.append(_candidate_shim_ext)
+DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS: tuple[str, ...] = tuple(
+    _normalized_shim_exts
+)
+# Compile the shim-shape regex from the validated extension list so
+# the Python pattern and the YAML list share a single source of
+# truth.  Pattern shape (optional dot-relative prefix, multi-
+# component, single-line) stays in code because it is structural
+# rather than tunable; the byte cap and extension list above are
+# the genuinely-tunable knobs.
+_ext_alt_for_shim = "|".join(
+    re.escape(ext) for ext in DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS
+)
+RE_DEGRADED_SYMLINK = re.compile(
+    r"^(?:\.{1,2}[\\/])?[^\r\n\\/]+(?:[\\/][^\r\n\\/]+)*"
+    rf"\.(?:{_ext_alt_for_shim})$"
+)
+del (
+    _degraded_symlink_cfg,
+    _raw_shim_exts,
+    _normalized_shim_exts,
+    _seen_shim_exts,
+    _ext_alt_for_shim,
+)
 
 # Skill body constraints
 _skill_body = _skill["body"]
@@ -667,6 +793,68 @@ BUNDLE_EXCLUDE_PATTERNS = _bundle["exclude_patterns"]
 # Valid bundle target identifiers and default (single source of truth)
 BUNDLE_VALID_TARGETS = tuple(_bundle["valid_targets"])
 BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
+
+# Long-path pre-flight thresholds.  The validator and bundler share
+# these to keep authoring-time WARN / bundle-time FAIL findings
+# aligned on the same numbers.  ``LONG_PATH_THRESHOLD`` is the
+# absolute cap any extracted path may reach, expressed as the bytes a
+# Windows MAX_PATH-bound user can afford; ``LONG_PATH_USER_PREFIX_BUDGET``
+# reserves space for a representative install location
+# (``C:\\Users\\<name>\\<repo>\\`` style) so the rule fires on the
+# arcname length the integrator can actually control.
+if "long_path" not in _bundle:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'bundle.long_path'; update your checkout or restore the "
+        "full configuration file."
+    )
+_long_path = _bundle["long_path"]
+LONG_PATH_THRESHOLD = int(_long_path["threshold"])
+LONG_PATH_USER_PREFIX_BUDGET = int(_long_path["user_prefix_budget"])
+if LONG_PATH_THRESHOLD <= 0 or LONG_PATH_USER_PREFIX_BUDGET < 0:
+    raise RuntimeError(
+        "configuration.yaml has invalid 'bundle.long_path' values: "
+        f"threshold={LONG_PATH_THRESHOLD}, "
+        f"user_prefix_budget={LONG_PATH_USER_PREFIX_BUDGET}; threshold "
+        "must be positive and the user prefix budget non-negative."
+    )
+if LONG_PATH_USER_PREFIX_BUDGET >= LONG_PATH_THRESHOLD:
+    raise RuntimeError(
+        "configuration.yaml has 'bundle.long_path.user_prefix_budget' "
+        f"({LONG_PATH_USER_PREFIX_BUDGET}) >= 'threshold' "
+        f"({LONG_PATH_THRESHOLD}); the prefix would consume the entire "
+        "budget, leaving no room for any arcname."
+    )
+
+# --- Stats (Token-Budget Proxy) ---
+# Per-file line-ending detection toggle.  The flag stays in YAML so
+# integrators can opt out without code changes; the fields it gates
+# (``line_endings`` per file, ``*_lf`` aggregates) are additive — the
+# raw byte counts continue to be reported regardless.
+if "stats" not in _config:
+    raise RuntimeError(
+        "configuration.yaml is missing required section 'stats'; "
+        "update your checkout or restore the full configuration file."
+    )
+_stats = _config["stats"]
+if "line_endings" not in _stats:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'stats.line_endings'; update your checkout."
+    )
+_stats_le = _stats["line_endings"]
+_stats_le_enabled = str(
+    _stats_le.get("enabled", "true")
+).strip().lower()
+if _stats_le_enabled not in ("true", "false"):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        f"'stats.line_endings.enabled': expected 'true' or 'false', "
+        f"got {_stats_le.get('enabled')!r}.  Other truthy spellings "
+        "(yes, on, 1) are not accepted — they would silently disable "
+        "the rule on a typo."
+    )
+STATS_LINE_ENDINGS_ENABLED = _stats_le_enabled == "true"
 
 # --- Prose YAML Validation ---
 # Fail-fast: a stale checkout missing this section produces a clear

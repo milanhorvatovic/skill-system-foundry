@@ -33,6 +33,7 @@ from audit_skill_system import (
     audit_skill_system,
     main,
 )
+from lib.reporting import to_posix
 from lib.constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -1472,8 +1473,10 @@ class AuditVerboseBranchTests(unittest.TestCase):
         self.assertIn("Skill-root mode: also auditing skill at", output)
         # Resolved path appears (audit_skill_system abspaths system_root
         # before printing, so the operator sees a real directory rather
-        # than a relative ".").
-        self.assertIn(os.path.abspath(skill_dir), output)
+        # than a relative ".").  ``abspath`` produces backslashes on
+        # Windows; the print site routes the path through ``to_posix``
+        # so the assertion must match the forward-slash form.
+        self.assertIn(to_posix(os.path.abspath(skill_dir)), output)
 
     def test_verbose_manifest_no_skills_section(self) -> None:
         """A manifest without a skills key prints 'no skills section'."""

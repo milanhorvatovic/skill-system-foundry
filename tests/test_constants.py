@@ -121,6 +121,8 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "    format_pattern: ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$\n"
             "    reserved_words:\n"
             "      - anthropic\n"
+            "    windows_reserved_names:\n"
+            "      - CON\n"
             "  description:\n"
             "    max_length: 1024\n"
             "    xml_tag_pattern: <[^>]+>\n"
@@ -231,6 +233,10 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "  reference_extensions:\n"
             "    - md\n"
             "    - py\n"
+            "  degraded_symlink:\n"
+            "    max_bytes: 512\n"
+            "    foundry_extensions:\n"
+            "      - md\n"
             "bundle:\n"
             "  max_reference_depth: 25\n"
             "  description_max_length: 200\n"
@@ -240,6 +246,12 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "  default_target: claude\n"
             "  exclude_patterns:\n"
             "    - .git\n"
+            "  long_path:\n"
+            "    threshold: 260\n"
+            "    user_prefix_budget: 80\n"
+            "stats:\n"
+            "  line_endings:\n"
+            "    enabled: true\n"
         )
 
         import builtins
@@ -1132,8 +1144,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - md\n    - \"\"\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - md\n    - \"\"\n",
                 )
             )
         message = str(ctx.exception)
@@ -1146,8 +1158,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - .md\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - .md\n",
                 )
             )
         message = str(ctx.exception)
@@ -1160,8 +1172,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - 'md txt'\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - 'md txt'\n",
                 )
             )
         message = str(ctx.exception)
@@ -1174,8 +1186,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - md\n    - md\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - md\n    - md\n",
                 )
             )
         message = str(ctx.exception)

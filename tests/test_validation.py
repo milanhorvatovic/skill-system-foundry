@@ -34,6 +34,7 @@ from lib.constants import (
     MAX_NAME_CHARS,
     MIN_NAME_CHARS,
     RESERVED_NAMES,
+    WINDOWS_RESERVED_NAMES,
 )
 
 
@@ -463,6 +464,73 @@ class ValidateNameReservedWordsTests(unittest.TestCase):
             if e.startswith(LEVEL_WARN) and "reserved" in e
         ]
         self.assertEqual(warn_errors, [])
+
+
+# ===================================================================
+# Windows Reserved Names (NTFS reserved-base-name rule)
+# ===================================================================
+
+
+class ValidateNameWindowsReservedTests(unittest.TestCase):
+    """Tests for the NTFS reserved-base-name rule."""
+
+    def test_each_windows_reserved_name_lowercase_fails(self) -> None:
+        """Each Windows reserved name (lowercase) FAILs the rule."""
+        for reserved in WINDOWS_RESERVED_NAMES:
+            name = reserved.lower()
+            with self.subTest(reserved=reserved, name=name):
+                errors, passes = validate_name(name, name)
+                fail_errors = [
+                    e for e in errors
+                    if e.startswith(LEVEL_FAIL) and "Windows reserved" in e
+                ]
+                self.assertEqual(
+                    len(fail_errors), 1,
+                    f"Expected one Windows reserved FAIL for '{name}', "
+                    f"got errors={errors}",
+                )
+                self.assertIn(reserved, fail_errors[0])
+
+    def test_non_reserved_name_passes(self) -> None:
+        """A regular skill name does not trigger the rule."""
+        errors, _ = validate_name("demo-skill", "demo-skill")
+        fail_errors = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "Windows reserved" in e
+        ]
+        self.assertEqual(fail_errors, [])
+
+    def test_windows_reserved_message_quotes_uppercase_form(self) -> None:
+        """The diagnostic names the canonical uppercase reserved form."""
+        errors, _ = validate_name("nul", "nul")
+        fail_errors = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "Windows reserved" in e
+        ]
+        self.assertEqual(len(fail_errors), 1)
+        self.assertIn("NUL", fail_errors[0])
+
+    def test_com0_and_lpt0_are_not_reserved(self) -> None:
+        """``com0`` and ``lpt0`` must NOT trigger the reserved-name rule.
+
+        Pinned regression: an earlier configuration listed ``COM0`` and
+        ``LPT0`` alongside the genuine ``COM1``-``COM9`` /
+        ``LPT1``-``LPT9`` ranges, which made otherwise-legal skill
+        names fail validation on every host.  Windows only reserves
+        the 1-9 forms; the zero-suffixed forms must remain legal.
+        """
+        for name in ("com0", "lpt0"):
+            with self.subTest(name=name):
+                errors, _ = validate_name(name, name)
+                fail_errors = [
+                    e for e in errors
+                    if e.startswith(LEVEL_FAIL) and "Windows reserved" in e
+                ]
+                self.assertEqual(
+                    fail_errors, [],
+                    f"'{name}' is not a Windows reserved name and must "
+                    f"not trigger the rule; got errors={errors}",
+                )
 
 
 # ===================================================================

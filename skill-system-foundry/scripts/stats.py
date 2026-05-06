@@ -51,6 +51,7 @@ from lib.reporting import (
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.stats import compute_stats
 
@@ -111,6 +112,20 @@ def _print_human(result: dict, verbose: bool) -> None:
         f"Load:      {_format_bytes(result['load_bytes'])} "
         f"({len(result['files'])} files)"
     )
+    # Surface the LF-normalized aggregates whenever they diverge from
+    # the raw counts so a CRLF-checkout reader can see both numbers
+    # without re-running the tool with --json.
+    if (
+        result.get("load_bytes_lf", result["load_bytes"])
+        != result["load_bytes"]
+        or result.get("discovery_bytes_lf", result["discovery_bytes"])
+        != result["discovery_bytes"]
+    ):
+        print(
+            f"Normalized (LF-only):  "
+            f"discovery={_format_bytes(result['discovery_bytes_lf'])}  "
+            f"load={_format_bytes(result['load_bytes_lf'])}"
+        )
     print("-" * SEPARATOR_WIDTH)
 
     if result["files"]:
@@ -218,7 +233,7 @@ def main() -> None:
         if json_output:
             print(to_json_output({
                 "tool": "stats",
-                "path": os.path.abspath(skill_path),
+                "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
             }))
@@ -232,7 +247,7 @@ def main() -> None:
     if json_output:
         payload = {
             "tool": "stats",
-            "path": os.path.abspath(skill_path),
+            "path": to_posix(os.path.abspath(skill_path)),
             "success": len(fails) == 0,
             "skill": result["skill"],
             "metric": result["metric"],
@@ -247,6 +262,15 @@ def main() -> None:
             },
             "errors": categorize_errors_for_json(result["errors"]),
         }
+        # ``*_lf`` companions are emitted only when ``compute_stats``
+        # produced them (i.e. line-ending detection is enabled in
+        # configuration.yaml).  Consumers branch on key presence
+        # rather than reading an equal-to-raw fallback that would
+        # silently misrepresent CRLF checkouts.
+        if "discovery_bytes_lf" in result:
+            payload["discovery_bytes_lf"] = result["discovery_bytes_lf"]
+        if "load_bytes_lf" in result:
+            payload["load_bytes_lf"] = result["load_bytes_lf"]
         print(to_json_output(payload))
         sys.exit(1 if fails else 0)
 

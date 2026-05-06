@@ -16,6 +16,41 @@ skill:
     reserved_words:
       - anthropic
       - claude
+    # Names reserved by the Windows / NTFS filesystem.  A skill or
+    # capability whose base name (case-insensitive) matches any of
+    # these cannot be created on Windows even though POSIX accepts it,
+    # so the rule fails on every host to keep the foundry's
+    # cross-platform contract consistent.  Match is case-insensitive
+    # and applies to the path component before any extension (NTFS
+    # rejects ``con.txt`` the same way it rejects ``CON``).
+    #
+    # Range note: Windows reserves ``COM1``-``COM9`` and ``LPT1``-
+    # ``LPT9``.  The zero-suffixed forms (``COM0``, ``LPT0``) are
+    # NOT reserved on Windows; including them here would falsely
+    # reject otherwise-legal names like ``com0`` on every platform.
+    windows_reserved_names:
+      - CON
+      - PRN
+      - AUX
+      - NUL
+      - COM1
+      - COM2
+      - COM3
+      - COM4
+      - COM5
+      - COM6
+      - COM7
+      - COM8
+      - COM9
+      - LPT1
+      - LPT2
+      - LPT3
+      - LPT4
+      - LPT5
+      - LPT6
+      - LPT7
+      - LPT8
+      - LPT9
   description:
     max_length: 1024
     xml_tag_pattern: <[^>]+>
@@ -522,6 +557,31 @@ path_resolution:
     - json
     - toml
     - txt
+  # Degraded-symlink shim heuristic — see
+  # ``looks_like_degraded_symlink`` in ``lib/references.py``.  Two
+  # tunables live in YAML so integrators can audit and adjust the
+  # rule without code changes:
+  #
+  # * ``max_bytes`` — files larger than this are not considered
+  #   shim candidates regardless of content.  Git symlink shims
+  #   are always tiny (the bytes of a relative path), so this is
+  #   a cheap pre-filter that bounds the read cost.
+  # * ``foundry_extensions`` — the trailing-extension allow-list
+  #   used by the shape regex.  Restricting to file types the
+  #   foundry actually ships shrinks the false-positive surface;
+  #   integrators with skills that ship additional text formats
+  #   can extend the list.
+  degraded_symlink:
+    max_bytes: 512
+    foundry_extensions:
+      - md
+      - yaml
+      - yml
+      - json
+      - txt
+      - sh
+      - py
+      - toml
 
 # ============================================================
 # Bundle Packaging
@@ -556,3 +616,28 @@ bundle:
     - $RECYCLE.BIN
     - "*.pyc"
     - "*.lnk"
+  # Long-path pre-flight thresholds for cross-platform safety.  Windows
+  # historically caps full paths at MAX_PATH (260 chars) without a
+  # registry override; the worst-case extraction path on a typical
+  # Windows checkout is the user-prefix budget plus the bundle
+  # arcname.  ``threshold`` is the absolute cap any path may reach
+  # after the user prefix is added; ``user_prefix_budget`` reserves
+  # bytes for a representative ``C:\Users\<name>\<repo>\`` location.
+  # Values configurable so integrators with longer install paths can
+  # tighten the budget.
+  long_path:
+    threshold: 260
+    user_prefix_budget: 80
+
+# ============================================================
+# Stats (Token-Budget Proxy)
+# ============================================================
+stats:
+  # Per-file line-ending detection toggle.  When enabled, ``stats.py``
+  # reports ``line_endings`` on every counted file (``lf`` / ``crlf``
+  # / ``mixed``) and produces normalized ``*_lf`` companions to the
+  # raw byte counts so consumers can compare across CRLF and LF
+  # checkouts without re-reading any files.  The raw counts continue
+  # to be reported as the deterministic on-disk signal.
+  line_endings:
+    enabled: true

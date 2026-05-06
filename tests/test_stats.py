@@ -25,6 +25,7 @@ if SCRIPTS_DIR not in sys.path:
 
 from lib.stats import (
     category_of,
+    compute_line_endings,
     compute_stats,
     discovery_bytes_of,
     extract_body_references,
@@ -1130,24 +1131,34 @@ class ComputeStatsGraphTests(unittest.TestCase):
 class ComputeStatsSchemaTests(unittest.TestCase):
     """Verify the returned dict matches the documented schema."""
 
-    def test_top_level_keys(self) -> None:
+    def test_top_level_keys_with_line_endings_enabled(self) -> None:
+        # YAML default is ``stats.line_endings.enabled: true``; the
+        # ``*_lf`` keys are part of the schema in this branch.  The
+        # toggle-off branch is pinned by
+        # ``LineEndingsToggleDisabledTests.test_top_level_keys_with_line_endings_disabled``.
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir)
             result = compute_stats(tmpdir)
         self.assertEqual(
             set(result.keys()),
-            {"skill", "metric", "discovery_bytes", "load_bytes",
-             "files", "errors"},
+            {
+                "skill", "metric", "discovery_bytes", "load_bytes",
+                "discovery_bytes_lf", "load_bytes_lf",
+                "files", "errors",
+            },
         )
         self.assertEqual(result["metric"], "bytes")
         self.assertIsInstance(result["discovery_bytes"], int)
         self.assertIsInstance(result["load_bytes"], int)
+        self.assertIsInstance(result["discovery_bytes_lf"], int)
+        self.assertIsInstance(result["load_bytes_lf"], int)
         self.assertIsInstance(result["files"], list)
         self.assertIsInstance(result["errors"], list)
 
     def test_file_entry_keys(self) -> None:
-        """Required keys are always present; ``discovery_bytes`` is
-        optional and only appears on discovery-relevant rows."""
+        """Required keys are always present; ``discovery_bytes`` and
+        ``line_endings`` are optional — the former only on discovery-
+        relevant rows, the latter whenever line-ending detection ran."""
         with tempfile.TemporaryDirectory() as tmpdir:
             write_skill_md(tmpdir)
             result = compute_stats(tmpdir)
@@ -1159,13 +1170,15 @@ class ComputeStatsSchemaTests(unittest.TestCase):
             )
             extra = set(entry.keys()) - required_keys
             self.assertTrue(
-                extra <= {"discovery_bytes"},
+                extra <= {"discovery_bytes", "line_endings"},
                 f"unexpected keys on {entry['path']}: {extra}",
             )
             self.assertIsInstance(entry["bytes"], int)
             self.assertIsInstance(entry["reachable_from"], list)
             if "discovery_bytes" in entry:
                 self.assertIsInstance(entry["discovery_bytes"], int)
+            if "line_endings" in entry:
+                self.assertIn(entry["line_endings"], ("lf", "crlf", "mixed"))
 
 
 # ============================================================
@@ -1589,6 +1602,220 @@ class CapabilityDiscoveryBytesTests(unittest.TestCase):
                 "capabilities/alpha/capability.md",
                 "capabilities/zeta/capability.md",
             ],
+        )
+
+
+class ComputeLineEndingsTests(unittest.TestCase):
+    """``compute_line_endings`` distinguishes LF / CRLF / mixed files."""
+
+    def _write(self, path: str, data: bytes) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+
+    def test_lf_only_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"line one\nline two\n")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "lf")
+            self.assertEqual(crlf, 0)
+            self.assertEqual(lf, 2)
+
+    def test_crlf_only_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"line one\r\nline two\r\n")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "crlf")
+            self.assertEqual(crlf, 2)
+            self.assertEqual(lf, 0)
+
+    def test_mixed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"line one\r\nline two\nline three\r\n")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "mixed")
+            self.assertEqual(crlf, 2)
+            self.assertEqual(lf, 1)
+
+    def test_empty_file_is_lf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, "f.md")
+            self._write(p, b"")
+            mode, crlf, lf = compute_line_endings(p)
+            self.assertEqual(mode, "lf")
+            self.assertEqual(crlf, 0)
+            self.assertEqual(lf, 0)
+
+
+class ComputeStatsLineEndingFieldsTests(unittest.TestCase):
+    """``compute_stats`` produces *_lf companions and per-file line_endings."""
+
+    def test_lf_skill_lf_counts_match_raw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            result = compute_stats(tmpdir)
+        # No CRLF in this fixture — normalized counts match raw.
+        self.assertEqual(
+            result["load_bytes_lf"], result["load_bytes"],
+        )
+        self.assertEqual(
+            result["discovery_bytes_lf"], result["discovery_bytes"],
+        )
+        for entry in result["files"]:
+            if "line_endings" in entry:
+                self.assertEqual(entry["line_endings"], "lf")
+
+    def test_crlf_skill_lf_count_is_smaller(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            crlf_body = (
+                b"---\r\nname: x\r\ndescription: triggers when run\r\n---\r\n"
+                b"# Skill\r\n\r\nbody body body\r\n"
+            )
+            with open(skill_md, "wb") as fh:
+                fh.write(crlf_body)
+            result = compute_stats(tmpdir)
+        # CRLF terminators inflate the raw count; the LF count
+        # subtracts every \r\n -> \n collapse.
+        self.assertLess(result["load_bytes_lf"], result["load_bytes"])
+        crlf_rows = [
+            e for e in result["files"]
+            if e.get("line_endings") == "crlf"
+        ]
+        self.assertEqual(len(crlf_rows), 1)
+        self.assertEqual(crlf_rows[0]["path"], "SKILL.md")
+
+    def test_discovery_lf_subtracts_only_in_window_crlfs(self) -> None:
+        """``discovery_bytes_lf`` must subtract only frontmatter CRLFs.
+
+        Pinned regression: the previous implementation capped the
+        subtraction at the whole-file CRLF count, which collapses to
+        nonsense when the body contains many more CRLFs than the
+        frontmatter.  The corrected implementation reads ``\\r\\n``
+        counts inside the discovery window directly.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Frontmatter has 4 CRLFs; body has many more.  The
+            # discovery byte count includes only the frontmatter
+            # window, so the LF normalised discovery count must
+            # subtract exactly 4 (the in-window CRLFs).
+            data = (
+                b"---\r\nname: x\r\ndescription: triggers when run\r\n---\r\n"
+                + (b"line of body\r\n" * 50)
+            )
+            with open(skill_md, "wb") as fh:
+                fh.write(data)
+            result = compute_stats(tmpdir)
+        # Expected: discovery_bytes_lf = discovery_bytes - 4
+        self.assertEqual(
+            result["discovery_bytes_lf"],
+            result["discovery_bytes"] - 4,
+        )
+        # The previous (incorrect) impl would have computed
+        # discovery_bytes - min(54, discovery_bytes), which is much
+        # smaller — this assertion would have failed under the bug.
+
+
+class LineEndingsTextOnlyTests(unittest.TestCase):
+    """``compute_stats`` only inspects line endings on text-shaped files.
+
+    Pinned regression: an earlier implementation called
+    ``compute_line_endings`` on every load-budget contributor,
+    including binary references (PDFs, images, zips).  Those files
+    can contain arbitrary ``\\r\\n`` byte pairs in their content
+    that are NOT line terminators, so the previous code reduced
+    ``load_bytes_lf`` and emitted a bogus ``line_endings`` value
+    for files that are byte-identical across platforms.
+    """
+
+    def test_binary_reference_has_no_line_endings(self) -> None:
+        # Build a skill whose SKILL.md links to a tiny binary file
+        # (a PNG-magic-like byte sequence containing CRLFs).  The
+        # binary file must contribute its raw byte count to both
+        # ``load_bytes`` and ``load_bytes_lf`` without a
+        # ``line_endings`` field.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            binary_path = os.path.join(ref_dir, "asset.png")
+            # 16 bytes total; contains two ``\r\n`` pairs that are
+            # NOT line terminators (just bytes inside an image).
+            with open(binary_path, "wb") as fh:
+                fh.write(b"\x89PNG\r\n\x1a\nfoo\r\nbar")
+            with open(
+                os.path.join(tmpdir, "SKILL.md"),
+                "w", encoding="utf-8", newline="\n",
+            ) as fh:
+                fh.write(
+                    "---\nname: t\ndescription: triggers when run\n---\n"
+                    "# T\n\nSee [a](references/asset.png).\n"
+                )
+            result = compute_stats(tmpdir)
+        png_rows = [
+            e for e in result["files"]
+            if e["path"].endswith("asset.png")
+        ]
+        self.assertEqual(len(png_rows), 1)
+        # The binary file is in the load graph...
+        self.assertGreater(png_rows[0]["bytes"], 0)
+        # ...but no ``line_endings`` field was assigned.
+        self.assertNotIn("line_endings", png_rows[0])
+        # And its raw bytes were NOT subtracted from load_bytes_lf.
+        self.assertEqual(result["load_bytes_lf"], result["load_bytes"])
+
+
+class LineEndingsToggleDisabledTests(unittest.TestCase):
+    """``*_lf`` keys and ``line_endings`` rows omitted when toggle off.
+
+    The schema invariant is "raw bytes minus the CRLFs in the relevant
+    window".  With detection disabled, no CRLFs are counted, so a
+    fallback that emits ``load_bytes_lf == load_bytes`` would
+    misrepresent CRLF checkouts as already-LF-normalised.  The
+    corrected behaviour drops the keys entirely so consumers branch
+    on key presence.
+    """
+
+    def test_keys_omitted_when_toggle_disabled(self) -> None:
+        # Patch the in-module reference to STATS_LINE_ENDINGS_ENABLED
+        # (the symbol was imported into ``lib.stats`` at module load
+        # time, so flipping the constant in ``lib.constants`` would
+        # not take effect).  ``unittest.mock.patch`` is preferable
+        # to direct attribute assignment because it auto-restores
+        # the original value even if the assertion below raises.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            with patch("lib.stats.STATS_LINE_ENDINGS_ENABLED", False):
+                result = compute_stats(tmpdir)
+        self.assertNotIn("discovery_bytes_lf", result)
+        self.assertNotIn("load_bytes_lf", result)
+        for entry in result["files"]:
+            self.assertNotIn("line_endings", entry)
+
+    def test_top_level_keys_with_line_endings_disabled(self) -> None:
+        """Pin the exact key set when detection is disabled.
+
+        Companion to
+        ``ComputeStatsSchemaTests.test_top_level_keys_with_line_endings_enabled``
+        — together they assert both schema branches so a future
+        addition of a third optional key cannot slip past the
+        contract by being absent from one branch's assertion.
+        """
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_skill_md(tmpdir)
+            with patch("lib.stats.STATS_LINE_ENDINGS_ENABLED", False):
+                result = compute_stats(tmpdir)
+        self.assertEqual(
+            set(result.keys()),
+            {
+                "skill", "metric", "discovery_bytes", "load_bytes",
+                "files", "errors",
+            },
         )
 
 

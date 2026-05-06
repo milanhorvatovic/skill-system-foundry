@@ -216,7 +216,7 @@ def append_skill_entry(
             lines.insert(insert_pos + j, part)
         text = "\n".join(lines)
 
-    with open(manifest_path, "w", encoding="utf-8") as f:
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
 
     return _collect_emit_findings(manifest_path)
@@ -288,7 +288,7 @@ def append_role_entry(
                 lines.insert(insert_pos + j, part)
             text = "\n".join(lines)
 
-    with open(manifest_path, "w", encoding="utf-8") as f:
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
 
     return _collect_emit_findings(manifest_path)
@@ -455,7 +455,7 @@ def scaffold_empty_manifest(manifest_path: str) -> None:
         "\n"
         "roles:\n"
     )
-    with open(manifest_path, "w", encoding="utf-8") as f:
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
 
 

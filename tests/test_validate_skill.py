@@ -4884,5 +4884,361 @@ class CapabilityAggregationIntegrationTests(unittest.TestCase):
         self.assertEqual(len(parse_fails), 1)
 
 
+class CaseExactReferenceTests(unittest.TestCase):
+    """Reference resolution must reject case-divergent links."""
+
+    def test_wrong_case_link_fails(self) -> None:
+        """A link that differs from on-disk casing produces a FAIL.
+
+        Uses ``validate_body`` (entry-file validation) so the test
+        does not rely on which other-file walker is exercised.  The
+        case-exact rule lives inside ``_check_references`` and fires
+        from both surfaces; exercising the entry-file path keeps the
+        test independent of ``validate_skill_references`` selection
+        rules.
+
+        Pinned regression: an earlier validator order ran
+        ``os.path.exists`` before ``resolve_case_exact``, so on
+        case-sensitive Linux a wrong-cased link returned False from
+        ``exists`` and emitted the generic broken-ref WARN before
+        the case-exact FAIL had a chance to fire.  The contract is
+        host-independent, so the FAIL must fire on every host.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [guide](References/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            self.assertEqual(
+                len(case_fails), 1,
+                msg=(
+                    "Expected a host-independent case-exact FAIL on "
+                    f"every platform; got errors={errors}"
+                ),
+            )
+            # The generic broken-ref WARN must NOT fire — that would
+            # mean the validator chose the less-actionable path.
+            broken = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            self.assertEqual(broken, [])
+
+    def test_correct_case_link_passes(self) -> None:
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            write_text(
+                os.path.join(tmpdir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [guide](references/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            self.assertEqual(case_fails, [])
+
+    def test_external_wrong_case_via_case_check_root_fails(self) -> None:
+        """A wrong-cased external reference fails when ``case_check_root`` widens scope.
+
+        Pinned regression for the ``case_check_root`` parameter:
+        an earlier ``_check_references`` anchored the case-exact
+        rule at ``skill_root`` and short-circuited via plain
+        ``os.path.exists`` for paths whose first segment was
+        ``..``.  External references like
+        ``../../shared/References/foo.md`` therefore bypassed the
+        host-independent FAIL even though the bundler ships them
+        and the wrong-cased link 404s on Linux.
+
+        With ``case_check_root`` set to a wider tree (the inferred
+        system root in production), the rule walks the on-disk
+        components for external refs too — and produces the same
+        FAIL it would for an in-skill miscapitalisation.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Synthetic system-root layout:
+            #   <tmpdir>/skills/demo/SKILL.md       — the skill
+            #   <tmpdir>/shared/references/guide.md — system-wide ref
+            skill_dir = os.path.join(tmpdir, "skills", "demo")
+            os.makedirs(skill_dir)
+            shared_dir = os.path.join(tmpdir, "shared", "references")
+            os.makedirs(shared_dir)
+            write_text(
+                os.path.join(shared_dir, "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [g](../../shared/References/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            # Pass the system root explicitly as the case-check
+            # root.  Without it, the test would short-circuit
+            # through the ``..``-prefix branch and skip the rule
+            # — that's the standalone-skill behaviour preserved
+            # for callers without an inferable system root.
+            errors, _ = validate_body(
+                body, skill_md, skill_dir,
+                case_check_root=tmpdir,
+            )
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            broken = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            # On case-insensitive filesystems the FAIL fires; on
+            # case-sensitive Linux the broken-ref WARN would fire
+            # instead — but since the case-exact check now walks
+            # ``os.listdir`` directly it should detect the
+            # divergence regardless of host.
+            self.assertEqual(
+                len(case_fails), 1,
+                msg=(
+                    "expected the case-exact FAIL on every host; "
+                    f"errors={errors}"
+                ),
+            )
+            self.assertEqual(
+                broken, [],
+                msg=(
+                    "case-exact FAIL should preempt the generic "
+                    "broken-ref WARN; got both"
+                ),
+            )
+            # Pinned regression: the rendered finding must name the
+            # corrected reference in the same coordinate system the
+            # author wrote the original ref in (relative to the
+            # source file's directory, forward slashes), not the
+            # on-disk path relative to ``case_check_root``.  The
+            # latter — e.g. ``shared/references/guide.md`` — would be
+            # an unusable copy/paste target from a SKILL.md two
+            # levels deeper than the system root.
+            self.assertIn(
+                "corrected reference is "
+                "'../../shared/references/guide.md'",
+                case_fails[0],
+                msg=(
+                    "expected the corrected reference to be relative "
+                    f"to the source file; got {case_fails[0]!r}"
+                ),
+            )
+            self.assertIn(
+                "on-disk path: 'shared/references/guide.md'",
+                case_fails[0],
+                msg=(
+                    "expected the on-disk path (relative to "
+                    "case_check_root) to appear as a secondary "
+                    f"breadcrumb; got {case_fails[0]!r}"
+                ),
+            )
+
+    def test_external_wrong_case_without_case_check_root_skips(self) -> None:
+        """Without ``case_check_root``, external wrong-case refs short-circuit.
+
+        Documents the deliberate fall-back: when no wider root is
+        provided (standalone-skill validation), external refs are
+        not case-checked.  This matches the behaviour before the
+        ``case_check_root`` parameter existed and keeps the rule
+        narrow when the validator has no system-root context.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo")
+            os.makedirs(skill_dir)
+            shared_dir = os.path.join(tmpdir, "shared", "references")
+            os.makedirs(shared_dir)
+            write_text(
+                os.path.join(shared_dir, "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [g](../../shared/References/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            # No case_check_root → falls back to skill_root.
+            # The ``..``-prefix branch in resolve_case_exact then
+            # short-circuits to plain os.path.exists, so the
+            # case-exact rule is skipped for this external ref.
+            errors, _ = validate_body(body, skill_md, skill_dir)
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            self.assertEqual(case_fails, [])
+
+
+class DegradedSymlinkReferenceTests(unittest.TestCase):
+    """Windows-without-DevMode degraded form produces a tailored WARN."""
+
+    def test_degraded_text_file_emits_dedicated_warn(self) -> None:
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            # Simulate Windows-without-DevMode: a small text file
+            # whose entire body is a relative target that does NOT
+            # resolve (the symlink was never materialised).
+            shim = os.path.join(ref_dir, "guide.md")
+            write_text(shim, "../../target/guide.md")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [g](references/guide.md).\n"
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            degraded = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "degraded symlink" in e
+            ]
+            self.assertEqual(len(degraded), 1)
+            self.assertIn("Developer Mode", degraded[0])
+            # The generic broken-ref WARN must NOT also fire — the
+            # degraded branch short-circuits before the existence
+            # check would run.
+            generic = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            self.assertEqual(generic, [])
+
+    def test_one_line_note_pointing_at_real_file_passes(self) -> None:
+        """A small file whose content is a path that resolves emits INFO.
+
+        Pinned regression for the false-positive / false-negative
+        trade-off: a deliberate one-line ``see-also.md`` whose body
+        is a relative path pointing at an existing sibling is NOT a
+        FAIL or WARN — but it IS shape-identical to a Git-degraded
+        symlink shim whose target also exists, so the validator
+        emits a dedicated INFO inviting the author to verify the
+        intent.  The WARN-level "degraded symlink" finding must
+        NOT fire here.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            # Real file the note points at
+            write_text(
+                os.path.join(ref_dir, "full-content.md"),
+                "# Full content\n",
+            )
+            # One-line note whose body resolves to the real file
+            note = os.path.join(ref_dir, "see-also.md")
+            write_text(note, "./full-content.md")
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = (
+                "# Skill\n\n"
+                "See [n](references/see-also.md).\n"
+                "See [f](references/full-content.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            # No WARN-level degraded-symlink finding (target exists).
+            degraded_warns = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "degraded symlink" in e
+            ]
+            self.assertEqual(degraded_warns, [])
+            # But the ambiguous-shim INFO must fire so the author
+            # can verify the shape was intentional.
+            ambiguous = [
+                e for e in errors
+                if e.startswith(LEVEL_INFO)
+                and "deliberate one-line content reference" in e
+            ]
+            self.assertEqual(len(ambiguous), 1)
+            self.assertIn("references/see-also.md", ambiguous[0])
+
+
+class DanglingSymlinkReferenceTests(unittest.TestCase):
+    """Dangling symlinks produce dedicated findings, not generic 'missing'."""
+
+    def test_dangling_symlink_emits_dedicated_warn(self) -> None:
+        from validate_skill import validate_body
+        from lib.references import is_dangling_symlink
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            link = os.path.join(ref_dir, "guide.md")
+            target = os.path.join(tmpdir, "missing-target.md")
+            # Pre-create the target so ``os.symlink`` unambiguously
+            # produces a file symlink (Windows determines link type
+            # from the target at creation time; pointing at a
+            # non-existent path leads to platform-dependent
+            # behaviour).  Then remove the target to make the link
+            # dangling, which is the state under test.
+            write_text(target, "x")
+            try:
+                os.symlink(target, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            os.unlink(target)
+            # Sanity check: the precondition must hold before the
+            # assertion below is meaningful.  Use the validator's
+            # exact ``is_dangling_symlink`` helper rather than ad-hoc
+            # ``os.path.islink``/``os.path.exists`` calls so we test
+            # the same logic the validator runs — if the helper
+            # disagrees with the OS-level primitives on this host,
+            # the test will skipTest with diagnostic context rather
+            # than mis-fire downstream.
+            if not is_dangling_symlink(link):
+                self.skipTest(
+                    "host did not produce a state is_dangling_symlink "
+                    f"recognises (islink={os.path.islink(link)}, "
+                    f"exists={os.path.exists(link)}, "
+                    f"is_dangling_symlink={is_dangling_symlink(link)})"
+                )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [g](references/guide.md).\n"
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            dangling = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "dangling symlink" in e
+            ]
+            # If the dangling WARN didn't fire, dump the full error
+            # list with environment context so the Windows runner's
+            # divergence is visible in the failure log instead of
+            # forcing another commit-and-rerun cycle to diagnose.
+            self.assertEqual(
+                len(dangling), 1,
+                msg=(
+                    f"expected 1 dangling-symlink WARN, got {len(dangling)}; "
+                    f"link={link!r}, "
+                    f"is_dangling_symlink(link)={is_dangling_symlink(link)}, "
+                    f"all errors={errors!r}"
+                ),
+            )
+            self.assertIn("references/guide.md", dangling[0])
+            generic = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            self.assertEqual(generic, [])
+
+
 if __name__ == "__main__":
     unittest.main()
