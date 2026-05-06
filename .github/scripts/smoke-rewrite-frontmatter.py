@@ -125,7 +125,13 @@ def rewrite(skill_md_path: str) -> int:
         )
         return 1
     body = "".join(lines[closer_idx + 1:])
-    new_content = _STUB_FRONTMATTER + body.lstrip()
+    # Strip leading newlines/CR only — not arbitrary whitespace.
+    # ``body.lstrip()`` would also remove leading spaces/tabs, which
+    # is meaningful in markdown (e.g. an indented code block on
+    # line 1 right after the frontmatter).  The stub already ends
+    # in ``\n`` so a single blank line between stub and body is
+    # both intended and idempotent.
+    new_content = _STUB_FRONTMATTER + body.lstrip("\r\n")
     try:
         with open(skill_md_path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(new_content)

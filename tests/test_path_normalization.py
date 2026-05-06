@@ -8,12 +8,34 @@ new emitter forgets either the explicit ``to_posix`` call or the
 ad-hoc ``.replace(os.sep, "/")`` idiom, the only safety net before
 this test was a Windows-runner failure on the next CI cycle.
 
-This test runs ``validate_skill.py --json`` against synthetic
-fixtures whose source paths contain backslashes (achieved on POSIX
-runners by patching ``os.sep`` to ``"\\\\"`` in the stats / validator
-helpers).  The output is parsed and every string field is checked
-for backslash presence.  A single backslash anywhere in the JSON
-shape is a regression.
+These tests run ``validate_skill.py``, ``audit_skill_system.py``,
+``bundle.py``, and ``stats.py`` with ``--json`` against synthetic
+fixtures, parse the output, and assert no backslash appears in
+any string field of the payload.  Coverage is host-dependent:
+
+* On Windows runners, ``os.path.abspath`` and friends produce
+  backslash-form paths, so any emitter that forgets ``to_posix``
+  surfaces a backslash in the JSON immediately and this test
+  fails.
+* On POSIX runners (Linux / macOS), ``os.sep == "/"``, so the
+  underlying primitives never produce backslashes and the
+  assertion passes trivially regardless of whether ``to_posix``
+  is applied.  The test still runs (and acts as a smoke check
+  that the JSON shape is parseable and the chosen ``"path"``
+  field is present), but it cannot catch a missing ``to_posix``
+  call here — that is reserved for the Windows matrix entry.
+
+A previous iteration of this docstring claimed that the test
+patches ``os.sep`` to ``"\\\\"`` on POSIX runners to simulate the
+Windows shape.  No such patching exists; that claim was
+aspirational rather than implemented.  Achieving it would
+require subprocess-level patching (the entry points are invoked
+via ``subprocess.run``, so an in-process ``mock.patch`` does
+not propagate).  Possible follow-ups: import the ``main()``
+functions and call them in-process under a ``mock.patch`` of
+``os.sep`` / ``os.path.sep``, or pass an ``OS_SEP_OVERRIDE``
+environment variable that the entry points honour.  Neither is
+in scope for this PR.
 """
 
 import json

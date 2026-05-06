@@ -127,6 +127,31 @@ class RewriteTests(unittest.TestCase):
             # And the body survived intact.
             self.assertIn("# Demo\n\nbody body body\n", content)
 
+    def test_indented_body_first_line_is_preserved(self) -> None:
+        """Body indentation on the first line must not be stripped.
+
+        Pinned regression: an earlier ``body.lstrip()`` removed all
+        leading whitespace, including indentation, so a body that
+        opened with an indented code block (4-space indent) was
+        silently flattened.  Restrict the strip to newlines/CR
+        only so indentation is preserved.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            with open(skill_md, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(
+                    "---\n"
+                    "name: demo\n"
+                    "---\n"
+                    "\n"
+                    "    indented_code = 'preserved'\n"
+                    "\nbody continues\n"
+                )
+            self.assertEqual(smoke_rewrite.rewrite(skill_md), 0)
+            content = _read(skill_md)
+            # Indentation survives.
+            self.assertIn("    indented_code = 'preserved'\n", content)
+
     def test_unclosed_frontmatter_returns_one(self) -> None:
         """A SKILL.md with an opener but no closer FAILs the helper.
 
