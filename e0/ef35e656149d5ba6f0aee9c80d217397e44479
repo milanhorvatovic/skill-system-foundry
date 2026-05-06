@@ -1,0 +1,23 @@
+tests/test_bundle_cli.py
+  s_1c34ff13e1ff69::t_5aa35efa0ebf49 2037-2094
+tests/test_bundle.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 1902-1919
+skill-system-foundry/scripts/bundle.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 453-455
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "e0ef35e656149d5ba6f0aee9c80d217397e44479",
+  "prompts": {},
+  "sessions": {
+    "s_1c34ff13e1ff69": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dff3f-dc47-74b3-8196-997b9a525858",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
