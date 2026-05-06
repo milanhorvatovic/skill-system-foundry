@@ -43,48 +43,60 @@ def _write(path: str, content: str) -> None:
         fh.write(content)
 
 
-class FindSkillDirTests(unittest.TestCase):
-    """``find_skill_dir`` resolves the extracted skill root deterministically."""
+class FindSkillDirsTests(unittest.TestCase):
+    """``find_skill_dirs`` enumerates extracted skill roots deterministically."""
 
-    def test_returns_top_level_dir_with_skill_md(self) -> None:
+    def test_returns_single_match_for_clean_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_root = os.path.join(tmpdir, "demo")
             _write(os.path.join(skill_root, "SKILL.md"), "stub")
             self.assertEqual(
-                smoke_validate.find_skill_dir(tmpdir), skill_root,
+                smoke_validate.find_skill_dirs(tmpdir), [skill_root],
             )
 
-    def test_returns_none_when_no_top_level_skill_md(self) -> None:
-        # A nested ``SKILL.md`` (not at depth 1) must NOT match —
-        # the bundle layout puts it at the top level by contract.
+    def test_only_walks_depth_one(self) -> None:
+        """Nested SKILL.md (depth > 1) must not match.
+
+        Pinned regression: the bundle contract is one top-level
+        ``<skill-name>/`` entry per archive, so the helper walks
+        only depth 1.  A future refactor that switched to
+        ``os.walk`` would silently start matching nested files and
+        let an unintended skill slip through the smoke validator;
+        this test fails that refactor by construction.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             nested = os.path.join(tmpdir, "outer", "demo")
             _write(os.path.join(nested, "SKILL.md"), "stub")
-            self.assertIsNone(smoke_validate.find_skill_dir(tmpdir))
+            self.assertEqual(smoke_validate.find_skill_dirs(tmpdir), [])
 
-    def test_returns_none_when_root_is_missing(self) -> None:
+    def test_returns_empty_when_root_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             missing = os.path.join(tmpdir, "does-not-exist")
-            self.assertIsNone(smoke_validate.find_skill_dir(missing))
+            self.assertEqual(smoke_validate.find_skill_dirs(missing), [])
 
-    def test_returns_none_when_root_has_no_directories(self) -> None:
+    def test_returns_empty_when_root_has_no_directories(self) -> None:
         # An extraction that produced only loose files (no enclosing
         # directory) must not be treated as a valid skill root.
         with tempfile.TemporaryDirectory() as tmpdir:
             _write(os.path.join(tmpdir, "loose.txt"), "noise")
-            self.assertIsNone(smoke_validate.find_skill_dir(tmpdir))
+            self.assertEqual(smoke_validate.find_skill_dirs(tmpdir), [])
 
-    def test_picks_first_sorted_match_when_multiple_candidates(self) -> None:
-        # Two top-level directories both contain a SKILL.md — pick
-        # the lexicographically first one so the smoke job is
-        # deterministic across runners (Linux ext4 ordering differs
-        # from Windows NTFS).
+    def test_returns_every_match_in_sorted_order(self) -> None:
+        # Two top-level directories both contain a SKILL.md.  The
+        # helper now surfaces every candidate so the caller can
+        # FAIL on the multi-match regression rather than silently
+        # picking the alphabetically-first one.  Sorted output keeps
+        # the failure message deterministic across runners (Linux
+        # ext4 ordering differs from Windows NTFS).
         with tempfile.TemporaryDirectory() as tmpdir:
             _write(os.path.join(tmpdir, "beta", "SKILL.md"), "b")
             _write(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
             self.assertEqual(
-                smoke_validate.find_skill_dir(tmpdir),
-                os.path.join(tmpdir, "alpha"),
+                smoke_validate.find_skill_dirs(tmpdir),
+                [
+                    os.path.join(tmpdir, "alpha"),
+                    os.path.join(tmpdir, "beta"),
+                ],
             )
 
 
@@ -105,7 +117,7 @@ class MainTests(unittest.TestCase):
             self.assertIn("SKILL.md", msg)
 
     def test_missing_extracted_root_emits_clear_error(self) -> None:
-        # ``find_skill_dir`` returns None for a missing root, then
+        # ``find_skill_dirs`` returns [] for a missing root, then
         # ``main`` re-attempts ``os.listdir`` for diagnostics — that
         # OSError must be reported, not propagated as a traceback.
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -119,6 +131,36 @@ class MainTests(unittest.TestCase):
             msg = stderr.getvalue()
             self.assertIn("cannot list extracted root", msg)
             self.assertIn(missing, msg)
+
+    def test_multi_match_layout_fails_without_invoking_validator(self) -> None:
+        """Two top-level <skill-name>/SKILL.md entries fail loudly.
+
+        The previous implementation silently picked the
+        alphabetically-first entry and validated it, hiding a
+        bundle-layout regression that the smoke job exists to
+        catch.  ``main`` must FAIL with a clear message listing
+        every candidate and must NOT invoke the validator at all
+        (otherwise a green validator on the picked entry would
+        report success).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
+            _write(os.path.join(tmpdir, "beta", "SKILL.md"), "b")
+            stderr = StringIO()
+            with mock.patch.object(
+                smoke_validate.subprocess, "call",
+            ) as call_mock:
+                with redirect_stderr(stderr):
+                    rc = smoke_validate.main(
+                        [tmpdir, "/path/to/validate_skill.py"],
+                    )
+            self.assertEqual(rc, 1)
+            call_mock.assert_not_called()
+            msg = stderr.getvalue()
+            self.assertIn("2 top-level directories", msg)
+            self.assertIn("exactly one", msg)
+            self.assertIn(os.path.join(tmpdir, "alpha"), msg)
+            self.assertIn(os.path.join(tmpdir, "beta"), msg)
 
     def test_propagates_validator_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
