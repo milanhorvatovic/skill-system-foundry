@@ -144,12 +144,21 @@ def _find_offenders(source_path: str) -> list[tuple[int, str]]:
 
     1. It targets ``open``.
     2. It declares a text-mode write flag (``"w"``, ``"a"``,
-       ``"w+"``, ``"wt"``, …; binary modes are skipped).
-    3. It declares ``encoding="utf-8"`` (the project convention —
-       binary writes and bare reads are out of scope).
-    4. It does NOT declare ``newline="\\n"`` (either omits the
+       ``"w+"``, ``"wt"``, ``"x"``, ``"r+"``, …; binary modes are
+       skipped).
+    3. It does NOT declare ``newline="\\n"`` (either omits the
        keyword entirely or uses a different value such as ``""`` or
        ``None``).
+
+    The newline rule is independent of the encoding rule: any
+    text-mode write performs newline translation on Windows
+    regardless of which encoding it uses, so the lint applies
+    even when ``encoding`` is missing or set to a non-literal
+    expression (e.g. a ``UTF8`` constant).  The repo's separate
+    ``encoding="utf-8"`` convention is documented in AGENTS.md but
+    is not gating this lint — coupling the two would let a future
+    ``open(p, "w")`` (no encoding kwarg at all) silently bypass
+    the newline guard.
     """
     offenders: list[tuple[int, str]] = []
     with open(source_path, "r", encoding="utf-8") as fh:
@@ -167,9 +176,6 @@ def _find_offenders(source_path: str) -> list[tuple[int, str]]:
         kwargs = _extract_open_kwargs(node)
         mode = _string_constant(kwargs.get("mode"))
         if mode is None or not _is_text_mode_write(mode):
-            continue
-        encoding = _string_constant(kwargs.get("encoding"))
-        if encoding != "utf-8":
             continue
         newline_node = kwargs.get("newline")
         newline = _string_constant(newline_node)
@@ -308,6 +314,33 @@ class LintCoverageTests(unittest.TestCase):
         # code currently uses positional mode exclusively.
         source = (
             "with open('p', mode='w', encoding='utf-8') as fh:\n"
+            "    fh.write('x')\n"
+        )
+        self.assertEqual(len(self._scan(source)), 1)
+
+    def test_no_encoding_keyword_is_still_matched(self) -> None:
+        """A text-mode write without ``encoding=`` still triggers the rule.
+
+        Pinned regression: an earlier ``_find_offenders`` skipped
+        any call whose ``encoding`` was not the literal string
+        ``"utf-8"``, which let ``open(p, "w")`` (no encoding
+        keyword at all) and ``open(p, "w", encoding=UTF8)`` (a
+        constant expression) bypass the newline check.  Newline
+        translation is independent of encoding, so the lint must
+        apply regardless of which encoding the call uses.
+        """
+        source = (
+            "with open('p', 'w') as fh:\n"
+            "    fh.write('x')\n"
+        )
+        self.assertEqual(len(self._scan(source)), 1)
+
+    def test_non_literal_encoding_is_still_matched(self) -> None:
+        # ``encoding=UTF8`` is a name expression, not a literal.
+        # The newline check must still fire.
+        source = (
+            "UTF8 = 'utf-8'\n"
+            "with open('p', 'w', encoding=UTF8) as fh:\n"
             "    fh.write('x')\n"
         )
         self.assertEqual(len(self._scan(source)), 1)

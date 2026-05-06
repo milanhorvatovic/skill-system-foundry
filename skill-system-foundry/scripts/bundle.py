@@ -410,14 +410,33 @@ def main() -> None:
     # ``<skill_basename>/<bundle_rel>``.
     skill_basename = os.path.basename(os.path.abspath(skill_path))
     external_arcnames: list[str] = []
+    external_arcname_errors: list[str] = []
     if scan_result is not None:
         for ext_file in sorted(scan_result.get("external_files", set())):
             try:
                 bundle_rel = compute_bundle_path(ext_file, system_root)
-            except Exception:  # pragma: no cover — defensive
+            except ValueError as exc:
+                # ``compute_bundle_path`` -> ``os.path.relpath`` raises
+                # ``ValueError`` when the external path is on a
+                # different Windows drive than ``system_root``.  Surface
+                # the path explicitly instead of silently skipping —
+                # the bundler would otherwise hit the same error
+                # later in ``_copy_external_files``, but at that
+                # point the user has already paid for skill-tree
+                # walking and copying.  Emit a WARN that names the
+                # external so the pre-validation result is
+                # trustworthy and the cause is named in one place.
+                external_arcname_errors.append(
+                    f"{LEVEL_WARN}: external file '{to_posix(ext_file)}' "
+                    f"could not be resolved to a bundle path "
+                    f"({exc.__class__.__name__}: {exc}); skipped from "
+                    "long-path / reserved-name pre-flight — bundle "
+                    "post-validation will catch any concrete failure"
+                )
                 continue
             external_arcnames.append(f"{skill_basename}/{bundle_rel}")
-    external_arcname_errors, _ = check_external_arcnames(external_arcnames)
+    arcname_errors, _ = check_external_arcnames(external_arcnames)
+    external_arcname_errors.extend(arcname_errors)
     errors = (
         list(errors)
         + long_path_errors

@@ -184,6 +184,7 @@ def _check_references(
     include_router_table: bool = False,
     source_label: str | None = None,
     listdir_cache: dict[str, list[str]] | None = None,
+    case_check_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Check markdown references in *body* using file-relative resolution.
 
@@ -284,6 +285,45 @@ def _check_references(
             continue
         seen_paths.add(ref_path)
 
+        # Case-exact resolution runs FIRST — before the
+        # ``is_external`` short-circuit — so the host-independent
+        # FAIL fires for external references too.  Wrong-cased
+        # ``../../shared/foo.md`` from a capability still resolves
+        # on Windows / default macOS but 404s on Linux, so external
+        # references are exactly the kind that benefit from this
+        # rule.  ``case_check_root`` defaults to ``skill_root``
+        # when the caller did not infer a wider root; with no
+        # wider root, external refs short-circuit through the
+        # existing ``..``-prefix branch in ``resolve_case_exact``
+        # (which falls back to ``os.path.exists``) so behaviour
+        # for standalone-skill validation is preserved.
+        effective_case_root = case_check_root or skill_root
+        case_ok, suggested, collisions = resolve_case_exact(
+            effective_case_root, ref_path, listdir_cache=listdir_cache,
+        )
+        if not case_ok and collisions is not None:
+            broken_found = True
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                "matches multiple on-disk paths that differ only by "
+                f"case ({', '.join(collisions)}) — Windows/macOS "
+                "default filesystems cannot represent this; rename "
+                "one of the colliding files to a case-distinct form."
+            )
+            continue
+        if not case_ok and suggested is not None:
+            broken_found = True
+            errors.append(
+                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
+                f"referenced in {source_label} (scope: {scope_tag}) "
+                f"differs from the on-disk casing — actual path is "
+                f"'{suggested}'.  Case-insensitive filesystems "
+                "(Windows, default macOS) accept the link but it "
+                "404s on Linux."
+            )
+            continue
+
         # Out-of-skill paths: a ``..`` chain that lands outside
         # ``skill_root`` is by definition out of scope for intra-skill
         # validation.  Surfaced as INFO and skipped — acceptable for
@@ -335,50 +375,6 @@ def _check_references(
         )
 
         internal_checked += 1
-
-        # Case-exact resolution runs first so the host-independent
-        # FAIL fires regardless of the filesystem's case sensitivity.
-        # If we deferred to ``os.path.exists`` first, a wrong-cased
-        # link on Linux (case-sensitive) would return False and emit
-        # the generic "does not exist" WARN — masking the real bug
-        # and producing a finding the integrator can't act on without
-        # already knowing the on-disk casing.  ``resolve_case_exact``
-        # walks ``os.listdir`` directly and detects the divergence on
-        # every host, so emit the FAIL here before the
-        # exists/dangling/degraded checks have a chance to fire a
-        # less-actionable diagnostic.
-        case_ok, suggested, collisions = resolve_case_exact(
-            skill_root, ref_path, listdir_cache=listdir_cache,
-        )
-        if not case_ok and collisions is not None:
-            # Case-collision: the on-disk tree has two or more
-            # siblings differing only by case at the same component.
-            # Legal on Linux but impossible on Windows/macOS default,
-            # so the bundle cannot extract on either.  Emit a
-            # dedicated FAIL listing every candidate so the author
-            # can resolve the ambiguity rather than receive an
-            # arbitrary "actual path is …" suggestion.
-            broken_found = True
-            errors.append(
-                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
-                f"referenced in {source_label} (scope: {scope_tag}) "
-                "matches multiple on-disk paths that differ only by "
-                f"case ({', '.join(collisions)}) — Windows/macOS "
-                "default filesystems cannot represent this; rename "
-                "one of the colliding files to a case-distinct form."
-            )
-            continue
-        if not case_ok and suggested is not None:
-            broken_found = True
-            errors.append(
-                f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
-                f"referenced in {source_label} (scope: {scope_tag}) "
-                f"differs from the on-disk casing — actual path is "
-                f"'{suggested}'.  Case-insensitive filesystems "
-                "(Windows, default macOS) accept the link but it "
-                "404s on Linux."
-            )
-            continue
 
         if is_dangling_symlink(ref_path):
             broken_found = True
@@ -575,6 +571,7 @@ def _check_references(
 def validate_body(
     body: str, entry_abs_path: str, skill_root: str,
     allow_nested_refs: bool = False,
+    case_check_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Validate skill or capability entry point body.
 
@@ -617,6 +614,7 @@ def validate_body(
     ref_errors, ref_passes = _check_references(
         body, entry_abs_path, skill_root, allow_nested_refs,
         include_router_table=(entry_filename == FILE_SKILL_MD),
+        case_check_root=case_check_root,
     )
     errors.extend(ref_errors)
     passes.extend(ref_passes)
@@ -627,6 +625,7 @@ def validate_body(
 def validate_skill_references(
     skill_path: str, skill_root: str, entry_file: str,
     allow_nested_refs: bool = False,
+    case_check_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Validate references in all markdown files across the skill tree.
 
@@ -704,6 +703,7 @@ def validate_skill_references(
                 content, filepath, skill_root, file_allow_nested,
                 source_label=rel_label,
                 listdir_cache=listdir_cache,
+                case_check_root=case_check_root,
             )
 
             files_checked += 1
@@ -802,13 +802,25 @@ def validate_skill(
         )
         errors.extend(sof_errors)
         passes.extend(sof_passes)
-        body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
+        # Use the inferred system root as the case-exact root so
+        # external references (capability → ``../../shared/foo.md``)
+        # also get the host-independent FAIL when the on-disk
+        # casing differs.  Falls back to ``skill_root`` when no
+        # system root can be inferred (standalone-skill validation).
+        cap_case_check_root = (
+            infer_system_root(skill_path) or skill_root
+        )
+        body_errors, body_passes = validate_body(
+            body, skill_md, skill_root, allow_nested_refs,
+            case_check_root=cap_case_check_root,
+        )
         errors.extend(body_errors)
         passes.extend(body_passes)
         # Validate references in all .md files across the skill tree
         # (walk skill_root, not skill_path, so the entire skill is scanned)
         ref_errors, ref_passes = validate_skill_references(
             skill_root, skill_root, skill_md, allow_nested_refs,
+            case_check_root=cap_case_check_root,
         )
         errors.extend(ref_errors)
         passes.extend(ref_passes)
@@ -912,8 +924,21 @@ def validate_skill(
     errors.extend(key_errors)
     passes.extend(key_passes)
 
+    # Use the inferred system root as the case-exact root so
+    # external references (e.g. ``../../shared/foo.md``) get the
+    # host-independent FAIL when the on-disk casing differs.  Falls
+    # back to ``skill_root`` when no system root can be inferred
+    # (standalone-skill validation), which preserves the
+    # within-skill-only behaviour for that case.
+    skill_case_check_root = (
+        infer_system_root(skill_path) or skill_root
+    )
+
     # Validate body
-    body_errors, body_passes = validate_body(body, skill_md, skill_root, allow_nested_refs)
+    body_errors, body_passes = validate_body(
+        body, skill_md, skill_root, allow_nested_refs,
+        case_check_root=skill_case_check_root,
+    )
     errors.extend(body_errors)
     passes.extend(body_passes)
 
@@ -925,6 +950,7 @@ def validate_skill(
     # Validate references in all other .md files in the skill tree
     sref_errors, sref_passes = validate_skill_references(
         skill_path, skill_root, skill_md, allow_nested_refs,
+        case_check_root=skill_case_check_root,
     )
     errors.extend(sref_errors)
     passes.extend(sref_passes)
