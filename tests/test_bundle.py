@@ -1976,6 +1976,38 @@ class CheckReservedPathComponentsTests(unittest.TestCase):
             errors, _ = check_reserved_path_components(skill_dir)
             self.assertEqual(errors, [])
 
+    def test_trailing_space_or_dot_is_flagged(self) -> None:
+        """Components like ``con `` / ``aux.`` are reserved on Windows.
+
+        Windows trims trailing spaces and dots from path components
+        before comparing against the device-name list, so a zip that
+        carries ``con `` (legal on POSIX) cannot be extracted on
+        Windows — it materialises as ``CON``.  The reserved-name
+        check normalises components the same way so the pre-flight
+        catches the shape on every host.
+        """
+        cases = (
+            ("references/con .md", "CON"),
+            ("references/aux..md", "AUX"),
+            ("references/nul . .md", "NUL"),
+        )
+        for relpath, stem in cases:
+            with self.subTest(relpath=relpath, stem=stem):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    skill_dir = os.path.join(tmpdir, "demo")
+                    os.makedirs(skill_dir)
+                    self._build(skill_dir, "SKILL.md")
+                    self._build(skill_dir, relpath)
+                    errors, _ = check_reserved_path_components(skill_dir)
+                    matched = [e for e in errors if stem in e]
+                    self.assertEqual(
+                        len(matched), 1,
+                        msg=(
+                            f"expected one {stem} finding for {relpath}; "
+                            f"got errors={errors}"
+                        ),
+                    )
+
 
 class CheckExternalArcnamesTests(unittest.TestCase):
     """``check_external_arcnames`` runs the long-path and reserved-name
@@ -2026,6 +2058,34 @@ class CheckExternalArcnamesTests(unittest.TestCase):
             severity=LEVEL_WARN,
         )
         self.assertTrue(errors[0].startswith(LEVEL_WARN))
+
+    def test_trailing_space_or_dot_is_flagged(self) -> None:
+        """External arcnames with trailing spaces/dots are also flagged.
+
+        Mirrors the same NTFS normalisation as
+        ``check_reserved_path_components`` — Windows trims trailing
+        spaces and dots before comparing path components against the
+        device-name list, so a bundled external named ``con `` becomes
+        ``CON`` on extraction.  Both pre-flight helpers must agree so
+        an external arcname slipped past the directory walk does not
+        bypass the check.
+        """
+        cases = (
+            ("demo/references/con .md", "CON"),
+            ("demo/references/aux..md", "AUX"),
+            ("demo/nul ./inner/file.md", "NUL"),
+        )
+        for arcname, stem in cases:
+            with self.subTest(arcname=arcname, stem=stem):
+                errors, _ = check_external_arcnames([arcname])
+                matched = [e for e in errors if stem in e]
+                self.assertEqual(
+                    len(matched), 1,
+                    msg=(
+                        f"expected one {stem} finding for {arcname}; "
+                        f"got errors={errors}"
+                    ),
+                )
 
 
 if __name__ == "__main__":

@@ -314,13 +314,28 @@ def _check_references(
             continue
         if not case_ok and suggested is not None:
             broken_found = True
+            # ``suggested`` is the on-disk casing relative to
+            # ``effective_case_root`` (often the inferred system root
+            # under a deployed layout — e.g.
+            # ``skills/<name>/references/foo.md``).  That string is
+            # not a valid link target from the source file, so an
+            # author copy/pasting it would re-break the link.  Render
+            # the corrected reference in the same coordinate system
+            # as the original: relative to the source file's own
+            # directory, with forward slashes.  Keep the on-disk path
+            # in the message too so the author can also see the
+            # filesystem location the validator found.
+            corrected_abs = os.path.join(effective_case_root, suggested)
+            corrected_ref = os.path.relpath(
+                corrected_abs, source_dir,
+            ).replace(os.sep, "/")
             errors.append(
                 f"{LEVEL_FAIL}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "
-                f"differs from the on-disk casing — actual path is "
-                f"'{suggested}'.  Case-insensitive filesystems "
-                "(Windows, default macOS) accept the link but it "
-                "404s on Linux."
+                f"differs from the on-disk casing — corrected reference "
+                f"is '{corrected_ref}' (on-disk path: '{suggested}').  "
+                "Case-insensitive filesystems (Windows, default macOS) "
+                "accept the link but it 404s on Linux."
             )
             continue
 

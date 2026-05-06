@@ -43,6 +43,26 @@ from .references import (
     RE_BUNDLE_BACKTICK,
 )
 
+def _reserved_stem(component: str) -> str:
+    """Return the NTFS-comparison stem of *component* in upper case.
+
+    Windows strips trailing spaces and dots from a path component's
+    stem when comparing against the device-name list, so a name like
+    ``con .md`` (basename ``con ``, extension ``.md``) is treated as
+    ``CON`` and rejected.  Names like ``aux.`` and ``nul . .md``
+    follow the same rule.  POSIX preserves the original bytes, so a
+    zip built on Linux can carry such names through bundling and
+    only fail on Windows extraction.
+
+    Take the portion before the first ``.``, strip trailing spaces
+    and dots, then upper-case.  Empty input (or input that consists
+    entirely of trailing characters) maps to ``""``, which never
+    matches a reserved name.
+    """
+    stem = component.split(".", 1)[0]
+    return stem.rstrip(" .").upper()
+
+
 def check_long_paths(
     skill_path: str,
     *,
@@ -242,7 +262,7 @@ def check_reserved_path_components(
         for component in components:
             component_path_parts.append(component)
             component_rel = "/".join(component_path_parts)
-            stem = component.split(".", 1)[0].upper()
+            stem = _reserved_stem(component)
             if stem not in WINDOWS_RESERVED_NAMES:
                 continue
             if (component_rel, stem) in seen:
@@ -329,7 +349,7 @@ def check_external_arcnames(
         for component in components:
             component_path_parts.append(component)
             component_rel = "/".join(component_path_parts)
-            stem = component.split(".", 1)[0].upper()
+            stem = _reserved_stem(component)
             if stem not in WINDOWS_RESERVED_NAMES:
                 continue
             if (component_rel, stem) in seen_reserved:
