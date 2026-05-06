@@ -4956,6 +4956,115 @@ class CaseExactReferenceTests(unittest.TestCase):
             ]
             self.assertEqual(case_fails, [])
 
+    def test_external_wrong_case_via_case_check_root_fails(self) -> None:
+        """A wrong-cased external reference fails when ``case_check_root`` widens scope.
+
+        Pinned regression for the ``case_check_root`` parameter:
+        an earlier ``_check_references`` anchored the case-exact
+        rule at ``skill_root`` and short-circuited via plain
+        ``os.path.exists`` for paths whose first segment was
+        ``..``.  External references like
+        ``../../shared/References/foo.md`` therefore bypassed the
+        host-independent FAIL even though the bundler ships them
+        and the wrong-cased link 404s on Linux.
+
+        With ``case_check_root`` set to a wider tree (the inferred
+        system root in production), the rule walks the on-disk
+        components for external refs too — and produces the same
+        FAIL it would for an in-skill miscapitalisation.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Synthetic system-root layout:
+            #   <tmpdir>/skills/demo/SKILL.md       — the skill
+            #   <tmpdir>/shared/references/guide.md — system-wide ref
+            skill_dir = os.path.join(tmpdir, "skills", "demo")
+            os.makedirs(skill_dir)
+            shared_dir = os.path.join(tmpdir, "shared", "references")
+            os.makedirs(shared_dir)
+            write_text(
+                os.path.join(shared_dir, "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [g](../../shared/References/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            # Pass the system root explicitly as the case-check
+            # root.  Without it, the test would short-circuit
+            # through the ``..``-prefix branch and skip the rule
+            # — that's the standalone-skill behaviour preserved
+            # for callers without an inferable system root.
+            errors, _ = validate_body(
+                body, skill_md, skill_dir,
+                case_check_root=tmpdir,
+            )
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            broken = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "does not exist" in e
+            ]
+            # On case-insensitive filesystems the FAIL fires; on
+            # case-sensitive Linux the broken-ref WARN would fire
+            # instead — but since the case-exact check now walks
+            # ``os.listdir`` directly it should detect the
+            # divergence regardless of host.
+            self.assertEqual(
+                len(case_fails), 1,
+                msg=(
+                    "expected the case-exact FAIL on every host; "
+                    f"errors={errors}"
+                ),
+            )
+            self.assertEqual(
+                broken, [],
+                msg=(
+                    "case-exact FAIL should preempt the generic "
+                    "broken-ref WARN; got both"
+                ),
+            )
+
+    def test_external_wrong_case_without_case_check_root_skips(self) -> None:
+        """Without ``case_check_root``, external wrong-case refs short-circuit.
+
+        Documents the deliberate fall-back: when no wider root is
+        provided (standalone-skill validation), external refs are
+        not case-checked.  This matches the behaviour before the
+        ``case_check_root`` parameter existed and keeps the rule
+        narrow when the validator has no system-root context.
+        """
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "skills", "demo")
+            os.makedirs(skill_dir)
+            shared_dir = os.path.join(tmpdir, "shared", "references")
+            os.makedirs(shared_dir)
+            write_text(
+                os.path.join(shared_dir, "guide.md"),
+                "# Guide\n",
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            body = (
+                "# Skill\n\nSee [g](../../shared/References/guide.md).\n"
+            )
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            # No case_check_root → falls back to skill_root.
+            # The ``..``-prefix branch in resolve_case_exact then
+            # short-circuits to plain os.path.exists, so the
+            # case-exact rule is skipped for this external ref.
+            errors, _ = validate_body(body, skill_md, skill_dir)
+            case_fails = [
+                e for e in errors
+                if e.startswith(LEVEL_FAIL)
+                and "differs from the on-disk casing" in e
+            ]
+            self.assertEqual(case_fails, [])
+
 
 class DegradedSymlinkReferenceTests(unittest.TestCase):
     """Windows-without-DevMode degraded form produces a tailored WARN."""
