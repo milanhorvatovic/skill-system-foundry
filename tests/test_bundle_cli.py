@@ -1915,9 +1915,8 @@ class ExternalArcnamePreflightValueErrorTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as cm:
                     bundle.main()
             # The WARN itself does NOT block the bundle (only FAILs
-            # do), so the bundle still exits 0 — matching the
-            # comment in bundle.main that post-validation will catch
-            # any concrete failure if the user proceeds.
+            # do), so the bundle still exits 0 when the later bundle
+            # phases have no concrete failure.
             self.assertEqual(cm.exception.code, 0)
             payload = json.loads(stdout.getvalue())
             # The success-path JSON places warnings in
@@ -1931,6 +1930,60 @@ class ExternalArcnamePreflightValueErrorTests(unittest.TestCase):
             # WARN names the offending external path so the
             # pre-validation result is actionable.
             self.assertIn(to_posix(ext_file), warn_msgs[0])
+            self.assertIn("a later bundle phase", warn_msgs[0])
+
+    def test_value_error_warning_survives_bundle_creation_failure(self) -> None:
+        """JSON failure keeps the pre-flight WARN for context.
+
+        In a real cross-drive run the same ``compute_bundle_path``
+        ValueError can recur during bundle creation.  JSON callers
+        still need the pre-flight warning because it names the
+        external path that was skipped from arcname checks.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
+            ext_file = os.path.join(tmpdir, "shared", "guide.md")
+            os.makedirs(os.path.dirname(ext_file))
+            write_text(ext_file, "x")
+            fake_scan = _make_fake_scan()
+            fake_scan["external_files"] = {ext_file}
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "bundle.py", skill_dir,
+                        "--system-root", system_root,
+                        "--output", output_path,
+                        "--json",
+                    ],
+                ),
+                mock.patch(
+                    "bundle.prevalidate", return_value=([], [], fake_scan),
+                ),
+                mock.patch(
+                    "bundle.compute_bundle_path",
+                    side_effect=ValueError("path is on mount 'X:'"),
+                ),
+                mock.patch(
+                    "bundle.create_bundle",
+                    side_effect=ValueError("bundle creation failed"),
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    bundle.main()
+            self.assertEqual(cm.exception.code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertFalse(payload["success"])
+            self.assertEqual(payload["error"], "bundle creation failed")
+            warn_msgs = payload.get("warnings", [])
+            self.assertEqual(len(warn_msgs), 1)
+            self.assertIn(to_posix(ext_file), warn_msgs[0])
+            self.assertIn("a later bundle phase", warn_msgs[0])
 
     def test_unexpected_exception_propagates(self) -> None:
         """A non-ValueError exception is NOT swallowed.

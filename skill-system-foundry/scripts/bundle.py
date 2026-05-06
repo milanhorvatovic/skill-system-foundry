@@ -216,14 +216,25 @@ def main() -> None:
     # system root) so they can be included in JSON output.
     early_warnings: list[str] = []
 
-    def _json_fail(error: str) -> None:
+    def _json_fail(
+        error: str,
+        warnings_list: list[str] | None = None,
+    ) -> None:
         """Print a JSON failure blob and exit 1."""
-        print(to_json_output({
+        result: dict = {
             "tool": "bundle",
             "path": to_posix(skill_path),
             "success": False,
             "error": error,
-        }))
+        }
+        if warnings_list:
+            result["warnings"] = [
+                w[len(LEVEL_WARN) + 2:]
+                if w.startswith(LEVEL_WARN + ": ")
+                else w
+                for w in warnings_list
+            ]
+        print(to_json_output(result))
         sys.exit(1)
 
     # Validate input
@@ -425,18 +436,18 @@ def main() -> None:
                 # at that point the user has already paid for
                 # skill-tree walking and copying.  Emit at WARN
                 # severity (non-blocking) so the user sees the
-                # path here while the eventual concrete failure is
-                # produced by the bundle creation phase, where the
-                # error message can name the OS-level cause
-                # precisely.  Routed to the *warnings* bucket — the
-                # pre-flight ``errors`` list is reserved for
-                # blocking FAILs (long-path, reserved-name).
+                # path here while any eventual concrete failure is
+                # produced by a later bundle phase, where the error
+                # message can name the OS-level cause precisely.
+                # Routed to the *warnings* bucket — the pre-flight
+                # ``errors`` list is reserved for blocking FAILs
+                # (long-path, reserved-name).
                 external_arcname_warns.append(
                     f"{LEVEL_WARN}: external file '{to_posix(ext_file)}' "
                     f"could not be resolved to a bundle path "
                     f"({exc.__class__.__name__}: {exc}); skipped from "
-                    "long-path / reserved-name pre-flight — bundle "
-                    "post-validation will catch any concrete failure"
+                    "long-path / reserved-name pre-flight — a later "
+                    "bundle phase will report any concrete failure"
                 )
                 continue
             external_arcnames.append(f"{skill_basename}/{bundle_rel}")
@@ -458,7 +469,7 @@ def main() -> None:
     # ``external_arcname_warns`` (cosmetic ValueError diagnostics
     # from ``compute_bundle_path``) flow through this bucket too —
     # they're informational and let the bundle proceed to creation
-    # so the eventual concrete failure surfaces with the precise
+    # so any eventual concrete failure surfaces with the precise
     # OS-level error.
     if json_output:
         warnings = (
@@ -594,7 +605,7 @@ def main() -> None:
 
     except ValueError as exc:
         if json_output:
-            _json_fail(str(exc))
+            _json_fail(str(exc), warnings)
         _print_failure_block(
             f"{phase_name} error",
             [f"{LEVEL_FAIL}: {exc}"],
@@ -605,7 +616,8 @@ def main() -> None:
         if json_output:
             _json_fail(
                 f"Unexpected error during {phase_name}: "
-                f"{exc.__class__.__name__}: {exc}."
+                f"{exc.__class__.__name__}: {exc}.",
+                warnings,
             )
         failure = (
             f"{LEVEL_FAIL}: Unexpected error during {phase_name}: "
