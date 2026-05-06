@@ -1,0 +1,23 @@
+.github/scripts/smoke-rewrite-frontmatter.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 43-156
+.github/scripts/smoke-validate-extracted.py
+  s_b25d3a22fb7ffb::t_8598e29bfbb491 62-167
+tests/test_text_write_newline.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 12-93,414-441
+  s_b25d3a22fb7ffb::t_d73a56dffc5561 289-298
+tests/test_bundle.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 1902-1919
+tests/test_smoke_validate_extracted.py
+  s_b25d3a22fb7ffb::t_c0b151e08a74ac 141-155,162-169
+  s_b25d3a22fb7ffb::t_124dfceb93b1af 156-161
+skill-system-foundry/scripts/bundle.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 453-455
+tests/test_bundle_cli.py
+  s_1c34ff13e1ff69::t_5aa35efa0ebf49 2037-2094
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "02afa0c0498b28b28b54c6f6a3738cbd314fdd34",
+  "prompts": {}
+}
