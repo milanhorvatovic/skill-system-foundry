@@ -1,0 +1,28 @@
+tests/test_text_write_newline.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 12-93,414-441
+  s_b25d3a22fb7ffb::t_d73a56dffc5561 289-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "32f20159dd6497c885cd576815003218bff5d467",
+  "prompts": {},
+  "sessions": {
+    "s_1c34ff13e1ff69": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dff3f-dc47-74b3-8196-997b9a525858",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    },
+    "s_b25d3a22fb7ffb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dfeff-bc0b-7b41-96df-820453fb2fb2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
