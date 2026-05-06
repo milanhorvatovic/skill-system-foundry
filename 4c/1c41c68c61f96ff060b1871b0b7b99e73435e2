@@ -1,0 +1,32 @@
+.github/scripts/smoke-rewrite-frontmatter.py
+  s_1c34ff13e1ff69::t_b7e1053ae3b200 43-156
+.github/scripts/smoke-validate-extracted.py
+  s_b25d3a22fb7ffb::t_8598e29bfbb491 62-167
+tests/test_smoke_validate_extracted.py
+  s_b25d3a22fb7ffb::t_c0b151e08a74ac 141-155,162-169
+  s_b25d3a22fb7ffb::t_124dfceb93b1af 156-161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "4c1c41c68c61f96ff060b1871b0b7b99e73435e2",
+  "prompts": {},
+  "sessions": {
+    "s_1c34ff13e1ff69": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dff3f-dc47-74b3-8196-997b9a525858",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    },
+    "s_b25d3a22fb7ffb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dfeff-bc0b-7b41-96df-820453fb2fb2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
