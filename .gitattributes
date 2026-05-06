@@ -1,17 +1,48 @@
-# Scoped .gitattributes for the YAML 1.2.2 conformance corpus only.
+# Repository-wide line-ending policy.
 #
-# This file currently governs ONLY the byte-exact preservation of
-# fixtures under tests/fixtures/yaml-conformance/.  Additions for other
-# repository paths are welcome, but must leave the corpus-fixture
-# attributes below untouched — these fixtures depend on git not
-# rewriting their line endings on Windows checkouts.
+# Authored text files are pinned to LF on commit AND on checkout: the
+# ``eol=lf`` directive on every text-pattern rule below overrides a
+# contributor's local ``core.autocrlf`` setting, so a Windows working
+# copy gets LF terminators regardless of how the user has configured
+# their git client.  The byte counts emitted by ``stats.py`` and the
+# prose-yaml validator therefore see consistent input on every host,
+# and the contributor avoids producing diff noise when their editor
+# happens to write CRLF.
 #
-# The ``-text`` attribute disables git's automatic line-ending
-# conversion AND tells git to treat the file as binary for diff
-# purposes.  That tradeoff is intentional: byte-exact preservation of
-# the LF / CRLF / mixed variants matters more than diff readability for
-# these fixtures.
+# Specific patterns under ``tests/fixtures/yaml-conformance/`` keep
+# the historical ``-text`` override so the LF / CRLF / mixed corpus
+# fixtures preserve their byte-exact terminators on every host.  The
+# ``-text`` attribute disables git's automatic line-ending conversion
+# AND tells git to treat the file as binary for diff purposes.  That
+# tradeoff is intentional: byte-exact preservation of the corpus
+# variants matters more than diff readability for those fixtures.
 
+# Default behaviour: detect text files automatically and store them
+# with LF terminators.  Binary files stay untouched.
+* text=auto eol=lf
+
+# Authored text formats — explicit so the rule is obvious to readers
+# without relying solely on auto-detection heuristics.
+*.md     text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.py     text eol=lf
+*.sh     text eol=lf
+*.json   text eol=lf
+*.toml   text eol=lf
+*.txt    text eol=lf
+
+# Common binary types — never normalise.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.zip    binary
+*.gz     binary
+
+# YAML 1.2.2 conformance corpus: byte-exact preservation across LF /
+# CRLF / mixed variants.  These overrides MUST stay below the broader
+# ``*.yaml`` rule above so the ``-text`` attribute wins.
 tests/fixtures/yaml-conformance/**/*.lf.yaml    -text
 tests/fixtures/yaml-conformance/**/*.crlf.yaml  -text
 tests/fixtures/yaml-conformance/**/*.mixed.yaml -text
