@@ -138,6 +138,35 @@ class MainTests(unittest.TestCase):
             self.assertIn("cannot list extracted root", msg)
             self.assertIn(smoke_validate.to_posix(missing), msg)
 
+    def test_missing_root_error_omits_native_path_from_os_error(self) -> None:
+        """The raw ``OSError`` path must not leak into diagnostics.
+
+        Pinned regression: the helper normalised ``extracted_root``
+        itself but still rendered ``str(exc)``.  On Windows,
+        ``str(FileNotFoundError(..., filename='C:\\tmp\\missing'))``
+        includes native backslashes, defeating the helper's
+        byte-identical diagnostic contract.  Mock the Windows-shaped
+        exception so the check runs on every host.
+        """
+        native = r"C:\tmp\missing"
+        err = FileNotFoundError(
+            2, "No such file or directory", native,
+        )
+        stderr = StringIO()
+        with mock.patch.object(
+            smoke_validate, "find_skill_dirs", return_value=[],
+        ):
+            with mock.patch.object(
+                smoke_validate.os, "listdir", side_effect=err,
+            ):
+                with redirect_stderr(stderr):
+                    rc = smoke_validate.main([native, "validate_skill.py"])
+        self.assertEqual(rc, 1)
+        msg = stderr.getvalue()
+        self.assertIn("C:/tmp/missing", msg)
+        self.assertNotIn(native, msg)
+        self.assertIn("FileNotFoundError: No such file or directory", msg)
+
     def test_multi_match_layout_fails_without_invoking_validator(self) -> None:
         """Two top-level <skill-name>/SKILL.md entries fail loudly.
 
