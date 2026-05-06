@@ -663,34 +663,49 @@ def audit_skill_system(
         if not rn_errors and verbose:
             print(f"  ✓ {skill['name']}: no reserved-name path components")
 
-    # ``roles/`` lives outside ``aggregation_targets`` (which only
-    # contains registered skills + the synthetic top-level skill
-    # entry) but the bundler can copy roles into the archive when
-    # they appear in the skill's reference graph.  Walk the
-    # ``<system_root>/roles/`` tree directly so a role with a
-    # reserved-name component or an over-budget path is caught at
-    # audit time instead of slipping through to bundle
-    # post-validation.  Skip the section when no ``roles/`` tree
-    # exists (distribution-repo mode, or a system that does not use
-    # the role layer).
-    roles_dir = os.path.join(system_root, "roles")
-    if os.path.isdir(roles_dir):
-        roles_lp_errors, _roles_lp_passes = check_long_paths(
-            roles_dir, severity=LEVEL_WARN, boundary=system_root,
+    # System-root content outside ``aggregation_targets`` (which
+    # only contains registered skills + the synthetic top-level
+    # skill entry) but reachable through the bundler's reference
+    # graph: ``roles/``, plus any shared ``references/``,
+    # ``assets/``, or ``scripts/`` directories the skill system
+    # exposes at the system root.  The bundler can copy those into
+    # an archive when they appear in a skill's reference graph;
+    # walking them at audit time surfaces reserved-name and
+    # long-path problems that would otherwise only fail later in
+    # bundle post-validation.
+    #
+    # Measurement caveat for the long-path rule: each system-root
+    # subtree is walked with ``arcname_root`` defaulting to the
+    # system root itself, so the rule sees arcnames like
+    # ``roles/<file>`` rather than the precise per-bundle form
+    # ``<skill-name>/roles/<file>``.  The audit's check is
+    # therefore approximate — a long path here is definitely a
+    # problem, but a path that fits at audit time may still
+    # overflow MAX_PATH once a particular skill's basename is
+    # prepended at bundle time.  ``bundle.py`` runs the precise
+    # per-skill calculation as part of pre-flight, so the
+    # approximate audit signal is the right shape: catch obvious
+    # offenders early, defer the per-skill arithmetic to packaging.
+    for shared_dirname in ("roles", "references", "assets", "scripts"):
+        shared_dir = os.path.join(system_root, shared_dirname)
+        if not os.path.isdir(shared_dir):
+            continue
+        shared_lp_errors, _shared_lp_passes = check_long_paths(
+            shared_dir, severity=LEVEL_WARN, boundary=system_root,
         )
-        for finding in roles_lp_errors:
+        for finding in shared_lp_errors:
             level, _, detail = finding.partition(": ")
-            errors.append(f"{level}: roles/: {detail}")
-        if not roles_lp_errors and verbose:
-            print("  ✓ roles/: long-path clean")
-        roles_rn_errors, _roles_rn_passes = check_reserved_path_components(
-            roles_dir, severity=LEVEL_WARN, boundary=system_root,
+            errors.append(f"{level}: {shared_dirname}/: {detail}")
+        if not shared_lp_errors and verbose:
+            print(f"  ✓ {shared_dirname}/: long-path clean")
+        shared_rn_errors, _shared_rn_passes = check_reserved_path_components(
+            shared_dir, severity=LEVEL_WARN, boundary=system_root,
         )
-        for finding in roles_rn_errors:
+        for finding in shared_rn_errors:
             level, _, detail = finding.partition(": ")
-            errors.append(f"{level}: roles/: {detail}")
-        if not roles_rn_errors and verbose:
-            print("  ✓ roles/: no reserved-name path components")
+            errors.append(f"{level}: {shared_dirname}/: {detail}")
+        if not shared_rn_errors and verbose:
+            print(f"  ✓ {shared_dirname}/: no reserved-name path components")
 
     # --- Capabilities should not be registered ---
     if verbose:

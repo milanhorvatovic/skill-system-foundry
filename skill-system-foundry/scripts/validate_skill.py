@@ -832,9 +832,15 @@ def validate_skill(
         )
         errors.extend(cap_lp_errors)
         passes.extend(cap_lp_passes)
+        # Pass the same ``arcname_root`` to the reserved-name rule
+        # so a parent-skill basename like ``con`` (which appears in
+        # the actual bundle path ``con/capabilities/<cap>/...``) is
+        # checked, not just the components inside the capability
+        # subtree.
         cap_rn_errors, cap_rn_passes = check_reserved_path_components(
             skill_path,
             severity=LEVEL_WARN,
+            arcname_root=cap_arcname_root,
             boundary=skill_root,
         )
         errors.extend(cap_rn_errors)

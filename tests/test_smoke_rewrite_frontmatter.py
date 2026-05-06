@@ -92,6 +92,41 @@ class RewriteTests(unittest.TestCase):
                 fh.write("# Demo\n\nbody only\n")
             self.assertEqual(smoke_rewrite.rewrite(skill_md), 1)
 
+    def test_dashes_inside_folded_scalar_not_treated_as_closer(self) -> None:
+        """Triple-dash inside a folded scalar is NOT the closer.
+
+        Pinned regression: an earlier ``src.split("---", 2)`` was a
+        substring split; if the frontmatter contained a folded
+        scalar or quoted value with ``---`` in its content, the
+        helper would treat that as the closing fence and rewrite
+        the wrong slice of the file, silently corrupting the body.
+        The line-aware split walks line by line and only accepts a
+        line whose stripped content is exactly ``---`` as the
+        closer, so embedded triple-dash content is preserved
+        through the replacement.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            # Frontmatter contains a folded scalar whose body has
+            # ``---`` as inline content.  The real closer is on
+            # its own line further down.
+            with open(skill_md, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(
+                    "---\n"
+                    "name: demo\n"
+                    "description: >\n"
+                    "  A description with --- inside.\n"
+                    "---\n"
+                    "# Demo\n\nbody body body\n"
+                )
+            self.assertEqual(smoke_rewrite.rewrite(skill_md), 0)
+            content = _read(skill_md)
+            # Stub replaced the frontmatter (no folded scalar
+            # remains in the rewritten content).
+            self.assertNotIn("A description with", content)
+            # And the body survived intact.
+            self.assertIn("# Demo\n\nbody body body\n", content)
+
     def test_unclosed_frontmatter_returns_one(self) -> None:
         """A SKILL.md with an opener but no closer FAILs the helper.
 

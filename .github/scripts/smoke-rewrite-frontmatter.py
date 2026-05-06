@@ -85,8 +85,13 @@ def rewrite(skill_md_path: str) -> int:
         )
         return 1
     # Strip the existing frontmatter block so the body alone remains.
-    # ``str.split`` with maxsplit=2 yields ``["", "<frontmatter>",
-    # "<body>"]`` for a file that starts with ``---``.
+    # The split must be LINE-AWARE: a substring search like
+    # ``src.split("---", 2)`` would treat any ``---`` appearing
+    # inside a folded scalar or quoted value as the closing fence,
+    # potentially rewriting the wrong slice of the file.  Walk the
+    # opening ``---`` line, then look for the next line whose
+    # stripped content is exactly ``---`` (the YAML frontmatter
+    # closer must appear on its own line per the spec).
     #
     # Refuse to silently rewrite a file that lacks a parseable
     # frontmatter block (no opener, or no closer).  The smoke job's
@@ -95,7 +100,8 @@ def rewrite(skill_md_path: str) -> int:
     # helper is the right place to FAIL — falling through to a
     # ``body = src`` / ``body = ""`` path would silently mask the
     # regression by writing a valid stub on top of garbage.
-    if not src.startswith("---"):
+    lines = src.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
         print(
             f"FAIL: '{skill_md_path}' has no frontmatter opener "
             "('---' on line 1) — refusing to rewrite a file the "
@@ -104,17 +110,21 @@ def rewrite(skill_md_path: str) -> int:
             file=sys.stderr,
         )
         return 1
-    parts = src.split("---", 2)
-    if len(parts) < 3:
+    closer_idx: int | None = None
+    for idx in range(1, len(lines)):
+        if lines[idx].rstrip("\r\n") == "---":
+            closer_idx = idx
+            break
+    if closer_idx is None:
         print(
             f"FAIL: '{skill_md_path}' has an unclosed frontmatter "
-            "block (no second '---' delimiter found) — refusing to "
-            "rewrite a file the scaffold pipeline should have "
-            "produced with a complete frontmatter block",
+            "block (no second '---' delimiter line found) — "
+            "refusing to rewrite a file the scaffold pipeline "
+            "should have produced with a complete frontmatter block",
             file=sys.stderr,
         )
         return 1
-    body = parts[2]
+    body = "".join(lines[closer_idx + 1:])
     new_content = _STUB_FRONTMATTER + body.lstrip()
     try:
         with open(skill_md_path, "w", encoding="utf-8", newline="\n") as fh:

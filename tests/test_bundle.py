@@ -22,6 +22,7 @@ from lib.bundling import (
     _rewrite_markdown_content,
     _rewrite_markdown_paths,
     _rewrite_reference_target,
+    check_external_arcnames,
     check_long_paths,
     check_reserved_path_components,
     create_bundle,
@@ -1974,6 +1975,57 @@ class CheckReservedPathComponentsTests(unittest.TestCase):
             self._build(skill_dir, "references/lpt0.md")
             errors, _ = check_reserved_path_components(skill_dir)
             self.assertEqual(errors, [])
+
+
+class CheckExternalArcnamesTests(unittest.TestCase):
+    """``check_external_arcnames`` runs the long-path and reserved-name
+    rules against pre-computed arcname strings so the bundle pre-flight
+    can verify externals BEFORE ``create_bundle`` copies them.
+    """
+
+    def test_empty_input_is_clean(self) -> None:
+        errors, passes = check_external_arcnames([])
+        self.assertEqual(errors, [])
+        self.assertEqual(passes, [])
+
+    def test_under_threshold_passes(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/SKILL.md", "demo/references/guide.md"],
+            threshold=260,
+            user_prefix_budget=80,
+        )
+        self.assertEqual(errors, [])
+
+    def test_over_threshold_fails(self) -> None:
+        long_arcname = "demo/" + ("x" * 80) + ".md"
+        errors, _ = check_external_arcnames(
+            [long_arcname], threshold=60, user_prefix_budget=10,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn(long_arcname, errors[0])
+
+    def test_reserved_basename_fails(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/references/con.md"],
+        )
+        con_errors = [e for e in errors if "CON" in e]
+        self.assertEqual(len(con_errors), 1)
+
+    def test_reserved_directory_fails(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/aux/inner/file.md"],
+        )
+        aux_errors = [e for e in errors if "AUX" in e]
+        self.assertEqual(len(aux_errors), 1)
+
+    def test_severity_override(self) -> None:
+        errors, _ = check_external_arcnames(
+            ["demo/" + ("x" * 80) + ".md"],
+            threshold=60,
+            user_prefix_budget=10,
+            severity=LEVEL_WARN,
+        )
+        self.assertTrue(errors[0].startswith(LEVEL_WARN))
 
 
 if __name__ == "__main__":

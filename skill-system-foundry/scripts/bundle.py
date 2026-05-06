@@ -33,6 +33,7 @@ from lib.bundling import (
     create_bundle,
     postvalidate,
     create_zip,
+    check_external_arcnames,
     check_long_paths,
     check_reserved_path_components,
 )
@@ -49,6 +50,7 @@ from lib.constants import (
     LEVEL_WARN,
 )
 from lib.references import (
+    compute_bundle_path,
     infer_system_root,
     is_within_directory,
 )
@@ -396,7 +398,32 @@ def main() -> None:
     reserved_name_errors, _ = check_reserved_path_components(
         skill_path, boundary=system_root,
     )
-    errors = list(errors) + long_path_errors + reserved_name_errors
+    # External-arcname pre-flight: ``check_long_paths`` /
+    # ``check_reserved_path_components`` walk the skill tree but
+    # external files (referenced via ``../../shared/...`` and the
+    # like) only land in the bundle after ``create_bundle``.  Their
+    # arcnames are deterministic given ``compute_bundle_path``, so
+    # check them up-front instead of waiting for post-flight to
+    # walk the assembled tree.  Skill basename is the archive root
+    # — ``create_bundle`` writes externals at
+    # ``<bundle_dir>/<bundle_rel>`` and the zip's arcname is
+    # ``<skill_basename>/<bundle_rel>``.
+    skill_basename = os.path.basename(os.path.abspath(skill_path))
+    external_arcnames: list[str] = []
+    if scan_result is not None:
+        for ext_file in sorted(scan_result.get("external_files", set())):
+            try:
+                bundle_rel = compute_bundle_path(ext_file, system_root)
+            except Exception:  # pragma: no cover — defensive
+                continue
+            external_arcnames.append(f"{skill_basename}/{bundle_rel}")
+    external_arcname_errors, _ = check_external_arcnames(external_arcnames)
+    errors = (
+        list(errors)
+        + long_path_errors
+        + reserved_name_errors
+        + external_arcname_errors
+    )
     # In JSON mode, merge early warnings (e.g. missing system root)
     # with prevalidation warnings so they appear in the JSON output.
     # In human mode, early warnings were already printed inline, so

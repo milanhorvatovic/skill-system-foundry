@@ -169,6 +169,7 @@ def check_reserved_path_components(
     *,
     severity: str = LEVEL_FAIL,
     boundary: str | None = None,
+    arcname_root: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Flag bundled path components that match a Windows reserved name.
 
@@ -201,7 +202,14 @@ def check_reserved_path_components(
     # the frontmatter ``name`` is legal.  Falling back to ``abs_root``
     # when ``dirname`` is empty (filesystem root case) keeps the
     # walk well-defined.
-    arcname_root_abs = os.path.dirname(abs_root) or abs_root
+    if arcname_root is None:
+        arcname_root_abs = os.path.dirname(abs_root) or abs_root
+    else:
+        # Caller-supplied override: lets capability-mode validation
+        # measure components relative to the dir above the parent
+        # skill so a parent skill named ``con`` is checked even
+        # when the walk only covers the capability's subtree.
+        arcname_root_abs = os.path.abspath(arcname_root)
     boundary_abs = (
         os.path.abspath(boundary) if boundary is not None else abs_root
     )
@@ -264,6 +272,88 @@ def check_reserved_path_components(
             "windows-reserved-names: every path component is legal "
             "on NTFS"
         )
+    return errors, passes
+
+
+def check_external_arcnames(
+    external_arcnames: list[str],
+    *,
+    threshold: int = LONG_PATH_THRESHOLD,
+    user_prefix_budget: int = LONG_PATH_USER_PREFIX_BUDGET,
+    severity: str = LEVEL_FAIL,
+) -> tuple[list[str], list[str]]:
+    """Run the long-path and reserved-name rules against a list of arcnames.
+
+    Companion to ``check_long_paths`` and ``check_reserved_path_components``
+    that walk a directory tree.  Bundle pre-flight cannot walk the
+    eventual archive layout because external files are not yet
+    copied into ``bundle_dir`` — but the bundler already knows
+    where each external will land (``compute_bundle_path`` per file
+    plus the skill basename prefix).  Pass those arcname strings
+    here so the pre-flight catches over-budget paths and reserved
+    components BEFORE the assembly phase spends time copying.
+
+    *external_arcnames* are the full archive paths in POSIX form
+    (i.e., ``<skill-basename>/roles/<rel>`` etc.) — the same
+    strings the post-flight walker would compute from the
+    assembled bundle directory.
+
+    Returns ``(errors, passes)`` per the validator contract; passes
+    is empty when *external_arcnames* is empty (nothing to verify).
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not external_arcnames:
+        return errors, passes
+    available = threshold - user_prefix_budget
+    seen_reserved: set[tuple[str, str]] = set()
+    for arcname in external_arcnames:
+        # Long-path rule.
+        arcname_len = len(arcname)
+        if arcname_len > available:
+            errors.append(
+                f"{severity}: '{arcname}' exceeds the long-path budget "
+                f"({user_prefix_budget} prefix + {arcname_len} arcname "
+                f"= {user_prefix_budget + arcname_len} > {threshold} "
+                "threshold) — Windows checkouts under a typical user "
+                "directory may fail to extract this path.  Shorten "
+                "the path or raise bundle.long_path.threshold in "
+                "configuration.yaml after auditing the integrator's "
+                "install location."
+            )
+        # Reserved-name rule: walk every component, dedup by
+        # (component-path, stem) so a directory shared by multiple
+        # external files is reported once.
+        components = arcname.split("/")
+        component_path_parts: list[str] = []
+        for component in components:
+            component_path_parts.append(component)
+            component_rel = "/".join(component_path_parts)
+            stem = component.split(".", 1)[0].upper()
+            if stem not in WINDOWS_RESERVED_NAMES:
+                continue
+            if (component_rel, stem) in seen_reserved:
+                continue
+            seen_reserved.add((component_rel, stem))
+            is_file = component_rel == arcname
+            if is_file:
+                errors.append(
+                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"'{arcname}' has a basename ('{component}') whose "
+                    f"stem matches a Windows reserved device name "
+                    f"({stem}) — illegal on NTFS regardless of host "
+                    "platform; rename to keep the bundle extractable "
+                    "on Windows."
+                )
+            else:
+                errors.append(
+                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+                    f"directory '{component_rel}' has a path "
+                    f"component ('{component}') whose stem matches a "
+                    f"Windows reserved device name ({stem}) — illegal "
+                    "on NTFS regardless of host platform; rename to "
+                    "keep the bundle extractable on Windows."
+                )
     return errors, passes
 
 
