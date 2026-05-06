@@ -1853,5 +1853,133 @@ class HumanModePhaseOutputTests(unittest.TestCase):
             self.assertIn("Internal error", output)
 
 
+class ExternalArcnamePreflightValueErrorTests(unittest.TestCase):
+    """Bundle pre-flight surfaces ``compute_bundle_path`` ``ValueError``s.
+
+    Pinned regression: an earlier ``bundle.main`` wrapped the
+    pre-flight loop in ``except Exception: continue`` and silently
+    swallowed every failure, including the documented
+    ``ValueError`` that ``os.path.relpath`` raises on a different-
+    drive path.  The corrected handler narrows the catch to
+    ``ValueError`` only and emits a WARN that names the offending
+    external path so the pre-validation result is trustworthy
+    rather than silently incomplete.
+    """
+
+    def test_value_error_emits_named_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
+            # Synthetic fake scan with one external file the pre-
+            # flight will try to compute a bundle path for.
+            ext_file = os.path.join(tmpdir, "shared", "guide.md")
+            os.makedirs(os.path.dirname(ext_file))
+            write_text(ext_file, "x")
+            fake_scan = _make_fake_scan()
+            fake_scan["external_files"] = {ext_file}
+            fake_stats = _make_fake_stats()
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "bundle.py", skill_dir,
+                        "--system-root", system_root,
+                        "--output", output_path,
+                        "--json",
+                    ],
+                ),
+                mock.patch(
+                    "bundle.prevalidate", return_value=([], [], fake_scan),
+                ),
+                # Force the pre-flight's ``compute_bundle_path`` call
+                # to raise the documented ValueError so the WARN
+                # emission path runs.
+                mock.patch(
+                    "bundle.compute_bundle_path",
+                    side_effect=ValueError("path is on mount 'X:'"),
+                ),
+                mock.patch(
+                    "bundle.create_bundle",
+                    return_value=("/tmp/fake-bundle", {}, fake_stats),
+                ),
+                mock.patch("bundle.postvalidate", return_value=[]),
+                mock.patch(
+                    "bundle.create_zip",
+                    side_effect=_create_zip_side_effect(),
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    bundle.main()
+            # The WARN itself does NOT block the bundle (only FAILs
+            # do), so the bundle still exits 0 — matching the
+            # comment in bundle.main that post-validation will catch
+            # any concrete failure if the user proceeds.
+            self.assertEqual(cm.exception.code, 0)
+            payload = json.loads(stdout.getvalue())
+            # The success-path JSON places warnings in
+            # ``payload["warnings"]`` (top-level) with the
+            # ``WARN: `` prefix stripped.  Look there.
+            warn_msgs = [
+                msg for msg in payload.get("warnings", [])
+                if "could not be resolved to a bundle path" in msg
+            ]
+            self.assertEqual(len(warn_msgs), 1)
+            # WARN names the offending external path so the
+            # pre-validation result is actionable.
+            self.assertIn(to_posix(ext_file), warn_msgs[0])
+
+    def test_unexpected_exception_propagates(self) -> None:
+        """A non-ValueError exception is NOT swallowed.
+
+        Pre-flight only catches the documented ``ValueError`` from
+        ``os.path.relpath`` cross-drive case.  Any other exception
+        (e.g. ``RuntimeError``) must propagate so a real bug is
+        loud rather than silent.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
+            ext_file = os.path.join(tmpdir, "shared", "guide.md")
+            os.makedirs(os.path.dirname(ext_file))
+            write_text(ext_file, "x")
+            fake_scan = _make_fake_scan()
+            fake_scan["external_files"] = {ext_file}
+
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "bundle.py", skill_dir,
+                        "--system-root", system_root,
+                        "--output", output_path,
+                        "--json",
+                    ],
+                ),
+                mock.patch(
+                    "bundle.prevalidate", return_value=([], [], fake_scan),
+                ),
+                mock.patch(
+                    "bundle.compute_bundle_path",
+                    side_effect=RuntimeError("unexpected"),
+                ),
+            ):
+                # ``bundle.main`` catches generic exceptions in the
+                # bundle-creation phase only; a RuntimeError raised
+                # from pre-flight propagates.  The exact wrapping
+                # is implementation detail — assert the unexpected
+                # exception is *not* silently consumed by emitting
+                # a clean exit-0 success.
+                with self.assertRaises((RuntimeError, SystemExit)) as cm:
+                    bundle.main()
+                if isinstance(cm.exception, SystemExit):
+                    # If wrapped into SystemExit, the exit code must
+                    # be non-zero (silent exit-0 would prove the
+                    # exception was swallowed).
+                    self.assertNotEqual(cm.exception.code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

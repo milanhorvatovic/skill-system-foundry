@@ -410,7 +410,7 @@ def main() -> None:
     # ``<skill_basename>/<bundle_rel>``.
     skill_basename = os.path.basename(os.path.abspath(skill_path))
     external_arcnames: list[str] = []
-    external_arcname_errors: list[str] = []
+    external_arcname_warns: list[str] = []
     if scan_result is not None:
         for ext_file in sorted(scan_result.get("external_files", set())):
             try:
@@ -418,15 +418,20 @@ def main() -> None:
             except ValueError as exc:
                 # ``compute_bundle_path`` -> ``os.path.relpath`` raises
                 # ``ValueError`` when the external path is on a
-                # different Windows drive than ``system_root``.  Surface
-                # the path explicitly instead of silently skipping —
-                # the bundler would otherwise hit the same error
-                # later in ``_copy_external_files``, but at that
-                # point the user has already paid for skill-tree
-                # walking and copying.  Emit a WARN that names the
-                # external so the pre-validation result is
-                # trustworthy and the cause is named in one place.
-                external_arcname_errors.append(
+                # different Windows drive than ``system_root``.
+                # Surface the path explicitly instead of silently
+                # skipping — the bundler would otherwise hit the
+                # same error later in ``_copy_external_files``, but
+                # at that point the user has already paid for
+                # skill-tree walking and copying.  Emit at WARN
+                # severity (non-blocking) so the user sees the
+                # path here while the eventual concrete failure is
+                # produced by the bundle creation phase, where the
+                # error message can name the OS-level cause
+                # precisely.  Routed to the *warnings* bucket — the
+                # pre-flight ``errors`` list is reserved for
+                # blocking FAILs (long-path, reserved-name).
+                external_arcname_warns.append(
                     f"{LEVEL_WARN}: external file '{to_posix(ext_file)}' "
                     f"could not be resolved to a bundle path "
                     f"({exc.__class__.__name__}: {exc}); skipped from "
@@ -435,22 +440,34 @@ def main() -> None:
                 )
                 continue
             external_arcnames.append(f"{skill_basename}/{bundle_rel}")
+    # ``check_external_arcnames`` returns FAIL-level findings (the
+    # rule's default severity); those flow through the blocking
+    # ``errors`` list alongside ``check_long_paths`` and
+    # ``check_reserved_path_components`` outputs.
     arcname_errors, _ = check_external_arcnames(external_arcnames)
-    external_arcname_errors.extend(arcname_errors)
     errors = (
         list(errors)
         + long_path_errors
         + reserved_name_errors
-        + external_arcname_errors
+        + arcname_errors
     )
     # In JSON mode, merge early warnings (e.g. missing system root)
     # with prevalidation warnings so they appear in the JSON output.
     # In human mode, early warnings were already printed inline, so
     # only include prevalidation warnings to avoid duplication.
+    # ``external_arcname_warns`` (cosmetic ValueError diagnostics
+    # from ``compute_bundle_path``) flow through this bucket too —
+    # they're informational and let the bundle proceed to creation
+    # so the eventual concrete failure surfaces with the precise
+    # OS-level error.
     if json_output:
-        warnings = early_warnings + list(prevalidate_warnings)
+        warnings = (
+            early_warnings
+            + list(prevalidate_warnings)
+            + external_arcname_warns
+        )
     else:
-        warnings = list(prevalidate_warnings)
+        warnings = list(prevalidate_warnings) + external_arcname_warns
 
     if errors:
         if json_output:
