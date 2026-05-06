@@ -164,21 +164,13 @@ jobs:
     # handling, long-path arcnames, and case semantics surface here
     # rather than at user-extract time on a Windows machine.
     #
-    # Scope: this is a *pipeline-integrity* smoke test.  It does NOT
-    # exercise specific rule firings (long-path FAIL, case-collision
-    # FAIL, reserved-name FAIL, degraded-symlink WARN) — those
-    # rules' on/off behaviour is covered exhaustively by unit tests
-    # under ``tests/`` (``CheckLongPathsTests``,
-    # ``ResolveCaseExactTests``, ``CheckReservedPathComponentsTests``,
-    # ``LooksLikeDegradedSymlinkTests``, etc.) which run on every
-    # matrix entry alongside this job.  The smoke job's role is to
-    # confirm that scaffold → bundle → extract → validate stays
-    # green end-to-end on both runners; rule-specific regressions
-    # would surface in the unit-test job before this smoke job had a
-    # chance to fail.  Adding negative fixtures here (an over-budget
-    # path, a case-collision tree) would fork the workflow into
-    # success+failure modes; keep the integration test focused on
-    # the happy path.
+    # Scope: this is primarily a *pipeline-integrity* smoke test:
+    # scaffold → bundle → extract → validate must stay green on both
+    # runners.  A companion helper also creates tiny negative
+    # fixtures for the two cross-platform failures the PR summary
+    # calls out most directly (wrong-cased references and long
+    # archive arcnames) so those surfaces are exercised in this
+    # workflow without making the happy-path bundle step fail.
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -227,6 +219,17 @@ jobs:
         # surface inline.
         run: |
           python .github/scripts/smoke-rewrite-frontmatter.py smoke-work/skills/demo/SKILL.md
+        env:
+          PYTHONUTF8: "1"
+
+      - name: Exercise cross-platform negative fixtures
+        # Keeps the happy-path bundle smoke focused on a valid skill,
+        # while still proving the workflow would catch the
+        # case-exact and long-path regressions it is meant to guard.
+        # The Python helper avoids shell-specific heredoc quoting
+        # across bash and PowerShell.
+        run: |
+          python .github/scripts/smoke-cross-platform-fixtures.py
         env:
           PYTHONUTF8: "1"
 
