@@ -41,6 +41,23 @@ import subprocess
 import sys
 
 
+# Bring the meta-skill's error-level constants into scope so this CI
+# helper can prefix its diagnostics with ``LEVEL_FAIL`` instead of a
+# hardcoded ``"FAIL"`` literal.  The repository convention is
+# non-negotiable across the entire codebase: error levels come from
+# ``skill-system-foundry/scripts/lib/constants.py``, never from raw
+# strings.  ``smoke-cross-platform-fixtures.py`` uses the same
+# sys.path-insertion pattern for the same reason.
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+_SCRIPTS_DIR = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from lib.constants import LEVEL_FAIL  # noqa: E402  (path injected above)
+
+
 def find_skill_dirs(extracted_root: str) -> list[str]:
     """Return every top-level entry in *extracted_root* that holds a SKILL.md.
 
@@ -106,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         # silently mask a duplicated-namespace regression.  Listing
         # every candidate makes the failure self-explanatory.
         print(
-            f"FAIL: '{args.extracted_root}' contains "
+            f"{LEVEL_FAIL}: '{args.extracted_root}' contains "
             f"{len(matches)} top-level directories with a SKILL.md "
             f"({matches!r}) — bundle extraction must produce exactly "
             "one <skill-name>/SKILL.md layout",
@@ -122,13 +139,13 @@ def main(argv: list[str] | None = None) -> int:
         entries = sorted(os.listdir(args.extracted_root))
     except OSError as exc:
         print(
-            f"FAIL: cannot list extracted root "
+            f"{LEVEL_FAIL}: cannot list extracted root "
             f"'{args.extracted_root}': {exc}",
             file=sys.stderr,
         )
         return 1
     print(
-        f"FAIL: no top-level directory under "
+        f"{LEVEL_FAIL}: no top-level directory under "
         f"'{args.extracted_root}' contains a SKILL.md "
         f"(entries: {entries!r}) — bundle extraction did not "
         "produce the expected <skill-name>/SKILL.md layout",
