@@ -266,10 +266,10 @@ def _compute_capability_discovery(
             discovery_by_filepath[filepath] = (0, 0)
             continue
         discovery_by_filepath[filepath] = (cap_bytes, cap_crlf)
-        # Always probe the parse layer even when ``cap_discovery``
-        # is zero: ``discovery_bytes_of`` returns 0 both for silent
-        # capabilities (no ``---`` opener at all) and for malformed
-        # ones (opener with no closing fence).  Only
+        # Always probe the parse layer even when ``cap_bytes`` is
+        # zero: the byte scan via ``discovery_window_of`` returns 0
+        # both for silent capabilities (no ``---`` opener at all) and
+        # for malformed ones (opener with no closing fence).  Only
         # ``load_frontmatter`` distinguishes the two — the silent
         # case returns ``(None, ..., [])`` and short-circuits below;
         # the unclosed-fence case returns a ``_parse_error`` dict
@@ -466,10 +466,10 @@ def compute_stats(skill_path: str) -> dict:
         return result
     if discovery_count == 0 and frontmatter is None:
         # Gate on ``frontmatter is None`` rather than on
-        # ``discovery_count == 0`` alone: ``discovery_bytes_of`` returns
-        # 0 for both the silent case (no ``---`` opener) and the
-        # unclosed-fence case (opener with no closer).  The unclosed-
-        # fence case already emits a parse-error WARN above
+        # ``discovery_count == 0`` alone: ``discovery_window_of``
+        # returns 0 for both the silent case (no ``---`` opener) and
+        # the unclosed-fence case (opener with no closer).  The
+        # unclosed-fence case already emits a parse-error WARN above
         # (``load_frontmatter`` surfaces it via ``_parse_error``); only
         # the silent case lacks any other diagnostic, so this is the
         # only branch that deserves its own WARN.  Mirrors the

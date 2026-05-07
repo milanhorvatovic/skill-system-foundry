@@ -674,6 +674,18 @@ def audit_skill_system(
     # long-path problems that would otherwise only fail later in
     # bundle post-validation.
     #
+    # Skill-root mode skip: when ``skill_root_entry`` is non-None
+    # the audit root IS the skill itself (system_root == the
+    # skill's path), so any shared subtree under it has already
+    # been walked by the per-skill loop above.  Walking again would
+    # emit duplicate findings (one under the skill name, one under
+    # the shared-directory label) and inflate audit counts on the
+    # canonical ``cd skill && audit_skill_system .`` invocation.
+    # The shared-subtree pass is meaningful only in deployed-system
+    # mode where ``system_root`` is a real system root with skills
+    # nested under ``skills/<name>/`` — those skill paths do not
+    # contain the shared subtrees, so the two passes are disjoint.
+    #
     # Measurement caveat for the long-path rule: each system-root
     # subtree is walked with ``arcname_root`` defaulting to the
     # system root itself, so the rule sees arcnames like
@@ -686,7 +698,12 @@ def audit_skill_system(
     # per-skill calculation as part of pre-flight, so the
     # approximate audit signal is the right shape: catch obvious
     # offenders early, defer the per-skill arithmetic to packaging.
-    for shared_dirname in ("roles", "references", "assets", "scripts"):
+    shared_dirnames = (
+        ("roles", "references", "assets", "scripts")
+        if skill_root_entry is None
+        else ()
+    )
+    for shared_dirname in shared_dirnames:
         shared_dir = os.path.join(system_root, shared_dirname)
         if not os.path.isdir(shared_dir):
             continue
