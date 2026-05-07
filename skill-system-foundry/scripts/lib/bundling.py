@@ -63,6 +63,47 @@ def _reserved_stem(component: str) -> str:
     return stem.rstrip(" .").upper()
 
 
+def _render_reserved_name_finding(
+    *,
+    severity: str,
+    rel: str,
+    component_rel: str,
+    component: str,
+    stem: str,
+) -> str:
+    """Render the per-component reserved-name finding.
+
+    Single source of truth for the FAIL/WARN message emitted by both
+    ``check_reserved_path_components`` (skill-tree walker) and
+    ``check_external_arcnames`` (per-arcname pre-flight).  Without
+    this helper the same trailing sentence ("illegal on NTFS
+    regardless of host platform; rename to keep the bundle
+    extractable on Windows.") was repeated four times across two
+    file/directory branches in two helpers, and a future copy-edit
+    had to land in lockstep across all four — exactly the drift
+    mode the cross-platform rules are meant to fight against.
+
+    The file vs. directory distinction is keyed off whether the
+    component path equals the full archive-relative path: when they
+    match the offending component is the basename, otherwise it is
+    an interior directory in the path.
+    """
+    is_file = component_rel == rel
+    if is_file:
+        leader = f"'{rel}' has a basename ('{component}')"
+    else:
+        leader = (
+            f"directory '{component_rel}' has a path component "
+            f"('{component}')"
+        )
+    return (
+        f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+        f"{leader} whose stem matches a Windows reserved device name "
+        f"({stem}) — illegal on NTFS regardless of host platform; "
+        "rename to keep the bundle extractable on Windows."
+    )
+
+
 def check_long_paths(
     skill_path: str,
     *,
@@ -316,25 +357,13 @@ def check_reserved_path_components(
             if (component_rel, stem) in seen:
                 continue
             seen.add((component_rel, stem))
-            is_file = component_rel == rel
-            if is_file:
-                errors.append(
-                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"'{rel}' has a basename ('{component}') whose "
-                    f"stem matches a Windows reserved device name "
-                    f"({stem}) — illegal on NTFS regardless of host "
-                    "platform; rename to keep the bundle extractable "
-                    "on Windows."
-                )
-            else:
-                errors.append(
-                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"directory '{component_rel}' has a path "
-                    f"component ('{component}') whose stem matches a "
-                    f"Windows reserved device name ({stem}) — illegal "
-                    "on NTFS regardless of host platform; rename to "
-                    "keep the bundle extractable on Windows."
-                )
+            errors.append(_render_reserved_name_finding(
+                severity=severity,
+                rel=rel,
+                component_rel=component_rel,
+                component=component,
+                stem=stem,
+            ))
     if not errors and file_count:
         passes.append(
             "windows-reserved-names: every path component is legal "
@@ -413,25 +442,13 @@ def check_external_arcnames(
             if (component_rel, stem) in seen_reserved:
                 continue
             seen_reserved.add((component_rel, stem))
-            is_file = component_rel == arcname
-            if is_file:
-                errors.append(
-                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"'{arcname}' has a basename ('{component}') whose "
-                    f"stem matches a Windows reserved device name "
-                    f"({stem}) — illegal on NTFS regardless of host "
-                    "platform; rename to keep the bundle extractable "
-                    "on Windows."
-                )
-            else:
-                errors.append(
-                    f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
-                    f"directory '{component_rel}' has a path "
-                    f"component ('{component}') whose stem matches a "
-                    f"Windows reserved device name ({stem}) — illegal "
-                    "on NTFS regardless of host platform; rename to "
-                    "keep the bundle extractable on Windows."
-                )
+            errors.append(_render_reserved_name_finding(
+                severity=severity,
+                rel=arcname,
+                component_rel=component_rel,
+                component=component,
+                stem=stem,
+            ))
     if not errors:
         passes.append(
             f"external-arcname long-path: longest external arcname "
