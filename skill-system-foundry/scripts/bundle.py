@@ -240,6 +240,8 @@ def main() -> None:
         }
         if warnings_list:
             categorized = categorize_errors_for_json(warnings_list)
+            if categorized["failures"]:
+                result["failures"] = categorized["failures"]
             if categorized["warnings"]:
                 result["warnings"] = categorized["warnings"]
             if categorized["info"]:
@@ -673,6 +675,8 @@ def main() -> None:
             # so INFO entries land in their own bucket instead of
             # leaking into ``warnings`` with the prefix intact.
             categorized = categorize_errors_for_json(warnings)
+            if categorized["failures"]:
+                result["failures"] = categorized["failures"]
             if categorized["warnings"]:
                 result["warnings"] = categorized["warnings"]
             if categorized["info"]:
