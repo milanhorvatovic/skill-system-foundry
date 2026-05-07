@@ -266,6 +266,76 @@ def is_dangling_symlink(path: str) -> bool:
 # structural rather than tunable.
 
 
+_OneLineShimVerdict = Literal["none", "broken", "ambiguous"]
+
+
+def _classify_one_line_shim(
+    path: str,
+) -> tuple[_OneLineShimVerdict, str | None]:
+    """Classify *path* against the one-line-shim shape gate.
+
+    Single source of truth for both ``looks_like_degraded_symlink``
+    and ``looks_like_ambiguous_one_line_shim``: same five-step gate
+    (size, read, decode, strip + multi-line check, drive-qualified
+    reject, regex match), with the captured-target existence check
+    folded into the return tag so each public predicate becomes a
+    one-line wrapper.  Without this consolidation each predicate
+    would re-read the file in turn and the shape rules would have
+    to drift in lockstep across two near-identical bodies.
+
+    Returns one of:
+
+    * ``("none", None)`` — not a shim shape (file missing or
+      unreadable, body too large, undecodable, multi-line, drive-
+      qualified, or regex non-match).
+    * ``("broken", candidate)`` — shape matches and the captured
+      target does NOT exist on disk.  The classic Windows-without-
+      Developer-Mode degraded-symlink case.
+    * ``("ambiguous", candidate)`` — shape matches AND the
+      captured target DOES exist.  Indistinguishable byte-for-byte
+      from a deliberate one-line content reference (e.g.
+      ``CLAUDE.md`` containing ``AGENTS.md`` when ``AGENTS.md``
+      is a sibling), so callers must surface this at a softer
+      severity than the broken case.
+
+    The drive-qualified reject mirrors ``is_drive_qualified``
+    semantics — git symlinks are stored as relative targets, so a
+    small file containing ``C:\\missing.md`` is not a real shim
+    even though ``RE_DEGRADED_SYMLINK`` would otherwise accept the
+    shape (the first-component class permits ``:`` and treats
+    ``\\`` as a separator).
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return "none", None
+    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
+        return "none", None
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return "none", None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "none", None
+    body = text.strip()
+    if not body or "\n" in body or "\r" in body:
+        return "none", None
+    if is_drive_qualified(body):
+        return "none", None
+    if not RE_DEGRADED_SYMLINK.match(body):
+        return "none", None
+    parent = os.path.dirname(os.path.abspath(path))
+    candidate = os.path.normpath(
+        os.path.join(parent, body.replace("\\", "/"))
+    )
+    if os.path.exists(candidate):
+        return "ambiguous", candidate
+    return "broken", candidate
+
+
 def looks_like_degraded_symlink(path: str) -> bool:
     """Return True when *path* looks like a Windows-without-DevMode shim.
 
@@ -316,46 +386,7 @@ def looks_like_degraded_symlink(path: str) -> bool:
     the validator can surface an INFO inviting the author to
     verify on a fresh Windows-without-DevMode clone.
     """
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return False
-    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
-        return False
-    try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
-    except OSError:
-        return False
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    body = text.strip()
-    if not body or "\n" in body or "\r" in body:
-        return False
-    # Reject drive-qualified absolute paths (``C:foo.md``,
-    # ``C:\foo.md``) before the shape regex.  Git symlinks are
-    # stored as relative targets, so a Windows-absolute path is
-    # never a real shim — but the regex's first-component class
-    # accepts ``:`` and treats ``\`` as a separator, so a small
-    # file containing ``C:\missing.md`` would otherwise pass the
-    # shape gate and produce a misleading WARN.
-    if is_drive_qualified(body):
-        return False
-    if not RE_DEGRADED_SYMLINK.match(body):
-        return False
-    # Broken-target confirmation: a real degraded symlink's captured
-    # path does not resolve to an existing file (the symlink was
-    # never materialised).  A deliberate one-line note's captured
-    # path does resolve — keep that case out of the True branch.
-    parent = os.path.dirname(os.path.abspath(path))
-    candidate = os.path.normpath(
-        os.path.join(parent, body.replace("\\", "/"))
-    )
-    if os.path.exists(candidate):
-        return False
-    return True
+    return _classify_one_line_shim(path)[0] == "broken"
 
 
 def looks_like_ambiguous_one_line_shim(path: str) -> bool:
@@ -386,36 +417,7 @@ def looks_like_ambiguous_one_line_shim(path: str) -> bool:
     captured target does NOT exist (those are handled by the
     "broken-target" branch of the degraded check).
     """
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return False
-    if size == 0 or size > DEGRADED_SYMLINK_MAX_BYTES:
-        return False
-    try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
-    except OSError:
-        return False
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    body = text.strip()
-    if not body or "\n" in body or "\r" in body:
-        return False
-    # Reject drive-qualified absolute paths for the same reason as
-    # ``looks_like_degraded_symlink`` — see that helper for the
-    # rationale.
-    if is_drive_qualified(body):
-        return False
-    if not RE_DEGRADED_SYMLINK.match(body):
-        return False
-    parent = os.path.dirname(os.path.abspath(path))
-    candidate = os.path.normpath(
-        os.path.join(parent, body.replace("\\", "/"))
-    )
-    return os.path.exists(candidate)
+    return _classify_one_line_shim(path)[0] == "ambiguous"
 
 
 def resolve_case_exact(
