@@ -1428,6 +1428,106 @@ class JsonOutputTests(unittest.TestCase):
                     f"Warning still has LEVEL_WARN prefix: {w!r}",
                 )
 
+    def test_json_success_warnings_and_infos_routed_to_separate_buckets(self) -> None:
+        """INFO entries from prevalidate land under ``info``, not ``warnings``.
+
+        Pinned regression: the previous JSON success path stripped only
+        the ``WARN: `` prefix and copied INFO-prefixed strings into the
+        ``warnings`` array verbatim, mislabeling informational
+        findings as warnings to consumers.
+        """
+        from lib.constants import LEVEL_INFO
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
+            fake_scan = _make_fake_scan()
+            fake_stats = _make_fake_stats()
+            mixed = [
+                f"{LEVEL_WARN}: Real warning",
+                f"{LEVEL_INFO}: Informational note",
+            ]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "bundle.py", skill_dir,
+                        "--system-root", system_root,
+                        "--output", output_path,
+                        "--json",
+                    ],
+                ),
+                mock.patch(
+                    "bundle.prevalidate",
+                    return_value=([], mixed, fake_scan),
+                ),
+                mock.patch(
+                    "bundle.create_bundle",
+                    return_value=("/tmp/fake-bundle", {}, fake_stats),
+                ),
+                mock.patch("bundle.postvalidate", return_value=[]),
+                mock.patch(
+                    "bundle.create_zip",
+                    side_effect=_create_zip_side_effect(),
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    bundle.main()
+            self.assertEqual(cm.exception.code, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["warnings"], ["Real warning"])
+            self.assertEqual(result["info"], ["Informational note"])
+
+    def test_json_fail_warnings_and_infos_routed_to_separate_buckets(self) -> None:
+        """``_json_fail`` routes prevalidate INFO entries into ``info``.
+
+        Companion regression to the success-path test above, exercising
+        the early-failure branch where ``_json_fail`` is invoked with
+        a mixed prevalidate warnings list.  An unexpected exception in
+        ``create_bundle`` triggers the named-warn aware failure path
+        that funnels the prevalidate stream into ``_json_fail``.
+        """
+        from lib.constants import LEVEL_INFO
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
+            fake_scan = _make_fake_scan()
+            mixed = [
+                f"{LEVEL_WARN}: Real warning",
+                f"{LEVEL_INFO}: Informational note",
+            ]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "bundle.py", skill_dir,
+                        "--system-root", system_root,
+                        "--output", output_path,
+                        "--json",
+                    ],
+                ),
+                mock.patch(
+                    "bundle.prevalidate",
+                    return_value=([], mixed, fake_scan),
+                ),
+                mock.patch(
+                    "bundle.create_bundle",
+                    side_effect=ValueError("boom"),
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    bundle.main()
+            self.assertEqual(cm.exception.code, 1)
+            result = json.loads(stdout.getvalue())
+            self.assertFalse(result["success"])
+            self.assertEqual(result["warnings"], ["Real warning"])
+            self.assertEqual(result["info"], ["Informational note"])
+
     def test_json_prevalidation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)

@@ -222,7 +222,16 @@ def main() -> None:
         error: str,
         warnings_list: list[str] | None = None,
     ) -> None:
-        """Print a JSON failure blob and exit 1."""
+        """Print a JSON failure blob and exit 1.
+
+        ``warnings_list`` is a mixed-level finding stream — the
+        prevalidate phase forwards ``WARN``/``INFO`` entries from
+        ``validate_skill()`` together, so route them through
+        ``categorize_errors_for_json`` to produce stripped
+        ``warnings`` and ``info`` arrays consumers can branch on.
+        Earlier iterations stripped only the ``WARN: `` prefix and
+        leaked ``INFO: ``-prefixed strings into the warnings array.
+        """
         result: dict = {
             "tool": "bundle",
             "path": to_posix(skill_path),
@@ -230,12 +239,11 @@ def main() -> None:
             "error": error,
         }
         if warnings_list:
-            result["warnings"] = [
-                w[len(LEVEL_WARN) + 2:]
-                if w.startswith(LEVEL_WARN + ": ")
-                else w
-                for w in warnings_list
-            ]
+            categorized = categorize_errors_for_json(warnings_list)
+            if categorized["warnings"]:
+                result["warnings"] = categorized["warnings"]
+            if categorized["info"]:
+                result["info"] = categorized["info"]
         print(to_json_output(result))
         sys.exit(1)
 
@@ -658,10 +666,17 @@ def main() -> None:
             },
         }
         if warnings:
-            result["warnings"] = [
-                w[len(LEVEL_WARN) + 2:] if w.startswith(LEVEL_WARN + ": ") else w
-                for w in warnings
-            ]
+            # Same level-aware split used by ``_json_fail`` —
+            # ``warnings`` here is the prevalidate-forwarded mixed
+            # WARN/INFO stream plus any external-arcname WARNs added
+            # in the pre-flight; route through ``categorize_errors_for_json``
+            # so INFO entries land in their own bucket instead of
+            # leaking into ``warnings`` with the prefix intact.
+            categorized = categorize_errors_for_json(warnings)
+            if categorized["warnings"]:
+                result["warnings"] = categorized["warnings"]
+            if categorized["info"]:
+                result["info"] = categorized["info"]
         print(to_json_output(result))
         sys.exit(0)
 
