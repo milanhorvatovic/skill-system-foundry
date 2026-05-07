@@ -1,0 +1,9 @@
+skill-system-foundry/scripts/lib/stats.py
+  ai_agent 595,600-612,731,739-743
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "da023e5e6f58320b268de4d8393f8f546e1ee2cd",
+  "prompts": {}
+}
