@@ -2628,5 +2628,118 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
         self.assertEqual(len(parse_fails), 1)
 
 
+class AuditCrossPlatformChecksTests(unittest.TestCase):
+    """Regression coverage for the audit's cross-platform passes.
+
+    The audit grew two new passes over registered skills and shared
+    system-root subtrees: ``check_long_paths`` (Windows MAX_PATH
+    pre-flight) and ``check_reserved_path_components`` (NTFS
+    reserved-device-name detection).  These tests pin the audit-side
+    glue — the helpers themselves are exercised under
+    ``CheckLongPathsTests`` and ``CheckReservedPathComponentsTests``
+    in ``test_bundle.py``; the assertions here cover the audit's
+    own loop dispatch, finding-prefix labelling, and the disjoint
+    skill-root vs deployed-system mode behaviour documented in the
+    audit comments.
+    """
+
+    def _make_minimal_system(self, system_root: str) -> None:
+        write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+        skills_root = os.path.join(system_root, "skills")
+        os.makedirs(skills_root)
+        write_skill_md(
+            os.path.join(skills_root, "demo-skill"), name="demo-skill",
+        )
+
+    def test_reserved_name_under_shared_roles_is_flagged(self) -> None:
+        """A ``roles/<reserved>`` component fails in deployed-system mode.
+
+        Pinned regression: the shared-subtree pass walks ``roles/``
+        in addition to registered skills; a reserved component there
+        must reach the audit findings list with a ``roles/`` prefix
+        on the message so triage can locate it without re-walking.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_minimal_system(tmpdir)
+            roles_dir = os.path.join(tmpdir, "roles")
+            os.makedirs(roles_dir)
+            # ``con.md`` matches a Windows device name regardless of
+            # extension after ``_reserved_stem`` strips the dot.
+            write_text(os.path.join(roles_dir, "con.md"), "# Role\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        reserved = [
+            e for e in errors
+            if "CON" in e and "roles/" in e
+        ]
+        self.assertGreaterEqual(
+            len(reserved), 1,
+            msg=f"expected one CON finding under roles/; got errors={errors}",
+        )
+
+    def test_long_path_under_shared_roles_is_flagged(self) -> None:
+        """A long path under ``roles/`` triggers a long-path WARN.
+
+        The shared-subtree pass uses ``severity=LEVEL_WARN`` (not
+        FAIL) because the audit's measurement is approximate vs the
+        per-skill bundle pre-flight; the WARN level lets integrators
+        surface the path before bundling without blocking the audit
+        run itself.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_minimal_system(tmpdir)
+            roles_dir = os.path.join(tmpdir, "roles", "deeply-nested")
+            os.makedirs(roles_dir)
+            # ``available = threshold (260) - user_prefix_budget (80) = 180``;
+            # the basename plus the roles/ + deeply-nested/ prefix
+            # overflows that comfortably.
+            long_basename = ("x" * 200) + ".md"
+            write_text(os.path.join(roles_dir, long_basename), "# Role\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        long_path_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "long-path budget" in e
+            and "roles/" in e
+        ]
+        self.assertGreaterEqual(
+            len(long_path_warns), 1,
+            msg=(
+                f"expected one long-path WARN under roles/; "
+                f"got errors={errors}"
+            ),
+        )
+
+    def test_skill_root_mode_skips_shared_subtree_pass(self) -> None:
+        """Skill-root mode does not double-walk the shared subtree pass.
+
+        Documented disjoint-mode behaviour: when the audit root IS
+        the skill (top-level SKILL.md), the per-skill loop already
+        walks every file under it.  Re-walking via the shared
+        ``roles/`` / ``references/`` etc. dispatch would duplicate
+        findings under both the skill name and the shared label.
+        Pin the disjoint behaviour so a future refactor of the
+        dispatch keeps the de-duplication.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Top-level SKILL.md → skill-root mode.
+            write_skill_md(tmpdir, name="my-meta-skill")
+            roles_dir = os.path.join(tmpdir, "roles")
+            os.makedirs(roles_dir)
+            write_text(os.path.join(roles_dir, "con.md"), "# Role\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        # The reserved name is still found by the per-skill walker
+        # (as part of the my-meta-skill scan).  What must NOT happen
+        # is a duplicate finding labelled ``roles/`` from the shared
+        # dispatch — that label belongs only to deployed-system mode.
+        roles_labelled = [e for e in errors if "roles/:" in e]
+        self.assertEqual(
+            roles_labelled, [],
+            msg=(
+                "shared-subtree dispatch must be skipped in skill-root "
+                f"mode; got duplicate findings={roles_labelled}"
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
