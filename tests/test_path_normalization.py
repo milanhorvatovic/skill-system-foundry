@@ -68,6 +68,33 @@ def _walk_strings(payload: object) -> list[str]:
     return out
 
 
+def _assert_subprocess_succeeded(
+    test: unittest.TestCase,
+    result: subprocess.CompletedProcess,
+    label: str,
+) -> None:
+    """Fail with stdout/stderr in the message if *result* did not exit 0.
+
+    Why: these tests parse whatever JSON appears on stdout to check
+    that string fields contain no backslashes.  An entry point that
+    emits an *error* JSON payload before the success-path code that
+    populates the path fields ran can still produce parseable JSON
+    that happens to contain no backslashes (because the error
+    payload echoes no paths), and the test would silently pass
+    without exercising the contract under test.  Asserting exit
+    code 0 first ensures the payload reflects the success path the
+    posix-paths assertion is meant to cover.
+    """
+    if result.returncode != 0:
+        test.fail(
+            f"{label} exited {result.returncode}; the path-normalization "
+            f"test exercises the success-path JSON shape and an error "
+            f"payload would not surface a missing to_posix call.\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}"
+        )
+
+
 def _build_minimal_skill(root: str) -> str:
     skill_dir = os.path.join(root, "demo")
     os.makedirs(os.path.join(skill_dir, "references"))
@@ -138,6 +165,7 @@ class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
                 text=True,
                 env={**os.environ, "PYTHONUTF8": "1"},
             )
+            _assert_subprocess_succeeded(self, result, "validate_skill.py")
             payload = json.loads(result.stdout)
             offenders = [
                 s for s in _walk_strings(payload) if "\\" in s
@@ -167,6 +195,7 @@ class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
                 text=True,
                 env={**os.environ, "PYTHONUTF8": "1"},
             )
+            _assert_subprocess_succeeded(self, result, "stats.py")
             payload = json.loads(result.stdout)
             offenders = [
                 s for s in _walk_strings(payload) if "\\" in s
@@ -193,6 +222,9 @@ class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 env={**os.environ, "PYTHONUTF8": "1"},
+            )
+            _assert_subprocess_succeeded(
+                self, result, "audit_skill_system.py",
             )
             payload = json.loads(result.stdout)
             offenders = [
@@ -223,6 +255,7 @@ class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
                 text=True,
                 env={**os.environ, "PYTHONUTF8": "1"},
             )
+            _assert_subprocess_succeeded(self, result, "bundle.py")
             payload = json.loads(result.stdout)
             offenders = [
                 s for s in _walk_strings(payload) if "\\" in s
