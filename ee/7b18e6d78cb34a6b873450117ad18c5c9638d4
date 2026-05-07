@@ -1,0 +1,9 @@
+skill-system-foundry/scripts/lib/bundling.py
+  ai_agent 66-106,360-366,445-451
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "ee7b18e6d78cb34a6b873450117ad18c5c9638d4",
+  "prompts": {}
+}
