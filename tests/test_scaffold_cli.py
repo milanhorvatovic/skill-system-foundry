@@ -1979,7 +1979,7 @@ class WriteFileOutputTests(unittest.TestCase):
             with mock.patch("sys.stdout", buf):
                 write_file(path, "content")
             self.assertIn("Created:", buf.getvalue())
-            self.assertIn(path, buf.getvalue())
+            self.assertIn(to_posix(path), buf.getvalue())
 
 
 # ===================================================================
