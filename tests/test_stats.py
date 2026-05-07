@@ -1768,6 +1768,27 @@ class LineEndingsTextOnlyTests(unittest.TestCase):
         self.assertEqual(result["load_bytes_lf"], result["load_bytes"])
 
 
+class LineEndingsTextExtensionsSourceOfTruthTests(unittest.TestCase):
+    """``LINE_ENDINGS_TEXT_EXTENSIONS`` derives from configuration.yaml.
+
+    The earlier implementation hardcoded the foundry text-extension
+    tuple in two places: ``configuration.yaml`` under
+    ``path_resolution.degraded_symlink.foundry_extensions`` and a
+    bare tuple inside ``compute_stats``.  Adding an extension to one
+    silently diverged from the other; this test pins the single
+    source of truth so the two stay aligned.
+    """
+
+    def test_text_extensions_match_degraded_symlink_allowlist(self) -> None:
+        from lib.constants import DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS
+        from lib.stats import LINE_ENDINGS_TEXT_EXTENSIONS
+
+        self.assertEqual(
+            LINE_ENDINGS_TEXT_EXTENSIONS,
+            tuple(f".{ext}" for ext in DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS),
+        )
+
+
 class LineEndingsToggleDisabledTests(unittest.TestCase):
     """``*_lf`` keys and ``line_endings`` rows omitted when toggle off.
 

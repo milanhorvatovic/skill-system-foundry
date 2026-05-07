@@ -31,6 +31,7 @@ of the same content will report higher than a POSIX checkout.
 import os
 
 from .constants import (
+    DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS,
     DIR_ASSETS,
     DIR_CAPABILITIES,
     DIR_SCRIPTS,
@@ -41,6 +42,19 @@ from .constants import (
     LEVEL_WARN,
     PATH_RESOLUTION_RULE_NAME,
     STATS_LINE_ENDINGS_ENABLED,
+)
+
+
+# Line-ending detection only runs on text-shaped foundry files.  The
+# extension set is the same one ``looks_like_degraded_symlink`` uses
+# to gate its shape match, so authoritative ownership lives in
+# ``configuration.yaml`` under
+# ``path_resolution.degraded_symlink.foundry_extensions`` and reaches
+# both call sites through the validated tuple in ``constants.py``.
+# Hardcoding a second list here would silently drift the day someone
+# extends one source without the other.
+LINE_ENDINGS_TEXT_EXTENSIONS: tuple[str, ...] = tuple(
+    f".{ext}" for ext in DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS
 )
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
@@ -517,7 +531,9 @@ def compute_stats(skill_path: str) -> dict:
         # line terminators — counting them as CRLFs would reduce
         # ``load_bytes_lf`` and emit a bogus ``line_endings`` value
         # even though the file is byte-identical across platforms.
-        # The set covers the foundry's load-budget text categories;
+        # ``LINE_ENDINGS_TEXT_EXTENSIONS`` derives from the foundry
+        # text-extension allow-list in ``configuration.yaml`` so the
+        # set stays in sync with the degraded-symlink shape gate;
         # extensions outside this list keep ``line_endings`` absent
         # and contribute their raw byte count to both ``load_bytes``
         # and ``load_bytes_lf`` (which is correct — there is no
@@ -525,7 +541,7 @@ def compute_stats(skill_path: str) -> dict:
         line_endings_mode: str | None = None
         crlf_count = 0
         is_text_for_line_endings = filepath.lower().endswith(
-            (".md", ".yaml", ".yml", ".json", ".txt", ".sh", ".py", ".toml")
+            LINE_ENDINGS_TEXT_EXTENSIONS
         )
         if STATS_LINE_ENDINGS_ENABLED and is_text_for_line_endings:
             try:

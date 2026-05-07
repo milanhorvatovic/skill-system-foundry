@@ -570,7 +570,10 @@ path_resolution:
   #   used by the shape regex.  Restricting to file types the
   #   foundry actually ships shrinks the false-positive surface;
   #   integrators with skills that ship additional text formats
-  #   can extend the list.
+  #   can extend the list.  ``stats.py`` reuses this list (with a
+  #   leading dot) to gate ``line_endings`` detection per file —
+  #   adding an extension here also opts it into stats line-ending
+  #   classification, which is the intended coupling.
   degraded_symlink:
     max_bytes: 512
     foundry_extensions:
