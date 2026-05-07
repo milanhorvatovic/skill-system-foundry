@@ -43,6 +43,9 @@ from .constants import (
     PATH_RESOLUTION_RULE_NAME,
     STATS_LINE_ENDINGS_ENABLED,
 )
+from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
+from .reachability import extract_body_references
+from .references import is_drive_qualified, is_within_directory
 
 
 # Line-ending detection only runs on text-shaped foundry files.  The
@@ -56,9 +59,6 @@ from .constants import (
 LINE_ENDINGS_TEXT_EXTENSIONS: tuple[str, ...] = tuple(
     f".{ext}" for ext in DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS
 )
-from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
-from .reachability import extract_body_references
-from .references import is_drive_qualified, is_within_directory
 
 
 # Directory categories whose bytes are excluded from ``load_bytes``.
