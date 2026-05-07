@@ -72,7 +72,6 @@ from lib.discovery import (
     find_skill_dirs,
     find_roles,
     find_router_audit_targets,
-    check_line_count,
     read_file,
     load_capability_data,
     top_level_skill_entry,
@@ -81,7 +80,7 @@ from lib.discovery import (
 from lib.constants import (
     ALLOWED_ORPHANS,
     DIR_SKILLS, DIR_CAPABILITIES, DIR_SHARED,
-    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
+    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
     RE_ROLES_REF, RE_SIBLING_CAP_REF,
     RE_SKILL_REF, RE_CAPABILITY_REF, MIN_ROLE_SKILLS,
