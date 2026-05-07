@@ -366,8 +366,13 @@ def check_external_arcnames(
     strings the post-flight walker would compute from the
     assembled bundle directory.
 
-    Returns ``(errors, passes)`` per the validator contract; passes
-    is empty when *external_arcnames* is empty (nothing to verify).
+    Returns ``(errors, passes)`` per the validator contract.  When
+    *external_arcnames* is empty no pass line is emitted (the rule
+    had nothing to verify); a non-empty list with no findings emits
+    a single pass line summarising the long-path budget so JSON and
+    verbose human output see the rule ran, mirroring the contract
+    of the sibling ``check_long_paths`` and
+    ``check_reserved_path_components`` helpers.
     """
     errors: list[str] = []
     passes: list[str] = []
@@ -375,9 +380,14 @@ def check_external_arcnames(
         return errors, passes
     available = threshold - user_prefix_budget
     seen_reserved: set[tuple[str, str]] = set()
+    longest_external = 0
+    longest_external_arcname = ""
     for arcname in external_arcnames:
         # Long-path rule.
         arcname_len = len(arcname)
+        if arcname_len > longest_external:
+            longest_external = arcname_len
+            longest_external_arcname = arcname
         if arcname_len > available:
             errors.append(
                 f"{severity}: '{arcname}' exceeds the long-path budget "
@@ -422,6 +432,13 @@ def check_external_arcnames(
                     "on NTFS regardless of host platform; rename to "
                     "keep the bundle extractable on Windows."
                 )
+    if not errors:
+        passes.append(
+            f"external-arcname long-path: longest external arcname "
+            f"'{longest_external_arcname}' ({longest_external} chars) "
+            f"fits within the {available}-char arcname budget "
+            f"(threshold {threshold}, prefix {user_prefix_budget})"
+        )
     return errors, passes
 
 

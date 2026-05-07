@@ -2112,6 +2112,57 @@ class CheckExternalArcnamesTests(unittest.TestCase):
         )
         self.assertEqual(errors, [])
 
+    def test_clean_run_emits_summary_pass_line(self) -> None:
+        """Non-empty clean input emits one summary pass line.
+
+        Pinned regression: earlier versions returned an empty
+        ``passes`` list even when externals were present and clean,
+        diverging from sibling helpers ``check_long_paths`` and
+        ``check_reserved_path_components`` whose contracts both emit
+        a single summary pass line so verbose human output and JSON
+        consumers see the rule ran.
+        """
+        arcnames = [
+            "demo/SKILL.md",
+            "demo/references/short.md",
+            "demo/references/longest-name.md",
+        ]
+        errors, passes = check_external_arcnames(
+            arcnames, threshold=260, user_prefix_budget=80,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+        self.assertIn("longest external arcname", passes[0])
+        # The summary references the longest input arcname so callers
+        # can verify against worst-case rather than walker-order.
+        self.assertIn("demo/references/longest-name.md", passes[0])
+
+    def test_findings_suppress_pass_line(self) -> None:
+        """Any finding suppresses the summary pass line.
+
+        The pass-line contract mirrors ``check_long_paths``: the
+        summary appears only when the rule is fully clean, so a
+        finding-bearing run does not double-report.
+        """
+        long_arcname = "demo/" + ("x" * 80) + ".md"
+        errors, passes = check_external_arcnames(
+            [long_arcname], threshold=60, user_prefix_budget=10,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(passes, [])
+
+    def test_empty_input_emits_no_pass_line(self) -> None:
+        """Empty input means ``nothing to verify`` — no pass line emitted.
+
+        The helper distinguishes ``rule ran clean`` (one summary
+        line) from ``rule had nothing to check`` (silent).  Without
+        this distinction a skill with no externals would falsely
+        report an external-arcname pass that never executed.
+        """
+        errors, passes = check_external_arcnames([])
+        self.assertEqual(errors, [])
+        self.assertEqual(passes, [])
+
     def test_over_threshold_fails(self) -> None:
         long_arcname = "demo/" + ("x" * 80) + ".md"
         errors, _ = check_external_arcnames(
