@@ -238,6 +238,46 @@ class JSONPathFieldsAreForwardSlashedTests(unittest.TestCase):
                 ),
             )
 
+    def test_scaffold_json_payload_is_posix_only(self) -> None:
+        """Scaffold's JSON payload pins paths to POSIX form.
+
+        Pinned regression: scaffold previously emitted ``"path"`` and
+        ``"created"`` entries verbatim from ``os.path.abspath`` /
+        ``os.path.join`` output, so on Windows runners the payload
+        carried backslashes — diverging from validate_skill /
+        bundle / stats which all pin to_posix.  Routing scaffold
+        paths through to_posix keeps the chokepoint contract
+        consistent across every entry point.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(SCRIPTS_DIR, "scaffold.py"),
+                    "skill",
+                    "demo",
+                    "--root", tmpdir,
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONUTF8": "1"},
+            )
+            _assert_subprocess_succeeded(self, result, "scaffold.py")
+            payload = json.loads(result.stdout)
+            offenders = [
+                s for s in _walk_strings(payload) if "\\" in s
+            ]
+            self.assertEqual(
+                offenders, [],
+                msg=(
+                    "Backslashes leaked into scaffold JSON payload — "
+                    "every program-derived path must pass through "
+                    "to_posix.  Offenders:\n  " + "\n  ".join(offenders)
+                ),
+            )
+
     def test_bundle_json_payload_is_posix_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = _build_minimal_skill(tmpdir)

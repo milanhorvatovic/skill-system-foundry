@@ -40,7 +40,7 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 from lib.frontmatter import load_frontmatter
-from lib.reporting import to_json_output
+from lib.reporting import to_json_output, to_posix
 from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
     update_manifest_for_skill,
@@ -177,12 +177,23 @@ def read_template(template_name: str) -> str:
 
 
 def write_file(path: str, content: str, *, quiet: bool = False) -> None:
-    """Write content to a file, creating directories as needed."""
+    """Write content to a file, creating directories as needed.
+
+    The human-mode "Created:" line normalises *path* through
+    ``to_posix`` so scaffold output stays platform-independent — the
+    chokepoint contract documented in ``lib.reporting.to_posix``
+    applies to JSON payloads and human-mode diagnostics that quote
+    a filename.  Program-derived paths (``os.path.join(skill_path,
+    ...)``) carry native separators on Windows; without the
+    normalisation the line would render with backslashes on
+    Windows and forward slashes on POSIX, diverging from
+    ``validate_skill.py`` / ``bundle.py`` / ``stats.py``.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
     if not quiet:
-        print(f"  Created: {path}")
+        print(f"  Created: {to_posix(path)}")
 
 
 def create_dir_with_gitkeep(path: str) -> str:
@@ -246,9 +257,9 @@ def scaffold_skill(
                 "component": "skill",
                 "name": name,
                 "success": False,
-                "error": f"Directory already exists: {skill_path}",
+                "error": f"Directory already exists: {to_posix(skill_path)}",
             }
-        print(f"{LEVEL_FAIL}: Directory already exists: {skill_path}")
+        print(f"{LEVEL_FAIL}: Directory already exists: {to_posix(skill_path)}")
         sys.exit(1)
 
     # Tracks created filesystem entries: content files (e.g. SKILL.md),
@@ -282,14 +293,14 @@ def scaffold_skill(
         created_paths.append(caps_dir)
         created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Created: {caps_dir}")
+            print(f"  Created: {to_posix(caps_dir)}")
         for d in optional_dirs:
             opt_dir = os.path.join(skill_path, d)
             gitkeep = create_dir_with_gitkeep(opt_dir)
             created_paths.append(opt_dir)
             created_paths.append(gitkeep)
             if not json_output:
-                print(f"  Created: {opt_dir}")
+                print(f"  Created: {to_posix(opt_dir)}")
         if not json_output:
             print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
     else:
@@ -318,7 +329,7 @@ def scaffold_skill(
             created_paths.append(opt_dir)
             created_paths.append(gitkeep)
             if not json_output:
-                print(f"  Created: {opt_dir}")
+                print(f"  Created: {to_posix(opt_dir)}")
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
@@ -347,14 +358,14 @@ def scaffold_skill(
         )
         manifest_emit_corrupted = has_emit_corruption(manifest_findings)
         if created_manifest and not json_output:
-            print(f"  Created: {manifest_path}")
+            print(f"  Created: {to_posix(manifest_path)}")
         if created_manifest:
             created_paths.append(manifest_path)
         if manifest_warning and not json_output:
             level = LEVEL_FAIL if manifest_emit_corrupted else LEVEL_WARN
             print(f"  {level}: {manifest_warning}")
         if manifest_updated and not json_output:
-            print(f"  Updated: {manifest_path}")
+            print(f"  Updated: {to_posix(manifest_path)}")
         if manifest_findings and not json_output:
             for f in _dedupe_preserving_order(list(manifest_findings)):
                 print(f"  {f}")
@@ -367,8 +378,8 @@ def scaffold_skill(
             "component": "skill",
             "name": name,
             "success": not hard_failure,
-            "path": os.path.abspath(skill_path),
-            "created": [os.path.abspath(p) for p in created_paths],
+            "path": to_posix(os.path.abspath(skill_path)),
+            "created": [to_posix(os.path.abspath(p)) for p in created_paths],
             "router": router,
         }
         # All plain-scalar divergence findings merge into a single
@@ -386,12 +397,15 @@ def scaffold_skill(
                 result_dict["manifest_warning"] = manifest_warning
         return result_dict
 
-    print(f"\n\u2713 Skill '{name}' scaffolded at {skill_path}")
+    print(f"\n\u2713 Skill '{name}' scaffolded at {to_posix(skill_path)}")
     skill_md_path = os.path.join(skill_path, FILE_SKILL_MD)
     if not update_manifest:
-        print(f"  Next: edit {skill_md_path} and update {manifest_path}")
+        print(
+            f"  Next: edit {to_posix(skill_md_path)} and update "
+            f"{to_posix(manifest_path)}"
+        )
     else:
-        print(f"  Next: edit {skill_md_path}")
+        print(f"  Next: edit {to_posix(skill_md_path)}")
     if hard_failure:
         sys.exit(1)
     return None
@@ -457,9 +471,9 @@ def scaffold_capability(
                 "name": name,
                 "domain": domain,
                 "success": False,
-                "error": f"Directory already exists: {cap_path}",
+                "error": f"Directory already exists: {to_posix(cap_path)}",
             }
-        print(f"{LEVEL_FAIL}: Directory already exists: {cap_path}")
+        print(f"{LEVEL_FAIL}: Directory already exists: {to_posix(cap_path)}")
         sys.exit(1)
 
     router_skill = os.path.join(root, DIR_SKILLS, domain, FILE_SKILL_MD) if root else os.path.join(DIR_SKILLS, domain, FILE_SKILL_MD)
@@ -471,9 +485,9 @@ def scaffold_capability(
                 "name": name,
                 "domain": domain,
                 "success": False,
-                "error": f"Parent skill not found: {router_skill}",
+                "error": f"Parent skill not found: {to_posix(router_skill)}",
             }
-        print(f"{LEVEL_FAIL}: Parent skill not found: {router_skill}")
+        print(f"{LEVEL_FAIL}: Parent skill not found: {to_posix(router_skill)}")
         sys.exit(1)
 
     # Tracks created filesystem entries: content files (e.g.
@@ -506,7 +520,7 @@ def scaffold_capability(
         created_paths.append(opt_dir)
         created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Created: {opt_dir}")
+            print(f"  Created: {to_posix(opt_dir)}")
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
@@ -522,7 +536,8 @@ def scaffold_capability(
     # belong under their parent skill's ``capabilities:`` list.
     cap_manifest_msg = (
         f"Capabilities are not added to manifest.yaml directly. "
-        f"Add '{name}' to the capabilities list of '{domain}' in {manifest_path}."
+        f"Add '{name}' to the capabilities list of '{domain}' "
+        f"in {to_posix(manifest_path)}."
     )
 
     if json_output:
@@ -532,8 +547,8 @@ def scaffold_capability(
             "name": name,
             "domain": domain,
             "success": not frontmatter_parse_error,
-            "path": os.path.abspath(cap_path),
-            "created": [os.path.abspath(p) for p in created_paths],
+            "path": to_posix(os.path.abspath(cap_path)),
+            "created": [to_posix(os.path.abspath(p)) for p in created_paths],
         }
         if frontmatter_findings:
             result_dict["warnings"] = list(frontmatter_findings)
@@ -542,14 +557,16 @@ def scaffold_capability(
             result_dict["manifest_warning"] = cap_manifest_msg
         return result_dict
 
-    print(f"\n\u2713 Capability '{name}' scaffolded at {cap_path}")
+    print(f"\n\u2713 Capability '{name}' scaffolded at {to_posix(cap_path)}")
     cap_md_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
-    print(f"  Next: edit {cap_md_path}")
-    print(f"  Next: add capability to {router_skill} routing table")
+    print(f"  Next: edit {to_posix(cap_md_path)}")
+    print(
+        f"  Next: add capability to {to_posix(router_skill)} routing table"
+    )
     if update_manifest:
         print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
     else:
-        print(f"  Next: update {manifest_path}")
+        print(f"  Next: update {to_posix(manifest_path)}")
     if frontmatter_parse_error:
         sys.exit(1)
     return None
@@ -610,9 +627,9 @@ def scaffold_role(
                 "name": name,
                 "group": group,
                 "success": False,
-                "error": f"File already exists: {role_path}",
+                "error": f"File already exists: {to_posix(role_path)}",
             }
-        print(f"{LEVEL_FAIL}: File already exists: {role_path}")
+        print(f"{LEVEL_FAIL}: File already exists: {to_posix(role_path)}")
         sys.exit(1)
 
     # Tracks all filesystem entries created (files only for roles).
@@ -684,14 +701,14 @@ def scaffold_role(
         )
         manifest_emit_corrupted = has_emit_corruption(manifest_findings)
         if created_manifest and not json_output:
-            print(f"  Created: {manifest_path}")
+            print(f"  Created: {to_posix(manifest_path)}")
         if created_manifest:
             created_paths.append(manifest_path)
         if manifest_warning and not json_output:
             level = LEVEL_FAIL if manifest_emit_corrupted else LEVEL_WARN
             print(f"  {level}: {manifest_warning}")
         if manifest_updated and not json_output:
-            print(f"  Updated: {manifest_path}")
+            print(f"  Updated: {to_posix(manifest_path)}")
         if manifest_findings and not json_output:
             for f in _dedupe_preserving_order(list(manifest_findings)):
                 print(f"  {f}")
@@ -705,8 +722,8 @@ def scaffold_role(
             "name": name,
             "group": group,
             "success": not hard_failure,
-            "path": os.path.abspath(role_path),
-            "created": [os.path.abspath(p) for p in created_paths],
+            "path": to_posix(os.path.abspath(role_path)),
+            "created": [to_posix(os.path.abspath(p)) for p in created_paths],
         }
         combined_warnings = _dedupe_preserving_order(
             list(frontmatter_findings) + list(manifest_findings)
@@ -719,10 +736,10 @@ def scaffold_role(
                 result_dict["manifest_warning"] = manifest_warning
         return result_dict
 
-    print(f"\n\u2713 Role '{name}' scaffolded at {role_path}")
-    print(f"  Next: edit {role_path}")
+    print(f"\n\u2713 Role '{name}' scaffolded at {to_posix(role_path)}")
+    print(f"  Next: edit {to_posix(role_path)}")
     if not update_manifest:
-        print(f"  Next: update {manifest_path}")
+        print(f"  Next: update {to_posix(manifest_path)}")
     if hard_failure:
         sys.exit(1)
     return None
