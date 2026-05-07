@@ -686,6 +686,19 @@ def audit_skill_system(
     # nested under ``skills/<name>/`` — those skill paths do not
     # contain the shared subtrees, so the two passes are disjoint.
     #
+    # Distribution-repo mode skip: when ``skill_root_entry`` is
+    # None *and* ``find_skill_dirs`` returned no skills, the audit
+    # root has neither a top-level SKILL.md nor a ``skills/`` tree.
+    # That is the documented partial-audit shape (e.g., the foundry
+    # repo root, where the meta-skill lives under
+    # ``skill-system-foundry/`` rather than ``skills/<name>/``), and
+    # the shared subtrees here are top-level repository
+    # infrastructure such as ``scripts/`` — *not* skill-system
+    # content the bundler would copy.  Walking them would emit
+    # cross-platform warnings unrelated to any deployed skill.
+    # Gate the pass on ``skills`` so distribution-repo audits stay
+    # quiet on infrastructure that is out of scope for this rule.
+    #
     # Measurement caveat for the long-path rule: each system-root
     # subtree is walked with ``arcname_root`` defaulting to the
     # system root itself, so the rule sees arcnames like
@@ -700,7 +713,7 @@ def audit_skill_system(
     # offenders early, defer the per-skill arithmetic to packaging.
     shared_dirnames = (
         ("roles", "references", "assets", "scripts")
-        if skill_root_entry is None
+        if skill_root_entry is None and skills
         else ()
     )
     for shared_dirname in shared_dirnames:

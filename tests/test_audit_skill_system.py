@@ -2740,6 +2740,39 @@ class AuditCrossPlatformChecksTests(unittest.TestCase):
             ),
         )
 
+    def test_distribution_repo_mode_skips_shared_subtree_pass(self) -> None:
+        """Distribution-repo mode skips the shared-subtree dispatch.
+
+        When the audit root has neither a top-level SKILL.md nor a
+        ``skills/`` tree (the documented partial-audit shape — e.g.,
+        the foundry repo root, which holds the meta-skill under
+        ``skill-system-foundry/`` and has top-level repository
+        infrastructure under ``scripts/``), the shared-subtree
+        dispatch must stay quiet.  The directories present here are
+        not skill-system content the bundler would copy, so emitting
+        long-path or reserved-name warnings against them would be
+        unrelated audit noise that contradicts the documented
+        repo-root partial-audit behaviour.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No top-level SKILL.md and no ``skills/`` tree → the
+            # distribution-repo / partial-audit shape.  Place a
+            # reserved-name file under ``scripts/`` (top-level repo
+            # infrastructure) and confirm the audit does not flag it.
+            scripts_dir = os.path.join(tmpdir, "scripts")
+            os.makedirs(scripts_dir)
+            write_text(os.path.join(scripts_dir, "con.py"), "# infra\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        scripts_labelled = [e for e in errors if "scripts/:" in e]
+        self.assertEqual(
+            scripts_labelled, [],
+            msg=(
+                "shared-subtree dispatch must be skipped in "
+                "distribution-repo mode (no skills/ tree, no top-level "
+                f"SKILL.md); got infrastructure findings={scripts_labelled}"
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
