@@ -728,6 +728,15 @@ def audit_skill_system(
             errors.append(f"{level}: {shared_dirname}/: {detail}")
         if not shared_lp_errors and verbose:
             print(f"  ✓ {shared_dirname}/: long-path clean")
+        # Reserved-name pass — measurement is exact here, not
+        # approximate like the long-path pass above.  Reserved-name
+        # findings key off the per-component stem
+        # (``_reserved_stem``); prepending a skill basename at
+        # bundle time would only add another component to the
+        # archive path, never change whether ``roles/<file>``'s
+        # existing components match a Windows device name.  No
+        # ``arcname_root`` override is needed for parity with the
+        # bundler's per-skill measurement.
         shared_rn_errors, _shared_rn_passes = check_reserved_path_components(
             shared_dir, severity=LEVEL_WARN, boundary=system_root,
         )
