@@ -84,11 +84,10 @@ def _build_module_alias_map(tree: ast.AST) -> dict[str, str]:
     sole module surfaces that expose the built-in ``open`` with the
     ``newline=`` keyword (``zipfile.ZipFile.open`` and friends have
     a different signature and are intentionally skipped — see
-    ``_is_open_call``).  ``ast.ImportFrom`` is not walked because
-    ``from io import open`` rebinds the name, which would land in
-    the bare-name branch of ``_is_open_call``; resolving that path
-    would require tracking individual function rebinds, not module
-    aliases, and no current call site in the tree uses that form.
+    ``_is_open_call``).  ``ast.ImportFrom`` is handled by the
+    sibling ``_build_open_alias_set`` because the rebound name is a
+    callable (not a module) and lives in the bare-name branch of
+    ``_is_open_call``.
     """
     alias_map: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -100,24 +99,64 @@ def _build_module_alias_map(tree: ast.AST) -> dict[str, str]:
     return alias_map
 
 
-def _is_open_call(node: ast.Call, alias_map: dict[str, str]) -> bool:
+def _build_open_alias_set(tree: ast.AST) -> set[str]:
+    """Return local names rebound to ``io.open`` / ``builtins.open``.
+
+    Walks ``ast.ImportFrom`` nodes for ``from io import open`` and
+    ``from builtins import open``, with or without an ``as <name>``
+    rename.  Each match contributes the local name (the alias when
+    present, otherwise ``"open"``) to the set so ``_is_open_call``
+    can treat the rebound callable like the literal built-in
+    ``open``.
+
+    Without this set, a production module containing
+    ``from io import open as io_open`` could call ``io_open(path,
+    "w", encoding="utf-8")`` without ``newline="\\n"`` and the lint
+    would stay green — the previous bare-name branch only accepted
+    the literal identifier ``open``.
+    """
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module not in ("io", "builtins"):
+            continue
+        for alias in node.names:
+            if alias.name == "open":
+                aliases.add(alias.asname or alias.name)
+    return aliases
+
+
+def _is_open_call(
+    node: ast.Call,
+    alias_map: dict[str, str],
+    open_aliases: set[str],
+) -> bool:
     """Return True when *node* is a supported built-in ``open`` call.
 
-    The walker accepts the bare-name form plus attribute-form opens
-    whose left-hand side resolves to ``builtins`` or ``io`` (directly
-    or through an ``import io as _io`` alias).  It deliberately
-    rejects arbitrary ``obj.open(...)`` methods (for example
-    ``zipfile.ZipFile.open``), whose signatures and newline semantics
-    differ; treating every method named ``open`` as a built-in file
-    write would produce false-positive lint failures with invalid
-    remediation advice.
+    The walker accepts the bare-name form (the literal ``open``
+    plus any local name bound to ``io.open`` / ``builtins.open``
+    via ``from ... import open [as <name>]``) plus attribute-form
+    opens whose left-hand side resolves to ``builtins`` or ``io``
+    (directly or through an ``import io as _io`` alias).  It
+    deliberately rejects arbitrary ``obj.open(...)`` methods (for
+    example ``zipfile.ZipFile.open``), whose signatures and
+    newline semantics differ; treating every method named ``open``
+    as a built-in file write would produce false-positive lint
+    failures with invalid remediation advice.
 
     *alias_map* is the per-source ``{local_name: target_module}``
-    table built once by ``_build_module_alias_map`` and passed in so
-    AST traversal does not re-scan import statements per call.
+    table built once by ``_build_module_alias_map`` (covering the
+    attribute-form aliases); *open_aliases* is the matching set of
+    function-level aliases built once by ``_build_open_alias_set``
+    (covering the bare-name aliases from ``from``-import forms).
+    Both are passed in so AST traversal does not re-scan import
+    statements per call.
     """
     func = node.func
-    if isinstance(func, ast.Name) and func.id == "open":
+    if isinstance(func, ast.Name) and (
+        func.id == "open" or func.id in open_aliases
+    ):
         return True
     if (
         isinstance(func, ast.Attribute)
@@ -238,10 +277,11 @@ def _find_offenders(source_path: str) -> list[tuple[int, str]]:
         offenders.append((exc.lineno or 0, f"could not parse: {exc}"))
         return offenders
     alias_map = _build_module_alias_map(tree)
+    open_aliases = _build_open_alias_set(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if not _is_open_call(node, alias_map):
+        if not _is_open_call(node, alias_map, open_aliases):
             continue
         kwargs = _extract_open_kwargs(node)
         mode_node = kwargs.get("mode")
@@ -498,6 +538,56 @@ class LintCoverageTests(unittest.TestCase):
                     + "    fh.write('x')\n"
                 )
                 self.assertEqual(len(self._scan(source)), 1)
+
+    def test_from_import_open_alias_is_matched(self) -> None:
+        """``from io import open as io_open`` rebinds the bare name.
+
+        Pinned regression: the previous bare-name branch only accepted
+        the literal identifier ``open``, so a production module that
+        rebound the built-in via ``from io import open as io_open``
+        (or ``from builtins import open as builtin_open``) could call
+        ``io_open(path, "w")`` without ``newline="\\n"`` and the lint
+        stayed green.  ``_build_open_alias_set`` now resolves the
+        rebound name against the file's ``ImportFrom`` statements.
+        """
+        cases = (
+            ("from io import open as io_open\n", "io_open"),
+            ("from builtins import open as builtin_open\n", "builtin_open"),
+            # Bare ``from io import open`` rebinds the literal name
+            # ``open``; the lint must still treat it as the same
+            # built-in (the bare-name branch already covers ``open``,
+            # but the alias set adds it explicitly so the regression
+            # is pinned even if a future refactor removes the
+            # implicit literal-name check).
+            ("from io import open\n", "open"),
+            ("from builtins import open\n", "open"),
+        )
+        for import_stmt, opener in cases:
+            with self.subTest(opener=opener):
+                source = (
+                    import_stmt
+                    + f"with {opener}('p', 'w') as fh:\n"
+                    + "    fh.write('x')\n"
+                )
+                self.assertEqual(len(self._scan(source)), 1)
+
+    def test_from_import_open_from_unrelated_module_is_skipped(self) -> None:
+        """``from zipfile import ZipFile as _zf`` is not in the alias set.
+
+        Only ``io`` and ``builtins`` contribute to ``_build_open_alias_set``,
+        so a ``from <unrelated> import open as <name>`` form (extremely
+        unusual in production code, but defensively covered) does not
+        register as a built-in open, and the rebound name's calls are
+        passed through unchanged.
+        """
+        # ``zipfile.ZipFile`` is not the built-in ``open``; the
+        # rebound name should not be treated as a text-file write.
+        source = (
+            "from zipfile import ZipFile as _zf\n"
+            "with _zf('out.zip', 'w') as zf:\n"
+            "    pass\n"
+        )
+        self.assertEqual(self._scan(source), [])
 
     def test_aliased_unrelated_module_open_is_skipped(self) -> None:
         """An ``import zipfile as _zf; _zf.open(...)`` is not linted.
