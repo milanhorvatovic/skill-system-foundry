@@ -1615,7 +1615,7 @@ class ScaffoldSkillHumanOutputTests(unittest.TestCase):
             self.assertIn("Skill 'test-skill' scaffolded at", output)
             self.assertIn("Next:", output)
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn(manifest_path, output)
+            self.assertIn(to_posix(manifest_path), output)
 
     def test_success_message_with_update_manifest(self) -> None:
         """Success message with update_manifest omits manifest guidance."""
@@ -1731,7 +1731,7 @@ class ScaffoldCapabilityHumanOutputTests(unittest.TestCase):
             self.assertIn("routing table", output)
             # The manifest path includes the tmpdir prefix
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn("update " + manifest_path, output)
+            self.assertIn("update " + to_posix(manifest_path), output)
 
     def test_update_manifest_info_non_json(self) -> None:
         """With update_manifest=True, prints INFO about not adding to manifest directly."""
@@ -1753,7 +1753,7 @@ class ScaffoldCapabilityHumanOutputTests(unittest.TestCase):
                 scaffold_capability("my-domain", "my-cap", root=tmpdir, update_manifest=False)
             output = buf.getvalue()
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn("Next: update " + manifest_path, output)
+            self.assertIn("Next: update " + to_posix(manifest_path), output)
 
 
 # ===================================================================
@@ -1885,7 +1885,7 @@ class ScaffoldRoleHumanOutputTests(unittest.TestCase):
             self.assertIn("Role 'my-role' scaffolded at", output)
             self.assertIn("Next: edit", output)
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn("Next: update " + manifest_path, output)
+            self.assertIn("Next: update " + to_posix(manifest_path), output)
 
     def test_success_message_with_update_manifest(self) -> None:
         """Success with update_manifest omits manifest guidance."""
