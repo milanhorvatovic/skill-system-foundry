@@ -42,7 +42,7 @@
 
 # YAML 1.2.2 conformance corpus: byte-exact preservation across LF /
 # CRLF / mixed variants.  These overrides MUST stay below the broader
-# ``*.yaml`` rule above so the ``-text`` attribute wins.
-tests/fixtures/yaml-conformance/**/*.lf.yaml    -text
-tests/fixtures/yaml-conformance/**/*.crlf.yaml  -text
-tests/fixtures/yaml-conformance/**/*.mixed.yaml -text
+# ``*.yaml`` rule above so ``-text -eol`` wins per attribute.
+tests/fixtures/yaml-conformance/**/*.lf.yaml    -text -eol
+tests/fixtures/yaml-conformance/**/*.crlf.yaml  -text -eol
+tests/fixtures/yaml-conformance/**/*.mixed.yaml -text -eol
