@@ -1,0 +1,19 @@
+skill-system-foundry/scripts/audit_skill_system.py
+  s_80f3bc4f8ef8cc::t_c2f49a48e5bd6d 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "e5adad8ddaa54a531091c2ffd5cbdab5a87e1e19",
+  "prompts": {},
+  "sessions": {
+    "s_80f3bc4f8ef8cc": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1fb83c801ffetNTAExxUhr5Ogo",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
