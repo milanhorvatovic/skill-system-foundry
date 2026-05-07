@@ -1,0 +1,9 @@
+skill-system-foundry/scripts/audit_skill_system.py
+  ai_agent 731-739
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "1a1329a23b43a1bdc028a1cf9a10b0c7ae89960d",
+  "prompts": {}
+}
