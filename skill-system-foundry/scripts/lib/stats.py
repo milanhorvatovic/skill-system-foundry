@@ -592,13 +592,24 @@ def compute_stats(skill_path: str) -> dict:
         parents: set[str] = set()
         if parent_rel is not None:
             parents.add(parent_rel)
-        visited[filepath] = {
+        state: dict = {
             "path": rel,
             "bytes": byte_count,
             "parents": parents,
-            "line_endings": line_endings_mode,
-            "crlf_count": crlf_count,
         }
+        # Persist line-ending fields only when the toggle is enabled.
+        # ``compute_stats`` documents that ``*_lf`` keys and per-row
+        # ``line_endings`` are omitted entirely when detection is
+        # disabled; carrying ``crlf_count`` on every row in the
+        # disabled path would contradict that contract and the
+        # ``state["bytes"] - state.get("crlf_count", 0)`` aggregator
+        # below would silently consume a value the schema says is
+        # absent.
+        if STATS_LINE_ENDINGS_ENABLED:
+            state["crlf_count"] = crlf_count
+            if line_endings_mode is not None:
+                state["line_endings"] = line_endings_mode
+        visited[filepath] = state
 
         # Non-markdown: byte count recorded, nothing to walk further.
         if content is None:
@@ -717,7 +728,7 @@ def compute_stats(skill_path: str) -> dict:
             "bytes": state["bytes"],
             "reachable_from": sorted(state["parents"]),
         }
-        if state.get("line_endings") is not None:
+        if "line_endings" in state:
             entry["line_endings"] = state["line_endings"]
         if filepath == skill_md_abs:
             entry["discovery_bytes"] = discovery_count
@@ -725,6 +736,11 @@ def compute_stats(skill_path: str) -> dict:
             entry["discovery_bytes"] = capability_discovery[filepath][0]
         entries.append(entry)
         load_total += state["bytes"]
+        # ``crlf_count`` is only persisted when the toggle is on; the
+        # ``get`` default keeps the disabled-toggle path correct (no
+        # subtraction) and the enabled path consistent with whatever
+        # ``compute_line_endings`` recorded — including 0 for binary
+        # rows that were skipped by the text-extension gate.
         load_total_lf += state["bytes"] - state.get("crlf_count", 0)
 
     entries.sort(key=lambda entry: entry["path"])
