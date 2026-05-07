@@ -354,8 +354,21 @@ def _check_references(
                 "resolves outside the skill directory — acceptable for "
                 "shared resources but verify the path is intentional"
             )
-            # Skip all filesystem checks for external refs to avoid acting
-            # as a filesystem existence oracle in CI environments.
+            # Skip the *existence* check for external refs to avoid
+            # acting as a filesystem existence oracle in CI
+            # environments.  The case-exact pass above DOES run on
+            # external refs by design (see the comment introducing
+            # ``effective_case_root``): a wrong-cased
+            # ``../../shared/foo.md`` from a capability still resolves
+            # on Windows / default macOS but 404s on Linux, so the
+            # case-exact FAIL is exactly the host-independent diagnostic
+            # we want for external references too.  ``resolve_case_exact``
+            # walks ``os.listdir`` along the path and may fall back to
+            # ``os.path.exists`` for paths whose first segment is ``..``;
+            # that probe is bounded to one stat call per external ref
+            # and produces a structured ``(False, None, None)`` rather
+            # than a finding when the path is absent, so it is not a
+            # general-purpose existence oracle.
             continue
 
         # Cross-scope reference from a capability.  Two sub-cases:

@@ -46,6 +46,7 @@ from .constants import (
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
 from .references import is_drive_qualified, is_within_directory
+from .reporting import to_posix
 
 
 # Line-ending detection only runs on text-shaped foundry files.  The
@@ -438,8 +439,17 @@ def compute_stats(skill_path: str) -> dict:
         result["load_bytes_lf"] = 0
 
     if not os.path.isfile(skill_md):
+        # Route the path through ``to_posix`` so the FAIL message
+        # honours the cross-platform-rule contract documented in
+        # ``references/agentskills-spec.md``: program-derived paths
+        # in FAIL/WARN/INFO findings emit forward slashes regardless
+        # of host.  Without this, a Windows runner would emit a
+        # backslashed path here (``skill_path`` was already
+        # ``os.path.abspath``-ed above) and JSON consumers would see
+        # a different string than on POSIX runners.
         result["errors"].append(
-            f"{LEVEL_FAIL}: [foundry] No {FILE_SKILL_MD} found in {skill_path}"
+            f"{LEVEL_FAIL}: [foundry] No {FILE_SKILL_MD} found in "
+            f"{to_posix(skill_path)}"
         )
         return result
 
