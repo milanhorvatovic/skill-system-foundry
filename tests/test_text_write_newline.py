@@ -9,11 +9,24 @@ deterministic regardless of host.
 The lint walks the production source trees (the meta-skill scripts,
 the repo-infrastructure scripts under top-level ``scripts/``, and the
 CI helpers under ``.github/scripts/``) using Python's ``ast`` module
-and asserts that every ``open(...)`` call with a text-mode write
-flag and ``encoding="utf-8"`` also carries ``newline="\\n"``.  Tests
+and asserts that every built-in ``open(...)`` call with a text-mode
+write flag also carries ``newline="\\n"``.  Tests
 under ``tests/`` are exempt because they typically write fixtures in
 ``"wb"`` mode or rely on default newline handling that does not
 affect production output.
+
+The newline rule is **independent of the encoding rule**: any
+text-mode write performs Windows newline translation regardless of
+which encoding the call uses, so the lint applies to every
+text-mode ``open(...)`` write call — calls without ``encoding=`` at
+all, calls whose ``encoding`` is a non-literal expression (e.g. a
+``UTF8`` constant), and calls that pin ``encoding="utf-8"`` are all
+treated identically.  Example call shapes appearing below that
+include ``encoding="utf-8"`` are illustrative, not preconditions
+for the lint to fire.  The repo's separate ``encoding="utf-8"``
+convention is documented in AGENTS.md but is not gating this lint
+— coupling the two would let a future ``open(p, "w")`` (no
+encoding kwarg at all) silently bypass the newline guard.
 
 An earlier implementation used a regex matcher.  Two false-negative
 holes prompted the move to AST: the regex stopped the first
@@ -57,20 +70,61 @@ def _iter_python_sources() -> list[str]:
     return sources
 
 
-def _is_open_call(node: ast.Call) -> bool:
-    """Return True when *node* is a call to ``open`` (or ``X.open``).
+def _build_module_alias_map(tree: ast.AST) -> dict[str, str]:
+    """Return ``{local_name: target_module}`` for ``io`` / ``builtins``.
 
-    The walker accepts both the bare-name form and the
-    attribute form because production code may shadow ``open`` via
-    ``import builtins; builtins.open(...)`` or use a module's
-    ``open`` member (e.g., ``io.open``).  Either way the
-    text-mode-newline rule applies because the underlying call
-    accepts the same ``newline=`` keyword.
+    Walks ``ast.Import`` nodes so the lint can recognise aliased
+    forms such as ``import io as _io`` and still treat ``_io.open``
+    as a built-in text-file open.  Without this map, a contributor
+    who renames the module on import would silently bypass the
+    newline guard — the previous ``func.value.id in ("builtins",
+    "io")`` check matched only the literal module names.
+
+    Only ``io`` and ``builtins`` are tracked because they are the
+    sole module surfaces that expose the built-in ``open`` with the
+    ``newline=`` keyword (``zipfile.ZipFile.open`` and friends have
+    a different signature and are intentionally skipped — see
+    ``_is_open_call``).  ``ast.ImportFrom`` is not walked because
+    ``from io import open`` rebinds the name, which would land in
+    the bare-name branch of ``_is_open_call``; resolving that path
+    would require tracking individual function rebinds, not module
+    aliases, and no current call site in the tree uses that form.
+    """
+    alias_map: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            if alias.name in ("io", "builtins"):
+                alias_map[alias.asname or alias.name] = alias.name
+    return alias_map
+
+
+def _is_open_call(node: ast.Call, alias_map: dict[str, str]) -> bool:
+    """Return True when *node* is a supported built-in ``open`` call.
+
+    The walker accepts the bare-name form plus attribute-form opens
+    whose left-hand side resolves to ``builtins`` or ``io`` (directly
+    or through an ``import io as _io`` alias).  It deliberately
+    rejects arbitrary ``obj.open(...)`` methods (for example
+    ``zipfile.ZipFile.open``), whose signatures and newline semantics
+    differ; treating every method named ``open`` as a built-in file
+    write would produce false-positive lint failures with invalid
+    remediation advice.
+
+    *alias_map* is the per-source ``{local_name: target_module}``
+    table built once by ``_build_module_alias_map`` and passed in so
+    AST traversal does not re-scan import statements per call.
     """
     func = node.func
     if isinstance(func, ast.Name) and func.id == "open":
         return True
-    if isinstance(func, ast.Attribute) and func.attr == "open":
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr == "open"
+        and isinstance(func.value, ast.Name)
+        and alias_map.get(func.value.id) in ("builtins", "io")
+    ):
         return True
     return False
 
@@ -143,12 +197,27 @@ def _find_offenders(source_path: str) -> list[tuple[int, str]]:
     A call is an offender when:
 
     1. It targets ``open``.
-    2. It declares a text-mode write flag (``"w"``, ``"a"``,
-       ``"w+"``, ``"wt"``, ``"x"``, ``"r+"``, …; binary modes are
-       skipped).
+    2. Its ``mode`` argument is either a literal text-mode write
+       (``"w"``, ``"a"``, ``"w+"``, ``"wt"``, ``"x"``, ``"r+"``, …;
+       binary modes are skipped) OR a non-literal expression that
+       the lint cannot prove is safe.
     3. It does NOT declare ``newline="\\n"`` (either omits the
        keyword entirely or uses a different value such as ``""`` or
        ``None``).
+
+    Non-literal modes (``open(path, MODE)`` where ``MODE`` is a
+    ``ast.Name`` / attribute / call expression) are flagged because
+    a constant resolution like ``WRITE_MODE = "w"`` would otherwise
+    let production code introduce CRLF output on Windows while
+    bypassing the lint entirely.  An author who genuinely needs a
+    dynamic mode has three remediations: inline the literal at the
+    call site, pin ``newline="\\n"`` defensively (only safe when
+    the dynamic mode is guaranteed text — Python raises
+    ``ValueError: binary mode doesn't take a newline argument``
+    when ``newline=`` is paired with a binary mode), or split the
+    call into separate ``open()`` invocations per mode shape.
+    Calls with no ``mode`` argument at all default to ``"r"``
+    (read-only text), which cannot write — those are skipped.
 
     The newline rule is independent of the encoding rule: any
     text-mode write performs newline translation on Windows
@@ -168,14 +237,23 @@ def _find_offenders(source_path: str) -> list[tuple[int, str]]:
     except SyntaxError as exc:  # pragma: no cover — defensive only
         offenders.append((exc.lineno or 0, f"could not parse: {exc}"))
         return offenders
+    alias_map = _build_module_alias_map(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if not _is_open_call(node):
+        if not _is_open_call(node, alias_map):
             continue
         kwargs = _extract_open_kwargs(node)
-        mode = _string_constant(kwargs.get("mode"))
-        if mode is None or not _is_text_mode_write(mode):
+        mode_node = kwargs.get("mode")
+        if mode_node is None:
+            # No ``mode`` argument at all — defaults to ``"r"``
+            # (read-only text), which never writes.
+            continue
+        mode = _string_constant(mode_node)
+        non_literal_mode = False
+        if mode is None:
+            non_literal_mode = True
+        elif not _is_text_mode_write(mode):
             continue
         newline_node = kwargs.get("newline")
         newline = _string_constant(newline_node)
@@ -183,7 +261,23 @@ def _find_offenders(source_path: str) -> list[tuple[int, str]]:
             continue
         # Anything else is an offender — keyword missing, set to a
         # different literal, or set to a non-literal expression.
-        if newline_node is None:
+        if non_literal_mode:
+            shown = ast.unparse(mode_node)
+            if newline_node is None:
+                reason = (
+                    f"mode is a non-literal expression ({shown}) and "
+                    "newline=\"\\n\" missing — pin newline=\"\\n\" "
+                    "defensively or inline the mode literal"
+                )
+            else:
+                newline_shown = ast.unparse(newline_node)
+                reason = (
+                    f"mode is a non-literal expression ({shown}) and "
+                    f"newline is {newline_shown}; expected \"\\n\" — "
+                    "pin newline=\"\\n\" defensively or inline the "
+                    "mode literal"
+                )
+        elif newline_node is None:
             reason = "newline=\"\\n\" missing"
         else:
             shown = ast.unparse(newline_node)
@@ -227,9 +321,16 @@ class LintCoverageTests(unittest.TestCase):
 
     def _scan(self, source: str) -> list[tuple[int, str]]:
         # Helper: write *source* to a temp file and run the walker.
+        # ``newline="\n"`` keeps the fixture deterministic across hosts.
+        # Without it, Windows would translate the source's ``\n`` to
+        # ``\r\n`` on disk; the lint walks the file via ``ast.parse``
+        # which copes with either, but the regression harness for the
+        # explicit-LF rule should not introduce host variability into
+        # its own fixture writer.
         import tempfile
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", suffix=".py", delete=False,
+            mode="w", encoding="utf-8", newline="\n", suffix=".py",
+            delete=False,
         ) as fh:
             fh.write(source)
             path = fh.name
@@ -344,6 +445,147 @@ class LintCoverageTests(unittest.TestCase):
             "    fh.write('x')\n"
         )
         self.assertEqual(len(self._scan(source)), 1)
+
+    def test_arbitrary_open_methods_are_skipped(self) -> None:
+        """Only built-in-compatible ``open`` calls are linted.
+
+        Pinned regression: the AST lint previously accepted any
+        attribute named ``open``.  Production APIs such as
+        ``zipfile.ZipFile.open`` do not accept ``newline=`` and
+        should not receive the text-file remediation this lint
+        reports.
+        """
+        source = (
+            "import zipfile\n"
+            "with zipfile.ZipFile('out.zip', 'w') as zf:\n"
+            "    with zf.open('member.txt', mode='w') as fh:\n"
+            "        fh.write(b'x')\n"
+        )
+        self.assertEqual(self._scan(source), [])
+
+    def test_supported_open_attributes_are_matched(self) -> None:
+        """``builtins.open`` and ``io.open`` still use file semantics."""
+        for opener in ("builtins.open", "io.open"):
+            with self.subTest(opener=opener):
+                source = (
+                    "import builtins\n"
+                    "import io\n"
+                    f"with {opener}('p', 'w') as fh:\n"
+                    "    fh.write('x')\n"
+                )
+                self.assertEqual(len(self._scan(source)), 1)
+
+    def test_aliased_module_open_is_matched(self) -> None:
+        """``import io as _io; _io.open(...)`` must still be linted.
+
+        Pinned regression: the previous ``func.value.id in
+        ("builtins", "io")`` check matched only the literal module
+        names, so an alias would silently bypass the newline guard.
+        ``_build_module_alias_map`` now resolves the alias against
+        the file's import statements, and any local name bound to
+        ``io`` or ``builtins`` is treated the same as the bare
+        module name.
+        """
+        cases = (
+            ("import io as _io\n", "_io.open"),
+            ("import builtins as _bi\n", "_bi.open"),
+        )
+        for import_stmt, opener in cases:
+            with self.subTest(opener=opener):
+                source = (
+                    import_stmt
+                    + f"with {opener}('p', 'w') as fh:\n"
+                    + "    fh.write('x')\n"
+                )
+                self.assertEqual(len(self._scan(source)), 1)
+
+    def test_aliased_unrelated_module_open_is_skipped(self) -> None:
+        """An ``import zipfile as _zf; _zf.open(...)`` is not linted.
+
+        The alias map only registers ``io`` and ``builtins`` targets,
+        so an alias pointing at any other module falls through to the
+        attribute-form rejection path — same outcome as the bare
+        ``zipfile.ZipFile.open`` case in
+        ``test_arbitrary_open_methods_are_skipped``.
+        """
+        source = (
+            "import zipfile as _zf\n"
+            "with _zf.ZipFile('out.zip', 'w') as zf:\n"
+            "    with zf.open('member.txt', mode='w') as fh:\n"
+            "        fh.write(b'x')\n"
+        )
+        self.assertEqual(self._scan(source), [])
+
+    def test_non_literal_mode_is_offender(self) -> None:
+        """Non-literal mode expressions are flagged.
+
+        Pinned regression: an earlier ``_find_offenders`` skipped any
+        call whose ``mode`` was not a string literal, so a constant
+        resolution like ``WRITE_MODE = "w"; open(path, WRITE_MODE,
+        encoding="utf-8")`` bypassed the newline check entirely.  The
+        lint cannot prove a non-literal mode is binary or read-only,
+        so it surfaces such calls as offenders so a reviewer either
+        inlines the literal or pins ``newline="\\n"`` defensively.
+        """
+        source = (
+            "WRITE_MODE = 'w'\n"
+            "with open('p', WRITE_MODE, encoding='utf-8') as fh:\n"
+            "    fh.write('x')\n"
+        )
+        offenders = self._scan(source)
+        self.assertEqual(len(offenders), 1)
+        self.assertIn("non-literal", offenders[0][1])
+
+    def test_non_literal_mode_with_lf_newline_passes(self) -> None:
+        """Non-literal mode + ``newline="\\n"`` is fine.
+
+        The defensive remediation path: pinning ``newline="\\n"`` at
+        the call site removes the variability the lint is worried
+        about, so the lint accepts the call even though it cannot
+        prove the mode is a write.
+        """
+        source = (
+            "WRITE_MODE = 'w'\n"
+            "with open('p', WRITE_MODE, encoding='utf-8', "
+            "newline='\\n') as fh:\n"
+            "    fh.write('x')\n"
+        )
+        self.assertEqual(self._scan(source), [])
+
+    def test_non_literal_mode_with_non_lf_newline_is_offender(self) -> None:
+        """Non-literal mode + non-LF newline triggers the combined message.
+
+        Pinned regression: ``_find_offenders`` has a four-quadrant
+        decision (``non_literal_mode × newline_node is None``); this
+        test exercises the fourth quadrant whose dedicated message
+        formats both the mode and the newline expressions.  Without
+        coverage, a typo swapping ``newline_shown`` for the mode's
+        ``shown`` would land silently.
+        """
+        source = (
+            "WRITE_MODE = 'w'\n"
+            "with open('p', WRITE_MODE, encoding='utf-8', "
+            "newline='') as fh:\n"
+            "    fh.write('x')\n"
+        )
+        offenders = self._scan(source)
+        self.assertEqual(len(offenders), 1)
+        reason = offenders[0][1]
+        self.assertIn("non-literal", reason)
+        self.assertIn("WRITE_MODE", reason)
+        self.assertIn("newline is ''", reason)
+
+    def test_no_mode_kwarg_is_skipped(self) -> None:
+        """``open(path)`` with no mode defaults to ``"r"``; not flagged.
+
+        Distinguishes the absent-argument case from the non-literal
+        case so the lint does not produce noise on bare reads.
+        """
+        source = (
+            "with open('p') as fh:\n"
+            "    fh.read()\n"
+        )
+        self.assertEqual(self._scan(source), [])
 
 
 if __name__ == "__main__":

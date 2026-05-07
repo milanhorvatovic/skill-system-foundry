@@ -40,6 +40,20 @@ import os
 import sys
 
 
+# Use the same repository-level severity constant as the companion
+# smoke helper so CI diagnostics stay aligned with the foundry's
+# FAIL/WARN/INFO convention instead of spelling the level directly
+# in each print call.
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+_SCRIPTS_DIR = os.path.join(_REPO_ROOT, "skill-system-foundry", "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from lib.constants import LEVEL_FAIL  # noqa: E402  (path injected above)
+
+
 _STUB_FRONTMATTER = (
     "---\n"
     "name: demo\n"
@@ -56,11 +70,13 @@ _STUB_FRONTMATTER = (
 def rewrite(skill_md_path: str) -> int:
     """Replace *skill_md_path*'s frontmatter with the smoke-test stub.
 
-    Returns 0 on success, 1 if the file is missing or unreadable.
+    Returns 0 on success, 1 when the file is missing, unreadable,
+    undecodable as UTF-8, malformed (no opener or closer), or cannot
+    be rewritten.
     """
     if not os.path.isfile(skill_md_path):
         print(
-            f"FAIL: '{skill_md_path}' is not a file",
+            f"{LEVEL_FAIL}: '{skill_md_path}' is not a file",
             file=sys.stderr,
         )
         return 1
@@ -69,7 +85,7 @@ def rewrite(skill_md_path: str) -> int:
             src = fh.read()
     except OSError as exc:
         print(
-            f"FAIL: cannot read '{skill_md_path}': {exc}",
+            f"{LEVEL_FAIL}: cannot read '{skill_md_path}': {exc}",
             file=sys.stderr,
         )
         return 1
@@ -80,7 +96,7 @@ def rewrite(skill_md_path: str) -> int:
         # mode predictable instead of crashing with a traceback that
         # the caller's status handling does not expect.
         print(
-            f"FAIL: cannot decode '{skill_md_path}' as UTF-8: {exc}",
+            f"{LEVEL_FAIL}: cannot decode '{skill_md_path}' as UTF-8: {exc}",
             file=sys.stderr,
         )
         return 1
@@ -103,7 +119,7 @@ def rewrite(skill_md_path: str) -> int:
     lines = src.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
         print(
-            f"FAIL: '{skill_md_path}' has no frontmatter opener "
+            f"{LEVEL_FAIL}: '{skill_md_path}' has no frontmatter opener "
             "('---' on line 1) — refusing to rewrite a file the "
             "scaffold pipeline should have produced with a proper "
             "frontmatter block",
@@ -117,7 +133,7 @@ def rewrite(skill_md_path: str) -> int:
             break
     if closer_idx is None:
         print(
-            f"FAIL: '{skill_md_path}' has an unclosed frontmatter "
+            f"{LEVEL_FAIL}: '{skill_md_path}' has an unclosed frontmatter "
             "block (no second '---' delimiter line found) — "
             "refusing to rewrite a file the scaffold pipeline "
             "should have produced with a complete frontmatter block",
@@ -137,7 +153,7 @@ def rewrite(skill_md_path: str) -> int:
             fh.write(new_content)
     except OSError as exc:
         print(
-            f"FAIL: cannot write '{skill_md_path}': {exc}",
+            f"{LEVEL_FAIL}: cannot write '{skill_md_path}': {exc}",
             file=sys.stderr,
         )
         return 1
