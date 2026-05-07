@@ -28,6 +28,8 @@ from lib.constants import (
     BUNDLE_DESCRIPTION_MAX_LENGTH,
     LEVEL_FAIL,
     LEVEL_WARN,
+    PHASE_POSTVALIDATION,
+    PHASE_PREVALIDATION,
     SEPARATOR_WIDTH,
 )
 
@@ -1455,7 +1457,7 @@ class JsonOutputTests(unittest.TestCase):
             self.assertEqual(cm.exception.code, 1)
             result = json.loads(stdout.getvalue())
             self.assertFalse(result["success"])
-            self.assertEqual(result["phase"], "pre-validation")
+            self.assertEqual(result["phase"], PHASE_PREVALIDATION)
 
     def test_json_postvalidation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1490,7 +1492,7 @@ class JsonOutputTests(unittest.TestCase):
             self.assertEqual(cm.exception.code, 1)
             result = json.loads(stdout.getvalue())
             self.assertFalse(result["success"])
-            self.assertEqual(result["phase"], "post-validation")
+            self.assertEqual(result["phase"], PHASE_POSTVALIDATION)
 
     def test_json_missing_scan_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2032,6 +2034,97 @@ class ExternalArcnamePreflightValueErrorTests(unittest.TestCase):
                     # be non-zero (silent exit-0 would prove the
                     # exception was swallowed).
                     self.assertNotEqual(cm.exception.code, 0)
+
+
+class ExternalArcnamePreflightPathShapeTests(unittest.TestCase):
+    """Bundle pre-flight normalizes native external bundle paths."""
+
+    def test_native_external_bundle_path_is_checked_as_posix_arcname(self) -> None:
+        """Backslash-shaped external arcnames must still split by component.
+
+        Pinned regression: on Windows ``compute_bundle_path`` can
+        return a native relative path such as ``roles\\con.md``.
+        ``check_external_arcnames`` expects POSIX archive paths and
+        splits only on ``/``; passing the native path through would
+        treat ``roles\\con.md`` as one component and miss the
+        Windows-reserved ``CON`` basename.
+
+        Defence-in-depth caveat: ``compute_bundle_path`` already
+        normalises its return value to POSIX on every code path
+        (see ``references.py`` — every ``return`` runs through
+        ``replace(os.sep, "/")``).  In normal flow the
+        ``to_posix(bundle_rel)`` call in ``bundle.py`` is therefore
+        redundant.  This test mocks ``compute_bundle_path`` to
+        deliberately produce a backslash-shape value so the
+        ``bundle.py`` defensive layer is exercised end-to-end — if
+        the upstream helper ever lost or weakened its
+        normalisation, this test would still catch the regression.
+        Treat the doubled normalisation as belt-and-braces, not as
+        a load-bearing single-source-of-truth contract.
+
+        The ``phase`` assertion locks in that the **pre-validation**
+        layer is what catches this — if the normalisation regresses
+        to a no-op on POSIX (e.g. someone replaces ``to_posix`` with
+        ``str.replace(os.sep, "/")`` again), the bundle assembly
+        would still emit a post-validation FAIL on Linux and the
+        previous-shape assertions would silently keep passing.
+        Asserting the phase makes that regression visible on every
+        runner.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir, output_path = _setup_bundling_env(tmpdir)
+            ext_file = os.path.join(tmpdir, "roles", "con.md")
+            os.makedirs(os.path.dirname(ext_file))
+            write_text(ext_file, "x")
+            fake_scan = _make_fake_scan()
+            fake_scan["external_files"] = {ext_file}
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(
+                    sys, "argv",
+                    [
+                        "bundle.py", skill_dir,
+                        "--system-root", system_root,
+                        "--output", output_path,
+                        "--json",
+                    ],
+                ),
+                mock.patch(
+                    "bundle.prevalidate", return_value=([], [], fake_scan),
+                ),
+                mock.patch(
+                    "bundle.compute_bundle_path",
+                    return_value=r"roles\con.md",
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    bundle.main()
+            self.assertEqual(cm.exception.code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(
+                payload.get("phase"),
+                PHASE_PREVALIDATION,
+                msg=(
+                    "expected pre-validation phase to catch the "
+                    "reserved-name violation in the backslash arcname "
+                    "(post-validation indicates the pre-flight skipped "
+                    "the path), got "
+                    + repr(payload.get("phase"))
+                ),
+            )
+            failures = payload["errors"]["failures"]
+            self.assertTrue(
+                any("demo-skill/roles/con.md" in msg for msg in failures),
+                msg=f"expected POSIX arcname in failures, got {failures}",
+            )
+            self.assertTrue(
+                any("CON" in msg for msg in failures),
+                msg=f"expected reserved-name finding, got {failures}",
+            )
 
 
 if __name__ == "__main__":

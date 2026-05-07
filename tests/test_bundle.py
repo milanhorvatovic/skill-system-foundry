@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -1847,12 +1848,58 @@ class CheckLongPathsTests(unittest.TestCase):
             # bare-from-skill-root form.
             self.assertIn(f"{self.SKILL_NAME}/x.md", errors[0])
 
+    def test_findings_emitted_in_lexicographic_order(self) -> None:
+        """Pinned regression: findings are sorted by POSIX rel-path.
+
+        ``walk_skill_files`` inherits ``os.walk`` / ``os.listdir``
+        ordering, which varies across filesystems and runners.  The
+        helper sorts candidate rel-paths before emitting findings so
+        finding text is byte-identical across hosts and downstream
+        tests can assert full error lists without flaking.  Without
+        this invariant, a future refactor that reverts to walker
+        order would silently regress on the ubuntu-only matrix
+        entry, since ext4 happens to yield in alphabetical-ish order
+        on many trees.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = self._make_skill_dir(tmpdir)
+            # Build over-budget files across multiple subdirectories;
+            # the basenames are intentionally a mix so the sort
+            # must compare across siblings, not just within a
+            # single directory.
+            arcnames = (
+                "z_subdir/" + "a" * 50 + ".md",
+                "a_subdir/" + "z" * 50 + ".md",
+                "m_subdir/" + "m" * 50 + ".md",
+                "z_subdir/" + "b" * 50 + ".md",
+                "a_subdir/" + "y" * 50 + ".md",
+            )
+            for arcname in arcnames:
+                self._build_skill_with_arcname(skill_dir, arcname)
+            errors, _ = check_long_paths(
+                skill_dir, threshold=60, user_prefix_budget=5,
+            )
+            self.assertEqual(len(errors), 5)
+            # Extract the rel-path each finding names; the format is
+            # ``LEVEL_FAIL: '<rel>' exceeds...`` so the rel sits
+            # between the first pair of single quotes.
+            rels = [re.search(r"'([^']+)'", e).group(1) for e in errors]
+            self.assertEqual(
+                rels,
+                sorted(rels),
+                msg=(
+                    "check_long_paths must emit findings in "
+                    "lexicographic POSIX-rel order — order observed "
+                    "was " + repr(rels)
+                ),
+            )
+
 
 @unittest.skipIf(
     sys.platform == "win32",
     "Cannot create reserved-name files (CON/AUX/NUL/...) on Windows; "
     "the rule under test is OS-independent and is verified on the "
-    "ubuntu and macOS matrix runners instead.",
+    "ubuntu-latest matrix runner instead.",
 )
 class CheckReservedPathComponentsTests(unittest.TestCase):
     """``check_reserved_path_components`` flags reserved NTFS names.
@@ -1868,8 +1915,8 @@ class CheckReservedPathComponentsTests(unittest.TestCase):
     fixture-construction calls below would error out before
     ``check_reserved_path_components`` is invoked.  The rule's
     logic does not depend on the host OS — it walks names against
-    a configured list — so the matrix's ubuntu and macOS runs
-    cover the behaviour, and the Windows skip avoids a false
+    a configured list — so the matrix's ubuntu-latest run covers
+    the behaviour, and the Windows skip avoids a false
     test failure that has nothing to do with the rule itself.
     """
 
@@ -2007,6 +2054,43 @@ class CheckReservedPathComponentsTests(unittest.TestCase):
                             f"got errors={errors}"
                         ),
                     )
+
+    def test_findings_emitted_in_lexicographic_order(self) -> None:
+        """Pinned regression: findings are sorted by POSIX rel-path.
+
+        Same invariant as ``CheckLongPathsTests``: collecting and
+        sorting candidate rel-paths before emitting findings makes
+        the output byte-identical across runners.  The dedup ``seen``
+        set folds duplicate (component, stem) pairs so reported
+        findings still match between hosts even when the underlying
+        walk order differs.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_dir = os.path.join(tmpdir, "demo")
+            os.makedirs(skill_dir)
+            self._build(skill_dir, "SKILL.md")
+            # Three reserved-name files in distinct sibling
+            # directories so dedup does not collapse the findings.
+            # Lexicographic order is determined by the POSIX rel
+            # path (with the skill basename prefix), so the expected
+            # order is ``demo/a/...``, ``demo/m/...``, ``demo/z/...``.
+            self._build(skill_dir, "z_subdir/nul.md")
+            self._build(skill_dir, "a_subdir/con.md")
+            self._build(skill_dir, "m_subdir/aux.md")
+            errors, _ = check_reserved_path_components(skill_dir)
+            self.assertEqual(len(errors), 3)
+            # Each finding text contains the offending POSIX rel
+            # path between the first pair of single quotes.
+            rels = [re.search(r"'([^']+)'", e).group(1) for e in errors]
+            self.assertEqual(
+                rels,
+                sorted(rels),
+                msg=(
+                    "check_reserved_path_components must emit "
+                    "findings in lexicographic POSIX-rel order — "
+                    "order observed was " + repr(rels)
+                ),
+            )
 
 
 class CheckExternalArcnamesTests(unittest.TestCase):

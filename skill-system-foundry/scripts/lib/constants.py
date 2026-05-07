@@ -80,6 +80,13 @@ PH_ROLE_TITLE = "<Role Name>"
 ROUTER_HEADERS: tuple[str, str, str] = ("Capability", "Trigger", "Path")
 ROUTER_HEADER_STRIP_CHARS = " *_`"
 
+# Bundle phase tokens — emitted as the ``phase`` field of every JSON
+# bundle payload.  Centralised here so producers (``bundle.py``) and
+# consumers (smoke checks, regression tests) reference the same
+# string and a future rename does not silently desynchronise the two.
+PHASE_PREVALIDATION = "pre-validation"
+PHASE_POSTVALIDATION = "post-validation"
+
 # ===================================================================
 # Validation Rules (loaded from configuration.yaml)
 # ===================================================================

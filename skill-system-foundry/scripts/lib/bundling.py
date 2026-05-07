@@ -137,7 +137,6 @@ def check_long_paths(
     available = threshold - user_prefix_budget
     longest = 0
     longest_rel = ""
-    file_count = 0
     # Use the bundler's actual walker (``walk_skill_files``) so the
     # pre-flight inspects exactly the same files ``create_bundle``
     # would copy: same exclude-pattern filtering on entries AND on
@@ -152,16 +151,48 @@ def check_long_paths(
     # an out-of-boundary symlink is silently skipped here (the
     # bundler enforces the boundary strictly at packaging time).
     boundary_violations: list = []
+    # Collect every candidate rel-path first, then sort before
+    # emitting findings.  ``walk_skill_files`` inherits ``os.walk``
+    # / ``os.listdir`` ordering, which varies across filesystems
+    # and runners — finding text would diff differently on
+    # ubuntu-latest vs windows-latest for the same skill.  Sorting
+    # by the POSIX rel-path used in the message makes the output
+    # byte-identical across hosts and lets future tests assert
+    # full error lists without flaking.
+    candidates: list[str] = []
     for dirpath, fname in walk_skill_files(
         abs_root,
         BUNDLE_EXCLUDE_PATTERNS,
         boundary=boundary_abs,
         boundary_violations=boundary_violations,
     ):
-        file_count += 1
         full = os.path.join(dirpath, fname)
+        # ``os.path.relpath`` returns a native-shape string (``/``
+        # on POSIX, ``\\`` on Windows), so ``replace(os.sep, "/")``
+        # always normalises the actual separator that was just
+        # produced.  This differs from the ``bundle.py`` external
+        # arcname case where the input came from
+        # ``compute_bundle_path`` — that helper may have been
+        # mocked or refactored, so the bundle.py call routes
+        # through ``to_posix`` to defend against a backslash
+        # appearing on POSIX.  The two idioms are not
+        # interchangeable: this site is safe with the cheaper
+        # single-replace because the upstream is ``os.path.relpath``.
         rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
+        candidates.append(rel)
+    candidates.sort()
+    file_count = len(candidates)
+    for rel in candidates:
         arcname_len = len(rel)
+        # ``longest_rel`` reports the lexicographically-first rel
+        # path of maximum length.  The earlier walker-order
+        # implementation reported whichever max-length file
+        # ``os.walk`` happened to yield first — that varied across
+        # filesystems and runners and made the pass message
+        # non-deterministic.  The sorted iteration above also
+        # changes the tie-break: when several files share the max
+        # length, the lex-first one wins now instead of the
+        # walker-first.  The reported *length* is unchanged.
         if arcname_len > longest:
             longest = arcname_len
             longest_rel = rel
@@ -234,23 +265,39 @@ def check_reserved_path_components(
     boundary_abs = (
         os.path.abspath(boundary) if boundary is not None else abs_root
     )
-    file_count = 0
     seen: set[tuple[str, str]] = set()
     # Reuse the bundler's actual walker so the rule fires on
     # exactly the path components ``create_bundle`` would write
     # into the archive (same exclude-pattern filtering, same
     # boundary enforcement, same alias-preserving cycle
     # protection).  See ``check_long_paths`` for the rationale.
+    # ``walk_skill_files`` inherits ``os.walk`` / ``os.listdir``
+    # ordering, so collect rel-paths first and sort them before
+    # emitting findings — without this, finding text would diff
+    # differently across runners and filesystems for the same
+    # skill, making CI output flaky and JSON payloads
+    # platform-dependent.
     boundary_violations: list = []
+    candidates: list[str] = []
     for dirpath, fname in walk_skill_files(
         abs_root,
         BUNDLE_EXCLUDE_PATTERNS,
         boundary=boundary_abs,
         boundary_violations=boundary_violations,
     ):
-        file_count += 1
         full = os.path.join(dirpath, fname)
+        # Same separator-shape invariant as ``check_long_paths``:
+        # ``os.path.relpath`` output is native-shape, so
+        # ``replace(os.sep, "/")`` is sufficient here.  The
+        # ``bundle.py`` external-arcname pre-flight uses
+        # ``to_posix`` instead because its input came from
+        # ``compute_bundle_path`` and could carry a backslash on
+        # POSIX (e.g. under test mocks).
         rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
+        candidates.append(rel)
+    candidates.sort()
+    file_count = len(candidates)
+    for rel in candidates:
         # Check every component of the relative path — directory
         # AND filename — exactly once per (component-path, stem).
         # ``walk_skill_files`` yields a (root, filename) pair per

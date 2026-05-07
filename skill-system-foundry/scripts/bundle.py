@@ -45,6 +45,8 @@ from lib.constants import (
     FILE_MANIFEST,
     FILE_SKILL_MD,
     BUNDLE_EXCLUDE_PATTERNS,
+    PHASE_POSTVALIDATION,
+    PHASE_PREVALIDATION,
     SEPARATOR_WIDTH,
     LEVEL_FAIL,
     LEVEL_WARN,
@@ -450,7 +452,9 @@ def main() -> None:
                     "bundle phase will report any concrete failure"
                 )
                 continue
-            external_arcnames.append(f"{skill_basename}/{bundle_rel}")
+            external_arcnames.append(
+                f"{skill_basename}/{to_posix(bundle_rel)}"
+            )
     # ``check_external_arcnames`` returns FAIL-level findings (the
     # rule's default severity); those flow through the blocking
     # ``errors`` list alongside ``check_long_paths`` and
@@ -487,7 +491,7 @@ def main() -> None:
                 "tool": "bundle",
                 "path": to_posix(skill_path),
                 "success": False,
-                "phase": "pre-validation",
+                "phase": PHASE_PREVALIDATION,
                 "errors": categorize_errors_for_json(all_issues),
             }))
             sys.exit(1)
@@ -587,7 +591,7 @@ def main() -> None:
                     "tool": "bundle",
                     "path": to_posix(skill_path),
                     "success": False,
-                    "phase": "post-validation",
+                    "phase": PHASE_POSTVALIDATION,
                     "errors": categorize_errors_for_json(post_errors),
                 }))
                 sys.exit(1)
