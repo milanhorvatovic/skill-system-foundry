@@ -60,6 +60,7 @@ from lib.constants import (
     LEVEL_WARN,
     LEVEL_INFO,
 )
+from lib.reporting import to_posix
 
 
 def _run(args, cwd):
@@ -936,7 +937,7 @@ class UpdateManifestSkillTests(unittest.TestCase):
             data = json.loads(proc.stdout)
             self.assertTrue(data["success"])
             manifest_abs = os.path.abspath(os.path.join(tmpdir, "manifest.yaml"))
-            self.assertIn(manifest_abs, data["created"])
+            self.assertIn(to_posix(manifest_abs), data["created"])
 
     def test_json_created_excludes_manifest_when_preexisting(self) -> None:
         """--update-manifest does not add manifest.yaml to created if it already exists."""
@@ -1075,7 +1076,7 @@ class UpdateManifestRoleTests(unittest.TestCase):
             data = json.loads(proc.stdout)
             self.assertTrue(data["success"])
             manifest_abs = os.path.abspath(os.path.join(tmpdir, "manifest.yaml"))
-            self.assertIn(manifest_abs, data["created"])
+            self.assertIn(to_posix(manifest_abs), data["created"])
 
     def test_role_conflict_warns(self) -> None:
         """--update-manifest for role warns on name conflict."""
