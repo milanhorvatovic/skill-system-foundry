@@ -136,11 +136,21 @@ class StatsCLIHappyPathTests(unittest.TestCase):
         for key in (
             "tool", "version", "path", "success",
             "skill", "metric", "discovery_bytes", "load_bytes",
-            "files", "summary", "errors",
+            "stats", "files", "summary", "errors",
         ):
             self.assertIn(key, payload, f"missing key {key}")
         self.assertEqual(payload["tool"], "stats")
         self.assertEqual(payload["metric"], "bytes")
+        self.assertEqual(payload["stats"]["metric"], "bytes")
+        self.assertEqual(
+            payload["stats"]["discovery_bytes"],
+            payload["discovery_bytes"],
+        )
+        self.assertEqual(payload["stats"]["load_bytes"], payload["load_bytes"])
+        self.assertIn("discovery_bytes_lf", payload["stats"])
+        self.assertIn("load_bytes_lf", payload["stats"])
+        self.assertNotIn("discovery_bytes_lf", payload)
+        self.assertNotIn("load_bytes_lf", payload)
         self.assertTrue(payload["success"])
         self.assertEqual(payload["summary"]["files"], len(payload["files"]))
 

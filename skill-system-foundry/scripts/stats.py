@@ -35,22 +35,22 @@ relative cost of authoring decisions over time.  Counts are taken
 from raw on-disk UTF-8 bytes (CRLF preserved); a Windows checkout of
 the same content reports a higher count than a POSIX checkout.
 
-For cross-platform comparability, the JSON payload also reports
-``discovery_bytes_lf`` and ``load_bytes_lf`` alongside the raw
-counts, with one byte subtracted per ``\\r\\n`` pair detected in
-the relevant window — ``load_bytes_lf`` subtracts every CRLF in
-every text-shaped load-budget file, ``discovery_bytes_lf`` subtracts
-only the CRLFs inside each frontmatter block.  Every text-shaped
-load-budget contributor (markdown, YAML, JSON, txt, sh, py, toml)
-also carries a per-row ``line_endings`` field (``"lf"`` / ``"crlf"``
-/ ``"mixed"``); binary load contributors (e.g. an image or PDF
-referenced from ``references/``) deliberately omit the key because
-arbitrary ``\\r\\n`` byte pairs in binary content are not line
-terminators, so consumers should branch on key presence rather
-than treat the missing key as a regression.  The ``*_lf`` keys and
-``line_endings`` fields are gated on
-``stats.line_endings.enabled`` in ``configuration.yaml`` — when the
-toggle is off the keys are omitted from the JSON payload entirely.
+For cross-platform comparability, the JSON payload's ``stats`` object
+also reports ``discovery_bytes_lf`` and ``load_bytes_lf`` alongside
+the nested raw counts, with one byte subtracted per ``\\r\\n`` pair
+detected in the relevant window — ``load_bytes_lf`` subtracts every
+CRLF in every text-shaped load-budget file, ``discovery_bytes_lf``
+subtracts only the CRLFs inside each frontmatter block.  Every
+text-shaped load-budget contributor (markdown, YAML, JSON, txt, sh,
+py, toml) also carries a per-row ``line_endings`` field (``"lf"`` /
+``"crlf"`` / ``"mixed"``); binary load contributors (e.g. an image
+or PDF referenced from ``references/``) deliberately omit the key
+because arbitrary ``\\r\\n`` byte pairs in binary content are not line
+terminators, so consumers should branch on key presence rather than
+treat the missing key as a regression.  The ``*_lf`` keys and
+``line_endings`` fields are gated on ``stats.line_endings.enabled``
+in ``configuration.yaml`` — when the toggle is off the keys are
+omitted from the JSON payload entirely.
 """
 
 import argparse
@@ -270,6 +270,11 @@ def main() -> None:
             "metric": result["metric"],
             "discovery_bytes": result["discovery_bytes"],
             "load_bytes": result["load_bytes"],
+            "stats": {
+                "metric": result["metric"],
+                "discovery_bytes": result["discovery_bytes"],
+                "load_bytes": result["load_bytes"],
+            },
             "files": result["files"],
             "summary": {
                 "failures": len(fails),
@@ -285,9 +290,11 @@ def main() -> None:
         # rather than reading an equal-to-raw fallback that would
         # silently misrepresent CRLF checkouts.
         if "discovery_bytes_lf" in result:
-            payload["discovery_bytes_lf"] = result["discovery_bytes_lf"]
+            payload["stats"]["discovery_bytes_lf"] = (
+                result["discovery_bytes_lf"]
+            )
         if "load_bytes_lf" in result:
-            payload["load_bytes_lf"] = result["load_bytes_lf"]
+            payload["stats"]["load_bytes_lf"] = result["load_bytes_lf"]
         print(to_json_output(payload))
         sys.exit(1 if fails else 0)
 
