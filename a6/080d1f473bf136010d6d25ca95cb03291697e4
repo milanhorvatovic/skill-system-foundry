@@ -1,0 +1,21 @@
+tests/test_reporting.py
+  s_ccbf066e1709cb::t_0fd2b875a95da6 48-76
+skill-system-foundry/scripts/lib/reporting.py
+  s_ccbf066e1709cb::t_32ee462f353db0 100-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "a6080d1f473bf136010d6d25ca95cb03291697e4",
+  "prompts": {},
+  "sessions": {
+    "s_ccbf066e1709cb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e0723-e0d1-7152-bb9e-a97a288f0417",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
