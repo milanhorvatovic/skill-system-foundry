@@ -1355,7 +1355,7 @@ def main() -> None:
                         },
                     }))
                 else:
-                    print(f"Error: {msg}")
+                    print_error_line(f"{LEVEL_FAIL}: {msg}")
                 sys.exit(1)
             rewrite_root = detected
         rows = find_fixable_references(rewrite_root)
