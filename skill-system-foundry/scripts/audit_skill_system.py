@@ -1237,10 +1237,10 @@ def main() -> None:
                 "tool": "audit_skill_system",
                 "path": to_posix(os.path.abspath(system_root)),
                 "success": False,
-                "error": f"'{system_root}' is not a directory",
+                "error": f"'{to_posix(system_root)}' is not a directory",
             }))
         else:
-            print_error_line(f"{LEVEL_FAIL}: '{system_root}' is not a directory.")
+            print_error_line(f"{LEVEL_FAIL}: '{to_posix(system_root)}' is not a directory.")
         sys.exit(1)
 
     # When --json is active, suppress verbose terminal output from

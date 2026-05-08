@@ -252,10 +252,10 @@ def main() -> None:
                 "tool": "stats",
                 "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
-                "error": f"'{skill_path}' is not a directory",
+                "error": f"'{to_posix(skill_path)}' is not a directory",
             }))
         else:
-            print_error_line(f"{LEVEL_FAIL}: '{skill_path}' is not a directory.")
+            print_error_line(f"{LEVEL_FAIL}: '{to_posix(skill_path)}' is not a directory.")
         sys.exit(1)
 
     result = compute_stats(skill_path)
