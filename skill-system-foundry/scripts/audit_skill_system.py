@@ -63,6 +63,7 @@ from lib.yaml_parser import parse_yaml_subset
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
+    format_exception,
     print_error_line,
     print_summary,
     to_json_output,
@@ -113,7 +114,7 @@ def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except OSError as exc:
-        return None, f"cannot read: {exc}"
+        return None, f"cannot read: {format_exception(exc)}"
     except json.JSONDecodeError as exc:
         return None, f"invalid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
     if not isinstance(data, dict):
@@ -124,25 +125,26 @@ def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
 def _skill_md_version(system_root: str) -> tuple[str | None, str | None]:
     """Return ``(version, error)`` for ``skill-system-foundry/SKILL.md``."""
     path = os.path.join(system_root, "skill-system-foundry", FILE_SKILL_MD)
+    path_display = to_posix(path)
     if not os.path.exists(path):
-        return None, f"{path} does not exist"
+        return None, f"{path_display} does not exist"
     try:
         fm, _, _ = load_frontmatter(path)
     except OSError as exc:
         # A present-but-unreadable file (permissions, transient FS error)
         # must surface as a structured finding instead of aborting the
         # audit, mirroring how _read_plugin_json handles its own errors.
-        return None, f"{path} cannot be read: {exc}"
+        return None, f"{path_display} cannot be read: {format_exception(exc)}"
     if fm is None:
-        return None, f"{path} has no frontmatter"
+        return None, f"{path_display} has no frontmatter"
     if "_parse_error" in fm:
-        return None, f"{path} YAML parse error: {fm['_parse_error']}"
+        return None, f"{path_display} YAML parse error: {fm['_parse_error']}"
     metadata = fm.get("metadata")
     if not isinstance(metadata, dict):
-        return None, f"{path} has no 'metadata' mapping"
+        return None, f"{path_display} has no 'metadata' mapping"
     value = metadata.get("version")
     if not isinstance(value, str):
-        return None, f"{path} missing 'metadata.version' string"
+        return None, f"{path_display} missing 'metadata.version' string"
     return value, None
 
 
@@ -223,7 +225,7 @@ def check_version_consistency(system_root: str) -> list[str]:
     if not os.path.exists(marketplace_path):
         findings.append(
             f"{LEVEL_FAIL}: version drift — marketplace.json: "
-            f"{marketplace_path} does not exist"
+            f"{to_posix(marketplace_path)} does not exist"
         )
     else:
         market_data, market_err = _read_plugin_json(marketplace_path)
@@ -479,7 +481,7 @@ def audit_skill_system(
             # loop FAILs the file via its existing parse-error branch
             # instead of silently skipping or deferring the crash to a
             # later body-read site.
-            fm = {"_parse_error": f"unreadable: {exc}"}
+            fm = {"_parse_error": f"unreadable: {format_exception(exc)}"}
             cap_scalar_findings = []
         system_capability_data[cap_md_abs] = CapabilityRecord(
             fm, cap_scalar_findings,

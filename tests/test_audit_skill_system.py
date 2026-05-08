@@ -2126,7 +2126,9 @@ class CheckVersionConsistencyTests(unittest.TestCase):
 
             with mock.patch(
                 "audit_skill_system.load_frontmatter",
-                side_effect=OSError(13, "permission denied"),
+                side_effect=OSError(
+                    13, "permission denied", "C:\\tmp\\SKILL.md",
+                ),
             ):
                 findings = check_version_consistency(tmp)
             self.assertTrue(
@@ -2135,6 +2137,7 @@ class CheckVersionConsistencyTests(unittest.TestCase):
                     for f in findings
                 )
             )
+            self.assertTrue(all("\\" not in finding for finding in findings))
 
     def test_empty_string_version_is_treated_as_drift(self) -> None:
         """``"version": ""`` must not silently bypass the comparison.
