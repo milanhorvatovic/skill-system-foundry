@@ -1,0 +1,19 @@
+tests/test_constants.py
+  s_d898409b72bc63::t_6b2103ca33fc2f 1229-1230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "629c55055b200890870ef4b30a07cbafb5da06b5",
+  "prompts": {},
+  "sessions": {
+    "s_d898409b72bc63": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f75c7451ffeCcx9YqZ6nfYC3w",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
