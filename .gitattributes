@@ -33,12 +33,12 @@
 *.txt    text eol=lf
 
 # Common binary types — never normalise.
-*.png    binary
-*.jpg    binary
-*.jpeg   binary
-*.gif    binary
-*.zip    binary
-*.gz     binary
+*.png    binary -eol
+*.jpg    binary -eol
+*.jpeg   binary -eol
+*.gif    binary -eol
+*.zip    binary -eol
+*.gz     binary -eol
 
 # YAML 1.2.2 conformance corpus: byte-exact preservation across LF /
 # CRLF / mixed variants.  These overrides MUST stay below the broader
