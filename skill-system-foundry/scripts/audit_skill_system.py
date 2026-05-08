@@ -1281,6 +1281,18 @@ def main() -> None:
                     print(
                         f"Checking prose YAML: {path} ({fence_count} fences)"
                     )
+        skill_root_entry = top_level_skill_entry(system_root)
+        if skill_root_entry is not None:
+            findings, checked, per_file = collect_prose_findings(
+                system_root, audit_prefix=skill_root_entry["name"]
+            )
+            prose_checked += checked
+            prose_findings.extend(findings)
+            if effective_verbose:
+                for path, fence_count in per_file:
+                    print(
+                        f"Checking prose YAML: {path} ({fence_count} fences)"
+                    )
         for finding in prose_findings:
             errors.append(format_finding_as_string(finding))
     yaml_conformance_slot = {
