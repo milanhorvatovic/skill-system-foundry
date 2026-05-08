@@ -1235,14 +1235,20 @@ def main() -> None:
 
     if not os.path.isdir(system_root):
         if json_output:
+            # ``path`` is program-derived (``abspath``) and routed
+            # through ``to_posix`` per the chokepoint contract.  The
+            # ``error`` field echoes the user-typed argument and is
+            # left verbatim — agentskills-spec.md documents user-input
+            # echoes as a deliberate exception so the message
+            # round-trips back to the operator unchanged.
             print(to_json_output({
                 "tool": "audit_skill_system",
                 "path": to_posix(os.path.abspath(system_root)),
                 "success": False,
-                "error": f"'{to_posix(system_root)}' is not a directory",
+                "error": f"'{system_root}' is not a directory",
             }))
         else:
-            print_error_line(f"{LEVEL_FAIL}: '{to_posix(system_root)}' is not a directory.")
+            print_error_line(f"{LEVEL_FAIL}: '{system_root}' is not a directory.")
         sys.exit(1)
 
     # When --json is active, suppress verbose terminal output from

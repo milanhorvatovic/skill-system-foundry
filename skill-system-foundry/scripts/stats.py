@@ -248,14 +248,20 @@ def main() -> None:
 
     if not os.path.isdir(skill_path):
         if json_output:
+            # ``path`` is program-derived (``abspath``) and routed
+            # through ``to_posix`` per the chokepoint contract.  The
+            # ``error`` field echoes the user-typed argument and is
+            # left verbatim — agentskills-spec.md documents user-input
+            # echoes as a deliberate exception so the message
+            # round-trips back to the operator unchanged.
             print(to_json_output({
                 "tool": "stats",
                 "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
-                "error": f"'{to_posix(skill_path)}' is not a directory",
+                "error": f"'{skill_path}' is not a directory",
             }))
         else:
-            print_error_line(f"{LEVEL_FAIL}: '{to_posix(skill_path)}' is not a directory.")
+            print_error_line(f"{LEVEL_FAIL}: '{skill_path}' is not a directory.")
         sys.exit(1)
 
     result = compute_stats(skill_path)
