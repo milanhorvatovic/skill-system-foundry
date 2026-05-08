@@ -904,12 +904,14 @@ CODEX_KNOWN_TOOL_KEYS = frozenset(_codex["known_tool_keys"])
 # Clean up private names
 del _f, _config
 del _skill, _skill_name, _skill_desc, _voice, _skill_body, _body_refs
+del _raw_windows_reserved, _normalized_windows_reserved, _seen_windows_reserved
 del _allowed_tools, _catalogs, _claude_code_catalog, _fence_languages
 del _capability_frontmatter, _raw_skill_only_fields
 del _normalized_skill_only_fields, _seen_skill_only_fields
 del _metadata, _plain_scalar, _WS_DECODE, _fm_suggest
-del _dep, _role, _bundle
+del _dep, _role, _bundle, _long_path
 del _orphan_refs, _raw_allowed_orphans, _normalized_orphans
 del _path_resolution
+del _stats, _stats_le, _stats_le_enabled
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf
