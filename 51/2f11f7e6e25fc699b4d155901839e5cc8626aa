@@ -1,0 +1,19 @@
+skill-system-foundry/scripts/bundle.py
+  s_a121792104a1eb::t_19826a7ceedd84 606
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "512f11f7e6e25fc699b4d155901839e5cc8626aa",
+  "prompts": {},
+  "sessions": {
+    "s_a121792104a1eb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f76ed920ffeCmUr3Ud7gQ6y1b",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
