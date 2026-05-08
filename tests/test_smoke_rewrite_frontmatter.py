@@ -191,12 +191,17 @@ class RewriteTests(unittest.TestCase):
         err = OSError(5, "Input/output error", native)
         stderr = StringIO()
 
+        # Patch ``builtins.open`` rather than ``smoke_rewrite.open``:
+        # the helper uses bare ``open(...)`` calls, so the module
+        # itself has no ``open`` attribute and ``patch.object`` is
+        # implementation-detail-fragile (mock has historically
+        # required ``create=True`` for non-existent attrs, and
+        # patching the builtin directly is the explicit way to
+        # intercept the actual call site).
         with mock.patch.object(
             smoke_rewrite.os.path, "isfile", return_value=True,
         ):
-            with mock.patch.object(
-                smoke_rewrite, "open", side_effect=err,
-            ):
+            with mock.patch("builtins.open", side_effect=err):
                 with redirect_stderr(stderr):
                     result = smoke_rewrite.rewrite(native)
 
