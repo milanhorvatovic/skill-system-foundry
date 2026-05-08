@@ -1620,6 +1620,56 @@ class IsWithinDirectoryTests(unittest.TestCase):
             os.unlink(target)
             self.assertTrue(is_within_directory(link, tmpdir))
 
+    def test_live_and_dangling_links_under_symlinked_parent(self) -> None:
+        """Both child shapes classify into the same enclosing directory.
+
+        Pinned regression: the dangling branch uses ``abspath`` while
+        the live branch uses ``realpath``.  When the *parent*
+        directory is itself reachable via a symlink, the two
+        canonicalisation regimes could disagree about what
+        "enclosing directory" means — a live child resolves through
+        the parent's realpath target while a dangling sibling
+        resolves only to the parent alias.  The function must still
+        return ``True`` for both children when measured against the
+        symlinked parent path so callers using one consistent root
+        cannot accidentally split children into "in-tree" and
+        "out-of-tree" buckets purely on link liveness.
+        """
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks not available on this platform")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real_parent = os.path.join(tmpdir, "real-parent")
+            os.makedirs(real_parent)
+            alias_parent = os.path.join(tmpdir, "alias-parent")
+            try:
+                os.symlink(real_parent, alias_parent)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation not permitted")
+            live_target = os.path.join(real_parent, "live.md")
+            write_text(live_target, "x")
+            live_link = os.path.join(real_parent, "live-link.md")
+            os.symlink(live_target, live_link)
+            dangling_target = os.path.join(real_parent, "missing.md")
+            write_text(dangling_target, "x")
+            dangling_link = os.path.join(real_parent, "dangling-link.md")
+            os.symlink(dangling_target, dangling_link)
+            os.unlink(dangling_target)
+            # Both children must classify as inside the alias parent
+            # root, even though one is reachable via realpath and the
+            # other only via abspath.
+            self.assertTrue(
+                is_within_directory(
+                    os.path.join(alias_parent, "live-link.md"),
+                    alias_parent,
+                )
+            )
+            self.assertTrue(
+                is_within_directory(
+                    os.path.join(alias_parent, "dangling-link.md"),
+                    alias_parent,
+                )
+            )
+
 
 # ===================================================================
 # extract_references
