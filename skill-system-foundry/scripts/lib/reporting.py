@@ -70,6 +70,47 @@ def to_posix(path: str) -> str:
     return path
 
 
+def format_exception(exc: BaseException) -> str:
+    """Return a path-free description of an exception.
+
+    Companion to ``to_posix``: the chokepoint covers paths the
+    foundry composes itself, but exceptions raised by stdlib
+    helpers (``OSError`` from ``open()``, ``ValueError`` from
+    ``os.path.relpath`` on different Windows drives) embed the
+    offending path in their default ``str()`` form.  On Windows
+    those paths arrive with backslashes and would leak through
+    every ``f"... ({exc})"`` site in finding strings.
+
+    For ``OSError`` subclasses, render the class name plus
+    ``strerror`` (or an ``errno`` fallback) so the message stays
+    platform-independent — every call site already names the
+    relevant path through ``to_posix`` in its own format string.
+    For ``ValueError`` instances raised by ``os.path.relpath`` and
+    similar path arithmetic, render the class name plus the first
+    arg verbatim (the message), but stripped of any embedded
+    filename context.  Other exception classes (including
+    ``UnicodeError``) are rendered via their default ``str()``
+    because their messages do not carry a filename.
+    """
+    if isinstance(exc, OSError):
+        detail = exc.strerror or (
+            f"errno {exc.errno}" if exc.errno is not None else "OS error"
+        )
+        return f"{exc.__class__.__name__}: {detail}"
+    if isinstance(exc, ValueError):
+        # ``os.path.relpath`` raises ``ValueError("path is on mount
+        # 'C:', start on mount 'D:'")`` on Windows-cross-drive.
+        # The mount tokens carry colons (a path component) but no
+        # backslashes, so the default ``str()`` form is safe today;
+        # routing through this helper anyway keeps every UI-bound
+        # exception text on the same chokepoint should the stdlib
+        # wording evolve to include a backslashed path.
+        message = exc.args[0] if exc.args else ""
+        message_str = str(message) if message else "value error"
+        return f"{exc.__class__.__name__}: {message_str}"
+    return f"{exc.__class__.__name__}: {exc}"
+
+
 def parse_finding_string(raw: str) -> dict:
     """Parse a parser finding string into a structured dict.
 

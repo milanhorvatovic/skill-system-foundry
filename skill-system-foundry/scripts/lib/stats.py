@@ -46,7 +46,7 @@ from .constants import (
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
 from .references import is_drive_qualified, is_within_directory
-from .reporting import to_posix
+from .reporting import format_exception, to_posix
 
 
 # Line-ending detection only runs on text-shaped foundry files.  The
@@ -71,28 +71,6 @@ _EXCLUDED_LOAD_CATEGORIES = frozenset({DIR_SCRIPTS, DIR_ASSETS})
 # ===================================================================
 # File-level helpers
 # ===================================================================
-
-
-def _format_exception(exc: Exception) -> str:
-    """Return a path-free description of an OSError or UnicodeError.
-
-    ``OSError.__str__`` embeds the offending filename in host-native
-    form (backslashes on Windows), which would leak through the
-    ``to_posix`` chokepoint contract for UI-bound finding strings.
-    For ``OSError`` subclasses, render the class name plus
-    ``strerror`` (or an ``errno`` fallback) so the message stays
-    platform-independent — every call site already names the
-    relevant path through ``to_posix`` in its own format string.
-    For ``UnicodeError`` subclasses, ``str(exc)`` does not include
-    a filename (it carries codec/byte-position context instead),
-    so the default format is safe.
-    """
-    if isinstance(exc, OSError):
-        detail = exc.strerror or (
-            f"errno {exc.errno}" if exc.errno is not None else "OS error"
-        )
-        return f"{exc.__class__.__name__}: {detail}"
-    return f"{exc.__class__.__name__}: {exc}"
 
 
 def read_bytes_count(filepath: str) -> int:
@@ -297,7 +275,7 @@ def _compute_capability_discovery(
         except (OSError, UnicodeError) as exc:
             errors.append(
                 f"{LEVEL_WARN}: [foundry] cannot scan '{state['path']}' "
-                f"frontmatter ({_format_exception(exc)}) — "
+                f"frontmatter ({format_exception(exc)}) — "
                 f"discovery_bytes recorded as 0"
             )
             discovery_by_filepath[filepath] = (0, 0)
@@ -485,7 +463,7 @@ def compute_stats(skill_path: str) -> dict:
     except (OSError, UnicodeError) as exc:
         result["errors"].append(
             f"{LEVEL_FAIL}: [foundry] cannot read {FILE_SKILL_MD} "
-            f"({_format_exception(exc)})"
+            f"({format_exception(exc)})"
         )
         return result
     if frontmatter and "_parse_error" in frontmatter:
@@ -507,7 +485,7 @@ def compute_stats(skill_path: str) -> dict:
     except (OSError, UnicodeError) as exc:
         result["errors"].append(
             f"{LEVEL_FAIL}: [foundry] cannot scan {FILE_SKILL_MD} "
-            f"frontmatter ({_format_exception(exc)})"
+            f"frontmatter ({format_exception(exc)})"
         )
         return result
     if discovery_count == 0 and frontmatter is None:
@@ -550,7 +528,7 @@ def compute_stats(skill_path: str) -> dict:
         except OSError as exc:
             result["errors"].append(
                 f"{LEVEL_WARN}: [foundry] cannot read '{rel}' "
-                f"({_format_exception(exc)}) — excluded from "
+                f"({format_exception(exc)}) — excluded from "
                 f"load_bytes"
             )
             return
@@ -587,7 +565,7 @@ def compute_stats(skill_path: str) -> dict:
                 # readable working copy fills in the gap.
                 result["errors"].append(
                     f"{LEVEL_WARN}: [foundry] cannot detect line endings "
-                    f"for '{rel}' ({_format_exception(exc)}) — "
+                    f"for '{rel}' ({format_exception(exc)}) — "
                     f"line_endings field omitted from this row"
                 )
 
@@ -606,7 +584,7 @@ def compute_stats(skill_path: str) -> dict:
             except (OSError, UnicodeError) as exc:
                 result["errors"].append(
                     f"{LEVEL_WARN}: [foundry] cannot decode '{rel}' as "
-                    f"UTF-8 ({_format_exception(exc)}) — "
+                    f"UTF-8 ({format_exception(exc)}) — "
                     f"excluded from load_bytes"
                 )
                 return

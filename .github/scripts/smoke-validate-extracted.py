@@ -56,21 +56,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.constants import LEVEL_FAIL  # noqa: E402  (path injected above)
-from lib.reporting import to_posix  # noqa: E402  (path injected above)
-
-
-def format_os_error(exc: OSError) -> str:
-    """Return an ``OSError`` summary without embedding native path text.
-
-    ``str(exc)`` includes ``filename`` on most platforms.  On Windows
-    that path contains backslashes, which defeats the helper's
-    diagnostic contract: paths that cross the UI boundary are rendered
-    through ``to_posix`` so log text and tests are byte-identical on
-    every runner.  Keep the actionable error class and strerror while
-    leaving path rendering to the caller.
-    """
-    reason = exc.strerror or "OS error"
-    return f"{exc.__class__.__name__}: {reason}"
+from lib.reporting import format_exception, to_posix  # noqa: E402
 
 
 def find_skill_dirs(extracted_root: str) -> list[str]:
@@ -164,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(
             f"{LEVEL_FAIL}: cannot list extracted root "
-            f"'{extracted_root_posix}': {format_os_error(exc)}",
+            f"'{extracted_root_posix}': {format_exception(exc)}",
             file=sys.stderr,
         )
         return 1

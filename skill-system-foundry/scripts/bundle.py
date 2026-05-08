@@ -59,6 +59,7 @@ from lib.references import (
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
+    format_exception,
     print_error_line,
     print_summary,
     to_json_output,
@@ -471,7 +472,7 @@ def main() -> None:
                 external_arcname_warns.append(
                     f"{LEVEL_WARN}: external file '{to_posix(ext_file)}' "
                     f"could not be resolved to a bundle path "
-                    f"({exc.__class__.__name__}: {exc}); skipped from "
+                    f"({format_exception(exc)}); skipped from "
                     "long-path / reserved-name pre-flight — a later "
                     "bundle phase will report any concrete failure"
                 )
