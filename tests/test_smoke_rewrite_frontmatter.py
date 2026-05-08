@@ -13,6 +13,9 @@ import importlib.util
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
+from unittest import mock
 
 
 _CI_SCRIPTS_DIR = os.path.abspath(
@@ -171,6 +174,37 @@ class RewriteTests(unittest.TestCase):
                 smoke_rewrite.rewrite(os.path.join(tmpdir, "missing.md")),
                 1,
             )
+
+    def test_missing_file_error_normalizes_windows_path(self) -> None:
+        """Diagnostics should not leak native backslashes in path text."""
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            result = smoke_rewrite.rewrite(r"C:\tmp\missing.md")
+
+        self.assertEqual(result, 1)
+        self.assertIn("C:/tmp/missing.md", stderr.getvalue())
+        self.assertNotIn(r"C:\tmp\missing.md", stderr.getvalue())
+
+    def test_read_oserror_omits_native_path_from_exception_text(self) -> None:
+        """Raw ``OSError`` repr should not reintroduce backslash paths."""
+        native = r"C:\tmp\demo\SKILL.md"
+        err = OSError(5, "Input/output error", native)
+        stderr = StringIO()
+
+        with mock.patch.object(
+            smoke_rewrite.os.path, "isfile", return_value=True,
+        ):
+            with mock.patch.object(
+                smoke_rewrite, "open", side_effect=err,
+            ):
+                with redirect_stderr(stderr):
+                    result = smoke_rewrite.rewrite(native)
+
+        self.assertEqual(result, 1)
+        msg = stderr.getvalue()
+        self.assertIn("C:/tmp/demo/SKILL.md", msg)
+        self.assertIn("OSError: Input/output error", msg)
+        self.assertNotIn(native, msg)
 
     def test_non_utf8_content_returns_one(self) -> None:
         """A SKILL.md with non-UTF-8 bytes returns the documented exit 1.
