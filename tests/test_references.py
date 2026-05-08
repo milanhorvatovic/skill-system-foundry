@@ -2002,11 +2002,14 @@ class ScanReferencesExceptionHandlingTests(unittest.TestCase):
             write_text(os.path.join(skill_dir, "doc.md"), "content")
             with patch(
                 "lib.references.extract_references",
-                side_effect=OSError("mocked read error"),
+                side_effect=OSError(
+                    13, "Permission denied", "C:\\tmp\\secret.md",
+                ),
             ):
                 result = scan_references(skill_dir, tmpdir)
         fails = [e for e in result["errors"] if "Cannot read" in e]
         self.assertGreaterEqual(len(fails), 1)
+        self.assertTrue(all("\\" not in fail for fail in fails))
 
     def test_os_error_non_markdown_produces_warn(self) -> None:
         """An OSError when reading a non-markdown file produces a WARN."""
@@ -2019,7 +2022,9 @@ class ScanReferencesExceptionHandlingTests(unittest.TestCase):
 
             def selective_oserror(filepath: str) -> list:
                 if filepath.endswith(".yaml"):
-                    raise OSError("mocked")
+                    raise OSError(
+                        13, "Permission denied", "C:\\tmp\\secret.yaml",
+                    )
                 return original(filepath)
 
             with patch(
@@ -2029,6 +2034,7 @@ class ScanReferencesExceptionHandlingTests(unittest.TestCase):
                 result = scan_references(skill_dir, tmpdir)
         warns = [w for w in result["warnings"] if "Cannot read" in w]
         self.assertGreaterEqual(len(warns), 1)
+        self.assertTrue(all("\\" not in warn for warn in warns))
 
 
 # ===================================================================

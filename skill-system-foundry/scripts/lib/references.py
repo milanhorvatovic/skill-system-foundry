@@ -24,6 +24,7 @@ from .constants import (
     EXT_MARKDOWN,
     RE_DEGRADED_SYMLINK,
 )
+from .reporting import format_exception, to_posix
 
 # ===================================================================
 # Reference Detection Patterns (broader than validation patterns)
@@ -910,8 +911,8 @@ def walk_skill_files(
                         rel = os.path.relpath(dir_path, skill_path).replace(os.sep, "/")
                         raise ValueError(
                             f"Symlinked directory escapes allowed boundary "
-                            f"rooted at '{boundary}': "
-                            f"'{rel}' -> '{real_target}'. "
+                            f"rooted at '{to_posix(boundary)}': "
+                            f"'{rel}' -> '{to_posix(real_target)}'. "
                             f"Remove or replace the symlink before bundling."
                         )
                     continue
@@ -938,8 +939,8 @@ def walk_skill_files(
                         rel = os.path.relpath(filepath, skill_path).replace(os.sep, "/")
                         raise ValueError(
                             f"Symlinked file escapes allowed boundary "
-                            f"rooted at '{boundary}': "
-                            f"'{rel}' -> '{real_target}'. "
+                            f"rooted at '{to_posix(boundary)}': "
+                            f"'{rel}' -> '{to_posix(real_target)}'. "
                             f"Remove or replace the symlink before bundling."
                         )
                     continue
@@ -1084,12 +1085,14 @@ def scan_references(
             rel = _rel(filepath)
             if is_markdown_file(filepath):
                 errors.append(
-                    f"{LEVEL_FAIL}: Cannot read '{rel}': {exc}. "
+                    f"{LEVEL_FAIL}: Cannot read '{rel}': "
+                    f"{format_exception(exc)}. "
                     f"Ensure the file is accessible before bundling."
                 )
             else:
                 warnings.append(
-                    f"{LEVEL_WARN}: Cannot read '{rel}': {exc}. "
+                    f"{LEVEL_WARN}: Cannot read '{rel}': "
+                    f"{format_exception(exc)}. "
                     f"Skipping reference detection for this file."
                 )
             return
@@ -1481,8 +1484,9 @@ def scan_references(
                                         f"in inlined skill "
                                         f"'{canonical_name}' escapes "
                                         f"allowed boundary rooted at "
-                                        f"'{inlined_boundary}': "
-                                        f"'{iv_rel}' -> '{iv.real_target}'. "
+                                        f"'{to_posix(inlined_boundary)}': "
+                                        f"'{iv_rel}' -> "
+                                        f"'{to_posix(iv.real_target)}'. "
                                         f"Symlink targets must stay within "
                                         f"this boundary."
                                     )
@@ -1586,13 +1590,13 @@ def scan_references(
     ):
         _scan_file(os.path.join(root, filename), 0, frozenset(), ())
 
-    boundary_display = boundary
+    boundary_display = to_posix(boundary)
     for v in violations:
         rel = _rel(v.link_path)
         errors.append(
             f"{LEVEL_FAIL}: Symlinked {v.kind} escapes allowed boundary "
             f"rooted at '{boundary_display}': '{rel}' -> "
-            f"'{v.real_target}'. Symlink targets must stay within "
+            f"'{to_posix(v.real_target)}'. Symlink targets must stay within "
             f"this boundary."
         )
 
