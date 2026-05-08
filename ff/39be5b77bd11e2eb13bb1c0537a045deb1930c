@@ -1,0 +1,19 @@
+skill-system-foundry/scripts/stats.py
+  s_d898409b72bc63::t_69385639672b0a 255,258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "ff39be5b77bd11e2eb13bb1c0537a045deb1930c",
+  "prompts": {},
+  "sessions": {
+    "s_d898409b72bc63": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f75c7451ffeCcx9YqZ6nfYC3w",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
