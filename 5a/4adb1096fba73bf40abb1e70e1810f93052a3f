@@ -1,0 +1,23 @@
+AGENTS.md
+  s_46d49bc23c4241::t_610a9908159b2d 192
+skill-system-foundry/scripts/stats.py
+  s_46d49bc23c4241::t_c16e191a4d7ff8 38-53,273-277,293-295,297
+tests/test_stats_cli.py
+  s_46d49bc23c4241::t_a225b34797d5bd 139,144-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "5a4adb1096fba73bf40abb1e70e1810f93052a3f",
+  "prompts": {},
+  "sessions": {
+    "s_46d49bc23c4241": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e088c-8f98-7a63-ae3a-d87523d87ea2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
