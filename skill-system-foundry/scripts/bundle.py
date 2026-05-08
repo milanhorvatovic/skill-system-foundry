@@ -434,7 +434,21 @@ def main() -> None:
     skill_basename = os.path.basename(os.path.abspath(skill_path))
     external_arcnames: list[str] = []
     external_arcname_warns: list[str] = []
-    if scan_result is not None:
+    # Gate the external-arcname preflight on a real system root.
+    # ``compute_bundle_path`` falls back to ``DIR_REFERENCES`` plus the
+    # bare basename when ``system_root`` is None, which collapses every
+    # external (regardless of its actual category on disk) into a single
+    # speculative arcname under ``references/``.  Walking those
+    # speculative paths through the long-path / reserved-name rules
+    # would emit findings that don't correspond to anything the bundler
+    # will actually write — and may double-up basenames into duplicate
+    # arcnames.  The standalone-skill-with-external-refs case is
+    # already covered upstream: ``infer_system_root`` failure with
+    # external files in ``scan_result`` produces an ``early_warnings``
+    # entry and the bundler ultimately fails when ``_copy_external_files``
+    # cannot resolve the externals.  Skipping the preflight here keeps
+    # the existing diagnostic path authoritative.
+    if scan_result is not None and system_root is not None:
         for ext_file in sorted(scan_result.get("external_files", set())):
             try:
                 bundle_rel = compute_bundle_path(ext_file, system_root)
