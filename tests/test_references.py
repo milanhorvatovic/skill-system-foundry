@@ -2841,6 +2841,49 @@ class ResolveCaseExactCacheTests(unittest.TestCase):
                 # without the cache.
                 self.assertEqual(spy.call_count, 4)
 
+    def test_cache_collapses_symlink_aliases_to_one_entry(self) -> None:
+        """Two aliases that reach the same physical directory share one listdir.
+
+        The foundry's own dev-cycle layout ships
+        ``.claude/skills/<name>`` symlinks into ``.agents/skills/<name>``.
+        A deployed-system audit walks the same physical directory
+        through two aliases — without a canonicalised cache key the
+        helper would re-listdir on the second alias even though the
+        first alias already populated the cache.
+        """
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks not available on this platform")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            real_dir = os.path.join(tmpdir, "real-skills")
+            os.makedirs(real_dir)
+            write_text(os.path.join(real_dir, "guide.md"), "x")
+            alias_dir = os.path.join(tmpdir, "alias-skills")
+            try:
+                os.symlink(real_dir, alias_dir)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation not permitted")
+            cache: dict[str, list[str]] = {}
+            from unittest import mock
+            with mock.patch(
+                "lib.references.os.listdir",
+                wraps=os.listdir,
+            ) as spy:
+                resolve_case_exact(
+                    real_dir,
+                    os.path.join(real_dir, "guide.md"),
+                    listdir_cache=cache,
+                )
+                resolve_case_exact(
+                    alias_dir,
+                    os.path.join(alias_dir, "guide.md"),
+                    listdir_cache=cache,
+                )
+            # Both resolutions touch the same physical directory, so
+            # the canonicalised cache key collapses them to a single
+            # listdir call.  Without the canonicalisation each alias
+            # would issue its own listdir.
+            self.assertEqual(spy.call_count, 1)
+
 
 class LooksLikeDegradedSymlinkTests(unittest.TestCase):
     """The Windows-without-DevMode degraded-symlink heuristic.

@@ -454,19 +454,22 @@ def resolve_case_exact(
     - *listdir_cache* — optional dict that callers can pass in to
       amortise ``os.listdir`` calls across many resolutions in the
       same validation pass.  When supplied, the helper consults the
-      cache (keyed by absolute directory path) before issuing a
-      syscall and stores the result for subsequent lookups.  A skill
-      with N references M components deep without the cache costs
-      N·M listdirs; with the cache it costs at most one listdir per
-      unique directory the reference graph touches.  The cache is
-      not read concurrently; safe to share within a single pass.
-      Cache keys are absolute path strings as composed by
-      ``os.path.join``; aliases reached via different symlink paths
-      produce different cache entries even when they resolve to the
-      same physical directory.  The redundancy does not affect
-      correctness — both keys list the same content — but the cache
-      is less effective on skills that lean on internal-symlink
-      aliases for naming.
+      cache (keyed by canonicalised absolute directory path) before
+      issuing a syscall and stores the result for subsequent
+      lookups.  A skill with N references M components deep without
+      the cache costs N·M listdirs; with the cache it costs at most
+      one listdir per unique physical directory the reference graph
+      touches.  The cache is not read concurrently; safe to share
+      within a single pass.  Cache keys are canonicalised through
+      ``os.path.normcase(os.path.realpath(...))`` so two aliases
+      that reach the same physical directory (the foundry's own
+      ``.claude/skills/<name>`` → ``.agents/skills/<name>`` symlink
+      layout, for example) share a single cache entry rather than
+      paying for a duplicate listdir on the second alias.
+      ``os.listdir`` is still issued on the (non-canonicalised)
+      cursor on a cache miss because canonicalisation could resolve
+      to a directory the helper is not meant to list directly; the
+      cache key is the only canonicalised value.
 
     Returns a ``(case_ok, suggested, collisions)`` triple:
 
@@ -515,15 +518,26 @@ def resolve_case_exact(
     suggested_parts: list[str] = []
     case_diverged = False
     for part in parts:
-        if listdir_cache is not None and cursor in listdir_cache:
-            entries = listdir_cache[cursor]
+        # Canonicalise the cache key so a directory reached via two
+        # symlink aliases (e.g. the foundry's
+        # ``.claude/skills/<name>`` → ``.agents/skills/<name>``
+        # layout) shares one entry instead of paying for a duplicate
+        # listdir on the second alias.  ``os.path.realpath`` resolves
+        # the chain to its physical target; ``os.path.normcase`` then
+        # collapses Windows-style case differences so a Windows host
+        # and a POSIX host share the same key shape.  ``os.listdir``
+        # is still issued against the *original* cursor — only the
+        # cache key is canonicalised.
+        cache_key = os.path.normcase(os.path.realpath(cursor))
+        if listdir_cache is not None and cache_key in listdir_cache:
+            entries = listdir_cache[cache_key]
         else:
             try:
                 entries = os.listdir(cursor)
             except OSError:
                 return False, None, None
             if listdir_cache is not None:
-                listdir_cache[cursor] = entries
+                listdir_cache[cache_key] = entries
         # Collect every entry that matches case-insensitively.  Done
         # BEFORE the exact-match fast path because an exact match
         # alongside a case-different sibling (legal on Linux) is
