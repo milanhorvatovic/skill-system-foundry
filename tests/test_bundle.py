@@ -169,6 +169,22 @@ class CopyExternalFilesCollisionTests(unittest.TestCase):
 
             self.assertIn("overwrite skill-internal file", str(cm.exception))
 
+    def test_collision_message_uses_posix_separators(self) -> None:
+        """ValueError text must be backslash-free even on Windows.
+
+        ``bundle.py`` formats a caught ``ValueError`` via ``str(exc)``,
+        so any native ``os.sep`` embedded in the message leaks to both
+        stderr and the JSON ``error`` field.  Mock ``os.path.isfile`` so
+        the function reaches the "not a regular file" branch with an
+        explicit Windows-style path and assert the rendered message
+        contains no ``\\`` characters.
+        """
+        with mock.patch("lib.bundling.os.path.isfile", return_value=False):
+            ext_file = "C:\\Users\\dev\\skills\\demo\\references\\guide.md"
+            with self.assertRaises(ValueError) as cm:
+                _copy_external_files({ext_file}, None, "/tmp/bundle-out")
+            self.assertNotIn("\\", str(cm.exception))
+
 
 class CopySkillSymlinkBoundaryTests(unittest.TestCase):
     def test_symlink_escaping_boundary_is_rejected(self) -> None:

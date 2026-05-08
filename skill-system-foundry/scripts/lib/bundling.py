@@ -28,6 +28,7 @@ from .constants import (
     WINDOWS_RESERVED_NAMES,
 )
 from .frontmatter import load_frontmatter
+from .reporting import to_posix
 from .references import (
     scan_references,
     ScanResult,
@@ -629,9 +630,14 @@ def _copy_external_files(
     dest_to_source: dict[str, str] = {}
 
     for ext_file in sorted(external_files):
+        # Render native source paths in POSIX form so the message
+        # matches across Linux/macOS/Windows when bubbled to stderr or
+        # the JSON ``error`` field by the bundle entry point.
+        ext_file_posix = to_posix(ext_file)
+
         if not os.path.isfile(ext_file):
             raise ValueError(
-                f"External reference is not a regular file: '{ext_file}'. "
+                f"External reference is not a regular file: '{ext_file_posix}'. "
                 f"Only files can be bundled — remove or replace the "
                 f"directory reference."
             )
@@ -643,7 +649,7 @@ def _copy_external_files(
         parts = os.path.normpath(real_path).split(os.sep)
         if any(should_exclude(p, exclude_patterns) for p in parts):
             raise ValueError(
-                f"External reference '{ext_file}' resolves to an "
+                f"External reference '{ext_file_posix}' resolves to an "
                 f"excluded path. Files matching bundle.exclude_patterns "
                 f"cannot be included in the bundle."
             )
@@ -655,7 +661,7 @@ def _copy_external_files(
         if existing and existing != ext_file:
             raise ValueError(
                 f"Bundle path collision: '{bundle_rel}' is the target "
-                f"for both '{existing}' and '{ext_file}'. "
+                f"for both '{to_posix(existing)}' and '{ext_file_posix}'. "
                 f"Rename or relocate one of the source files to avoid "
                 f"the conflict."
             )
@@ -669,7 +675,7 @@ def _copy_external_files(
         if os.path.exists(target):
             raise ValueError(
                 f"External file would overwrite skill-internal file at "
-                f"'{bundle_rel}' (source: '{ext_file}'). "
+                f"'{bundle_rel}' (source: '{ext_file_posix}'). "
                 f"Rename or relocate the external file to avoid the "
                 f"conflict."
             )
@@ -678,7 +684,7 @@ def _copy_external_files(
         try:
             shutil.copy2(ext_file, target)
         except OSError as e:
-            rel_ext = os.path.relpath(ext_file, system_root).replace(os.sep, "/") if system_root else ext_file
+            rel_ext = os.path.relpath(ext_file, system_root).replace(os.sep, "/") if system_root else ext_file_posix
             raise ValueError(
                 f"Failed to copy external file '{rel_ext}' into bundle"
             ) from e
