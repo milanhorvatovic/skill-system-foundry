@@ -1,0 +1,21 @@
+tests/test_validate_skill.py
+  s_2d58682bdcd133::t_282561d84903d2 5242-5275
+tests/test_gitattributes.py
+  s_2d58682bdcd133::t_cafda0cd478012 12,14-16,20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c8f341feeb165b15edf5bd648d769111c4396f4d",
+  "prompts": {},
+  "sessions": {
+    "s_2d58682bdcd133": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f87a913bffeK4ef9CyTqygt5R",
+        "model": "unknown"
+      },
+      "human_author": null
+    }
+  }
+}
