@@ -137,9 +137,17 @@ class MissingCorpusRootTests(unittest.TestCase):
     """Bad ``--corpus-root`` surfaces a clear error."""
 
     def test_missing_root_returns_one(self) -> None:
-        with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+        out = io.StringIO()
+        with unittest.mock.patch("sys.stdout", new=out):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
+        # Pin the human-mode contract: the diagnostic must reach
+        # stdout (where ``print_error_line`` writes), not just exit
+        # with code 1.  Without an assertion on the captured stream
+        # a regression that silently swallows the message — or moves
+        # it back to stderr — would still pass this test.
+        self.assertIn("corpus root not found", out.getvalue())
+        self.assertIn("/nonexistent/path", out.getvalue())
 
     def test_oserror_during_run_corpus_emits_json_payload(self) -> None:
         # ``run_corpus`` opens ``digests.txt`` directly and can raise
