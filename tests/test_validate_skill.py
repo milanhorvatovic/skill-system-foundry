@@ -5239,6 +5239,40 @@ class DanglingSymlinkReferenceTests(unittest.TestCase):
             ]
             self.assertEqual(generic, [])
 
+    def test_working_symlink_produces_no_dangling_finding(self) -> None:
+        """A valid symlink that resolves must NOT emit a dangling-symlink WARN."""
+        from validate_skill import validate_body
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_dir = os.path.join(tmpdir, "references")
+            os.makedirs(ref_dir)
+            target = os.path.join(tmpdir, "real-guide.md")
+            write_text(target, "# Real Guide\n")
+            link = os.path.join(ref_dir, "guide.md")
+            try:
+                os.symlink(target, link)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks not supported on this host")
+            if not os.path.exists(link):
+                self.skipTest(
+                    f"working symlink not readable on this host "
+                    f"(link={link!r})"
+                )
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [g](references/guide.md).\n"
+            write_text(skill_md, "---\nname: test\n---\n" + body)
+            errors, _ = validate_body(body, skill_md, tmpdir)
+            dangling = [
+                e for e in errors
+                if e.startswith(LEVEL_WARN) and "dangling symlink" in e
+            ]
+            self.assertEqual(
+                dangling, [],
+                msg=(
+                    "working symlink must not produce a dangling-symlink "
+                    f"WARN; got errors={errors!r}"
+                ),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
