@@ -1,0 +1,25 @@
+skill-system-foundry/scripts/audit_skill_system.py
+  s_2d58682bdcd133::t_820d4b14564d17 1243
+skill-system-foundry/scripts/validate_skill.py
+  s_2d58682bdcd133::t_cf157885cfec7b 1307
+  s_2d58682bdcd133::t_ea3a2aef00971b 1599
+skill-system-foundry/scripts/stats.py
+  s_2d58682bdcd133::t_48ccb49ff776a8 64
+  s_2d58682bdcd133::t_61f149ec5a2e42 258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "2288d229ae08034b9fa0200f9b4a116a4924ddb7",
+  "prompts": {},
+  "sessions": {
+    "s_2d58682bdcd133": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f87a913bffeK4ef9CyTqygt5R",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
