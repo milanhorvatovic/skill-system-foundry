@@ -1,0 +1,15 @@
+skill-system-foundry/scripts/bundle.py
+  ai_agent 62,475
+skill-system-foundry/scripts/lib/reporting.py
+  ai_agent 73-113
+skill-system-foundry/scripts/lib/stats.py
+  ai_agent 49,278,466,488,531,568,587
+.github/scripts/smoke-validate-extracted.py
+  ai_agent 59,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "1d264f62d58769561053d8ce2d03c1bcf4f92919",
+  "prompts": {}
+}
