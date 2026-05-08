@@ -1,0 +1,24 @@
+skill-system-foundry/scripts/yaml_conformance_report.py
+  s_1bc9c249fa5026::t_c53d5d68f219a3 108-109
+  s_1bc9c249fa5026::t_fd36b8434a9e4f 31-32
+  s_1bc9c249fa5026::t_802924161e21f6 145-147
+tests/test_yaml_conformance_report.py
+  s_1bc9c249fa5026::t_c979045cf94d06 140
+  s_1bc9c249fa5026::t_d08bdc98509368 207-208,211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c0e732bde09efc382ffdfcc2ab16d7cd75047bca",
+  "prompts": {},
+  "sessions": {
+    "s_1bc9c249fa5026": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f8604baeffedxfIBRtlLMX98a",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
