@@ -269,7 +269,7 @@ def is_dangling_symlink(path: str) -> bool:
 _OneLineShimVerdict = Literal["none", "broken", "ambiguous"]
 
 
-def _classify_one_line_shim(
+def classify_one_line_shim(
     path: str,
 ) -> tuple[_OneLineShimVerdict, str | None]:
     """Classify *path* against the one-line-shim shape gate.
@@ -282,6 +282,13 @@ def _classify_one_line_shim(
     one-line wrapper.  Without this consolidation each predicate
     would re-read the file in turn and the shape rules would have
     to drift in lockstep across two near-identical bodies.
+
+    Public so callers that need both the broken and ambiguous
+    verdicts in one pass can avoid re-reading the file (the
+    ``validate_skill`` reference walker is the canonical consumer).
+    The ``looks_like_*`` predicates remain for callers that need
+    only one verdict — they are now thin wrappers around this
+    classification call.
 
     Returns one of:
 
@@ -386,7 +393,7 @@ def looks_like_degraded_symlink(path: str) -> bool:
     the validator can surface an INFO inviting the author to
     verify on a fresh Windows-without-DevMode clone.
     """
-    return _classify_one_line_shim(path)[0] == "broken"
+    return classify_one_line_shim(path)[0] == "broken"
 
 
 def looks_like_ambiguous_one_line_shim(path: str) -> bool:
@@ -417,7 +424,7 @@ def looks_like_ambiguous_one_line_shim(path: str) -> bool:
     captured target does NOT exist (those are handled by the
     "broken-target" branch of the degraded check).
     """
-    return _classify_one_line_shim(path)[0] == "ambiguous"
+    return classify_one_line_shim(path)[0] == "ambiguous"
 
 
 def resolve_case_exact(

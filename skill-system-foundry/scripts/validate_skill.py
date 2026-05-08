@@ -22,12 +22,11 @@ if _scripts_dir not in sys.path:
 from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.frontmatter import load_frontmatter, count_body_lines
 from lib.references import (
+    classify_one_line_shim,
     infer_system_root,
     is_dangling_symlink,
     is_drive_qualified,
     is_within_directory,
-    looks_like_ambiguous_one_line_shim,
-    looks_like_degraded_symlink,
     resolve_case_exact,
     strip_fragment,
 )
@@ -415,6 +414,18 @@ def _check_references(
             )
             continue
 
+        # Classify the one-line-shim shape ONCE per reference and
+        # reuse the verdict for both the broken-degraded WARN
+        # (``"broken"``) and the ambiguous-shim INFO
+        # (``"ambiguous"``).  The previous implementation called
+        # ``looks_like_degraded_symlink`` and
+        # ``looks_like_ambiguous_one_line_shim`` in succession, each
+        # re-opening the file and re-running the entire 5-step gate
+        # (size, read, decode, line, regex).  ``classify_one_line_shim``
+        # returns one of ``"none"`` / ``"broken"`` / ``"ambiguous"``
+        # so a single call covers both branches.
+        shim_verdict, _shim_target = classify_one_line_shim(ref_path)
+
         # Windows-without-Developer-Mode degraded form: the would-be
         # symlink exists as a small text file containing the relative
         # target.  ``os.path.islink`` returns False so the dangling
@@ -423,7 +434,7 @@ def _check_references(
         # be reported as the failing one.  Detecting the shape here
         # surfaces an actionable WARN naming the same fix as the true
         # dangling case.
-        if looks_like_degraded_symlink(ref_path):
+        if shim_verdict == "broken":
             broken_found = True
             errors.append(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
@@ -457,7 +468,7 @@ def _check_references(
         # The rule fires only on regular files (broken symlinks and
         # the dangling-target case of degraded symlinks have
         # already short-circuited above).
-        if looks_like_ambiguous_one_line_shim(ref_path):
+        if shim_verdict == "ambiguous":
             errors.append(
                 f"{LEVEL_INFO}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "
