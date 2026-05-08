@@ -827,7 +827,7 @@ def run(
     if not dry_run and additions:
         new_yaml = apply_additions(yaml_text, additions, today_iso)
         if new_yaml != yaml_text:
-            with open(catalog_path, "w", encoding="utf-8") as fh:
+            with open(catalog_path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(new_yaml)
 
     return (drift_detected, summary, json_payload)
@@ -920,7 +920,7 @@ def main(argv: list[str] | None = None) -> int:
         # traceback.  The summary-out write is the workflow's only
         # path to the PR body, so a clean failure mode matters.
         try:
-            with open(args.summary_out, "w", encoding="utf-8") as fh:
+            with open(args.summary_out, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(summary)
         except OSError as exc:
             print(f"FAIL: I/O error writing summary: {exc}", file=sys.stderr)

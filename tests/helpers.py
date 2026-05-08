@@ -7,10 +7,19 @@ DEFAULT_DESCRIPTION = (
 
 
 def write_text(path: str, content: str) -> None:
+    """Write *content* to *path* with LF terminators on every host.
+
+    Pinning ``newline="\\n"`` makes test fixtures deterministic
+    across platforms.  Without it, Python's text mode translates
+    ``\\n`` to ``\\r\\n`` on Windows, so any test that asserts
+    LF-byte semantics (line-ending detection, ``load_bytes_lf ==
+    load_bytes`` for an LF-only fixture) silently fails on a
+    Windows runner.
+    """
     dir_name = os.path.dirname(path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
 
 

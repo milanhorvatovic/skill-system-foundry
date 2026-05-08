@@ -45,6 +45,35 @@ class ToPosixTests(unittest.TestCase):
         self.assertEqual(reporting.to_posix("a\\b\\c"), "a/b/c")
 
 
+class FormatExceptionTests(unittest.TestCase):
+    """``format_exception`` keeps diagnostics actionable and portable."""
+
+    def test_oserror_omits_filename(self) -> None:
+        exc = OSError(5, "Input/output error", r"C:\tmp\SKILL.md")
+
+        result = reporting.format_exception(exc)
+
+        self.assertEqual(result, "OSError: Input/output error")
+        self.assertNotIn(r"C:\tmp\SKILL.md", result)
+
+    def test_unicode_decode_error_keeps_decode_detail(self) -> None:
+        exc = UnicodeDecodeError("utf-8", b"\x80", 0, 1, "invalid start byte")
+
+        result = reporting.format_exception(exc)
+
+        self.assertIn("UnicodeDecodeError", result)
+        self.assertIn("can't decode byte 0x80", result)
+        self.assertIn("invalid start byte", result)
+
+    def test_value_error_keeps_message(self) -> None:
+        exc = ValueError("path is on mount 'C:', start on mount 'D:'")
+
+        self.assertEqual(
+            reporting.format_exception(exc),
+            "ValueError: path is on mount 'C:', start on mount 'D:'",
+        )
+
+
 class ParseFindingStringTests(unittest.TestCase):
     """``parse_finding_string`` covers spec-tagged, untagged, and bad input."""
 

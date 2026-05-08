@@ -34,6 +34,23 @@ tokenizers — they are a deterministic on-disk signal for tracking the
 relative cost of authoring decisions over time.  Counts are taken
 from raw on-disk UTF-8 bytes (CRLF preserved); a Windows checkout of
 the same content reports a higher count than a POSIX checkout.
+
+For cross-platform comparability, the JSON payload's ``stats`` object
+also reports ``discovery_bytes_lf`` and ``load_bytes_lf`` alongside
+the nested raw counts, with one byte subtracted per ``\\r\\n`` pair
+detected in the relevant window — ``load_bytes_lf`` subtracts every
+CRLF in every text-shaped load-budget file, ``discovery_bytes_lf``
+subtracts only the CRLFs inside each frontmatter block.  Every
+text-shaped load-budget contributor (markdown, YAML, JSON, txt, sh,
+py, toml) also carries a per-row ``line_endings`` field (``"lf"`` /
+``"crlf"`` / ``"mixed"``); binary load contributors (e.g. an image
+or PDF referenced from ``references/``) deliberately omit the key
+because arbitrary ``\\r\\n`` byte pairs in binary content are not line
+terminators, so consumers should branch on key presence rather than
+treat the missing key as a regression.  The ``*_lf`` keys and
+``line_endings`` fields are gated on ``stats.line_endings.enabled``
+in ``configuration.yaml`` — when the toggle is off the keys are
+omitted from the JSON payload entirely.
 """
 
 import argparse
@@ -44,13 +61,14 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
-from lib.constants import SEPARATOR_WIDTH
+from lib.constants import LEVEL_FAIL, SEPARATOR_WIDTH
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.stats import compute_stats
 
@@ -111,6 +129,20 @@ def _print_human(result: dict, verbose: bool) -> None:
         f"Load:      {_format_bytes(result['load_bytes'])} "
         f"({len(result['files'])} files)"
     )
+    # Surface the LF-normalized aggregates whenever they diverge from
+    # the raw counts so a CRLF-checkout reader can see both numbers
+    # without re-running the tool with --json.
+    if (
+        result.get("load_bytes_lf", result["load_bytes"])
+        != result["load_bytes"]
+        or result.get("discovery_bytes_lf", result["discovery_bytes"])
+        != result["discovery_bytes"]
+    ):
+        print(
+            f"Normalized (LF-only):  "
+            f"discovery={_format_bytes(result['discovery_bytes_lf'])}  "
+            f"load={_format_bytes(result['load_bytes_lf'])}"
+        )
     print("-" * SEPARATOR_WIDTH)
 
     if result["files"]:
@@ -216,14 +248,20 @@ def main() -> None:
 
     if not os.path.isdir(skill_path):
         if json_output:
+            # ``path`` is program-derived (``abspath``) and routed
+            # through ``to_posix`` per the chokepoint contract.  The
+            # ``error`` field echoes the user-typed argument and is
+            # left verbatim — agentskills-spec.md documents user-input
+            # echoes as a deliberate exception so the message
+            # round-trips back to the operator unchanged.
             print(to_json_output({
                 "tool": "stats",
-                "path": os.path.abspath(skill_path),
+                "path": to_posix(os.path.abspath(skill_path)),
                 "success": False,
                 "error": f"'{skill_path}' is not a directory",
             }))
         else:
-            print(f"Error: '{skill_path}' is not a directory")
+            print_error_line(f"{LEVEL_FAIL}: '{skill_path}' is not a directory.")
         sys.exit(1)
 
     result = compute_stats(skill_path)
@@ -232,12 +270,17 @@ def main() -> None:
     if json_output:
         payload = {
             "tool": "stats",
-            "path": os.path.abspath(skill_path),
+            "path": to_posix(os.path.abspath(skill_path)),
             "success": len(fails) == 0,
             "skill": result["skill"],
             "metric": result["metric"],
             "discovery_bytes": result["discovery_bytes"],
             "load_bytes": result["load_bytes"],
+            "stats": {
+                "metric": result["metric"],
+                "discovery_bytes": result["discovery_bytes"],
+                "load_bytes": result["load_bytes"],
+            },
             "files": result["files"],
             "summary": {
                 "failures": len(fails),
@@ -247,6 +290,17 @@ def main() -> None:
             },
             "errors": categorize_errors_for_json(result["errors"]),
         }
+        # ``*_lf`` companions are emitted only when ``compute_stats``
+        # produced them (i.e. line-ending detection is enabled in
+        # configuration.yaml).  Consumers branch on key presence
+        # rather than reading an equal-to-raw fallback that would
+        # silently misrepresent CRLF checkouts.
+        if "discovery_bytes_lf" in result:
+            payload["stats"]["discovery_bytes_lf"] = (
+                result["discovery_bytes_lf"]
+            )
+        if "load_bytes_lf" in result:
+            payload["stats"]["load_bytes_lf"] = result["load_bytes_lf"]
         print(to_json_output(payload))
         sys.exit(1 if fails else 0)
 

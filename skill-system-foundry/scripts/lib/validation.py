@@ -7,7 +7,7 @@ import re
 
 from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
-    RE_NAME_FORMAT, RESERVED_NAMES,
+    RE_NAME_FORMAT, RESERVED_NAMES, WINDOWS_RESERVED_NAMES,
     KNOWN_FRONTMATTER_KEYS, KNOWN_TOOLS, MAX_ALLOWED_TOOLS,
     RE_METADATA_VERSION,
     MAX_AUTHOR_LENGTH, KNOWN_SPDX_LICENSES,
@@ -211,6 +211,22 @@ def validate_name(name: str, dir_name: str) -> tuple[list[str], list[str]]:
                 f"{LEVEL_WARN}: [platform: Anthropic] 'name' contains reserved word "
                 f"'{reserved}' — not allowed on Anthropic platforms"
             )
+
+    # NTFS reserved base names.  Windows rejects any path component
+    # whose name matches one of these regardless of case, so a skill
+    # named ``con`` or ``nul`` scaffolds on POSIX and breaks on
+    # Windows.  The rule fires on every host to keep the foundry's
+    # stated cross-platform contract honest.  Match is case-
+    # insensitive against the bare name; the format pattern earlier in
+    # this function already FAILs any name containing ``.``, so the
+    # ``con.txt`` shape cannot reach this branch via a legal name.
+    if name.upper() in WINDOWS_RESERVED_NAMES:
+        errors.append(
+            f"{LEVEL_FAIL}: 'name' '{name}' matches a Windows reserved "
+            f"filesystem name ({name.upper()}) — illegal on NTFS "
+            "regardless of host platform; rename to keep the skill "
+            "creatable on Windows."
+        )
 
     if len(name) < MIN_NAME_CHARS:
         errors.append(

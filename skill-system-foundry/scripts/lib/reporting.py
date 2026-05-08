@@ -49,6 +49,14 @@ _SEVERITY_TO_LOWER = {
 def to_posix(path: str) -> str:
     """Return *path* with path separators rewritten as ``/``.
 
+    Single chokepoint for any path that crosses a UI boundary — JSON
+    output payloads, FAIL/WARN/INFO finding strings, and human-mode
+    diagnostic lines that quote a filename.  Internal data structures
+    consumed only by other library modules (e.g. zip arcname maps,
+    reference rewrite tables) keep their native form because the
+    consumer relies on identity comparisons against ``os.path``-built
+    keys.
+
     Used to keep the ``file`` field of structured findings consistent
     across Linux, macOS, and Windows runners.  Both Windows-style
     backslashes and the native ``os.sep`` are normalised so callers get
@@ -60,6 +68,54 @@ def to_posix(path: str) -> str:
     if os.sep != "/":
         path = path.replace(os.sep, "/")
     return path
+
+
+def format_exception(exc: BaseException) -> str:
+    """Return a path-free description of an exception.
+
+    Companion to ``to_posix``: the chokepoint covers paths the
+    foundry composes itself, but exceptions raised by stdlib
+    helpers (``OSError`` from ``open()``, ``ValueError`` from
+    ``os.path.relpath`` on different Windows drives) embed the
+    offending path in their default ``str()`` form.  On Windows
+    those paths arrive with backslashes and would leak through
+    every ``f"... ({exc})"`` site in finding strings.
+
+    For ``OSError`` subclasses, render the class name plus
+    ``strerror`` (or an ``errno`` fallback) so the message stays
+    platform-independent — every call site already names the
+    relevant path through ``to_posix`` in its own format string.
+    For ``ValueError`` instances raised by ``os.path.relpath`` and
+    similar path arithmetic, render the class name plus the first
+    arg verbatim — ``os.path.relpath``'s cross-drive message is
+    ``"path is on mount 'C:', start on mount 'D:'"`` and contains
+    only mount tokens, not a backslashed path, so the verbatim
+    message is already path-free.  Routing through this helper
+    anyway keeps every UI-bound exception text on the same
+    chokepoint should the stdlib wording evolve to embed a path.
+    Other exception classes (including ``UnicodeError``) are
+    rendered via their default ``str()`` because their messages
+    do not carry a filename.
+    """
+    if isinstance(exc, OSError):
+        detail = exc.strerror or (
+            f"errno {exc.errno}" if exc.errno is not None else "OS error"
+        )
+        return f"{exc.__class__.__name__}: {detail}"
+    if isinstance(exc, UnicodeError):
+        return f"{exc.__class__.__name__}: {exc}"
+    if isinstance(exc, ValueError):
+        # ``os.path.relpath`` raises ``ValueError("path is on mount
+        # 'C:', start on mount 'D:'")`` on Windows-cross-drive.
+        # The mount tokens carry colons (a path component) but no
+        # backslashes, so the default ``str()`` form is safe today;
+        # routing through this helper anyway keeps every UI-bound
+        # exception text on the same chokepoint should the stdlib
+        # wording evolve to include a backslashed path.
+        message = exc.args[0] if exc.args else ""
+        message_str = str(message) if message else "value error"
+        return f"{exc.__class__.__name__}: {message_str}"
+    return f"{exc.__class__.__name__}: {exc}"
 
 
 def parse_finding_string(raw: str) -> dict:

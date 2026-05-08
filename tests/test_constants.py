@@ -121,6 +121,8 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "    format_pattern: ^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$\n"
             "    reserved_words:\n"
             "      - anthropic\n"
+            "    windows_reserved_names:\n"
+            "      - CON\n"
             "  description:\n"
             "    max_length: 1024\n"
             "    xml_tag_pattern: <[^>]+>\n"
@@ -231,6 +233,10 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "  reference_extensions:\n"
             "    - md\n"
             "    - py\n"
+            "  degraded_symlink:\n"
+            "    max_bytes: 512\n"
+            "    foundry_extensions:\n"
+            "      - md\n"
             "bundle:\n"
             "  max_reference_depth: 25\n"
             "  description_max_length: 200\n"
@@ -240,6 +246,12 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "  default_target: claude\n"
             "  exclude_patterns:\n"
             "    - .git\n"
+            "  long_path:\n"
+            "    threshold: 260\n"
+            "    user_prefix_budget: 80\n"
+            "stats:\n"
+            "  line_endings:\n"
+            "    enabled: true\n"
         )
 
         import builtins
@@ -1132,8 +1144,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - md\n    - \"\"\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - md\n    - \"\"\n",
                 )
             )
         message = str(ctx.exception)
@@ -1146,8 +1158,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - .md\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - .md\n",
                 )
             )
         message = str(ctx.exception)
@@ -1160,8 +1172,8 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - 'md txt'\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - 'md txt'\n",
                 )
             )
         message = str(ctx.exception)
@@ -1174,13 +1186,88 @@ class MissingSectionFailFastTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_with_substitution(
-                    "    - md\n",
-                    "    - md\n    - md\n",
+                    "  reference_extensions:\n    - md\n",
+                    "  reference_extensions:\n    - md\n    - md\n",
                 )
             )
         message = str(ctx.exception)
         self.assertIn("reference_extensions", message)
         self.assertIn("duplicate", message.lower())
+
+    def test_missing_stats_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(self._full_config_minus("stats"))
+        self.assertIn("stats", str(ctx.exception))
+
+    def test_missing_bundle_long_path_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("bundle", "long_path")
+            )
+        self.assertIn("long_path", str(ctx.exception))
+
+    def test_missing_path_resolution_degraded_symlink_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested(
+                    "path_resolution", "degraded_symlink",
+                )
+            )
+        self.assertIn("degraded_symlink", str(ctx.exception))
+
+    def test_missing_stats_line_endings_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("stats", "line_endings")
+            )
+        self.assertIn("line_endings", str(ctx.exception))
+
+    def test_invalid_stats_line_endings_enabled_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "line_endings:\n    enabled: true\n",
+                    "line_endings:\n    enabled: maybe\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("line_endings", message)
+        self.assertIn("enabled", message)
+
+    def test_invalid_bundle_long_path_threshold_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "  long_path:\n    threshold: 260\n    user_prefix_budget: 80\n",
+                    "  long_path:\n    threshold: 0\n    user_prefix_budget: 80\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("long_path", message)
+        self.assertIn("threshold", message)
+
+    def test_invalid_bundle_long_path_budget_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "  long_path:\n    threshold: 260\n    user_prefix_budget: 80\n",
+                    "  long_path:\n    threshold: 100\n    user_prefix_budget: 100\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("long_path", message)
+        self.assertIn("user_prefix_budget", message)
+
+    def test_empty_windows_reserved_names_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "    windows_reserved_names:\n      - CON\n",
+                    "    windows_reserved_names: []\n",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("windows_reserved_names", message)
 
     def test_duplicate_error_surfaces_raw_and_normalized_forms(self) -> None:
         # Author writes 'Triggers When' (mixed case) and again as

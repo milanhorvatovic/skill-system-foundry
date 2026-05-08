@@ -137,9 +137,17 @@ class MissingCorpusRootTests(unittest.TestCase):
     """Bad ``--corpus-root`` surfaces a clear error."""
 
     def test_missing_root_returns_one(self) -> None:
-        with unittest.mock.patch("sys.stderr", new=io.StringIO()):
+        out = io.StringIO()
+        with unittest.mock.patch("sys.stdout", new=out):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
+        # Pin the human-mode contract: the diagnostic must reach
+        # stdout (where ``print_error_line`` writes), not just exit
+        # with code 1.  Without an assertion on the captured stream
+        # a regression that silently swallows the message — or moves
+        # it back to stderr — would still pass this test.
+        self.assertIn("corpus root not found", out.getvalue())
+        self.assertIn("/nonexistent/path", out.getvalue())
 
     def test_oserror_during_run_corpus_emits_json_payload(self) -> None:
         # ``run_corpus`` opens ``digests.txt`` directly and can raise
@@ -184,10 +192,11 @@ class MissingCorpusRootTests(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
-    def test_malformed_manifest_human_mode_writes_stderr(self) -> None:
+    def test_malformed_manifest_human_mode_writes_stdout(self) -> None:
         # Human mode for the same corpus-load failure path emits a
-        # stderr message and exits 1 — covered separately so both
-        # branches of the new try/except are exercised.
+        # stdout message via ``print_error_line`` and exits 1 —
+        # covered separately so both branches of the new try/except
+        # are exercised.
         import shutil
         import tempfile
         root = tempfile.mkdtemp()
@@ -204,11 +213,11 @@ class MissingCorpusRootTests(unittest.TestCase):
                 encoding="utf-8",
             ) as fh:
                 fh.write("not-a-valid-line\n")
-            err = io.StringIO()
-            with unittest.mock.patch("sys.stderr", new=err):
+            out = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=out):
                 rc = report.main(["--corpus-root", root])
             self.assertEqual(rc, 1)
-            self.assertIn("corpus load failure", err.getvalue())
+            self.assertIn("corpus load failure", out.getvalue())
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

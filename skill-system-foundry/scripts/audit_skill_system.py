@@ -63,15 +63,16 @@ from lib.yaml_parser import parse_yaml_subset
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
+    format_exception,
     print_error_line,
     print_summary,
     to_json_output,
+    to_posix,
 )
 from lib.discovery import (
     find_skill_dirs,
     find_roles,
     find_router_audit_targets,
-    check_line_count,
     read_file,
     load_capability_data,
     top_level_skill_entry,
@@ -80,7 +81,7 @@ from lib.discovery import (
 from lib.constants import (
     ALLOWED_ORPHANS,
     DIR_SKILLS, DIR_CAPABILITIES, DIR_SHARED,
-    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST, EXT_MARKDOWN,
+    FILE_SKILL_MD, FILE_CAPABILITY_MD, FILE_MANIFEST,
     MAX_BODY_LINES, MAX_DESCRIPTION_CHARS,
     RE_ROLES_REF, RE_SIBLING_CAP_REF,
     RE_SKILL_REF, RE_CAPABILITY_REF, MIN_ROLE_SKILLS,
@@ -92,6 +93,7 @@ from lib.constants import (
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
+from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.router_table import audit_router_table
 from lib.validation import (
     validate_description_triggers,
@@ -112,7 +114,7 @@ def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except OSError as exc:
-        return None, f"cannot read: {exc}"
+        return None, f"cannot read: {format_exception(exc)}"
     except json.JSONDecodeError as exc:
         return None, f"invalid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
     if not isinstance(data, dict):
@@ -123,25 +125,26 @@ def _read_plugin_json(path: str) -> tuple[dict | None, str | None]:
 def _skill_md_version(system_root: str) -> tuple[str | None, str | None]:
     """Return ``(version, error)`` for ``skill-system-foundry/SKILL.md``."""
     path = os.path.join(system_root, "skill-system-foundry", FILE_SKILL_MD)
+    path_display = to_posix(path)
     if not os.path.exists(path):
-        return None, f"{path} does not exist"
+        return None, f"{path_display} does not exist"
     try:
         fm, _, _ = load_frontmatter(path)
     except OSError as exc:
         # A present-but-unreadable file (permissions, transient FS error)
         # must surface as a structured finding instead of aborting the
         # audit, mirroring how _read_plugin_json handles its own errors.
-        return None, f"{path} cannot be read: {exc}"
+        return None, f"{path_display} cannot be read: {format_exception(exc)}"
     if fm is None:
-        return None, f"{path} has no frontmatter"
+        return None, f"{path_display} has no frontmatter"
     if "_parse_error" in fm:
-        return None, f"{path} YAML parse error: {fm['_parse_error']}"
+        return None, f"{path_display} YAML parse error: {fm['_parse_error']}"
     metadata = fm.get("metadata")
     if not isinstance(metadata, dict):
-        return None, f"{path} has no 'metadata' mapping"
+        return None, f"{path_display} has no 'metadata' mapping"
     value = metadata.get("version")
     if not isinstance(value, str):
-        return None, f"{path} missing 'metadata.version' string"
+        return None, f"{path_display} missing 'metadata.version' string"
     return value, None
 
 
@@ -222,7 +225,7 @@ def check_version_consistency(system_root: str) -> list[str]:
     if not os.path.exists(marketplace_path):
         findings.append(
             f"{LEVEL_FAIL}: version drift — marketplace.json: "
-            f"{marketplace_path} does not exist"
+            f"{to_posix(marketplace_path)} does not exist"
         )
     else:
         market_data, market_err = _read_plugin_json(marketplace_path)
@@ -478,7 +481,7 @@ def audit_skill_system(
             # loop FAILs the file via its existing parse-error branch
             # instead of silently skipping or deferring the crash to a
             # later body-read site.
-            fm = {"_parse_error": f"unreadable: {exc}"}
+            fm = {"_parse_error": f"unreadable: {format_exception(exc)}"}
             cap_scalar_findings = []
         system_capability_data[cap_md_abs] = CapabilityRecord(
             fm, cap_scalar_findings,
@@ -493,7 +496,10 @@ def audit_skill_system(
             # skill-root entry that the router-table rule will audit.
             # Surface it explicitly so the verbose header agrees with
             # the findings about to be emitted.
-            print(f"Skill-root mode: also auditing skill at {system_root}")
+            print(
+                "Skill-root mode: also auditing skill at "
+                f"{to_posix(system_root)}"
+            )
         print()
 
     # Partial-audit WARN fires only when the audit cannot reach any
@@ -616,6 +622,130 @@ def audit_skill_system(
                 errors.append(f"{level}: {skill['name']}: {detail}")
         if not agg_errors and verbose:
             print(f"  ✓ {skill['name']}: aggregation clean")
+
+    # --- Long-path pre-flight (cross-platform) ---
+    if verbose:
+        print("\n== Long-Path Budget ==")
+    # Iterate ``aggregation_targets`` rather than ``skills`` so the
+    # rule covers both deployed-system layouts (registered skills
+    # under ``skills/<name>/``) AND skill-root mode (the synthetic
+    # top-level entry produced by ``top_level_skill_entry``).
+    # ``find_skill_dirs`` does not surface the top-level SKILL.md
+    # in skill-root mode, so iterating it alone would skip the most
+    # common local-audit-self shape.  Capabilities are excluded
+    # because they are part of their parent skill's archive and
+    # would double-report.
+    #
+    # Boundary widening: pass *system_root* so the walker inspects
+    # symlinks targeting sibling roles/skills the bundler would
+    # ship.  Without it, the audit's default ``boundary=skill_path``
+    # would silently skip those targets and miss problems that
+    # ``bundle.py`` will FAIL on at packaging time.
+    for skill in aggregation_targets:
+        lp_errors, lp_passes = check_long_paths(
+            skill["path"], severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in lp_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']}: {detail}")
+        if not lp_errors and verbose:
+            print(f"  ✓ {skill['name']}: long-path clean")
+
+    # --- Reserved-name path-component check (cross-platform) ---
+    if verbose:
+        print("\n== Reserved Names ==")
+    for skill in aggregation_targets:
+        rn_errors, _rn_passes = check_reserved_path_components(
+            skill["path"], severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in rn_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {skill['name']}: {detail}")
+        if not rn_errors and verbose:
+            print(f"  ✓ {skill['name']}: no reserved-name path components")
+
+    # System-root content outside ``aggregation_targets`` (which
+    # only contains registered skills + the synthetic top-level
+    # skill entry) but reachable through the bundler's reference
+    # graph: ``roles/``, plus any shared ``references/``,
+    # ``assets/``, or ``scripts/`` directories the skill system
+    # exposes at the system root.  The bundler can copy those into
+    # an archive when they appear in a skill's reference graph;
+    # walking them at audit time surfaces reserved-name and
+    # long-path problems that would otherwise only fail later in
+    # bundle post-validation.
+    #
+    # Skill-root mode skip: when ``skill_root_entry`` is non-None
+    # the audit root IS the skill itself (system_root == the
+    # skill's path), so any shared subtree under it has already
+    # been walked by the per-skill loop above.  Walking again would
+    # emit duplicate findings (one under the skill name, one under
+    # the shared-directory label) and inflate audit counts on the
+    # canonical ``cd skill && audit_skill_system .`` invocation.
+    # The shared-subtree pass is meaningful only in deployed-system
+    # mode where ``system_root`` is a real system root with skills
+    # nested under ``skills/<name>/`` — those skill paths do not
+    # contain the shared subtrees, so the two passes are disjoint.
+    #
+    # Distribution-repo mode skip: when ``skill_root_entry`` is
+    # None *and* ``find_skill_dirs`` returned no skills, the audit
+    # root has neither a top-level SKILL.md nor a ``skills/`` tree.
+    # That is the documented partial-audit shape (e.g., the foundry
+    # repo root, where the meta-skill lives under
+    # ``skill-system-foundry/`` rather than ``skills/<name>/``), and
+    # the shared subtrees here are top-level repository
+    # infrastructure such as ``scripts/`` — *not* skill-system
+    # content the bundler would copy.  Walking them would emit
+    # cross-platform warnings unrelated to any deployed skill.
+    # Gate the pass on ``skills`` so distribution-repo audits stay
+    # quiet on infrastructure that is out of scope for this rule.
+    #
+    # Measurement caveat for the long-path rule: each system-root
+    # subtree is walked with ``arcname_root`` defaulting to the
+    # system root itself, so the rule sees arcnames like
+    # ``roles/<file>`` rather than the precise per-bundle form
+    # ``<skill-name>/roles/<file>``.  The audit's check is
+    # therefore approximate — a long path here is definitely a
+    # problem, but a path that fits at audit time may still
+    # overflow MAX_PATH once a particular skill's basename is
+    # prepended at bundle time.  ``bundle.py`` runs the precise
+    # per-skill calculation as part of pre-flight, so the
+    # approximate audit signal is the right shape: catch obvious
+    # offenders early, defer the per-skill arithmetic to packaging.
+    shared_dirnames = (
+        ("roles", "references", "assets", "scripts")
+        if skill_root_entry is None and skills
+        else ()
+    )
+    for shared_dirname in shared_dirnames:
+        shared_dir = os.path.join(system_root, shared_dirname)
+        if not os.path.isdir(shared_dir):
+            continue
+        shared_lp_errors, _shared_lp_passes = check_long_paths(
+            shared_dir, severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in shared_lp_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {shared_dirname}/: {detail}")
+        if not shared_lp_errors and verbose:
+            print(f"  ✓ {shared_dirname}/: long-path clean")
+        # Reserved-name pass — measurement is exact here, not
+        # approximate like the long-path pass above.  Reserved-name
+        # findings key off the per-component stem
+        # (``_reserved_stem``); prepending a skill basename at
+        # bundle time would only add another component to the
+        # archive path, never change whether ``roles/<file>``'s
+        # existing components match a Windows device name.  No
+        # ``arcname_root`` override is needed for parity with the
+        # bundler's per-skill measurement.
+        shared_rn_errors, _shared_rn_passes = check_reserved_path_components(
+            shared_dir, severity=LEVEL_WARN, boundary=system_root,
+        )
+        for finding in shared_rn_errors:
+            level, _, detail = finding.partition(": ")
+            errors.append(f"{level}: {shared_dirname}/: {detail}")
+        if not shared_rn_errors and verbose:
+            print(f"  ✓ {shared_dirname}/: no reserved-name path components")
 
     # --- Capabilities should not be registered ---
     if verbose:
@@ -1105,14 +1235,20 @@ def main() -> None:
 
     if not os.path.isdir(system_root):
         if json_output:
+            # ``path`` is program-derived (``abspath``) and routed
+            # through ``to_posix`` per the chokepoint contract.  The
+            # ``error`` field echoes the user-typed argument and is
+            # left verbatim — agentskills-spec.md documents user-input
+            # echoes as a deliberate exception so the message
+            # round-trips back to the operator unchanged.
             print(to_json_output({
                 "tool": "audit_skill_system",
-                "path": os.path.abspath(system_root),
+                "path": to_posix(os.path.abspath(system_root)),
                 "success": False,
                 "error": f"'{system_root}' is not a directory",
             }))
         else:
-            print(f"Error: '{system_root}' is not a directory")
+            print_error_line(f"{LEVEL_FAIL}: '{system_root}' is not a directory.")
         sys.exit(1)
 
     # When --json is active, suppress verbose terminal output from
@@ -1153,6 +1289,18 @@ def main() -> None:
                     print(
                         f"Checking prose YAML: {path} ({fence_count} fences)"
                     )
+        skill_root_entry = top_level_skill_entry(system_root)
+        if skill_root_entry is not None:
+            findings, checked, per_file = collect_prose_findings(
+                system_root, audit_prefix=skill_root_entry["name"]
+            )
+            prose_checked += checked
+            prose_findings.extend(findings)
+            if effective_verbose:
+                for path, fence_count in per_file:
+                    print(
+                        f"Checking prose YAML: {path} ({fence_count} fences)"
+                    )
         for finding in prose_findings:
             errors.append(format_finding_as_string(finding))
     yaml_conformance_slot = {
@@ -1179,7 +1327,7 @@ def main() -> None:
         fails, warns, infos = categorize_errors(errors)
         result = {
             "tool": "audit_skill_system",
-            "path": os.path.abspath(system_root),
+            "path": to_posix(os.path.abspath(system_root)),
             "success": len(fails) == 0,
             "counts": counts,
             "summary": {

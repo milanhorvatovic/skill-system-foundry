@@ -22,8 +22,13 @@ from .constants import (
     BUNDLE_EXCLUDE_PATTERNS,
     LEVEL_FAIL,
     LEVEL_WARN,
+    LONG_PATH_THRESHOLD,
+    LONG_PATH_USER_PREFIX_BUDGET,
+    PATH_RESOLUTION_RULE_NAME,
+    WINDOWS_RESERVED_NAMES,
 )
 from .frontmatter import load_frontmatter
+from .reporting import to_posix
 from .references import (
     scan_references,
     ScanResult,
@@ -38,6 +43,426 @@ from .references import (
     RE_BUNDLE_MD_LINK,
     RE_BUNDLE_BACKTICK,
 )
+
+def _reserved_stem(component: str) -> str:
+    """Return the NTFS-comparison stem of *component* in upper case.
+
+    Windows strips trailing spaces and dots from a path component's
+    stem when comparing against the device-name list, so a name like
+    ``con .md`` (basename ``con ``, extension ``.md``) is treated as
+    ``CON`` and rejected.  Names like ``aux.`` and ``nul . .md``
+    follow the same rule.  POSIX preserves the original bytes, so a
+    zip built on Linux can carry such names through bundling and
+    only fail on Windows extraction.
+
+    Take the portion before the first ``.``, strip trailing spaces
+    and dots, then upper-case.  Empty input (or input that consists
+    entirely of trailing characters) maps to ``""``, which never
+    matches a reserved name.
+    """
+    stem = component.split(".", 1)[0]
+    return stem.rstrip(" .").upper()
+
+
+def _render_reserved_name_finding(
+    *,
+    severity: str,
+    rel: str,
+    component_rel: str,
+    component: str,
+    stem: str,
+) -> str:
+    """Render the per-component reserved-name finding.
+
+    Single source of truth for the FAIL/WARN message emitted by both
+    ``check_reserved_path_components`` (skill-tree walker) and
+    ``check_external_arcnames`` (per-arcname pre-flight).  Without
+    this helper the same trailing sentence ("illegal on NTFS
+    regardless of host platform; rename to keep the bundle
+    extractable on Windows.") was repeated four times across two
+    file/directory branches in two helpers, and a future copy-edit
+    had to land in lockstep across all four — exactly the drift
+    mode the cross-platform rules are meant to fight against.
+
+    The file vs. directory distinction is keyed off whether the
+    component path equals the full archive-relative path: when they
+    match the offending component is the basename, otherwise it is
+    an interior directory in the path.
+    """
+    is_file = component_rel == rel
+    if is_file:
+        leader = f"'{rel}' has a basename ('{component}')"
+    else:
+        leader = (
+            f"directory '{component_rel}' has a path component "
+            f"('{component}')"
+        )
+    return (
+        f"{severity}: [{PATH_RESOLUTION_RULE_NAME}] "
+        f"{leader} whose stem matches a Windows reserved device name "
+        f"({stem}) — illegal on NTFS regardless of host platform; "
+        "rename to keep the bundle extractable on Windows."
+    )
+
+
+def check_long_paths(
+    skill_path: str,
+    *,
+    threshold: int = LONG_PATH_THRESHOLD,
+    user_prefix_budget: int = LONG_PATH_USER_PREFIX_BUDGET,
+    severity: str = LEVEL_FAIL,
+    arcname_root: str | None = None,
+    boundary: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Pre-flight check for paths that risk Windows MAX_PATH on extract.
+
+    Walks every file under *skill_path* (excluding patterns the bundler
+    already skips) and computes the worst-case extracted path length:
+    ``user_prefix_budget + len(arcname)`` where the arcname is the
+    file's relative path from *arcname_root*, normalised to forward
+    slashes.  Any path whose total exceeds *threshold* is reported as
+    a finding at *severity*.
+
+    *arcname_root* defaults to ``os.path.dirname(skill_path)`` so the
+    arcname includes the skill's own basename as the top-level
+    component — that is what ``create_bundle`` writes into the zip
+    and what an integrator extracts.  Pass an explicit value to walk
+    a pre-assembled bundle directory whose arcnames are already
+    namespaced under a parent (i.e., ``bundle_base`` in the bundler):
+    set ``arcname_root=os.path.dirname(bundle_dir)`` and the helper
+    measures the same paths the zip will store.
+
+    The helper is callable from validators (WARN at authoring time)
+    and from the bundler (FAIL at packaging time) so the same rule
+    fires from both surfaces with consistent numbers.  The relative
+    path produced for the message uses forward slashes regardless of
+    host so finding text is identical on every runner.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    A skill that contains no offending paths reports a single pass
+    line summarising the budget so consumers see the rule ran.
+
+    Filter note: ``BUNDLE_EXCLUDE_PATTERNS`` is reused here as the
+    skip list — the same patterns that would omit a file from a
+    bundle (``.git``, ``*.pyc``, ``$RECYCLE.BIN``, ``*.lnk`` …) are
+    also exempt from the long-path check, because a path that is
+    never bundled cannot reach the user's filesystem under MAX_PATH.
+    The reuse is deliberate but couples the two rules: if a future
+    change tightens ``BUNDLE_EXCLUDE_PATTERNS`` for bundling alone,
+    the validator's blind spot widens silently.  The helper does
+    not currently expose an exempt-list override — splitting the
+    constant into bundler-only and shared sets is the correct
+    extension point if a future caller needs to diverge.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not os.path.isdir(skill_path):
+        return errors, passes
+    abs_root = os.path.abspath(skill_path)
+    if arcname_root is None:
+        # Default: arcnames are namespaced under the skill's own
+        # basename (matches how ``create_bundle`` writes the zip).
+        arcname_root_abs = os.path.dirname(abs_root) or abs_root
+    else:
+        arcname_root_abs = os.path.abspath(arcname_root)
+    # Boundary defaults to the skill itself; bundle.py passes the
+    # *system root* when one is available so symlinks targeting
+    # files under ``roles/``, sibling capabilities, or other
+    # system-root subtrees (which the bundler bundles via
+    # ``_copy_skill``) are inspected too.  Without the override an
+    # in-tree symlink to a file outside ``skill_path`` but inside
+    # the broader system root would be skipped here even though the
+    # archive includes it.
+    boundary_abs = (
+        os.path.abspath(boundary) if boundary is not None else abs_root
+    )
+    available = threshold - user_prefix_budget
+    longest = 0
+    longest_rel = ""
+    # Use the bundler's actual walker (``walk_skill_files``) so the
+    # pre-flight inspects exactly the same files ``create_bundle``
+    # would copy: same exclude-pattern filtering on entries AND on
+    # symlink targets, same ancestry-based cycle protection that
+    # preserves non-cyclical aliases, same boundary enforcement
+    # against in-skill symlinks that escape the skill tree.
+    # Without this, a raw ``os.walk(followlinks=True)`` would
+    # inspect boundary-escaping symlink targets and excluded target
+    # trees that the bundler deliberately skips, producing
+    # findings for files the bundle would never include.
+    # ``boundary_violations=[]`` opts into the non-raising mode so
+    # an out-of-boundary symlink is silently skipped here (the
+    # bundler enforces the boundary strictly at packaging time).
+    boundary_violations: list = []
+    # Collect every candidate rel-path first, then sort before
+    # emitting findings.  ``walk_skill_files`` inherits ``os.walk``
+    # / ``os.listdir`` ordering, which varies across filesystems
+    # and runners — finding text would diff differently on
+    # ubuntu-latest vs windows-latest for the same skill.  Sorting
+    # by the POSIX rel-path used in the message makes the output
+    # byte-identical across hosts and lets future tests assert
+    # full error lists without flaking.
+    candidates: list[str] = []
+    for dirpath, fname in walk_skill_files(
+        abs_root,
+        BUNDLE_EXCLUDE_PATTERNS,
+        boundary=boundary_abs,
+        boundary_violations=boundary_violations,
+    ):
+        full = os.path.join(dirpath, fname)
+        # ``os.path.relpath`` returns a native-shape string (``/``
+        # on POSIX, ``\\`` on Windows), so ``replace(os.sep, "/")``
+        # always normalises the actual separator that was just
+        # produced.  This differs from the ``bundle.py`` external
+        # arcname case where the input came from
+        # ``compute_bundle_path`` — that helper may have been
+        # mocked or refactored, so the bundle.py call routes
+        # through ``to_posix`` to defend against a backslash
+        # appearing on POSIX.  The two idioms are not
+        # interchangeable: this site is safe with the cheaper
+        # single-replace because the upstream is ``os.path.relpath``.
+        rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
+        candidates.append(rel)
+    candidates.sort()
+    file_count = len(candidates)
+    for rel in candidates:
+        arcname_len = len(rel)
+        # ``longest_rel`` reports the lexicographically-first rel
+        # path of maximum length.  The earlier walker-order
+        # implementation reported whichever max-length file
+        # ``os.walk`` happened to yield first — that varied across
+        # filesystems and runners and made the pass message
+        # non-deterministic.  The sorted iteration above also
+        # changes the tie-break: when several files share the max
+        # length, the lex-first one wins now instead of the
+        # walker-first.  The reported *length* is unchanged.
+        if arcname_len > longest:
+            longest = arcname_len
+            longest_rel = rel
+        if arcname_len > available:
+            errors.append(
+                f"{severity}: '{rel}' exceeds the long-path budget "
+                f"({user_prefix_budget} prefix + {arcname_len} arcname "
+                f"= {user_prefix_budget + arcname_len} > {threshold} "
+                "threshold) — Windows checkouts under a typical user "
+                "directory may fail to extract this path.  Shorten "
+                "the path or raise bundle.long_path.threshold in "
+                "configuration.yaml after auditing the integrator's "
+                "install location."
+            )
+    if not errors and file_count:
+        passes.append(
+            f"long-path: longest arcname '{longest_rel}' ({longest} chars) "
+            f"fits within the {available}-char arcname budget "
+            f"(threshold {threshold}, prefix {user_prefix_budget})"
+        )
+    return errors, passes
+
+
+def check_reserved_path_components(
+    skill_path: str,
+    *,
+    severity: str = LEVEL_FAIL,
+    boundary: str | None = None,
+    arcname_root: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Flag bundled path components that match a Windows reserved name.
+
+    The frontmatter ``name`` rule (in ``validate_name``) catches the
+    skill's own basename, but Windows reserves device names for
+    *every* path component, not just the top-level one.  A skill
+    that contains ``references/con.md`` or
+    ``capabilities/aux/capability.md`` would scaffold and validate
+    cleanly today and only fail when a Windows user tried to extract
+    the bundle.
+
+    Walk the skill tree (using the same exclude patterns the bundler
+    skips) and inspect every directory and file basename's stem,
+    case-insensitively, against ``WINDOWS_RESERVED_NAMES``.  Findings
+    are reported at *severity* (FAIL by default; the validator
+    surfaces the rule at WARN at authoring time so the bundler's
+    FAIL is never the first signal).  The relative path emitted in
+    finding text uses forward slashes regardless of host so
+    diagnostics are byte-identical on every runner.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not os.path.isdir(skill_path):
+        return errors, passes
+    abs_root = os.path.abspath(skill_path)
+    # Measure rel-paths against the parent directory so the skill
+    # basename is the FIRST component checked — the basename is the
+    # archive's top-level entry, and Windows refuses to extract a
+    # zip whose root directory is ``con/``, ``aux/``, etc., even if
+    # the frontmatter ``name`` is legal.  Falling back to ``abs_root``
+    # when ``dirname`` is empty (filesystem root case) keeps the
+    # walk well-defined.
+    if arcname_root is None:
+        arcname_root_abs = os.path.dirname(abs_root) or abs_root
+    else:
+        # Caller-supplied override: lets capability-mode validation
+        # measure components relative to the dir above the parent
+        # skill so a parent skill named ``con`` is checked even
+        # when the walk only covers the capability's subtree.
+        arcname_root_abs = os.path.abspath(arcname_root)
+    boundary_abs = (
+        os.path.abspath(boundary) if boundary is not None else abs_root
+    )
+    seen: set[tuple[str, str]] = set()
+    # Reuse the bundler's actual walker so the rule fires on
+    # exactly the path components ``create_bundle`` would write
+    # into the archive (same exclude-pattern filtering, same
+    # boundary enforcement, same alias-preserving cycle
+    # protection).  See ``check_long_paths`` for the rationale.
+    # ``walk_skill_files`` inherits ``os.walk`` / ``os.listdir``
+    # ordering, so collect rel-paths first and sort them before
+    # emitting findings — without this, finding text would diff
+    # differently across runners and filesystems for the same
+    # skill, making CI output flaky and JSON payloads
+    # platform-dependent.
+    boundary_violations: list = []
+    candidates: list[str] = []
+    for dirpath, fname in walk_skill_files(
+        abs_root,
+        BUNDLE_EXCLUDE_PATTERNS,
+        boundary=boundary_abs,
+        boundary_violations=boundary_violations,
+    ):
+        full = os.path.join(dirpath, fname)
+        # Same separator-shape invariant as ``check_long_paths``:
+        # ``os.path.relpath`` output is native-shape, so
+        # ``replace(os.sep, "/")`` is sufficient here.  The
+        # ``bundle.py`` external-arcname pre-flight uses
+        # ``to_posix`` instead because its input came from
+        # ``compute_bundle_path`` and could carry a backslash on
+        # POSIX (e.g. under test mocks).
+        rel = os.path.relpath(full, arcname_root_abs).replace(os.sep, "/")
+        candidates.append(rel)
+    candidates.sort()
+    file_count = len(candidates)
+    for rel in candidates:
+        # Check every component of the relative path — directory
+        # AND filename — exactly once per (component-path, stem).
+        # ``walk_skill_files`` yields a (root, filename) pair per
+        # eligible file; the directory components are encoded in
+        # the file's relative path, so a single pass over each
+        # rel-path covers both surfaces and cannot double-count
+        # a directory shared by multiple files.
+        components = rel.split("/")
+        component_path_parts: list[str] = []
+        for component in components:
+            component_path_parts.append(component)
+            component_rel = "/".join(component_path_parts)
+            stem = _reserved_stem(component)
+            if stem not in WINDOWS_RESERVED_NAMES:
+                continue
+            if (component_rel, stem) in seen:
+                continue
+            seen.add((component_rel, stem))
+            errors.append(_render_reserved_name_finding(
+                severity=severity,
+                rel=rel,
+                component_rel=component_rel,
+                component=component,
+                stem=stem,
+            ))
+    if not errors and file_count:
+        passes.append(
+            "windows-reserved-names: every path component is legal "
+            "on NTFS"
+        )
+    return errors, passes
+
+
+def check_external_arcnames(
+    external_arcnames: list[str],
+    *,
+    threshold: int = LONG_PATH_THRESHOLD,
+    user_prefix_budget: int = LONG_PATH_USER_PREFIX_BUDGET,
+    severity: str = LEVEL_FAIL,
+) -> tuple[list[str], list[str]]:
+    """Run the long-path and reserved-name rules against a list of arcnames.
+
+    Companion to ``check_long_paths`` and ``check_reserved_path_components``
+    that walk a directory tree.  Bundle pre-flight cannot walk the
+    eventual archive layout because external files are not yet
+    copied into ``bundle_dir`` — but the bundler already knows
+    where each external will land (``compute_bundle_path`` per file
+    plus the skill basename prefix).  Pass those arcname strings
+    here so the pre-flight catches over-budget paths and reserved
+    components BEFORE the assembly phase spends time copying.
+
+    *external_arcnames* are the full archive paths in POSIX form
+    (i.e., ``<skill-basename>/roles/<rel>`` etc.) — the same
+    strings the post-flight walker would compute from the
+    assembled bundle directory.
+
+    Returns ``(errors, passes)`` per the validator contract.  When
+    *external_arcnames* is empty no pass line is emitted (the rule
+    had nothing to verify); a non-empty list with no findings emits
+    two pass lines — one for the long-path budget and one for the
+    reserved-name clearance — mirroring the per-dimension pass
+    lines of the sibling ``check_long_paths`` and
+    ``check_reserved_path_components`` helpers.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not external_arcnames:
+        return errors, passes
+    available = threshold - user_prefix_budget
+    seen_reserved: set[tuple[str, str]] = set()
+    longest_external = 0
+    longest_external_arcname = ""
+    for arcname in external_arcnames:
+        # Long-path rule.
+        arcname_len = len(arcname)
+        if arcname_len > longest_external:
+            longest_external = arcname_len
+            longest_external_arcname = arcname
+        if arcname_len > available:
+            errors.append(
+                f"{severity}: '{arcname}' exceeds the long-path budget "
+                f"({user_prefix_budget} prefix + {arcname_len} arcname "
+                f"= {user_prefix_budget + arcname_len} > {threshold} "
+                "threshold) — Windows checkouts under a typical user "
+                "directory may fail to extract this path.  Shorten "
+                "the path or raise bundle.long_path.threshold in "
+                "configuration.yaml after auditing the integrator's "
+                "install location."
+            )
+        # Reserved-name rule: walk every component, dedup by
+        # (component-path, stem) so a directory shared by multiple
+        # external files is reported once.
+        components = arcname.split("/")
+        component_path_parts: list[str] = []
+        for component in components:
+            component_path_parts.append(component)
+            component_rel = "/".join(component_path_parts)
+            stem = _reserved_stem(component)
+            if stem not in WINDOWS_RESERVED_NAMES:
+                continue
+            if (component_rel, stem) in seen_reserved:
+                continue
+            seen_reserved.add((component_rel, stem))
+            errors.append(_render_reserved_name_finding(
+                severity=severity,
+                rel=arcname,
+                component_rel=component_rel,
+                component=component,
+                stem=stem,
+            ))
+    if not errors:
+        passes.append(
+            f"external-arcname long-path: longest external arcname "
+            f"'{longest_external_arcname}' ({longest_external} chars) "
+            f"fits within the {available}-char arcname budget "
+            f"(threshold {threshold}, prefix {user_prefix_budget})"
+        )
+        passes.append(
+            "external-arcname windows-reserved-names: every path "
+            "component is legal on NTFS"
+        )
+    return errors, passes
+
 
 class BundleStats(TypedDict):
     """Bundle creation statistics used in summary output."""
@@ -209,9 +634,14 @@ def _copy_external_files(
     dest_to_source: dict[str, str] = {}
 
     for ext_file in sorted(external_files):
+        # Render native source paths in POSIX form so the message
+        # matches across Linux/macOS/Windows when bubbled to stderr or
+        # the JSON ``error`` field by the bundle entry point.
+        ext_file_posix = to_posix(ext_file)
+
         if not os.path.isfile(ext_file):
             raise ValueError(
-                f"External reference is not a regular file: '{ext_file}'. "
+                f"External reference is not a regular file: '{ext_file_posix}'. "
                 f"Only files can be bundled — remove or replace the "
                 f"directory reference."
             )
@@ -223,7 +653,7 @@ def _copy_external_files(
         parts = os.path.normpath(real_path).split(os.sep)
         if any(should_exclude(p, exclude_patterns) for p in parts):
             raise ValueError(
-                f"External reference '{ext_file}' resolves to an "
+                f"External reference '{ext_file_posix}' resolves to an "
                 f"excluded path. Files matching bundle.exclude_patterns "
                 f"cannot be included in the bundle."
             )
@@ -235,7 +665,7 @@ def _copy_external_files(
         if existing and existing != ext_file:
             raise ValueError(
                 f"Bundle path collision: '{bundle_rel}' is the target "
-                f"for both '{existing}' and '{ext_file}'. "
+                f"for both '{to_posix(existing)}' and '{ext_file_posix}'. "
                 f"Rename or relocate one of the source files to avoid "
                 f"the conflict."
             )
@@ -249,7 +679,7 @@ def _copy_external_files(
         if os.path.exists(target):
             raise ValueError(
                 f"External file would overwrite skill-internal file at "
-                f"'{bundle_rel}' (source: '{ext_file}'). "
+                f"'{bundle_rel}' (source: '{ext_file_posix}'). "
                 f"Rename or relocate the external file to avoid the "
                 f"conflict."
             )
@@ -258,7 +688,7 @@ def _copy_external_files(
         try:
             shutil.copy2(ext_file, target)
         except OSError as e:
-            rel_ext = os.path.relpath(ext_file, system_root).replace(os.sep, "/") if system_root else ext_file
+            rel_ext = os.path.relpath(ext_file, system_root).replace(os.sep, "/") if system_root else ext_file_posix
             raise ValueError(
                 f"Failed to copy external file '{rel_ext}' into bundle"
             ) from e
@@ -480,7 +910,7 @@ def _rewrite_markdown_paths(
             if updated == content:
                 continue
 
-            with open(filepath, "w", encoding="utf-8") as f:
+            with open(filepath, "w", encoding="utf-8", newline="\n") as f:
                 f.write(updated)
             rewrite_count += 1
 

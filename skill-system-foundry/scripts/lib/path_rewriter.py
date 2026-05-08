@@ -33,6 +33,7 @@ from .constants import (
 )
 from .frontmatter import split_frontmatter, strip_frontmatter_for_scan
 from .references import is_drive_qualified, is_glob_path, is_within_directory
+from .reporting import to_posix
 
 
 # ===================================================================
@@ -391,6 +392,14 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                         line_no = idx
                         break
                 rows.append({
+                    # ``file`` keeps the native filesystem path
+                    # because ``apply_fixes`` opens it directly to
+                    # rewrite content.  POSIX permits ``\`` as a
+                    # legal filename character, so passing it
+                    # through ``to_posix`` could rewrite it to ``/``
+                    # and silently target the wrong file.  ``file_rel``
+                    # is the POSIX-form skill-relative form for JSON
+                    # consumers and human messages.
                     "file": filepath,
                     "file_rel": file_rel,
                     "original": ref,
@@ -494,15 +503,22 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                         line_no = idx
                         break
                 rows.append({
+                    # ``file`` keeps the native form for symmetry
+                    # with ``find_fixable_references`` (see the
+                    # comment there).  ``file_rel`` and the two
+                    # ``*_target`` fields are POSIX-normalised for
+                    # JSON consumers because they are skill-relative
+                    # display strings, not paths a caller would
+                    # ``open()`` directly.
                     "file": filepath,
                     "file_rel": file_rel,
                     "original": ref,
-                    "legacy_target": os.path.relpath(
-                        legacy_target, skill_root,
-                    ).replace(os.sep, "/"),
-                    "file_rel_target": os.path.relpath(
-                        file_rel_target, skill_root,
-                    ).replace(os.sep, "/"),
+                    "legacy_target": to_posix(
+                        os.path.relpath(legacy_target, skill_root)
+                    ),
+                    "file_rel_target": to_posix(
+                        os.path.relpath(file_rel_target, skill_root)
+                    ),
                     "line": line_no,
                 })
     return rows
@@ -613,7 +629,7 @@ def apply_fixes(rows: list[dict]) -> int:
         new_content = "".join(parts)
 
         if new_content != content:
-            with open(filepath, "w", encoding="utf-8") as f:
+            with open(filepath, "w", encoding="utf-8", newline="\n") as f:
                 f.write(new_content)
             changed += 1
     return changed

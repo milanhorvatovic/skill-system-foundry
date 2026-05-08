@@ -33,6 +33,7 @@ from audit_skill_system import (
     audit_skill_system,
     main,
 )
+from lib.reporting import to_posix
 from lib.constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
@@ -1472,8 +1473,10 @@ class AuditVerboseBranchTests(unittest.TestCase):
         self.assertIn("Skill-root mode: also auditing skill at", output)
         # Resolved path appears (audit_skill_system abspaths system_root
         # before printing, so the operator sees a real directory rather
-        # than a relative ".").
-        self.assertIn(os.path.abspath(skill_dir), output)
+        # than a relative ".").  ``abspath`` produces backslashes on
+        # Windows; the print site routes the path through ``to_posix``
+        # so the assertion must match the forward-slash form.
+        self.assertIn(to_posix(os.path.abspath(skill_dir)), output)
 
     def test_verbose_manifest_no_skills_section(self) -> None:
         """A manifest without a skills key prints 'no skills section'."""
@@ -2123,7 +2126,9 @@ class CheckVersionConsistencyTests(unittest.TestCase):
 
             with mock.patch(
                 "audit_skill_system.load_frontmatter",
-                side_effect=OSError(13, "permission denied"),
+                side_effect=OSError(
+                    13, "permission denied", "C:\\tmp\\SKILL.md",
+                ),
             ):
                 findings = check_version_consistency(tmp)
             self.assertTrue(
@@ -2132,6 +2137,7 @@ class CheckVersionConsistencyTests(unittest.TestCase):
                     for f in findings
                 )
             )
+            self.assertTrue(all("\\" not in finding for finding in findings))
 
     def test_empty_string_version_is_treated_as_drift(self) -> None:
         """``"version": ""`` must not silently bypass the comparison.
@@ -2623,6 +2629,152 @@ class AuditCapabilityAggregationTests(unittest.TestCase):
             and "capabilities/my-cap/capability.md" in e
         ]
         self.assertEqual(len(parse_fails), 1)
+
+
+class AuditCrossPlatformChecksTests(unittest.TestCase):
+    """Regression coverage for the audit's cross-platform passes.
+
+    The audit grew two new passes over registered skills and shared
+    system-root subtrees: ``check_long_paths`` (Windows MAX_PATH
+    pre-flight) and ``check_reserved_path_components`` (NTFS
+    reserved-device-name detection).  These tests pin the audit-side
+    glue — the helpers themselves are exercised under
+    ``CheckLongPathsTests`` and ``CheckReservedPathComponentsTests``
+    in ``test_bundle.py``; the assertions here cover the audit's
+    own loop dispatch, finding-prefix labelling, and the disjoint
+    skill-root vs deployed-system mode behaviour documented in the
+    audit comments.
+    """
+
+    def _make_minimal_system(self, system_root: str) -> None:
+        write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+        skills_root = os.path.join(system_root, "skills")
+        os.makedirs(skills_root)
+        write_skill_md(
+            os.path.join(skills_root, "demo-skill"), name="demo-skill",
+        )
+
+    def test_reserved_name_under_shared_roles_is_flagged(self) -> None:
+        """A ``roles/<reserved>`` component fails in deployed-system mode.
+
+        Pinned regression: the shared-subtree pass walks ``roles/``
+        in addition to registered skills; a reserved component there
+        must reach the audit findings list with a ``roles/`` prefix
+        on the message so triage can locate it without re-walking.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_minimal_system(tmpdir)
+            roles_dir = os.path.join(tmpdir, "roles")
+            os.makedirs(roles_dir)
+            # ``con.md`` matches a Windows device name regardless of
+            # extension after ``_reserved_stem`` strips the dot.
+            write_text(os.path.join(roles_dir, "con.md"), "# Role\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        reserved = [
+            e for e in errors
+            if "CON" in e and "roles/" in e
+        ]
+        self.assertGreaterEqual(
+            len(reserved), 1,
+            msg=f"expected one CON finding under roles/; got errors={errors}",
+        )
+
+    def test_long_path_under_shared_roles_is_flagged(self) -> None:
+        """A long path under ``roles/`` triggers a long-path WARN.
+
+        The shared-subtree pass uses ``severity=LEVEL_WARN`` (not
+        FAIL) because the audit's measurement is approximate vs the
+        per-skill bundle pre-flight; the WARN level lets integrators
+        surface the path before bundling without blocking the audit
+        run itself.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._make_minimal_system(tmpdir)
+            roles_dir = os.path.join(tmpdir, "roles", "deeply-nested")
+            os.makedirs(roles_dir)
+            # ``available = threshold (260) - user_prefix_budget (80) = 180``;
+            # the basename plus the roles/ + deeply-nested/ prefix
+            # overflows that comfortably.
+            long_basename = ("x" * 200) + ".md"
+            write_text(os.path.join(roles_dir, long_basename), "# Role\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        long_path_warns = [
+            e for e in errors
+            if e.startswith(LEVEL_WARN)
+            and "long-path budget" in e
+            and "roles/" in e
+        ]
+        self.assertGreaterEqual(
+            len(long_path_warns), 1,
+            msg=(
+                f"expected one long-path WARN under roles/; "
+                f"got errors={errors}"
+            ),
+        )
+
+    def test_skill_root_mode_skips_shared_subtree_pass(self) -> None:
+        """Skill-root mode does not double-walk the shared subtree pass.
+
+        Documented disjoint-mode behaviour: when the audit root IS
+        the skill (top-level SKILL.md), the per-skill loop already
+        walks every file under it.  Re-walking via the shared
+        ``roles/`` / ``references/`` etc. dispatch would duplicate
+        findings under both the skill name and the shared label.
+        Pin the disjoint behaviour so a future refactor of the
+        dispatch keeps the de-duplication.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Top-level SKILL.md → skill-root mode.
+            write_skill_md(tmpdir, name="my-meta-skill")
+            roles_dir = os.path.join(tmpdir, "roles")
+            os.makedirs(roles_dir)
+            write_text(os.path.join(roles_dir, "con.md"), "# Role\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        # The reserved name is still found by the per-skill walker
+        # (as part of the my-meta-skill scan).  What must NOT happen
+        # is a duplicate finding labelled ``roles/`` from the shared
+        # dispatch — that label belongs only to deployed-system mode.
+        roles_labelled = [e for e in errors if "roles/:" in e]
+        self.assertEqual(
+            roles_labelled, [],
+            msg=(
+                "shared-subtree dispatch must be skipped in skill-root "
+                f"mode; got duplicate findings={roles_labelled}"
+            ),
+        )
+
+    def test_distribution_repo_mode_skips_shared_subtree_pass(self) -> None:
+        """Distribution-repo mode skips the shared-subtree dispatch.
+
+        When the audit root has neither a top-level SKILL.md nor a
+        ``skills/`` tree (the documented partial-audit shape — e.g.,
+        the foundry repo root, which holds the meta-skill under
+        ``skill-system-foundry/`` and has top-level repository
+        infrastructure under ``scripts/``), the shared-subtree
+        dispatch must stay quiet.  The directories present here are
+        not skill-system content the bundler would copy, so emitting
+        long-path or reserved-name warnings against them would be
+        unrelated audit noise that contradicts the documented
+        repo-root partial-audit behaviour.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No top-level SKILL.md and no ``skills/`` tree → the
+            # distribution-repo / partial-audit shape.  Place a
+            # reserved-name file under ``scripts/`` (top-level repo
+            # infrastructure) and confirm the audit does not flag it.
+            scripts_dir = os.path.join(tmpdir, "scripts")
+            os.makedirs(scripts_dir)
+            write_text(os.path.join(scripts_dir, "con.py"), "# infra\n")
+            errors = audit_skill_system(tmpdir, verbose=False)
+        scripts_labelled = [e for e in errors if "scripts/:" in e]
+        self.assertEqual(
+            scripts_labelled, [],
+            msg=(
+                "shared-subtree dispatch must be skipped in "
+                "distribution-repo mode (no skills/ tree, no top-level "
+                f"SKILL.md); got infrastructure findings={scripts_labelled}"
+            ),
+        )
 
 
 if __name__ == "__main__":

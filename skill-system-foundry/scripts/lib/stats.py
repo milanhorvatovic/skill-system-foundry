@@ -31,6 +31,7 @@ of the same content will report higher than a POSIX checkout.
 import os
 
 from .constants import (
+    DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS,
     DIR_ASSETS,
     DIR_CAPABILITIES,
     DIR_SCRIPTS,
@@ -40,10 +41,25 @@ from .constants import (
     LEVEL_INFO,
     LEVEL_WARN,
     PATH_RESOLUTION_RULE_NAME,
+    STATS_LINE_ENDINGS_ENABLED,
 )
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
 from .references import is_drive_qualified, is_within_directory
+from .reporting import format_exception, to_posix
+
+
+# Line-ending detection only runs on text-shaped foundry files.  The
+# extension set is the same one ``looks_like_degraded_symlink`` uses
+# to gate its shape match, so authoritative ownership lives in
+# ``configuration.yaml`` under
+# ``path_resolution.degraded_symlink.foundry_extensions`` and reaches
+# both call sites through the validated tuple in ``constants.py``.
+# Hardcoding a second list here would silently drift the day someone
+# extends one source without the other.
+LINE_ENDINGS_TEXT_EXTENSIONS: tuple[str, ...] = tuple(
+    f".{ext}" for ext in DEGRADED_SYMLINK_FOUNDRY_EXTENSIONS
+)
 
 
 # Directory categories whose bytes are excluded from ``load_bytes``.
@@ -70,14 +86,58 @@ def read_bytes_count(filepath: str) -> int:
     return os.path.getsize(filepath)
 
 
+def compute_line_endings(filepath: str) -> tuple[str, int, int]:
+    """Detect line-ending mode for *filepath* and count CR/LF terminators.
+
+    Reads the file in binary mode (so universal-newline translation
+    cannot rewrite ``\\r\\n`` into ``\\n``) and counts the byte
+    sequences that act as line terminators.  Returns
+    ``(mode, crlf_count, lf_only_count)`` where:
+
+    * ``mode`` is ``"lf"`` when the file contains only ``\\n``
+      terminators, ``"crlf"`` when every terminator is ``\\r\\n``,
+      ``"mixed"`` when both shapes appear, and ``"lf"`` for files
+      with no terminators (treated as a single LF-style line).
+    * ``crlf_count`` is the number of ``\\r\\n`` pairs.
+    * ``lf_only_count`` is the number of standalone ``\\n``
+      terminators (those not preceded by ``\\r``).
+
+    The byte arithmetic for the LF-normalized file size is then
+    ``raw_bytes - crlf_count`` — every CRLF collapses to a single
+    LF, no other transformations are applied.  Raises ``OSError`` on
+    read failure; callers handle it as they handle ``read_bytes_count``.
+    """
+    with open(filepath, "rb") as fh:
+        data = fh.read()
+    crlf = data.count(b"\r\n")
+    total_lf = data.count(b"\n")
+    lf_only = total_lf - crlf
+    if crlf and lf_only:
+        return "mixed", crlf, lf_only
+    if crlf:
+        return "crlf", crlf, 0
+    return "lf", 0, lf_only
+
+
 def discovery_bytes_of(markdown_path: str) -> int:
     """Return the byte count of a markdown file's YAML frontmatter block.
 
-    The block runs from the opening ``---`` line through the closing
-    ``---`` line, inclusive of both fences and the newlines that
-    terminate them.  Returns ``0`` when the file does not start with a
-    ``---`` opener or has no closing ``---`` — those cases are
-    surfaced as findings by ``compute_stats``.
+    Thin wrapper around :func:`discovery_window_of` that returns only
+    the byte count.  Kept for backward compatibility with callers that
+    do not need the CRLF breakdown (today: ``compute_stats`` for the
+    aggregate count and the test suite's parser-agreement check).
+    """
+    byte_count, _ = discovery_window_of(markdown_path)
+    return byte_count
+
+
+def discovery_window_of(markdown_path: str) -> tuple[int, int]:
+    """Return ``(byte_count, crlf_in_window)`` for the discovery prefix.
+
+    The discovery window runs from the opening ``---`` line through
+    the closing ``---`` line, inclusive of both fences and the
+    newlines that terminate them.  Returns ``(0, 0)`` when the file
+    does not start with a ``---`` opener or has no closing ``---``.
 
     Counted from raw on-disk bytes (CRLF preserved).  Reads in UTF-8
     text mode with ``newline=""`` so carriage returns are not
@@ -86,16 +146,20 @@ def discovery_bytes_of(markdown_path: str) -> int:
     ``encoding="utf-8"`` convention without losing the CRLF byte cost
     that Windows checkouts genuinely pay at discovery time.
 
+    The ``crlf_in_window`` count is the number of ``\\r\\n`` pairs
+    *inside* the discovery window — strictly less than or equal to
+    the file's total CRLF count.  Callers use it to compute a
+    precise LF-normalised discovery byte count without re-walking
+    the file.
+
     Deliberately walks the bytes rather than reusing
     ``frontmatter.split_frontmatter`` — the parser normalizes CRLF to
     LF before splitting, which would also lose those carriage returns.
-    The two implementations are kept in sync by the
-    ``DiscoveryBoundaryAgreementTests`` assertion in test_stats.py.
     """
     with open(markdown_path, "r", encoding="utf-8", newline="") as f:
         data = f.read().encode("utf-8")
     if not data.startswith(b"---"):
-        return 0
+        return 0, 0
     # Walk line by line to find the closing fence.  Track the byte
     # offset where the closing fence's terminator ends so the count
     # includes both fences and the newline that follows the closer.
@@ -112,12 +176,13 @@ def discovery_bytes_of(markdown_path: str) -> int:
             terminator_end = newline + 1
         stripped = line.rstrip(b"\r")
         if line_index > 0 and stripped == b"---":
-            return terminator_end
+            window = data[:terminator_end]
+            return terminator_end, window.count(b"\r\n")
         if line_index == 0 and stripped != b"---":
-            return 0
+            return 0, 0
         offset = terminator_end
         line_index += 1
-    return 0
+    return 0, 0
 
 
 # ===================================================================
@@ -165,7 +230,7 @@ def is_capability_entry(rel_path: str) -> bool:
 
 def _compute_capability_discovery(
     visited: dict[str, dict],
-) -> tuple[dict[str, int], list[str]]:
+) -> tuple[dict[str, tuple[int, int]], list[str]]:
     """Walk capability entries and compute their discovery contributions.
 
     Iterates *visited* in path-alphabetical order so the emitted
@@ -176,27 +241,28 @@ def _compute_capability_discovery(
     Returns ``(discovery_by_filepath, errors)``:
 
     * ``discovery_by_filepath`` maps the absolute path of every
-      capability entry to its frontmatter byte count.  A capability
-      that is silent on frontmatter contributes ``0``; a capability
-      whose frontmatter could not be read also contributes ``0`` but
-      raises a finding in *errors*.
+      capability entry to ``(byte_count, crlf_in_window)``.  A
+      capability silent on frontmatter contributes ``(0, 0)``; a
+      capability whose frontmatter could not be read also contributes
+      ``(0, 0)`` but raises a finding in *errors*.  The CRLF-in-window
+      count is what the caller subtracts to derive a precise
+      LF-normalised discovery aggregate without re-walking the file.
     * ``errors`` is the list of new finding strings the caller should
       append to the run-level error list.  Two finding shapes are
-      possible: an I/O-failure WARN when ``discovery_bytes_of``
+      possible: an I/O-failure WARN when ``discovery_window_of``
       raises, and a parse-error WARN when ``load_frontmatter``
       returns a ``_parse_error`` dict.  The parse-error case covers
       *both* the unclosed-fence shape (``---`` opener with no
-      closing fence — ``discovery_bytes_of`` reports this as 0
-      bytes because the boundary is undetectable) *and* the
-      valid-fences-with-invalid-YAML-body shape.  A capability
-      silent on frontmatter (no ``---`` opener at all) produces no
-      finding.  ``cap_discovery == 0`` therefore is not a reliable
-      "silent capability" predicate — the byte scan returns 0 for
-      both legitimate silent and malformed unclosed-fence shapes,
-      so the parse probe must run unconditionally to distinguish
-      them.
+      closing fence — the byte scan reports this as 0 bytes because
+      the boundary is undetectable) *and* the valid-fences-with-
+      invalid-YAML-body shape.  A capability silent on frontmatter
+      (no ``---`` opener at all) produces no finding.  ``cap_bytes ==
+      0`` therefore is not a reliable "silent capability" predicate
+      — the byte scan returns 0 for both legitimate silent and
+      malformed unclosed-fence shapes, so the parse probe must run
+      unconditionally to distinguish them.
     """
-    discovery_by_filepath: dict[str, int] = {}
+    discovery_by_filepath: dict[str, tuple[int, int]] = {}
     errors: list[str] = []
     sorted_items = sorted(
         visited.items(), key=lambda item: item[1]["path"],
@@ -205,20 +271,20 @@ def _compute_capability_discovery(
         if not is_capability_entry(state["path"]):
             continue
         try:
-            cap_discovery = discovery_bytes_of(filepath)
+            cap_bytes, cap_crlf = discovery_window_of(filepath)
         except (OSError, UnicodeError) as exc:
             errors.append(
                 f"{LEVEL_WARN}: [foundry] cannot scan '{state['path']}' "
-                f"frontmatter ({exc.__class__.__name__}: {exc}) — "
+                f"frontmatter ({format_exception(exc)}) — "
                 f"discovery_bytes recorded as 0"
             )
-            discovery_by_filepath[filepath] = 0
+            discovery_by_filepath[filepath] = (0, 0)
             continue
-        discovery_by_filepath[filepath] = cap_discovery
-        # Always probe the parse layer even when ``cap_discovery``
-        # is zero: ``discovery_bytes_of`` returns 0 both for silent
-        # capabilities (no ``---`` opener at all) and for malformed
-        # ones (opener with no closing fence).  Only
+        discovery_by_filepath[filepath] = (cap_bytes, cap_crlf)
+        # Always probe the parse layer even when ``cap_bytes`` is
+        # zero: the byte scan via ``discovery_window_of`` returns 0
+        # both for silent capabilities (no ``---`` opener at all) and
+        # for malformed ones (opener with no closing fence).  Only
         # ``load_frontmatter`` distinguishes the two — the silent
         # case returns ``(None, ..., [])`` and short-circuits below;
         # the unclosed-fence case returns a ``_parse_error`` dict
@@ -257,24 +323,35 @@ def _to_skill_root_relative(filepath: str, skill_root: str) -> str:
 def compute_stats(skill_path: str) -> dict:
     """Compute byte-based stats for the skill rooted at *skill_path*.
 
-    Returns a dict with keys::
+    Returns a dict whose required keys are always present and whose
+    optional keys are toggle-dependent::
 
         {
+            # Required:
             "skill":           str,           # skill name (frontmatter or dir basename)
             "metric":          "bytes",
             "discovery_bytes": int,
             "load_bytes":      int,
             "files":           list[dict],    # sorted by relative POSIX path
             "errors":          list[str],     # FAIL/WARN/INFO finding strings
+
+            # Optional (only when ``stats.line_endings.enabled``
+            # is true in configuration.yaml):
+            "discovery_bytes_lf": int,
+            "load_bytes_lf":      int,
         }
 
     Each ``files`` entry has the shape::
 
         {
+            # Required:
             "path":            str,                 # relative to skill root, POSIX
             "bytes":           int,
             "reachable_from":  list[str],           # parents, sorted alphabetically
+
+            # Optional:
             "discovery_bytes": int,                 # only on discovery-relevant rows
+            "line_endings":    "lf" | "crlf" | "mixed",  # only on text-shaped rows
         }
 
     The optional ``discovery_bytes`` key is populated on rows the
@@ -291,6 +368,24 @@ def compute_stats(skill_path: str) -> dict:
     falsely imply they contribute to discovery cost.  The
     top-level ``discovery_bytes`` is the sum across rows that
     carry the key.
+
+    The optional ``line_endings`` key (and the top-level
+    ``discovery_bytes_lf`` / ``load_bytes_lf`` companions) are
+    emitted only when ``stats.line_endings.enabled`` is true in
+    ``configuration.yaml``.  When enabled, the per-row key is
+    further restricted to text-shaped extensions (``md``, ``yaml``,
+    ``yml``, ``json``, ``txt``, ``sh``, ``py``, ``toml``); binary
+    load-budget contributors (e.g., a PNG referenced from
+    ``references/``) deliberately omit the key because arbitrary
+    ``\\r\\n`` byte pairs in binary content are not line
+    terminators.  Consumers should branch on key presence rather
+    than treat the missing key on a binary row as a regression.
+    The ``*_lf`` aggregates subtract one byte per ``\\r\\n`` pair
+    detected in the relevant window — ``load_bytes_lf`` subtracts
+    every CRLF in every text-shaped load contributor;
+    ``discovery_bytes_lf`` subtracts only the CRLFs inside each
+    frontmatter block — so a CRLF checkout and an LF checkout of
+    the same content produce equal normalised totals.
 
     The traversal:
 
@@ -324,6 +419,13 @@ def compute_stats(skill_path: str) -> dict:
     skill_path = os.path.abspath(skill_path)
     skill_md = os.path.join(skill_path, FILE_SKILL_MD)
 
+    # ``*_lf`` keys are emitted only when line-ending detection is
+    # enabled.  Consumers should branch on key presence — when the
+    # toggle is off, a CRLF-checkout integrator would otherwise see
+    # ``load_bytes_lf == load_bytes`` (the schema name implies "raw
+    # bytes minus CRLFs", but with detection skipped no CRLFs are
+    # subtracted) and treat the equal-to-raw value as a normalised
+    # total.  Omitting the key keeps the schema honest.
     result: dict = {
         "skill": os.path.basename(skill_path.rstrip(os.sep)),
         "metric": "bytes",
@@ -332,10 +434,22 @@ def compute_stats(skill_path: str) -> dict:
         "files": [],
         "errors": [],
     }
+    if STATS_LINE_ENDINGS_ENABLED:
+        result["discovery_bytes_lf"] = 0
+        result["load_bytes_lf"] = 0
 
     if not os.path.isfile(skill_md):
+        # Route the path through ``to_posix`` so the FAIL message
+        # honours the cross-platform-rule contract documented in
+        # ``references/agentskills-spec.md``: program-derived paths
+        # in FAIL/WARN/INFO findings emit forward slashes regardless
+        # of host.  Without this, a Windows runner would emit a
+        # backslashed path here (``skill_path`` was already
+        # ``os.path.abspath``-ed above) and JSON consumers would see
+        # a different string than on POSIX runners.
         result["errors"].append(
-            f"{LEVEL_FAIL}: [foundry] No {FILE_SKILL_MD} found in {skill_path}"
+            f"{LEVEL_FAIL}: [foundry] No {FILE_SKILL_MD} found in "
+            f"{to_posix(skill_path)}"
         )
         return result
 
@@ -349,7 +463,7 @@ def compute_stats(skill_path: str) -> dict:
     except (OSError, UnicodeError) as exc:
         result["errors"].append(
             f"{LEVEL_FAIL}: [foundry] cannot read {FILE_SKILL_MD} "
-            f"({exc.__class__.__name__}: {exc})"
+            f"({format_exception(exc)})"
         )
         return result
     if frontmatter and "_parse_error" in frontmatter:
@@ -367,19 +481,19 @@ def compute_stats(skill_path: str) -> dict:
         result["skill"] = str(frontmatter["name"])
 
     try:
-        discovery_count = discovery_bytes_of(skill_md)
+        discovery_count, discovery_crlf = discovery_window_of(skill_md)
     except (OSError, UnicodeError) as exc:
         result["errors"].append(
             f"{LEVEL_FAIL}: [foundry] cannot scan {FILE_SKILL_MD} "
-            f"frontmatter ({exc.__class__.__name__}: {exc})"
+            f"frontmatter ({format_exception(exc)})"
         )
         return result
     if discovery_count == 0 and frontmatter is None:
         # Gate on ``frontmatter is None`` rather than on
-        # ``discovery_count == 0`` alone: ``discovery_bytes_of`` returns
-        # 0 for both the silent case (no ``---`` opener) and the
-        # unclosed-fence case (opener with no closer).  The unclosed-
-        # fence case already emits a parse-error WARN above
+        # ``discovery_count == 0`` alone: ``discovery_window_of``
+        # returns 0 for both the silent case (no ``---`` opener) and
+        # the unclosed-fence case (opener with no closer).  The
+        # unclosed-fence case already emits a parse-error WARN above
         # (``load_frontmatter`` surfaces it via ``_parse_error``); only
         # the silent case lacks any other diagnostic, so this is the
         # only branch that deserves its own WARN.  Mirrors the
@@ -414,10 +528,46 @@ def compute_stats(skill_path: str) -> dict:
         except OSError as exc:
             result["errors"].append(
                 f"{LEVEL_WARN}: [foundry] cannot read '{rel}' "
-                f"({exc.__class__.__name__}: {exc}) — excluded from "
+                f"({format_exception(exc)}) — excluded from "
                 f"load_bytes"
             )
             return
+
+        # Line-ending detection only applies to text-shaped files.
+        # ``compute_line_endings`` counts ``\r\n`` byte pairs in the
+        # raw file, but a binary load-budget contributor (PDF, image,
+        # zip, etc. referenced from ``references/``) can contain
+        # arbitrary ``\r\n`` byte pairs in its content that are NOT
+        # line terminators — counting them as CRLFs would reduce
+        # ``load_bytes_lf`` and emit a bogus ``line_endings`` value
+        # even though the file is byte-identical across platforms.
+        # ``LINE_ENDINGS_TEXT_EXTENSIONS`` derives from the foundry
+        # text-extension allow-list in ``configuration.yaml`` so the
+        # set stays in sync with the degraded-symlink shape gate;
+        # extensions outside this list keep ``line_endings`` absent
+        # and contribute their raw byte count to both ``load_bytes``
+        # and ``load_bytes_lf`` (which is correct — there is no
+        # newline-translation surface to normalise).
+        line_endings_mode: str | None = None
+        crlf_count = 0
+        is_text_for_line_endings = filepath.lower().endswith(
+            LINE_ENDINGS_TEXT_EXTENSIONS
+        )
+        if STATS_LINE_ENDINGS_ENABLED and is_text_for_line_endings:
+            try:
+                line_endings_mode, crlf_count, _ = compute_line_endings(
+                    filepath,
+                )
+            except OSError as exc:
+                # Surface a recoverable WARN — the byte count above
+                # already succeeded, so the row stays in ``files[]``
+                # without a mode field.  A subsequent rerun on a
+                # readable working copy fills in the gap.
+                result["errors"].append(
+                    f"{LEVEL_WARN}: [foundry] cannot detect line endings "
+                    f"for '{rel}' ({format_exception(exc)}) — "
+                    f"line_endings field omitted from this row"
+                )
 
         # For markdown files, attempt the UTF-8 decode BEFORE
         # recording in ``visited`` so that an undecodable file is
@@ -434,7 +584,7 @@ def compute_stats(skill_path: str) -> dict:
             except (OSError, UnicodeError) as exc:
                 result["errors"].append(
                     f"{LEVEL_WARN}: [foundry] cannot decode '{rel}' as "
-                    f"UTF-8 ({exc.__class__.__name__}: {exc}) — "
+                    f"UTF-8 ({format_exception(exc)}) — "
                     f"excluded from load_bytes"
                 )
                 return
@@ -442,11 +592,24 @@ def compute_stats(skill_path: str) -> dict:
         parents: set[str] = set()
         if parent_rel is not None:
             parents.add(parent_rel)
-        visited[filepath] = {
+        state: dict = {
             "path": rel,
             "bytes": byte_count,
             "parents": parents,
         }
+        # Persist line-ending fields only when the toggle is enabled.
+        # ``compute_stats`` documents that ``*_lf`` keys and per-row
+        # ``line_endings`` are omitted entirely when detection is
+        # disabled; carrying ``crlf_count`` on every row in the
+        # disabled path would contradict that contract and the
+        # ``state["bytes"] - state.get("crlf_count", 0)`` aggregator
+        # below would silently consume a value the schema says is
+        # absent.
+        if STATS_LINE_ENDINGS_ENABLED:
+            state["crlf_count"] = crlf_count
+            if line_endings_mode is not None:
+                state["line_endings"] = line_endings_mode
+        visited[filepath] = state
 
         # Non-markdown: byte count recorded, nothing to walk further.
         if content is None:
@@ -547,13 +710,17 @@ def compute_stats(skill_path: str) -> dict:
     )
     result["errors"].extend(capability_errors)
 
-    # Build the sorted file list and total load_bytes.  ``visited``
-    # already excludes scripts/assets thanks to the early-return in
+    # Build the sorted file list and totals.  ``visited`` already
+    # excludes scripts/assets thanks to the early-return in
     # ``_visit``, so this loop is an unconditional aggregator.  The
     # discovery aggregate folds in SKILL.md (already in
-    # ``discovery_count``) plus every capability entry's contribution.
+    # ``discovery_count``) plus every capability entry's
+    # contribution; the LF aggregate subtracts the CRLFs that fall
+    # *within* each discovery window — ``discovery_window_of`` returns
+    # those counts directly so no second walk is needed.
     entries: list[dict] = []
     load_total = 0
+    load_total_lf = 0
     skill_md_abs = os.path.abspath(skill_md)
     for filepath, state in visited.items():
         entry: dict = {
@@ -561,17 +728,33 @@ def compute_stats(skill_path: str) -> dict:
             "bytes": state["bytes"],
             "reachable_from": sorted(state["parents"]),
         }
+        if "line_endings" in state:
+            entry["line_endings"] = state["line_endings"]
         if filepath == skill_md_abs:
             entry["discovery_bytes"] = discovery_count
         elif filepath in capability_discovery:
-            entry["discovery_bytes"] = capability_discovery[filepath]
+            entry["discovery_bytes"] = capability_discovery[filepath][0]
         entries.append(entry)
         load_total += state["bytes"]
+        # ``crlf_count`` is only persisted when the toggle is on; the
+        # ``get`` default keeps the disabled-toggle path correct (no
+        # subtraction) and the enabled path consistent with whatever
+        # ``compute_line_endings`` recorded — including 0 for binary
+        # rows that were skipped by the text-extension gate.
+        load_total_lf += state["bytes"] - state.get("crlf_count", 0)
 
     entries.sort(key=lambda entry: entry["path"])
     result["files"] = entries
     result["load_bytes"] = load_total
     result["discovery_bytes"] = discovery_count + sum(
-        capability_discovery.values()
+        cap_bytes for cap_bytes, _ in capability_discovery.values()
     )
+    if STATS_LINE_ENDINGS_ENABLED:
+        discovery_total_crlf = discovery_crlf + sum(
+            crlf for _, crlf in capability_discovery.values()
+        )
+        result["load_bytes_lf"] = load_total_lf
+        result["discovery_bytes_lf"] = (
+            result["discovery_bytes"] - discovery_total_crlf
+        )
     return result

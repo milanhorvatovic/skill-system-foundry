@@ -60,6 +60,7 @@ from lib.constants import (
     LEVEL_WARN,
     LEVEL_INFO,
 )
+from lib.reporting import to_posix
 
 
 def _run(args, cwd):
@@ -936,7 +937,7 @@ class UpdateManifestSkillTests(unittest.TestCase):
             data = json.loads(proc.stdout)
             self.assertTrue(data["success"])
             manifest_abs = os.path.abspath(os.path.join(tmpdir, "manifest.yaml"))
-            self.assertIn(manifest_abs, data["created"])
+            self.assertIn(to_posix(manifest_abs), data["created"])
 
     def test_json_created_excludes_manifest_when_preexisting(self) -> None:
         """--update-manifest does not add manifest.yaml to created if it already exists."""
@@ -1075,7 +1076,7 @@ class UpdateManifestRoleTests(unittest.TestCase):
             data = json.loads(proc.stdout)
             self.assertTrue(data["success"])
             manifest_abs = os.path.abspath(os.path.join(tmpdir, "manifest.yaml"))
-            self.assertIn(manifest_abs, data["created"])
+            self.assertIn(to_posix(manifest_abs), data["created"])
 
     def test_role_conflict_warns(self) -> None:
         """--update-manifest for role warns on name conflict."""
@@ -1614,7 +1615,7 @@ class ScaffoldSkillHumanOutputTests(unittest.TestCase):
             self.assertIn("Skill 'test-skill' scaffolded at", output)
             self.assertIn("Next:", output)
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn(manifest_path, output)
+            self.assertIn(to_posix(manifest_path), output)
 
     def test_success_message_with_update_manifest(self) -> None:
         """Success message with update_manifest omits manifest guidance."""
@@ -1730,7 +1731,7 @@ class ScaffoldCapabilityHumanOutputTests(unittest.TestCase):
             self.assertIn("routing table", output)
             # The manifest path includes the tmpdir prefix
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn("update " + manifest_path, output)
+            self.assertIn("update " + to_posix(manifest_path), output)
 
     def test_update_manifest_info_non_json(self) -> None:
         """With update_manifest=True, prints INFO about not adding to manifest directly."""
@@ -1752,7 +1753,7 @@ class ScaffoldCapabilityHumanOutputTests(unittest.TestCase):
                 scaffold_capability("my-domain", "my-cap", root=tmpdir, update_manifest=False)
             output = buf.getvalue()
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn("Next: update " + manifest_path, output)
+            self.assertIn("Next: update " + to_posix(manifest_path), output)
 
 
 # ===================================================================
@@ -1884,7 +1885,7 @@ class ScaffoldRoleHumanOutputTests(unittest.TestCase):
             self.assertIn("Role 'my-role' scaffolded at", output)
             self.assertIn("Next: edit", output)
             manifest_path = os.path.join(tmpdir, FILE_MANIFEST)
-            self.assertIn("Next: update " + manifest_path, output)
+            self.assertIn("Next: update " + to_posix(manifest_path), output)
 
     def test_success_message_with_update_manifest(self) -> None:
         """Success with update_manifest omits manifest guidance."""
@@ -1978,7 +1979,7 @@ class WriteFileOutputTests(unittest.TestCase):
             with mock.patch("sys.stdout", buf):
                 write_file(path, "content")
             self.assertIn("Created:", buf.getvalue())
-            self.assertIn(path, buf.getvalue())
+            self.assertIn(to_posix(path), buf.getvalue())
 
 
 # ===================================================================
