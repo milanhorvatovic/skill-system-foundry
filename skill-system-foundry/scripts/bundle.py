@@ -603,6 +603,7 @@ def main() -> None:
         # would slip past the pre-flight.
         reserved_name_post_errors, _ = check_reserved_path_components(
             bundle_dir,
+            arcname_root=os.path.dirname(bundle_dir),
         )
         post_errors = (
             list(post_errors)
