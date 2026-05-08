@@ -1,0 +1,19 @@
+skill-system-foundry/scripts/validate_skill.py
+  s_1bc9c249fa5026::t_647cfc027baa9e 1358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "6c1389395436de3ac8803641b3007345cb1c1eb3",
+  "prompts": {},
+  "sessions": {
+    "s_1bc9c249fa5026": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f8604baeffedxfIBRtlLMX98a",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
