@@ -1,0 +1,21 @@
+tests/test_gitattributes.py
+  s_ccbf066e1709cb::t_e0cf57826b0e22 42-75
+.gitattributes
+  s_ccbf066e1709cb::t_68a9a7fd61ba6c 36-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "04feff26aa5f3ed9f71d0df5ddf811abbbe21862",
+  "prompts": {},
+  "sessions": {
+    "s_ccbf066e1709cb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e0723-e0d1-7152-bb9e-a97a288f0417",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
