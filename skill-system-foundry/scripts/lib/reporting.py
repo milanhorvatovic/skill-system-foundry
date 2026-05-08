@@ -87,10 +87,15 @@ def format_exception(exc: BaseException) -> str:
     relevant path through ``to_posix`` in its own format string.
     For ``ValueError`` instances raised by ``os.path.relpath`` and
     similar path arithmetic, render the class name plus the first
-    arg verbatim (the message), but stripped of any embedded
-    filename context.  Other exception classes (including
-    ``UnicodeError``) are rendered via their default ``str()``
-    because their messages do not carry a filename.
+    arg verbatim — ``os.path.relpath``'s cross-drive message is
+    ``"path is on mount 'C:', start on mount 'D:'"`` and contains
+    only mount tokens, not a backslashed path, so the verbatim
+    message is already path-free.  Routing through this helper
+    anyway keeps every UI-bound exception text on the same
+    chokepoint should the stdlib wording evolve to embed a path.
+    Other exception classes (including ``UnicodeError``) are
+    rendered via their default ``str()`` because their messages
+    do not carry a filename.
     """
     if isinstance(exc, OSError):
         detail = exc.strerror or (
