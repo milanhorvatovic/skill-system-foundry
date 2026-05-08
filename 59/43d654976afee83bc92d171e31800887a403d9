@@ -1,0 +1,22 @@
+skill-system-foundry/scripts/audit_skill_system.py
+  s_a73f590479d91a::t_0ff9ca07e97c50 66,117,484
+  s_a73f590479d91a::t_7bfec8def9dc0c 128,130,137,139,141,144,147,228
+tests/test_audit_skill_system.py
+  s_a73f590479d91a::t_91a175fd9af6c7 2129-2131,2140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "5943d654976afee83bc92d171e31800887a403d9",
+  "prompts": {},
+  "sessions": {
+    "s_a73f590479d91a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e08c5-2d7f-74e1-b060-3e2408123a2f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
