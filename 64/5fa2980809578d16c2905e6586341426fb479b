@@ -1,0 +1,22 @@
+tests/test_bundle.py
+  s_a121792104a1eb::t_eb71bab39cda1b 2150,2155
+skill-system-foundry/scripts/lib/bundling.py
+  s_a121792104a1eb::t_b05adcf537eb15 402-404
+  s_a121792104a1eb::t_21ea30df9da5f4 460-463
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "645fa2980809578d16c2905e6586341426fb479b",
+  "prompts": {},
+  "sessions": {
+    "s_a121792104a1eb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f76ed920ffeCmUr3Ud7gQ6y1b",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
