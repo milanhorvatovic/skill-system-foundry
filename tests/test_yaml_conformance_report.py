@@ -137,7 +137,7 @@ class MissingCorpusRootTests(unittest.TestCase):
     """Bad ``--corpus-root`` surfaces a clear error."""
 
     def test_missing_root_returns_one(self) -> None:
-        with unittest.mock.patch("sys.stderr", new=io.StringIO()):
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()):
             rc = report.main(["--corpus-root", "/nonexistent/path"])
         self.assertEqual(rc, 1)
 
@@ -204,11 +204,11 @@ class MissingCorpusRootTests(unittest.TestCase):
                 encoding="utf-8",
             ) as fh:
                 fh.write("not-a-valid-line\n")
-            err = io.StringIO()
-            with unittest.mock.patch("sys.stderr", new=err):
+            out = io.StringIO()
+            with unittest.mock.patch("sys.stdout", new=out):
                 rc = report.main(["--corpus-root", root])
             self.assertEqual(rc, 1)
-            self.assertIn("corpus load failure", err.getvalue())
+            self.assertIn("corpus load failure", out.getvalue())
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

@@ -28,7 +28,8 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib import yaml_conformance_runner as runner  # noqa: E402
-from lib.reporting import to_json_output  # noqa: E402
+from lib.constants import LEVEL_FAIL  # noqa: E402
+from lib.reporting import print_error_line, to_json_output  # noqa: E402
 
 DEFAULT_CORPUS_ROOT = os.path.join(
     _REPO_ROOT, "tests", "fixtures", "yaml-conformance"
@@ -104,9 +105,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            print(
-                f"Error: corpus root not found: {args.corpus_root}",
-                file=sys.stderr,
+            print_error_line(
+                f"{LEVEL_FAIL}: corpus root not found: {args.corpus_root}"
             )
         return 1
 
@@ -142,7 +142,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            print(f"Error: corpus load failure: {exc}", file=sys.stderr)
+            print_error_line(
+                f"{LEVEL_FAIL}: corpus load failure: {exc}"
+            )
         return 1
 
     payload = {"corpus": summary}
