@@ -1,0 +1,11 @@
+skill-system-foundry/scripts/lib/references.py
+  ai_agent 457-472,521-533,540
+tests/test_references.py
+  ai_agent 2844-2886
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "5e86a406af7d3aebf46f680684739c8a8102075c",
+  "prompts": {}
+}
