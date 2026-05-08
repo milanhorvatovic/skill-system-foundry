@@ -34,6 +34,23 @@ tokenizers — they are a deterministic on-disk signal for tracking the
 relative cost of authoring decisions over time.  Counts are taken
 from raw on-disk UTF-8 bytes (CRLF preserved); a Windows checkout of
 the same content reports a higher count than a POSIX checkout.
+
+For cross-platform comparability, the JSON payload also reports
+``discovery_bytes_lf`` and ``load_bytes_lf`` alongside the raw
+counts, with one byte subtracted per ``\\r\\n`` pair detected in
+the relevant window — ``load_bytes_lf`` subtracts every CRLF in
+every text-shaped load-budget file, ``discovery_bytes_lf`` subtracts
+only the CRLFs inside each frontmatter block.  Every text-shaped
+load-budget contributor (markdown, YAML, JSON, txt, sh, py, toml)
+also carries a per-row ``line_endings`` field (``"lf"`` / ``"crlf"``
+/ ``"mixed"``); binary load contributors (e.g. an image or PDF
+referenced from ``references/``) deliberately omit the key because
+arbitrary ``\\r\\n`` byte pairs in binary content are not line
+terminators, so consumers should branch on key presence rather
+than treat the missing key as a regression.  The ``*_lf`` keys and
+``line_endings`` fields are gated on
+``stats.line_endings.enabled`` in ``configuration.yaml`` — when the
+toggle is off the keys are omitted from the JSON payload entirely.
 """
 
 import argparse
