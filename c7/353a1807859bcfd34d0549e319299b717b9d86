@@ -1,0 +1,19 @@
+skill-system-foundry/scripts/lib/constants.py
+  s_d898409b72bc63::t_1a54783947371b 907,912,915
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "c7353a1807859bcfd34d0549e319299b717b9d86",
+  "prompts": {},
+  "sessions": {
+    "s_d898409b72bc63": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f75c7451ffeCcx9YqZ6nfYC3w",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
