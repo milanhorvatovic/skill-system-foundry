@@ -184,10 +184,11 @@ class MissingCorpusRootTests(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
-    def test_malformed_manifest_human_mode_writes_stderr(self) -> None:
+    def test_malformed_manifest_human_mode_writes_stdout(self) -> None:
         # Human mode for the same corpus-load failure path emits a
-        # stderr message and exits 1 — covered separately so both
-        # branches of the new try/except are exercised.
+        # stdout message via ``print_error_line`` and exits 1 —
+        # covered separately so both branches of the new try/except
+        # are exercised.
         import shutil
         import tempfile
         root = tempfile.mkdtemp()
