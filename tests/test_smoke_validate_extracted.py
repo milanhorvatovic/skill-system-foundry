@@ -19,6 +19,8 @@ from io import StringIO
 from contextlib import redirect_stderr
 from unittest import mock
 
+from helpers import write_text
+
 
 _CI_SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", ".github", "scripts")
@@ -35,21 +37,13 @@ smoke_validate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(smoke_validate)
 
 
-def _write(path: str, content: str) -> None:
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(content)
-
-
 class FindSkillDirsTests(unittest.TestCase):
     """``find_skill_dirs`` enumerates extracted skill roots deterministically."""
 
     def test_returns_single_match_for_clean_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_root = os.path.join(tmpdir, "demo")
-            _write(os.path.join(skill_root, "SKILL.md"), "stub")
+            write_text(os.path.join(skill_root, "SKILL.md"), "stub")
             self.assertEqual(
                 smoke_validate.find_skill_dirs(tmpdir), [skill_root],
             )
@@ -66,7 +60,7 @@ class FindSkillDirsTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             nested = os.path.join(tmpdir, "outer", "demo")
-            _write(os.path.join(nested, "SKILL.md"), "stub")
+            write_text(os.path.join(nested, "SKILL.md"), "stub")
             self.assertEqual(smoke_validate.find_skill_dirs(tmpdir), [])
 
     def test_returns_empty_when_root_is_missing(self) -> None:
@@ -78,7 +72,7 @@ class FindSkillDirsTests(unittest.TestCase):
         # An extraction that produced only loose files (no enclosing
         # directory) must not be treated as a valid skill root.
         with tempfile.TemporaryDirectory() as tmpdir:
-            _write(os.path.join(tmpdir, "loose.txt"), "noise")
+            write_text(os.path.join(tmpdir, "loose.txt"), "noise")
             self.assertEqual(smoke_validate.find_skill_dirs(tmpdir), [])
 
     def test_returns_every_match_in_sorted_order(self) -> None:
@@ -89,8 +83,8 @@ class FindSkillDirsTests(unittest.TestCase):
         # the failure message deterministic across runners (Linux
         # ext4 ordering differs from Windows NTFS).
         with tempfile.TemporaryDirectory() as tmpdir:
-            _write(os.path.join(tmpdir, "beta", "SKILL.md"), "b")
-            _write(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
+            write_text(os.path.join(tmpdir, "beta", "SKILL.md"), "b")
+            write_text(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
             self.assertEqual(
                 smoke_validate.find_skill_dirs(tmpdir),
                 [
@@ -187,8 +181,8 @@ class MainTests(unittest.TestCase):
         the assertion is byte-identical regardless of host.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            _write(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
-            _write(os.path.join(tmpdir, "beta", "SKILL.md"), "b")
+            write_text(os.path.join(tmpdir, "alpha", "SKILL.md"), "a")
+            write_text(os.path.join(tmpdir, "beta", "SKILL.md"), "b")
             stderr = StringIO()
             with mock.patch.object(
                 smoke_validate.subprocess, "call",
@@ -212,7 +206,7 @@ class MainTests(unittest.TestCase):
     def test_propagates_validator_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_root = os.path.join(tmpdir, "demo")
-            _write(os.path.join(skill_root, "SKILL.md"), "stub")
+            write_text(os.path.join(skill_root, "SKILL.md"), "stub")
             with mock.patch.object(
                 smoke_validate.subprocess, "call", return_value=7,
             ) as call_mock:

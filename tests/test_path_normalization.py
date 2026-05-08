@@ -55,7 +55,7 @@ SCRIPTS_DIR = os.path.join(
 
 
 def _walk_strings(payload: object) -> list[str]:
-    """Yield every string leaf in *payload*."""
+    """Return every string leaf in *payload*."""
     out: list[str] = []
     if isinstance(payload, str):
         out.append(payload)

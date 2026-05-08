@@ -231,7 +231,7 @@ def _is_text_mode_write(mode: str) -> bool:
 
 
 def _find_offenders(source_path: str) -> list[tuple[int, str]]:
-    """Yield ``(line_no, reason)`` for every offending ``open`` call.
+    """Return ``(line_no, reason)`` for every offending ``open`` call.
 
     A call is an offender when:
 
