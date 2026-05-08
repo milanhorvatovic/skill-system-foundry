@@ -1,0 +1,19 @@
+tests/test_validate_skill.py
+  s_2d58682bdcd133::t_282561d84903d2 5242-5275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "5f74d97452ea8b1a2826faa77e0eba006afb0005",
+  "prompts": {},
+  "sessions": {
+    "s_2d58682bdcd133": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1f87a913bffeK4ef9CyTqygt5R",
+        "model": "unknown"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
