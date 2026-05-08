@@ -399,9 +399,9 @@ def check_external_arcnames(
     Returns ``(errors, passes)`` per the validator contract.  When
     *external_arcnames* is empty no pass line is emitted (the rule
     had nothing to verify); a non-empty list with no findings emits
-    a single pass line summarising the long-path budget so JSON and
-    verbose human output see the rule ran, mirroring the contract
-    of the sibling ``check_long_paths`` and
+    two pass lines — one for the long-path budget and one for the
+    reserved-name clearance — mirroring the per-dimension pass
+    lines of the sibling ``check_long_paths`` and
     ``check_reserved_path_components`` helpers.
     """
     errors: list[str] = []
@@ -456,6 +456,10 @@ def check_external_arcnames(
             f"'{longest_external_arcname}' ({longest_external} chars) "
             f"fits within the {available}-char arcname budget "
             f"(threshold {threshold}, prefix {user_prefix_budget})"
+        )
+        passes.append(
+            "external-arcname windows-reserved-names: every path "
+            "component is legal on NTFS"
         )
     return errors, passes
 

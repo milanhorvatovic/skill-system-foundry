@@ -2147,11 +2147,12 @@ class CheckExternalArcnamesTests(unittest.TestCase):
             arcnames, threshold=260, user_prefix_budget=80,
         )
         self.assertEqual(errors, [])
-        self.assertEqual(len(passes), 1)
+        self.assertEqual(len(passes), 2)
         self.assertIn("longest external arcname", passes[0])
         # The summary references the longest input arcname so callers
         # can verify against worst-case rather than walker-order.
         self.assertIn("demo/references/longest-name.md", passes[0])
+        self.assertIn("windows-reserved-names", passes[1])
 
     def test_findings_suppress_pass_line(self) -> None:
         """Any finding suppresses the summary pass line.
