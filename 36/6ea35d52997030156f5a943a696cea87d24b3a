@@ -1,0 +1,21 @@
+skill-system-foundry/scripts/lib/references.py
+  s_a73f590479d91a::t_f52ef2078fdc38 27,914-915,942-943,1088-1089,1094-1095,1487-1489,1593,1599
+tests/test_references.py
+  s_a73f590479d91a::t_e0893011210572 2005-2007,2012,2025-2027,2037
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "366ea35d52997030156f5a943a696cea87d24b3a",
+  "prompts": {},
+  "sessions": {
+    "s_a73f590479d91a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e08c5-2d7f-74e1-b060-3e2408123a2f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
