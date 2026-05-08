@@ -97,6 +97,8 @@ def format_exception(exc: BaseException) -> str:
             f"errno {exc.errno}" if exc.errno is not None else "OS error"
         )
         return f"{exc.__class__.__name__}: {detail}"
+    if isinstance(exc, UnicodeError):
+        return f"{exc.__class__.__name__}: {exc}"
     if isinstance(exc, ValueError):
         # ``os.path.relpath`` raises ``ValueError("path is on mount
         # 'C:', start on mount 'D:'")`` on Windows-cross-drive.
