@@ -61,7 +61,7 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
-from lib.constants import SEPARATOR_WIDTH
+from lib.constants import LEVEL_FAIL, SEPARATOR_WIDTH
 from lib.reporting import (
     categorize_errors,
     categorize_errors_for_json,
@@ -255,7 +255,7 @@ def main() -> None:
                 "error": f"'{skill_path}' is not a directory",
             }))
         else:
-            print(f"Error: '{skill_path}' is not a directory")
+            print_error_line(f"{LEVEL_FAIL}: '{skill_path}' is not a directory.")
         sys.exit(1)
 
     result = compute_stats(skill_path)

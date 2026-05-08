@@ -1304,7 +1304,7 @@ def main() -> None:
                 },
             }))
         else:
-            print(f"Error: '{skill_path}' is not a directory")
+            print_error_line(f"{LEVEL_FAIL}: '{skill_path}' is not a directory.")
         sys.exit(1)
 
     # --fix mode: surface mechanical rewrites alongside any
@@ -1596,7 +1596,7 @@ def main() -> None:
         # apply.  Surface this as an INFO rather than silently
         # dropping the flag.
         errors.append(
-            "INFO: [foundry] --check-prose-yaml has no effect with "
+            f"{LEVEL_INFO}: [foundry] --check-prose-yaml has no effect with "
             "--capability; run against the parent skill root to scan "
             "prose fences"
         )

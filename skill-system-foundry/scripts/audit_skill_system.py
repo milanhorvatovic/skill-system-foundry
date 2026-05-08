@@ -1240,7 +1240,7 @@ def main() -> None:
                 "error": f"'{system_root}' is not a directory",
             }))
         else:
-            print(f"Error: '{system_root}' is not a directory")
+            print_error_line(f"{LEVEL_FAIL}: '{system_root}' is not a directory.")
         sys.exit(1)
 
     # When --json is active, suppress verbose terminal output from
