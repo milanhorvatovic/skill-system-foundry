@@ -1,0 +1,22 @@
+tests/test_smoke_rewrite_frontmatter.py
+  s_ccbf066e1709cb::t_a1f7fef92f530c 16-17,178-193,195-196,198-207
+  s_ccbf066e1709cb::t_28bc42d584b283 18,194,197
+.github/scripts/smoke-rewrite-frontmatter.py
+  s_ccbf066e1709cb::t_479e7d3dc67201 55,80,89-90,101-102,125-126,140-141,161-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "84d0206c2c127e903fa9a4ea6e6ef55166293d6a",
+  "prompts": {},
+  "sessions": {
+    "s_ccbf066e1709cb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e0723-e0d1-7152-bb9e-a97a288f0417",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Milan Horvatovič <milan.horvatovic@gmail.com>"
+    }
+  }
+}
