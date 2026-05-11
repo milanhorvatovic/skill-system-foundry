@@ -109,27 +109,25 @@ jobs:
     # minutes apiece) so a 30-minute cap surfaces a genuine hang as a
     # workflow failure without flaking on normal runs.
     timeout-minutes: 30
-    # ``contents: write`` is required to push the rolling branch.
-    # ``pull-requests: write`` is required to open / edit / close /
-    # merge the rolling PR.  ``issues: write`` is required because
-    # ``gh pr close --comment`` posts the closing comment via the
-    # issues API (PR comments are issue comments in GitHub's
-    # permission model) — without it the no-drift cleanup path
-    # would fail exactly when a stale rolling PR needs to be closed.
-    # ``checks: read`` and ``statuses: read`` are required by
-    # ``gh pr checks --required --watch`` to read check-run and
-    # legacy commit-status state.  Every write actually executed by
-    # the gh CLI uses the App token from ``steps.app-token`` rather
-    # than GITHUB_TOKEN, but the workflow's job-level permissions
-    # still have to declare the matching scopes because the
-    # ``actions/checkout`` step caches GITHUB_TOKEN credentials for
-    # the initial fetch even though we override it via ``token:``.
+    # Job-level ``permissions:`` apply to ``GITHUB_TOKEN`` only —
+    # they do NOT add scopes to the App installation token used by
+    # every gh call below.  The App's own permissions (declared at
+    # App-creation time, see the operator preconditions in this
+    # file's header comment) are what gate those calls.
+    #
+    # ``GITHUB_TOKEN`` is not actively used by this workflow —
+    # ``actions/checkout`` accepts the App token via ``token:``,
+    # every gh call sets ``GH_TOKEN`` to the App token, and the
+    # ``git push`` runs against the checkout-configured remote.
+    # Reduced to ``contents: read`` so an unused token does not
+    # carry write scopes that would widen the blast radius if a
+    # future step accidentally uses ``GITHUB_TOKEN`` or a
+    # third-party action is introduced.  Explicit job-level
+    # block (rather than inheriting the workflow-level
+    # ``contents: read``) so the minimisation is visible at the
+    # job site.
     permissions:
-      checks: read
-      contents: write
-      issues: write
-      pull-requests: write
-      statuses: read
+      contents: read
     steps:
       - name: Mint App token
         id: app-token
