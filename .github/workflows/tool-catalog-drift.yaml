@@ -48,7 +48,8 @@ name: Tool catalog drift
 #   * GitHub App installed on this repo with permissions
 #     ``contents: write`` and ``pull-requests: write``.  Its app id
 #     and PEM private key are stored as repository secrets
-#     ``DRIFT_BOT_APP_ID`` and ``DRIFT_BOT_PRIVATE_KEY``.  An App
+#     ``vars.AUTOMATION_APP_ID`` (variable, not secret — App IDs
+#     are not sensitive) and ``secrets.AUTOMATION_PRIVATE_KEY``.  An App
 #     identity is required (not the default ``GITHUB_TOKEN``)
 #     because GITHUB_TOKEN-authored PRs do not trigger downstream
 #     workflow runs — the auto-merge path needs CI to actually fire.
@@ -118,8 +119,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
         with:
-          app-id: ${{ secrets.DRIFT_BOT_APP_ID }}
-          private-key: ${{ secrets.DRIFT_BOT_PRIVATE_KEY }}
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
 
       - name: Checkout main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
