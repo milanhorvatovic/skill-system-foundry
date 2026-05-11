@@ -64,6 +64,20 @@ CATALOG_PATH = os.path.join(
     REPO_ROOT, "skill-system-foundry", "scripts", "lib", "configuration.yaml"
 )
 
+# Auto-merge gate.  A drift run is auto-mergeable only when it is
+# additions-only (removals are advisory and never auto-applied, so a
+# removals-only run is not a candidate) and the addition count is at
+# or below this threshold.  The threshold exists because an unusually
+# large addition burst is a signal worth a maintainer's eyes — either
+# the catalog has been silently stale for many weeks or the upstream
+# format changed in a way the regex still parses but represents
+# differently than expected.  Bumping the constant moves the policy;
+# keep it in version control so the change is auditable.  Set to 0
+# to disable auto-merge entirely (the helper still reports
+# ``auto_mergeable: false`` for every drift run, the workflow still
+# opens the rolling PR for manual review).
+MAX_AUTO_MERGE_ADDITIONS = 10
+
 # PascalCase token shape.  Matches ``Bash``, ``WebFetch``, ``LSP``, and
 # any future PascalCase or all-caps acronym tool name.  Anchored.
 RE_HARNESS_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
@@ -804,8 +818,19 @@ def run(
         additions, removals, source_url, today_iso, applied=not dry_run,
     )
     drift_detected = bool(additions or removals)
+    # Auto-merge is allowed only on additions-only drift at or below
+    # the configured threshold.  Any removals (advisory, never applied)
+    # or an unusually large additions burst routes the PR through the
+    # human review path even when CI passes.  See
+    # ``MAX_AUTO_MERGE_ADDITIONS`` for the policy rationale.
+    auto_mergeable = (
+        drift_detected
+        and not removals
+        and 0 < len(additions) <= MAX_AUTO_MERGE_ADDITIONS
+    )
     json_payload = {
         "drift": drift_detected,
+        "auto_mergeable": auto_mergeable,
         "source_url": source_url,
         "checked": today_iso,
         "additions": sorted(additions),
@@ -883,8 +908,12 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Emit the drift result as a JSON object to stdout instead "
             "of human-readable markdown. Object keys: drift (bool), "
-            "source_url, checked, additions, removals, catalog_size, "
-            "upstream_size. Useful for tooling consumers."
+            "auto_mergeable (bool), source_url, checked, additions, "
+            "removals, catalog_size, upstream_size. ``auto_mergeable`` "
+            "is true only when drift is additions-only and the count "
+            "is at or below MAX_AUTO_MERGE_ADDITIONS — used by the "
+            "workflow to gate the auto-merge path. Useful for tooling "
+            "consumers."
         ),
     )
     args = parser.parse_args(argv)

@@ -20,6 +20,18 @@ name: Tool catalog drift
 #     Removals are surfaced in the PR body as advisory candidates;
 #     they are NEVER auto-applied (a regex miss or a one-version-wide
 #     doc edit could falsely propose dropping a real tool).
+#   * Drift detected AND auto-mergeable — the helper's JSON output
+#     reports ``auto_mergeable: true`` only for additions-only drift
+#     within ``MAX_AUTO_MERGE_ADDITIONS`` (see the helper for the
+#     gate's policy rationale).  When eligible, this workflow waits
+#     for required status checks via ``gh pr checks --required
+#     --watch --fail-fast`` and squash-merges synchronously under
+#     the bot's still-valid token.  If a check fails or the merge
+#     races, it falls back to enabling GitHub auto-merge so a later
+#     rerun-to-green can fire the merge without a manual workflow
+#     re-trigger.  Drift outside the gate (removals present, or
+#     additions over the threshold) routes through the original
+#     manual-review path.
 #   * Hard-fail on any fetch error, table-shape change, or
 #     parse error — silent green is the worst outcome for a drift
 #     sweep.
@@ -30,6 +42,25 @@ name: Tool catalog drift
 # extension requires helper changes (and may need workflow updates
 # for per-harness PR titles or reporting).  See the design comment
 # on #118.
+#
+# Operator preconditions for the auto-merge path (see CLAUDE.md
+# "Detecting Tool Catalog Drift" for the full setup):
+#   * GitHub App installed on this repo with permissions
+#     ``contents: write`` and ``pull-requests: write``.  Its app id
+#     and PEM private key are stored as repository secrets
+#     ``DRIFT_BOT_APP_ID`` and ``DRIFT_BOT_PRIVATE_KEY``.  An App
+#     identity is required (not the default ``GITHUB_TOKEN``)
+#     because GITHUB_TOKEN-authored PRs do not trigger downstream
+#     workflow runs — the auto-merge path needs CI to actually fire.
+#   * Repository setting "Allow auto-merge" is enabled (Settings →
+#     General → Pull Requests).  ``gh pr merge --auto`` errors out
+#     when this is disabled.
+#   * Branch ruleset on ``main`` includes a ``required_status_checks``
+#     rule listing the checks that always fire on drift PRs (the
+#     two ``python-tests / test (...)`` matrix entries and
+#     ``ci-helper-tests / test``).  ``gh pr checks --required
+#     --watch`` waits on this list; if it is empty the merge step
+#     races CI.
 
 on:
   schedule:
@@ -52,20 +83,44 @@ concurrency:
 jobs:
   detect-and-pr:
     runs-on: ubuntu-latest
-    # Needs ``contents: write`` to push the rolling branch and
-    # ``pull-requests: write`` to open / edit / close the rolling PR.
-    # ``issues: write`` is also required because ``gh pr close
-    # --comment`` posts the closing comment via the issues API
-    # (PR comments are issue comments in GitHub's permission
-    # model) — without it the no-drift cleanup path would fail
-    # exactly when a stale rolling PR needs to be closed.
-    # The default workflow-wide ``contents: read`` stays so any future
-    # job that does not need write does not get it implicitly.
+    # ``gh pr checks --required --watch`` blocks until every required
+    # check reaches a terminal state.  If a check hangs (stuck runner,
+    # never-reporting integration, etc.) the run would otherwise wait
+    # up to GitHub's 6-hour default and tie up the per-run concurrency
+    # slot.  30 minutes is well above the realistic runtime of the
+    # required checks (python-tests + ci-helper-tests finish in 1-3
+    # minutes apiece) so a 30-minute cap surfaces a genuine hang as a
+    # workflow failure without flaking on normal runs.
+    timeout-minutes: 30
+    # ``contents: write`` is required to push the rolling branch.
+    # ``pull-requests: write`` is required to open / edit / close /
+    # merge the rolling PR.  ``issues: write`` is required because
+    # ``gh pr close --comment`` posts the closing comment via the
+    # issues API (PR comments are issue comments in GitHub's
+    # permission model) — without it the no-drift cleanup path
+    # would fail exactly when a stale rolling PR needs to be closed.
+    # ``checks: read`` and ``statuses: read`` are required by
+    # ``gh pr checks --required --watch`` to read check-run and
+    # legacy commit-status state.  Every write actually executed by
+    # the gh CLI uses the App token from ``steps.app-token`` rather
+    # than GITHUB_TOKEN, but the workflow's job-level permissions
+    # still have to declare the matching scopes because the
+    # ``actions/checkout`` step caches GITHUB_TOKEN credentials for
+    # the initial fetch even though we override it via ``token:``.
     permissions:
+      checks: read
       contents: write
-      pull-requests: write
       issues: write
+      pull-requests: write
+      statuses: read
     steps:
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
+        with:
+          app-id: ${{ secrets.DRIFT_BOT_APP_ID }}
+          private-key: ${{ secrets.DRIFT_BOT_PRIVATE_KEY }}
+
       - name: Checkout main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
@@ -73,6 +128,14 @@ jobs:
           # Fetch full history so a force-push to the rolling branch
           # cleanly supersedes whatever was there before.
           fetch-depth: 0
+          # Use the App token so the subsequent ``git push`` is
+          # authenticated as the App identity.  Pushes authenticated
+          # by GITHUB_TOKEN deliberately do not trigger downstream
+          # workflows; the App identity does, which is the whole
+          # point of switching off GITHUB_TOKEN here — without
+          # downstream CI firing on the rolling PR, the auto-merge
+          # path has nothing to wait on.
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # @v5 as 5.6.0
@@ -90,23 +153,28 @@ jobs:
           echo "summary_path=$SUMMARY_PATH" >> "$GITHUB_OUTPUT"
           echo "state_path=$STATE_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Detect drift from helper output
+      - name: Detect drift and auto-merge eligibility
         id: detect
         env:
           STATE_PATH: ${{ steps.helper.outputs.state_path }}
-        # Read the helper's authoritative drift signal from its JSON
-        # payload rather than inferring from the YAML diff.  A
-        # removals-only run on a day when ``last_checked`` already
-        # equals today produces a byte-identical YAML, so a diff-based
-        # detection would miss that drift case.
+        # Read the helper's authoritative drift signal AND
+        # auto_mergeable signal from its JSON payload rather than
+        # inferring from the YAML diff.  A removals-only run on a day
+        # when ``last_checked`` already equals today produces a
+        # byte-identical YAML, so a diff-based detection would miss
+        # that drift case.  ``auto_mergeable`` encodes the strict
+        # allowlist gate (additions-only, count <= threshold) — it is
+        # always false when ``drift`` is false.
         run: |
           drift=$(python -c "import json,sys; print(str(json.load(open(sys.argv[1], encoding='utf-8'))['drift']).lower())" "$STATE_PATH")
+          auto=$(python -c "import json,sys; print(str(json.load(open(sys.argv[1], encoding='utf-8'))['auto_mergeable']).lower())" "$STATE_PATH")
           echo "drift=$drift" >> "$GITHUB_OUTPUT"
+          echo "auto_mergeable=$auto" >> "$GITHUB_OUTPUT"
 
       - name: Resolve stale drift PR (no drift this run)
         if: steps.detect.outputs.drift == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BRANCH: chore/tool-catalog-drift
         run: |
           # If a previous run opened a PR but the drift was resolved
@@ -134,11 +202,34 @@ jobs:
             echo "No stale drift PR or rolling branch to clean up."
           fi
 
+      - name: Resolve App bot identity for git committer
+        if: steps.detect.outputs.drift == 'true'
+        id: identity
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        # actions/create-github-app-token v3.1.1 outputs ``token``,
+        # ``installation-id``, and ``app-slug`` — but not the bot
+        # user id needed for the canonical
+        # ``<id>+<slug>[bot]@users.noreply.github.com`` no-reply
+        # email.  Resolve it via the public users API; the slug
+        # mapping is stable (GitHub creates one bot account per App
+        # at install time and never reassigns the username), so a
+        # one-shot lookup per run is safe and cheap.
+        run: |
+          set -euo pipefail
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
       - name: Configure git identity
         if: steps.detect.outputs.drift == 'true'
+        env:
+          GIT_NAME: ${{ steps.identity.outputs.name }}
+          GIT_EMAIL: ${{ steps.identity.outputs.email }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "$GIT_NAME"
+          git config user.email "$GIT_EMAIL"
 
       - name: Commit and force-push to rolling branch
         if: steps.detect.outputs.drift == 'true'
@@ -165,6 +256,7 @@ jobs:
         env:
           SUMMARY_PATH: ${{ steps.helper.outputs.summary_path }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          AUTO_MERGEABLE: ${{ steps.detect.outputs.auto_mergeable }}
         run: |
           {
             echo "Auto-generated by [tool-catalog-drift run]($RUN_URL)."
@@ -175,17 +267,27 @@ jobs:
             echo
             echo "Any \"Candidate removals\" listed above are advisory only — they are NOT applied to the catalog by this workflow. Verify each name against the upstream tools reference before deleting; possible false positives include upstream renames, table-format changes, or extraction misses."
             echo
-            echo "## CI on this PR"
-            echo
-            echo "PRs opened by the default \`GITHUB_TOKEN\` do not trigger downstream workflow runs. To run the full CI matrix against this branch, close and reopen this PR (a human action) so \`python-tests.yaml\` and the other path-filtered checks fire against the head."
+            if [ "$AUTO_MERGEABLE" = "true" ]; then
+              echo "## Auto-merge"
+              echo
+              echo "This drift is **additions-only** and within the configured threshold (\`MAX_AUTO_MERGE_ADDITIONS\` in \`.github/scripts/tool-catalog-drift.py\`), so the workflow will: (1) wait for required status checks via \`gh pr checks --required --watch --fail-fast\`; (2) squash-merge synchronously under the bot's token if all required checks pass; (3) fall back to enabling GitHub auto-merge if a check fails or mergeability changes between the watch and the merge call, so a later rerun-to-green can fire the merge without a manual workflow re-trigger."
+              echo
+              echo "If you want to halt the auto-merge — for example to inspect a name that looks suspicious — close this PR or revert the corresponding upstream change before the required checks turn green."
+            else
+              echo "## Manual review required"
+              echo
+              echo "This drift is NOT eligible for auto-merge. The summary above lists either removals (advisory only — never auto-applied) or an additions count above \`MAX_AUTO_MERGE_ADDITIONS\` in \`.github/scripts/tool-catalog-drift.py\` (an unusually large burst is a signal worth maintainer's eyes — catalog drifted silently for many weeks, or upstream format shifted in a way the regex still parses but represents differently than expected). Verify the diff against the upstream tools reference before merging manually."
+            fi
           } > "$RUNNER_TEMP/pr-body.md"
 
       - name: Open or update rolling PR
         if: steps.detect.outputs.drift == 'true'
+        id: pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BRANCH: chore/tool-catalog-drift
         run: |
+          set -euo pipefail
           # Same fork-scoping rationale as in the no-drift cleanup
           # step: match only PRs whose head repo owner is this repo's
           # owner so a fork PR cannot be mistakenly edited.
@@ -195,10 +297,124 @@ jobs:
               --title "Sync claude_code tool catalog with upstream" \
               --body-file "$RUNNER_TEMP/pr-body.md"
             echo "Updated rolling PR #$existing."
+            echo "number=$existing" >> "$GITHUB_OUTPUT"
           else
-            gh pr create \
+            pr_url=$(gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "Sync claude_code tool catalog with upstream" \
-              --body-file "$RUNNER_TEMP/pr-body.md"
+              --body-file "$RUNNER_TEMP/pr-body.md")
+            pr_number=$(basename "$pr_url")
+            echo "Opened rolling PR #$pr_number."
+            echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Wait for required status checks, then squash-merge
+      # synchronously when CI is green; otherwise fall back to
+      # enabling GitHub auto-merge so a later rerun-to-green can fire
+      # the merge.  The synchronous path eliminates the
+      # enable-then-fire race that the server-side auto-merge worker
+      # occasionally drops after the last required check transitions
+      # green.  Pattern adapted from the dependabot-auto-merge
+      # workflow in milanhorvatovic/codex-ai-code-review-action;
+      # security-review label handling is omitted because drift PRs
+      # have no equivalent operator-applied gate (the strict
+      # allowlist on ``auto_mergeable`` is the equivalent — anything
+      # outside the gate never reaches this step).
+      - name: Wait for required checks, then squash-merge
+        if: steps.detect.outputs.drift == 'true' && steps.detect.outputs.auto_mergeable == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          # ``gh pr merge --auto`` is allowed to exit non-zero
+          # (already enabled, PR already merged/closed, transient API
+          # error), but we then verify the desired state was actually
+          # reached: PR is MERGED/CLOSED, or PR is OPEN with
+          # auto-merge enabled.  If neither holds, the call failed
+          # for a real reason (bot App lacks merge permission, repo
+          # ``Allow auto-merge`` disabled, GitHub outage) and the PR
+          # would be silently stranded — surface the failure as a
+          # workflow error instead of pretending success.
+          verify_auto_merge_or_terminal() {
+            local state_json pr_state has_auto
+            if ! state_json=$(gh pr view "$PR_NUMBER" --json state,autoMergeRequest); then
+              echo "::error::Failed to verify PR state after the gh pr merge --auto call. Cannot confirm whether auto-merge was enabled; manual intervention required."
+              return 1
+            fi
+            pr_state=$(jq -r '.state' <<<"$state_json")
+            has_auto=$(jq -r '.autoMergeRequest != null' <<<"$state_json")
+            case "$pr_state" in
+              MERGED|CLOSED)
+                echo "PR is $pr_state; nothing more to do."
+                return 0 ;;
+              OPEN)
+                if [ "$has_auto" = "true" ]; then
+                  return 0
+                fi
+                echo "::error::gh pr merge --auto exited but autoMergeRequest is still null on an OPEN PR. The auto-merge enable failed for a real reason — likely the bot App lacks merge permission, the repository's 'Allow auto-merge' setting is disabled, or a GitHub-side error. Investigate the gh pr merge output above and re-run after fixing."
+                return 1 ;;
+              *)
+                echo "::error::Unexpected PR state '$pr_state' after auto-merge attempt; manual intervention required."
+                return 1 ;;
+            esac
+          }
+
+          # Enable GitHub auto-merge and verify the call took.
+          # Returns 0 on full success, 1 on any verification failure
+          # (with appropriate ``::error::`` annotations).  Used both
+          # as the unhappy-path fallback and as the re-arm safety net
+          # when a required check fails — see the watch step below.
+          arm_auto_merge() {
+            gh pr merge --auto --squash "$PR_NUMBER" 2>&1 || true
+            if ! verify_auto_merge_or_terminal; then
+              return 1
+            fi
+            return 0
+          }
+
+          # ``--required`` filters to checks listed in the branch
+          # ruleset's ``required_status_checks`` rule.  ``--watch``
+          # polls until each reaches a terminal conclusion.
+          # ``--fail-fast`` aborts on the first required check that
+          # fails, surfacing the failure rather than waiting on the
+          # rest.
+          #
+          # If a required check fails (terminally or flakily) the
+          # watch exits non-zero.  This workflow is triggered only by
+          # ``schedule`` and ``workflow_dispatch``, not by check
+          # events on PRs, so without a re-arm step a manual
+          # rerun-to-green of the failed check has no path to finish
+          # the merge — the PR strands until next Monday.  Re-arm
+          # via auto-merge so the worker fires when the rerun lands,
+          # going through the same verified ``arm_auto_merge`` helper
+          # so a real auto-merge enable failure is surfaced as a
+          # second ``::error::``.  Exit 1 unconditionally so the
+          # check failure stays visible as a workflow failure.
+          if ! gh pr checks "$PR_NUMBER" --required --watch --fail-fast; then
+            echo "::warning::A required check failed during the wait; enabling GitHub auto-merge as a re-armed safety net so a later rerun-to-green of the failed check can fire the merge without a manual workflow re-trigger."
+            arm_auto_merge || true
+            exit 1
+          fi
+
+          # Mergeability isn't stable between the watch returning and
+          # this call: the base branch can move (the ruleset may have
+          # ``strict_required_status_checks_policy: true``, in which
+          # case BEHIND blocks the merge), GitHub can return a
+          # transient merge-state error, or another rule (e.g.
+          # ``required_review_thread_resolution`` if Copilot's review
+          # left an unresolved thread) can become pending.  This
+          # workflow doesn't re-trigger on base-branch updates or
+          # review events, so a naked failure here would strand the
+          # PR.  Fall back to verified auto-merge — same
+          # ``arm_auto_merge`` helper used elsewhere — so a later
+          # branch-update, transient-error recovery, or thread
+          # resolution still completes the merge.
+          if ! gh pr merge --squash "$PR_NUMBER"; then
+            echo "::warning::Synchronous squash merge failed (mergeability may have changed since the check wait completed — base branch advanced, transient API error, branch is BEHIND, or an unresolved review thread blocks merge). Enabling GitHub auto-merge so a later mergeability-restoring event can fire the merge."
+            if ! arm_auto_merge; then
+              exit 1
+            fi
           fi

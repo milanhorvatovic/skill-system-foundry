@@ -1093,6 +1093,13 @@ class MainTests(unittest.TestCase):
             self.assertEqual(
                 payload["additions"], sorted(payload["additions"])
             )
+            # Happy-catalog vs full upstream is a 27+ addition burst,
+            # well above MAX_AUTO_MERGE_ADDITIONS — must not be flagged
+            # for auto-merge.
+            self.assertEqual(payload["auto_mergeable"], False)
+            self.assertGreater(
+                len(payload["additions"]), mod.MAX_AUTO_MERGE_ADDITIONS,
+            )
 
     def test_json_mode_no_drift_returns_empty_lists(self) -> None:
         markdown = _load_fixture_markdown()
@@ -1122,6 +1129,158 @@ class MainTests(unittest.TestCase):
             self.assertEqual(payload["drift"], False)
             self.assertEqual(payload["additions"], [])
             self.assertEqual(payload["removals"], [])
+            # No drift means nothing to auto-merge — the gate is
+            # additions-bounded, not "any non-drift state".
+            self.assertEqual(payload["auto_mergeable"], False)
+
+    def test_json_mode_auto_mergeable_true_for_small_additions(self) -> None:
+        # Build a catalog that is upstream-minus-two so the diff
+        # produces exactly two additions — well within
+        # MAX_AUTO_MERGE_ADDITIONS and the realistic steady-state size
+        # of a weekly drift PR.
+        markdown = _load_fixture_markdown()
+        upstream = sorted(mod.extract_tools(markdown))
+        truncated = upstream[:-2]
+        catalog_yaml = _HAPPY_CATALOG.replace(
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "          - Edit\n",
+            (
+                "        harness_tools:\n"
+                + "".join(f"          - {t}\n" for t in truncated)
+            ),
+        )
+        with _CatalogTempFile(catalog_yaml) as path, _patched_fetch(markdown):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = mod.main([
+                    "--dry-run",
+                    "--json",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 1)
+            import json as _json
+            payload = _json.loads(stdout.getvalue())
+            self.assertEqual(payload["drift"], True)
+            self.assertEqual(payload["removals"], [])
+            self.assertEqual(len(payload["additions"]), 2)
+            self.assertEqual(payload["auto_mergeable"], True)
+
+    def test_json_mode_auto_mergeable_false_when_removals_present(self) -> None:
+        # Mixed drift: one addition AND one removal.  The advisory-only
+        # contract means removals never auto-apply, so a mixed run must
+        # route to the manual review path even when the addition count
+        # is small.
+        markdown = _load_fixture_markdown()
+        upstream = sorted(mod.extract_tools(markdown))
+        # Catalog = upstream minus one (creates one addition) plus a
+        # made-up name not in upstream (creates one removal).
+        truncated = upstream[:-1] + ["MadeUpName"]
+        catalog_yaml = _HAPPY_CATALOG.replace(
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "          - Edit\n",
+            (
+                "        harness_tools:\n"
+                + "".join(f"          - {t}\n" for t in sorted(truncated))
+            ),
+        )
+        with _CatalogTempFile(catalog_yaml) as path, _patched_fetch(markdown):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = mod.main([
+                    "--dry-run",
+                    "--json",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 1)
+            import json as _json
+            payload = _json.loads(stdout.getvalue())
+            self.assertEqual(payload["drift"], True)
+            self.assertEqual(len(payload["additions"]), 1)
+            self.assertEqual(payload["removals"], ["MadeUpName"])
+            self.assertEqual(payload["auto_mergeable"], False)
+
+    def test_json_mode_auto_mergeable_false_just_over_threshold(self) -> None:
+        # Boundary check: additions == MAX_AUTO_MERGE_ADDITIONS + 1
+        # must NOT be auto-mergeable.  Catalog = upstream minus
+        # (threshold + 1) names.
+        markdown = _load_fixture_markdown()
+        upstream = sorted(mod.extract_tools(markdown))
+        over = mod.MAX_AUTO_MERGE_ADDITIONS + 1
+        if len(upstream) < over:
+            self.skipTest(
+                f"fixture upstream has only {len(upstream)} tools; "
+                f"need at least {over} to test the boundary"
+            )
+        truncated = upstream[:-over]
+        catalog_yaml = _HAPPY_CATALOG.replace(
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "          - Edit\n",
+            (
+                "        harness_tools:\n"
+                + "".join(f"          - {t}\n" for t in truncated)
+            ),
+        )
+        with _CatalogTempFile(catalog_yaml) as path, _patched_fetch(markdown):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = mod.main([
+                    "--dry-run",
+                    "--json",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 1)
+            import json as _json
+            payload = _json.loads(stdout.getvalue())
+            self.assertEqual(len(payload["additions"]), over)
+            self.assertEqual(payload["auto_mergeable"], False)
+
+    def test_json_mode_auto_mergeable_true_at_threshold(self) -> None:
+        # Boundary check: additions == MAX_AUTO_MERGE_ADDITIONS exactly
+        # MUST still be auto-mergeable.  The gate is inclusive so a
+        # one-off equal-to-threshold burst (e.g., a maintainer left
+        # for vacation and N upstream tools landed) is not blocked.
+        markdown = _load_fixture_markdown()
+        upstream = sorted(mod.extract_tools(markdown))
+        at = mod.MAX_AUTO_MERGE_ADDITIONS
+        if len(upstream) < at:
+            self.skipTest(
+                f"fixture upstream has only {len(upstream)} tools; "
+                f"need at least {at} to test the boundary"
+            )
+        truncated = upstream[:-at]
+        catalog_yaml = _HAPPY_CATALOG.replace(
+            "        harness_tools:\n"
+            "          - Bash\n"
+            "          - Read\n"
+            "          - Edit\n",
+            (
+                "        harness_tools:\n"
+                + "".join(f"          - {t}\n" for t in truncated)
+            ),
+        )
+        with _CatalogTempFile(catalog_yaml) as path, _patched_fetch(markdown):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = mod.main([
+                    "--dry-run",
+                    "--json",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 1)
+            import json as _json
+            payload = _json.loads(stdout.getvalue())
+            self.assertEqual(len(payload["additions"]), at)
+            self.assertEqual(payload["auto_mergeable"], True)
 
     def test_summary_out_unwritable_path_exits_four(self) -> None:
         # An unwritable summary-out path must surface as the helper's
