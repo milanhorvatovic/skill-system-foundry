@@ -46,13 +46,24 @@ name: Tool catalog drift
 # Operator preconditions for the auto-merge path (see CLAUDE.md
 # "Detecting Tool Catalog Drift" for the full setup):
 #   * GitHub App installed on this repo with permissions
-#     ``contents: write`` and ``pull-requests: write``.  Its app id
-#     and PEM private key are stored as repository secrets
-#     ``vars.AUTOMATION_APP_ID`` (variable, not secret — App IDs
-#     are not sensitive) and ``secrets.AUTOMATION_PRIVATE_KEY``.  An App
-#     identity is required (not the default ``GITHUB_TOKEN``)
-#     because GITHUB_TOKEN-authored PRs do not trigger downstream
-#     workflow runs — the auto-merge path needs CI to actually fire.
+#     ``contents: write`` (push the rolling branch),
+#     ``pull-requests: write`` (open / edit / merge the rolling
+#     PR), ``issues: write`` (``gh pr close --comment`` posts via
+#     the issues API — PR comments are issue comments in GitHub's
+#     permission model), and ``checks: read`` + ``statuses: read``
+#     (``gh pr checks --required --watch`` reads check-run and
+#     legacy commit-status state).  These are App-level
+#     permissions and must be granted at App-creation time; the
+#     job-level ``permissions:`` block below scopes ``GITHUB_TOKEN``
+#     only and CANNOT compensate for missing App permissions.  An
+#     under-scoped App still mints a token successfully but then
+#     403s on the corresponding gh call.  The app id and PEM
+#     private key are stored as ``vars.AUTOMATION_APP_ID``
+#     (variable, not secret — App IDs are not sensitive) and
+#     ``secrets.AUTOMATION_PRIVATE_KEY``.  An App identity is
+#     required (not the default ``GITHUB_TOKEN``) because
+#     GITHUB_TOKEN-authored PRs do not trigger downstream workflow
+#     runs — the auto-merge path needs CI to actually fire.
 #   * Repository setting "Allow auto-merge" is enabled (Settings →
 #     General → Pull Requests).  ``gh pr merge --auto`` errors out
 #     when this is disabled.
@@ -62,6 +73,11 @@ name: Tool catalog drift
 #     ``ci-helper-tests / test``).  ``gh pr checks --required
 #     --watch`` waits on this list; if it is empty the merge step
 #     races CI.
+#
+# All four preconditions are HARD prerequisites for the workflow to
+# function — there is no degraded "catalog-sync still works without
+# the App" mode.  An unavailable App or missing secret hard-fails
+# at the "Mint App token" step before any drift logic runs.
 
 on:
   schedule:
