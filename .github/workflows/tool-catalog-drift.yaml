@@ -468,6 +468,46 @@ jobs:
             return 0
           }
 
+          # Wait for required check runs to appear before entering
+          # ``--watch``.  Downstream workflows (python-tests,
+          # ci-helper-tests) take a few seconds to create their check
+          # runs after the PR's head moves; ``gh pr checks --watch``
+          # only tracks check runs that exist at watch-start and
+          # does NOT subscribe to future check-suite creation, so
+          # entering it on a freshly opened or freshly pushed PR
+          # races: at the moment of the call the PR can have zero
+          # required checks visible, ``--required`` returns an empty
+          # set, and ``--watch`` exits immediately on a vacuous "all
+          # required checks passed" before downstream workflows have
+          # even reported.  The synchronous merge below would then
+          # fire before any CI has actually run.
+          #
+          # Poll for up to 90 seconds until at least one required
+          # check is visible.  One required check appearing means
+          # downstream workflows have started reporting; the
+          # remaining required checks typically follow within
+          # seconds, and ``--watch`` covers them once it starts
+          # because all current required checks exist at watch-start.
+          # If no required check appears within the window, treat as
+          # a workflow failure — downstream workflows are
+          # misconfigured (paths-filter mismatch on the consumer),
+          # the App's events aren't firing, or the ruleset's
+          # ``required_status_checks`` rule is empty.
+          deadline=$(($(date +%s) + 90))
+          required_count=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            required_count=$(gh pr checks "$PR_NUMBER" --required --json name --jq 'length' 2>/dev/null || echo 0)
+            if [ "$required_count" -gt 0 ]; then
+              echo "Found $required_count required check run(s); proceeding to watch."
+              break
+            fi
+            sleep 3
+          done
+          if [ "$required_count" -eq 0 ]; then
+            echo "::error::No required check runs appeared within 90s after the rolling PR's head moved. Downstream workflows may not have fired (App events not triggering, paths-filter mismatch on the consuming workflows), or the ruleset's required_status_checks rule is empty. Cannot safely proceed to merge — investigate before re-running."
+            exit 1
+          fi
+
           # ``--required`` filters to checks listed in the branch
           # ruleset's ``required_status_checks`` rule.  ``--watch``
           # polls until each reaches a terminal conclusion.
