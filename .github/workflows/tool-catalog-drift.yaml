@@ -478,55 +478,51 @@ jobs:
             return 0
           }
 
-          # Wait for the full required-check set to appear AND
-          # stabilize before entering ``--watch``.  Downstream
-          # workflows (python-tests, ci-helper-tests) take a few
-          # seconds to create their check runs after the PR's head
-          # moves; ``gh pr checks --watch`` only tracks check runs
-          # that exist at watch-start and does NOT subscribe to
-          # future check-suite creation, so entering it on a freshly
-          # opened or freshly pushed PR races: at the moment of the
-          # call the PR can have zero required checks visible,
-          # ``--required`` returns an empty set, and ``--watch``
-          # exits immediately on a vacuous "all required checks
-          # passed" before downstream workflows have even reported.
-          # The synchronous merge below would then fire before any
-          # CI has actually run.
+          # Wait for the FULL required-check set to register before
+          # entering ``--watch``.  Downstream workflows (python-tests,
+          # ci-helper-tests) take a few seconds to create their check
+          # runs after the PR's head moves; ``gh pr checks --watch``
+          # only tracks check runs that exist at watch-start and does
+          # NOT subscribe to future check-suite creation, so entering
+          # it on a freshly opened or freshly pushed PR races: at the
+          # moment of the call the PR can have zero or only some
+          # required checks visible, ``--required`` returns the
+          # incomplete set, and ``--watch`` exits "all required
+          # checks passed" once those visible-at-start checks finish
+          # — even if other required checks register later and would
+          # have failed.  The synchronous merge below would then fire
+          # before the full required CI set has run.
           #
-          # Polling for ANY non-zero count is insufficient: with N
-          # required checks appearing at different times, the first
-          # read can return 1 while later ones are still pending,
-          # and proceeding to ``--watch`` at that moment misses the
-          # later checks for the same watch-start-snapshot reason
-          # described above.  Instead, require the count to be stable
-          # (and non-zero) across two consecutive reads ~3s apart
-          # before proceeding — a stable non-zero count is a good
-          # proxy for "downstream workflows have finished registering
-          # their required checks".
+          # The earlier "stable count across two consecutive reads"
+          # heuristic was insufficient: with N required checks
+          # registering in staggered bursts, a partial set can be
+          # briefly stable across a single 3s window while later
+          # workflows are still spinning up.  Instead, query the
+          # ruleset's ``required_status_checks`` rule for the
+          # *expected* count and poll until the visible count
+          # matches it — a strictly stronger condition than
+          # stability that closes the staggered-registration race
+          # the prior heuristic left open.
           #
           # Errors from ``gh pr checks`` are distinguished from a
-          # legitimate empty-but-zero result: capture stderr to a
-          # file and inspect the exit code separately, validate the
-          # stdout payload as a bare integer with a strict regex,
-          # and only treat an empty payload as "no required checks
-          # visible yet".  The original ``2>/dev/null || echo 0``
-          # pattern conflated transient gh failures (token
-          # regression, API outage) with the legitimate
-          # zero-required-checks case, burning the full 90-second
-          # budget before the eventual hard fail; and if ``gh``
-          # ever exited non-zero while still printing a count to
-          # stdout, the substitution would have produced
-          # ``"N\n0"`` and tripped the numeric comparison under
-          # ``set -e``.
+          # legitimate "no required checks yet" result by capturing
+          # stderr to a file, inspecting the exit code separately,
+          # and validating the stdout payload as a bare integer.
+          # See the per-call exit-code policy comment below.
           #
-          # If no stable required-check set appears within the
-          # window, treat as a workflow failure — downstream
-          # workflows are misconfigured (paths-filter mismatch on
-          # the consumer), the App's events aren't firing, or the
-          # ruleset's ``required_status_checks`` rule is empty.
+          # If the expected count cannot be determined, or fewer
+          # than expected appear within the polling budget, hard-fail
+          # — proceeding without knowing the target count would let
+          # the staggered-registration race back in.
+          expected_count=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | length' 2>/dev/null)
+          if ! printf '%s' "${expected_count:-}" | grep -qE '^[1-9][0-9]*$'; then
+            echo "::error::Could not determine the expected required-check count from main's branch ruleset (queried via gh api repos/.../rules/branches/main, expected a positive integer count of required_status_checks contexts, got '${expected_count:-<empty>}').  The ruleset may have no required_status_checks rule, the rule may be empty, or the API call failed.  Cannot safely proceed to merge — investigate before re-running."
+            exit 1
+          fi
+          echo "Expecting $expected_count required check run(s) to register before --watch."
+
           deadline=$(($(date +%s) + 90))
           required_count=0
-          prev_count=-1
           stderr_file="$RUNNER_TEMP/gh-pr-checks-required.err"
           while [ "$(date +%s)" -lt "$deadline" ]; do
             : >"$stderr_file"
@@ -545,47 +541,45 @@ jobs:
             # Treat 0 and 8 as success-with-valid-stdout: the JSON
             # length is a valid count of registered required checks
             # (passed + non-terminal + failed all included), so the
-            # stability gate proceeds and the downstream
-            # ``--watch --fail-fast`` catches any terminal failure
-            # with the right diagnostic.  Exit 8 is in fact the
-            # *expected* state immediately after a force-push,
-            # since the documented required-check runtime is 1-3
-            # minutes and the polling budget is only 90s.
+            # match-against-expected gate proceeds and the
+            # downstream ``--watch --fail-fast`` catches any
+            # terminal failure with the right diagnostic.  Exit 8
+            # is in fact the *expected* state immediately after a
+            # force-push, since the documented required-check
+            # runtime is 1-3 minutes and the polling budget is
+            # only 90s.
             #
             # Treat 1 and 4 (and any other non-zero) as real CLI
-            # failures: warn, reset the stability counter, retry
-            # within the budget.  Accepting them here would
-            # silently mask auth/network/parse errors as "no
-            # required checks yet" and burn the budget without
-            # surfacing the real problem.
+            # failures: warn and retry within the budget.
+            # Accepting them here would silently mask
+            # auth/network/parse errors as "no required checks yet"
+            # and burn the budget without surfacing the real
+            # problem.
             if [ "$rc" -ne 0 ] && [ "$rc" -ne 8 ]; then
               err_msg=$(tr '\n' ' ' <"$stderr_file" 2>/dev/null || true)
-              echo "::warning::gh pr checks --required failed during pre-watch poll (exit $rc): ${err_msg}. Resetting stability counter and retrying."
-              prev_count=-1
+              echo "::warning::gh pr checks --required failed during pre-watch poll (exit $rc): ${err_msg}. Retrying."
               sleep 3
               continue
             fi
             if [ -z "$current_raw" ]; then
               current=0
             elif ! printf '%s' "$current_raw" | grep -qE '^[0-9]+$'; then
-              echo "::warning::gh pr checks --required returned non-numeric output during pre-watch poll: ${current_raw}. Resetting stability counter and retrying."
-              prev_count=-1
+              echo "::warning::gh pr checks --required returned non-numeric output during pre-watch poll: ${current_raw}. Retrying."
               sleep 3
               continue
             else
               current=$current_raw
             fi
-            if [ "$current" -gt 0 ] && [ "$current" -eq "$prev_count" ]; then
+            if [ "$current" -ge "$expected_count" ]; then
               required_count=$current
-              echo "Required check count stable at $required_count across two consecutive reads; proceeding to watch."
+              echo "All $required_count of $expected_count required check runs registered; proceeding to watch."
               break
             fi
-            prev_count=$current
             sleep 3
           done
           rm -f "$stderr_file"
-          if [ "$required_count" -eq 0 ]; then
-            echo "::error::No stable set of required check runs appeared within 90s after the rolling PR's head moved. Either downstream workflows did not fire (App events not triggering, paths-filter mismatch on the consuming workflows), the ruleset's required_status_checks rule is empty, or gh pr checks repeatedly failed. Cannot safely proceed to merge — investigate before re-running."
+          if [ "$required_count" -lt "$expected_count" ]; then
+            echo "::error::Only $required_count of $expected_count required check runs appeared within 90s after the rolling PR's head moved.  The missing checks have not registered — possible causes: paths-filter mismatch on a consuming workflow (the required_status_checks rule lists a check that doesn't fire on this PR's file changes), App events not triggering downstream workflows, or a downstream workflow in error state.  Cannot safely proceed to merge — investigate before re-running."
             exit 1
           fi
 
