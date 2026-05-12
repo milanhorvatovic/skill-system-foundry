@@ -43,79 +43,28 @@ name: Tool catalog drift
 # for per-harness PR titles or reporting).  See the design comment
 # on #118.
 #
-# Operator preconditions for the auto-merge path (see CLAUDE.md
-# "Detecting Tool Catalog Drift" for the full setup):
-#   * GitHub App installed on this repo with permissions
-#     ``contents: write`` (push the rolling branch),
-#     ``pull-requests: write`` (open / edit / merge the rolling
-#     PR), ``issues: write`` (``gh pr close --comment`` posts via
-#     the issues API — PR comments are issue comments in GitHub's
-#     permission model), and ``checks: read`` + ``statuses: read``
-#     (``gh pr checks --required --watch`` reads check-run and
-#     legacy commit-status state).  These are App-level
-#     permissions and must be granted at App-creation time; the
-#     job-level ``permissions:`` block below scopes ``GITHUB_TOKEN``
-#     only and CANNOT compensate for missing App permissions.  An
-#     under-scoped App still mints a token successfully but then
-#     403s on the corresponding gh call.  The app id and PEM
-#     private key are stored as ``vars.AUTOMATION_APP_ID``
-#     (variable, not secret — App IDs are not sensitive) and
-#     ``secrets.AUTOMATION_PRIVATE_KEY``.  An App identity is
-#     required (not the default ``GITHUB_TOKEN``) because
-#     GITHUB_TOKEN-authored PRs do not trigger downstream workflow
-#     runs — the auto-merge path needs CI to actually fire.
-#   * Repository setting "Allow auto-merge" is enabled (Settings →
-#     General → Pull Requests).  ``gh pr merge --auto`` errors out
-#     when this is disabled.
-#   * Branch ruleset on ``main`` includes a ``required_status_checks``
-#     rule listing the checks that always fire on drift PRs (the
-#     two ``test (ubuntu-latest, 3.12)`` and
-#     ``test (windows-latest, 3.12)`` matrix entries from
-#     ``python-tests.yaml`` plus ``test`` from
-#     ``ci-helper-tests.yaml``; both workflows name their job
-#     ``test`` and GitHub registers the check context as the bare
-#     job-name + matrix suffix without a workflow-name prefix).
-#     The wait-and-merge step has two distinct failure modes for
-#     this precondition: (a) if the rule is absent or empty,
-#     ``gh api repos/.../rules/branches/main`` returns a count of
-#     0 contexts and the workflow hard-fails immediately with
-#     ``::error::Could not determine the expected required-check
-#     count...``; (b) if the rule is present but the listed checks
-#     don't register on the PR (paths-filter mismatch on the
-#     consumer, App events not firing), the pre-watch polling guard
-#     times out after 90s with ``::error::Only N of M required
-#     check runs appeared...``.
-#   * ``.github/CODEOWNERS`` does not cover
-#     ``skill-system-foundry/scripts/lib/configuration.yaml``.  If it
-#     did, ``require_code_owner_review: true`` on the branch ruleset
-#     would block the auto-merge path because the bot cannot approve
-#     its own PR (the second-identity workaround used in
-#     ``milanhorvatovic/codex-ai-code-review-action``'s
-#     dependabot-auto-merge workflow would then be required).
+# Operator preconditions for the auto-merge path: see the
+# "Operator preconditions for the auto-merge path" subsection of
+# CLAUDE.md → "Detecting Tool Catalog Drift" for the canonical
+# setup (App permissions + secret/variable names, "Allow
+# auto-merge" toggle, ``required_status_checks`` rule contents,
+# CODEOWNERS scope) and per-failure-mode diagnostic strings.
+# Kept in one place to prevent drift between this file and the
+# operator docs.
 #
-# The four preconditions split into two tiers.  Tier 1
-# (workflow-runtime): the App + secrets are the ONLY hard
-# prerequisite for the workflow to run at all — an unavailable
-# App or missing secret hard-fails at the "Mint App token" step
-# before any drift logic runs.  Tier 2 (auto-merge safety): the
-# branch ruleset's required_status_checks rule, the "Allow
-# auto-merge" repo setting, and the absence of CODEOWNERS
+# Summary for code-side context: a GitHub App is the only HARD
+# prerequisite for the workflow to run at all (Tier 1 — missing
+# secrets hard-fail at "Mint App token" before any drift logic).
+# The branch ruleset's ``required_status_checks`` rule, the
+# "Allow auto-merge" repo setting, and the absence of CODEOWNERS
 # coverage on the catalog file each gate a different aspect of
-# auto-merge correctness.  Without ANY of the Tier-2
-# preconditions, drift detection and PR open/update still
-# succeed end-to-end; only the auto-merge path is unsafe or
-# non-functional.  Specifically: a missing or empty
-# required_status_checks rule causes the wait-and-merge step to
-# hard-fail immediately at the expected-count query with
-# ``::error::Could not determine the expected required-check
-# count...`` (the rule-present-but-checks-don't-register case
-# fails after 90s instead, with a different ``::error::Only N of
-# M required check runs appeared...`` diagnostic — see the
-# precondition bullet above for the distinction); without "Allow
-# auto-merge", the fallback ``gh pr merge --auto`` errors out
-# with ``::error::``; with the catalog file in CODEOWNERS,
-# ``require_code_owner_review: true`` blocks every auto-merge
-# attempt because the bot cannot approve its own PR.
+# the auto-merge path's safety (Tier 2 — without any of them,
+# drift detection and PR open/update still succeed end-to-end;
+# only the auto-merge path is unsafe or non-functional).  Tier-2
+# failures surface as distinct ``::error::`` annotations
+# (expected-count query at the ruleset endpoint, polling-guard
+# timeout, ``gh pr merge --auto`` rejection); see CLAUDE.md for
+# the full diagnostic mapping.
 
 on:
   schedule:
