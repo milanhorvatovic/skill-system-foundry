@@ -547,7 +547,7 @@ jobs:
           if ! printf '%s' "${expected_count:-}" | grep -qE '^[1-9][0-9]*$'; then
             err_msg=$(tr '\n' ' ' <"$ruleset_err" 2>/dev/null || true)
             rm -f "$ruleset_err"
-            echo "::error::Could not determine the expected required-check count from main's branch ruleset (queried via gh api repos/.../rules/branches/main, expected a positive integer count of required_status_checks contexts, got '${expected_count:-<empty>}').  Underlying gh stderr: ${err_msg:-<none>}.  Possible causes: the ruleset has no required_status_checks rule, the rule is empty, the App lacks the metadata: read permission needed for the rules API, or a transient GitHub API error.  Cannot safely proceed to merge — investigate before re-running."
+            echo "::error::Could not determine the expected required-check count from main's branch ruleset (queried via gh api repos/.../rules/branches/main, expected a positive integer count of required_status_checks contexts, got '${expected_count:-<empty>}').  Underlying gh stderr: ${err_msg:-<none>}.  Possible causes: the ruleset has no required_status_checks rule, the rule is empty, a rate-limit or transient GitHub API error, or an API shape change at the rules endpoint.  Cannot safely proceed to merge — investigate before re-running."
             exit 1
           fi
           rm -f "$ruleset_err"
