@@ -514,7 +514,7 @@ jobs:
           # than expected appear within the polling budget, hard-fail
           # — proceeding without knowing the target count would let
           # the staggered-registration race back in.
-          expected_count=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | length' 2>/dev/null) || expected_count=""
+          expected_count=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | unique | length' 2>/dev/null) || expected_count=""
           if ! printf '%s' "${expected_count:-}" | grep -qE '^[1-9][0-9]*$'; then
             echo "::error::Could not determine the expected required-check count from main's branch ruleset (queried via gh api repos/.../rules/branches/main, expected a positive integer count of required_status_checks contexts, got '${expected_count:-<empty>}').  The ruleset may have no required_status_checks rule, the rule may be empty, or the API call failed.  Cannot safely proceed to merge — investigate before re-running."
             exit 1
