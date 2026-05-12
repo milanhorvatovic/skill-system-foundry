@@ -533,17 +533,31 @@ jobs:
             current_raw=""
             rc=0
             current_raw=$(gh pr checks "$PR_NUMBER" --required --json name --jq 'length' 2>"$stderr_file") || rc=$?
-            # ``gh pr checks`` exits 8 when one or more required
-            # checks are still pending or in-progress — the
-            # *expected* state immediately after a force-push since
-            # the documented required-check runtime is 1-3 minutes
-            # and our polling budget is only 90s.  Treat exit 8 as
-            # success: the JSON length on stdout is still valid (the
-            # check runs exist with non-terminal status), so we can
-            # count them and let the stability gate proceed.  Any
-            # other non-zero exit (auth failure, network outage,
-            # rate limit) is a real CLI failure that warrants a
-            # warning + retry.
+            # Exit-code policy for ``gh pr checks --required`` (per
+            # ``gh help exit-codes`` and ``gh pr checks --help``):
+            # exit 0 = all required checks passed, exit 8 = at
+            # least one is pending/in-progress/terminally-failed
+            # (the per-check ``bucket`` field is the only
+            # distinguisher — no exit code maps to "terminally
+            # failed" alone), exit 1 = generic CLI failure, exit 4
+            # = auth required.
+            #
+            # Treat 0 and 8 as success-with-valid-stdout: the JSON
+            # length is a valid count of registered required checks
+            # (passed + non-terminal + failed all included), so the
+            # stability gate proceeds and the downstream
+            # ``--watch --fail-fast`` catches any terminal failure
+            # with the right diagnostic.  Exit 8 is in fact the
+            # *expected* state immediately after a force-push,
+            # since the documented required-check runtime is 1-3
+            # minutes and the polling budget is only 90s.
+            #
+            # Treat 1 and 4 (and any other non-zero) as real CLI
+            # failures: warn, reset the stability counter, retry
+            # within the budget.  Accepting them here would
+            # silently mask auth/network/parse errors as "no
+            # required checks yet" and burn the budget without
+            # surfacing the real problem.
             if [ "$rc" -ne 0 ] && [ "$rc" -ne 8 ]; then
               err_msg=$(tr '\n' ' ' <"$stderr_file" 2>/dev/null || true)
               echo "::warning::gh pr checks --required failed during pre-watch poll (exit $rc): ${err_msg}. Resetting stability counter and retrying."
