@@ -81,16 +81,24 @@ name: Tool catalog drift
 #     ``milanhorvatovic/codex-ai-code-review-action``'s
 #     dependabot-auto-merge workflow would then be required).
 #
-# The App + secrets and the branch ruleset are HARD prerequisites
-# for any drift run — there is no degraded "catalog-sync still works
-# without the App" mode.  An unavailable App or missing secret
-# hard-fails at the "Mint App token" step before any drift logic
-# runs.  "Allow auto-merge" gates the merge half only: a missing
-# toggle still lets the rolling PR open, but the auto-merge step
-# surfaces an ``::error::`` and exits non-zero.  CODEOWNERS coverage
-# is a soft prerequisite for the merge half — the rolling PR can
-# still open, but auto-merge would block on the missing code-owner
-# approval.
+# The four preconditions split into two tiers.  Tier 1
+# (workflow-runtime): the App + secrets are the ONLY hard
+# prerequisite for the workflow to run at all — an unavailable
+# App or missing secret hard-fails at the "Mint App token" step
+# before any drift logic runs.  Tier 2 (auto-merge safety): the
+# branch ruleset's required_status_checks rule, the "Allow
+# auto-merge" repo setting, and the absence of CODEOWNERS
+# coverage on the catalog file each gate a different aspect of
+# auto-merge correctness.  Without ANY of the Tier-2
+# preconditions, drift detection and PR open/update still
+# succeed end-to-end; only the auto-merge path is unsafe or
+# non-functional.  Specifically: without required_status_checks,
+# the watch step returns immediately on an empty required-check
+# set and the synchronous merge races CI; without "Allow
+# auto-merge", the fallback ``gh pr merge --auto`` errors out
+# with ``::error::``; with the catalog file in CODEOWNERS,
+# ``require_code_owner_review: true`` blocks every auto-merge
+# attempt because the bot cannot approve its own PR.
 
 on:
   schedule:
