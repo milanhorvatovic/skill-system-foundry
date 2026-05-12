@@ -69,8 +69,13 @@ name: Tool catalog drift
 #     when this is disabled.
 #   * Branch ruleset on ``main`` includes a ``required_status_checks``
 #     rule listing the checks that always fire on drift PRs (the
-#     two ``python-tests / test (...)`` matrix entries and
-#     ``ci-helper-tests / test``).  The pre-watch polling guard
+#     two ``test (ubuntu-latest, 3.12)`` and
+#     ``test (windows-latest, 3.12)`` matrix entries from
+#     ``python-tests.yaml`` plus ``test`` from
+#     ``ci-helper-tests.yaml``; both workflows name their job
+#     ``test`` and GitHub registers the check context as the bare
+#     job-name + matrix suffix without a workflow-name prefix).
+#     The pre-watch polling guard
 #     in the wait-and-merge step times out after 90s with
 #     ``::error::`` and fails the workflow without merging when
 #     the required-check set never appears (rule absent or empty,
