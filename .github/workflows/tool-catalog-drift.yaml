@@ -468,43 +468,89 @@ jobs:
             return 0
           }
 
-          # Wait for required check runs to appear before entering
-          # ``--watch``.  Downstream workflows (python-tests,
-          # ci-helper-tests) take a few seconds to create their check
-          # runs after the PR's head moves; ``gh pr checks --watch``
-          # only tracks check runs that exist at watch-start and
-          # does NOT subscribe to future check-suite creation, so
-          # entering it on a freshly opened or freshly pushed PR
-          # races: at the moment of the call the PR can have zero
-          # required checks visible, ``--required`` returns an empty
-          # set, and ``--watch`` exits immediately on a vacuous "all
-          # required checks passed" before downstream workflows have
-          # even reported.  The synchronous merge below would then
-          # fire before any CI has actually run.
+          # Wait for the full required-check set to appear AND
+          # stabilize before entering ``--watch``.  Downstream
+          # workflows (python-tests, ci-helper-tests) take a few
+          # seconds to create their check runs after the PR's head
+          # moves; ``gh pr checks --watch`` only tracks check runs
+          # that exist at watch-start and does NOT subscribe to
+          # future check-suite creation, so entering it on a freshly
+          # opened or freshly pushed PR races: at the moment of the
+          # call the PR can have zero required checks visible,
+          # ``--required`` returns an empty set, and ``--watch``
+          # exits immediately on a vacuous "all required checks
+          # passed" before downstream workflows have even reported.
+          # The synchronous merge below would then fire before any
+          # CI has actually run.
           #
-          # Poll for up to 90 seconds until at least one required
-          # check is visible.  One required check appearing means
-          # downstream workflows have started reporting; the
-          # remaining required checks typically follow within
-          # seconds, and ``--watch`` covers them once it starts
-          # because all current required checks exist at watch-start.
-          # If no required check appears within the window, treat as
-          # a workflow failure — downstream workflows are
-          # misconfigured (paths-filter mismatch on the consumer),
-          # the App's events aren't firing, or the ruleset's
-          # ``required_status_checks`` rule is empty.
+          # Polling for ANY non-zero count is insufficient: with N
+          # required checks appearing at different times, the first
+          # read can return 1 while later ones are still pending,
+          # and proceeding to ``--watch`` at that moment misses the
+          # later checks for the same watch-start-snapshot reason
+          # described above.  Instead, require the count to be stable
+          # (and non-zero) across two consecutive reads ~3s apart
+          # before proceeding — a stable non-zero count is a good
+          # proxy for "downstream workflows have finished registering
+          # their required checks".
+          #
+          # Errors from ``gh pr checks`` are distinguished from a
+          # legitimate empty-but-zero result: capture stderr to a
+          # file and inspect the exit code separately, validate the
+          # stdout payload as a bare integer with a strict regex,
+          # and only treat an empty payload as "no required checks
+          # visible yet".  The original ``2>/dev/null || echo 0``
+          # pattern conflated transient gh failures (token
+          # regression, API outage) with the legitimate
+          # zero-required-checks case, burning the full 90-second
+          # budget before the eventual hard fail; and if ``gh``
+          # ever exited non-zero while still printing a count to
+          # stdout, the substitution would have produced
+          # ``"N\n0"`` and tripped the numeric comparison under
+          # ``set -e``.
+          #
+          # If no stable required-check set appears within the
+          # window, treat as a workflow failure — downstream
+          # workflows are misconfigured (paths-filter mismatch on
+          # the consumer), the App's events aren't firing, or the
+          # ruleset's ``required_status_checks`` rule is empty.
           deadline=$(($(date +%s) + 90))
           required_count=0
+          prev_count=-1
+          stderr_file="$RUNNER_TEMP/gh-pr-checks-required.err"
           while [ "$(date +%s)" -lt "$deadline" ]; do
-            required_count=$(gh pr checks "$PR_NUMBER" --required --json name --jq 'length' 2>/dev/null || echo 0)
-            if [ "$required_count" -gt 0 ]; then
-              echo "Found $required_count required check run(s); proceeding to watch."
+            : >"$stderr_file"
+            current_raw=""
+            rc=0
+            current_raw=$(gh pr checks "$PR_NUMBER" --required --json name --jq 'length' 2>"$stderr_file") || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              err_msg=$(tr '\n' ' ' <"$stderr_file" 2>/dev/null || true)
+              echo "::warning::gh pr checks --required failed during pre-watch poll (exit $rc): ${err_msg}. Resetting stability counter and retrying."
+              prev_count=-1
+              sleep 3
+              continue
+            fi
+            if [ -z "$current_raw" ]; then
+              current=0
+            elif ! printf '%s' "$current_raw" | grep -qE '^[0-9]+$'; then
+              echo "::warning::gh pr checks --required returned non-numeric output during pre-watch poll: ${current_raw}. Resetting stability counter and retrying."
+              prev_count=-1
+              sleep 3
+              continue
+            else
+              current=$current_raw
+            fi
+            if [ "$current" -gt 0 ] && [ "$current" -eq "$prev_count" ]; then
+              required_count=$current
+              echo "Required check count stable at $required_count across two consecutive reads; proceeding to watch."
               break
             fi
+            prev_count=$current
             sleep 3
           done
+          rm -f "$stderr_file"
           if [ "$required_count" -eq 0 ]; then
-            echo "::error::No required check runs appeared within 90s after the rolling PR's head moved. Downstream workflows may not have fired (App events not triggering, paths-filter mismatch on the consuming workflows), or the ruleset's required_status_checks rule is empty. Cannot safely proceed to merge — investigate before re-running."
+            echo "::error::No stable set of required check runs appeared within 90s after the rolling PR's head moved. Either downstream workflows did not fire (App events not triggering, paths-filter mismatch on the consuming workflows), the ruleset's required_status_checks rule is empty, or gh pr checks repeatedly failed. Cannot safely proceed to merge — investigate before re-running."
             exit 1
           fi
 
