@@ -73,11 +73,24 @@ name: Tool catalog drift
 #     ``ci-helper-tests / test``).  ``gh pr checks --required
 #     --watch`` waits on this list; if it is empty the merge step
 #     races CI.
+#   * ``.github/CODEOWNERS`` does not cover
+#     ``skill-system-foundry/scripts/lib/configuration.yaml``.  If it
+#     did, ``require_code_owner_review: true`` on the branch ruleset
+#     would block the auto-merge path because the bot cannot approve
+#     its own PR (the second-identity workaround used in
+#     ``milanhorvatovic/codex-ai-code-review-action``'s
+#     dependabot-auto-merge workflow would then be required).
 #
-# All four preconditions are HARD prerequisites for the workflow to
-# function — there is no degraded "catalog-sync still works without
-# the App" mode.  An unavailable App or missing secret hard-fails
-# at the "Mint App token" step before any drift logic runs.
+# The App + secrets and the branch ruleset are HARD prerequisites
+# for any drift run — there is no degraded "catalog-sync still works
+# without the App" mode.  An unavailable App or missing secret
+# hard-fails at the "Mint App token" step before any drift logic
+# runs.  "Allow auto-merge" gates the merge half only: a missing
+# toggle still lets the rolling PR open, but the auto-merge step
+# surfaces an ``::error::`` and exits non-zero.  CODEOWNERS coverage
+# is a soft prerequisite for the merge half — the rolling PR can
+# still open, but auto-merge would block on the missing code-owner
+# approval.
 
 on:
   schedule:
