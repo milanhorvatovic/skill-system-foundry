@@ -70,9 +70,12 @@ name: Tool catalog drift
 #   * Branch ruleset on ``main`` includes a ``required_status_checks``
 #     rule listing the checks that always fire on drift PRs (the
 #     two ``python-tests / test (...)`` matrix entries and
-#     ``ci-helper-tests / test``).  ``gh pr checks --required
-#     --watch`` waits on this list; if it is empty the merge step
-#     races CI.
+#     ``ci-helper-tests / test``).  The pre-watch polling guard
+#     in the wait-and-merge step times out after 90s with
+#     ``::error::`` and fails the workflow without merging when
+#     the required-check set never appears (rule absent or empty,
+#     paths-filter mismatch on the consumer, App events not
+#     firing).
 #   * ``.github/CODEOWNERS`` does not cover
 #     ``skill-system-foundry/scripts/lib/configuration.yaml``.  If it
 #     did, ``require_code_owner_review: true`` on the branch ruleset
@@ -93,12 +96,14 @@ name: Tool catalog drift
 # preconditions, drift detection and PR open/update still
 # succeed end-to-end; only the auto-merge path is unsafe or
 # non-functional.  Specifically: without required_status_checks,
-# the watch step returns immediately on an empty required-check
-# set and the synchronous merge races CI; without "Allow
-# auto-merge", the fallback ``gh pr merge --auto`` errors out
-# with ``::error::``; with the catalog file in CODEOWNERS,
-# ``require_code_owner_review: true`` blocks every auto-merge
-# attempt because the bot cannot approve its own PR.
+# the pre-watch polling guard in the wait-and-merge step times
+# out after 90s with ``::error::`` and fails the workflow
+# without merging because no required checks ever appear;
+# without "Allow auto-merge", the fallback ``gh pr merge
+# --auto`` errors out with ``::error::``; with the catalog file
+# in CODEOWNERS, ``require_code_owner_review: true`` blocks
+# every auto-merge attempt because the bot cannot approve its
+# own PR.
 
 on:
   schedule:
