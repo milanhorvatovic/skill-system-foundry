@@ -246,6 +246,63 @@ jobs:
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
 
+      # Defense against the rolling-branch reuse race.  The merge
+      # step below can leave ``gh pr merge --auto`` armed on the
+      # rolling PR as a fallback when the synchronous merge cannot
+      # complete (Copilot left an unresolved thread, transient
+      # mergeability flip, etc.).  That auto-merge persists across
+      # workflow runs because the PR is reused.  If a subsequent run
+      # produces drift that is NOT auto-mergeable (removals present,
+      # or additions over the threshold), this workflow force-pushes
+      # non-eligible content to the same PR — but the previously
+      # armed auto-merge is still active.  Once the new commit's
+      # required checks pass and any blocking condition resolves,
+      # GitHub would auto-merge the now-out-of-policy drift,
+      # bypassing the strict allowlist gate that the
+      # ``auto_mergeable`` flag exists to enforce.
+      #
+      # Disarm BEFORE the force-push so the GitHub auto-merge worker
+      # cannot fire against the freshly-pushed non-eligible commit
+      # in the window between push and disarm.  Look up the rolling
+      # PR via ``gh pr list`` (the open-or-update step has not run
+      # yet, so ``steps.pr.outputs.number`` is unavailable here) using
+      # the same fork-scoped filter as the no-drift cleanup step.
+      # If no open rolling PR exists yet, there is nothing to disarm
+      # and the step exits cleanly.  Failing to disarm is a hard
+      # error — a silently-armed auto-merge on out-of-policy drift is
+      # the exact security failure this defense prevents.
+      - name: Disarm stale auto-merge if drift no longer eligible
+        if: steps.detect.outputs.drift == 'true' && steps.detect.outputs.auto_mergeable != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: chore/tool-catalog-drift
+        run: |
+          set -euo pipefail
+          pr_number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,headRepositoryOwner --jq "[.[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number][0] // empty")
+          if [ -z "$pr_number" ]; then
+            echo "No open rolling PR; nothing to disarm before force-push."
+            exit 0
+          fi
+          auto_merge=$(gh pr view "$pr_number" --json autoMergeRequest --jq '.autoMergeRequest')
+          if [ "$auto_merge" = "null" ]; then
+            echo "Auto-merge is not armed on PR #$pr_number; nothing to disarm."
+            exit 0
+          fi
+          if ! gh pr merge --disable-auto "$pr_number"; then
+            echo "::error::Failed to disable a previously-armed auto-merge on the rolling PR before pushing non-eligible drift. Aborting before force-push so the armed auto-merge cannot land out-of-policy drift (removals present, or additions above MAX_AUTO_MERGE_ADDITIONS). Investigate and disable the armed auto-merge manually before re-running."
+            exit 1
+          fi
+          # Verify the disarm actually took.  ``--disable-auto`` can
+          # return success while the underlying mutation races with
+          # other PR-state changes; querying ``autoMergeRequest``
+          # post-call confirms it is now ``null``.
+          auto_merge=$(gh pr view "$pr_number" --json autoMergeRequest --jq '.autoMergeRequest')
+          if [ "$auto_merge" != "null" ]; then
+            echo "::error::gh pr merge --disable-auto exited 0 but autoMergeRequest is still non-null on the rolling PR. Aborting before force-push so the armed auto-merge cannot land out-of-policy drift. Investigate immediately."
+            exit 1
+          fi
+          echo "Disarmed previously-armed auto-merge on PR #$pr_number."
+
       - name: Commit and force-push to rolling branch
         if: steps.detect.outputs.drift == 'true'
         env:
@@ -323,54 +380,6 @@ jobs:
             echo "Opened rolling PR #$pr_number."
             echo "number=$pr_number" >> "$GITHUB_OUTPUT"
           fi
-
-      # Defense against the rolling-branch reuse race.  The merge
-      # step below can leave ``gh pr merge --auto`` armed on the
-      # rolling PR as a fallback when the synchronous merge cannot
-      # complete (Copilot left an unresolved thread, transient
-      # mergeability flip, etc.).  That auto-merge persists across
-      # workflow runs because the PR is reused.  If a subsequent run
-      # produces drift that is NOT auto-mergeable (removals present,
-      # or additions over the threshold), this workflow force-pushes
-      # non-eligible content to the same PR — but the previously
-      # armed auto-merge is still active.  Once the new commit's
-      # required checks pass and any blocking condition resolves,
-      # GitHub would auto-merge the now-out-of-policy drift,
-      # bypassing the strict allowlist gate that the
-      # ``auto_mergeable`` flag exists to enforce.
-      #
-      # Disarm defensively in the non-eligible path: query
-      # ``autoMergeRequest``, call ``--disable-auto`` only when armed
-      # (the command exits non-zero on a no-op disarm), then verify
-      # the disarm took.  Failing to disarm is a hard error — a
-      # silently-armed auto-merge on out-of-policy drift is the
-      # exact security failure this defense prevents.
-      - name: Disarm stale auto-merge if drift no longer eligible
-        if: steps.detect.outputs.drift == 'true' && steps.detect.outputs.auto_mergeable != 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
-        run: |
-          set -euo pipefail
-          auto_merge=$(gh pr view "$PR_NUMBER" --json autoMergeRequest --jq '.autoMergeRequest')
-          if [ "$auto_merge" = "null" ]; then
-            echo "Auto-merge is not armed on this PR; nothing to disarm."
-            exit 0
-          fi
-          if ! gh pr merge --disable-auto "$PR_NUMBER"; then
-            echo "::error::Failed to disable a previously-armed auto-merge on the rolling PR. The PR may merge automatically when blocking conditions resolve, landing drift that is now outside the gate (removals present, or additions above MAX_AUTO_MERGE_ADDITIONS). Investigate and disable the armed auto-merge manually before the next push to this branch."
-            exit 1
-          fi
-          # Verify the disarm actually took.  ``--disable-auto`` can
-          # return success while the underlying mutation races with
-          # other PR-state changes; querying ``autoMergeRequest``
-          # post-call confirms it is now ``null``.
-          auto_merge=$(gh pr view "$PR_NUMBER" --json autoMergeRequest --jq '.autoMergeRequest')
-          if [ "$auto_merge" != "null" ]; then
-            echo "::error::gh pr merge --disable-auto exited 0 but autoMergeRequest is still non-null on the rolling PR. The PR may merge automatically when blocking conditions resolve, landing out-of-policy drift. Investigate immediately."
-            exit 1
-          fi
-          echo "Disarmed previously-armed auto-merge on PR #$PR_NUMBER."
 
       # Wait for required status checks, then squash-merge
       # synchronously when CI is green; otherwise fall back to
