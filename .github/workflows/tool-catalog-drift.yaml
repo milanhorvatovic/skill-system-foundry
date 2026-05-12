@@ -533,7 +533,18 @@ jobs:
             current_raw=""
             rc=0
             current_raw=$(gh pr checks "$PR_NUMBER" --required --json name --jq 'length' 2>"$stderr_file") || rc=$?
-            if [ "$rc" -ne 0 ]; then
+            # ``gh pr checks`` exits 8 when one or more required
+            # checks are still pending or in-progress — the
+            # *expected* state immediately after a force-push since
+            # the documented required-check runtime is 1-3 minutes
+            # and our polling budget is only 90s.  Treat exit 8 as
+            # success: the JSON length on stdout is still valid (the
+            # check runs exist with non-terminal status), so we can
+            # count them and let the stability gate proceed.  Any
+            # other non-zero exit (auth failure, network outage,
+            # rate limit) is a real CLI failure that warrants a
+            # warning + retry.
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 8 ]; then
               err_msg=$(tr '\n' ' ' <"$stderr_file" 2>/dev/null || true)
               echo "::warning::gh pr checks --required failed during pre-watch poll (exit $rc): ${err_msg}. Resetting stability counter and retrying."
               prev_count=-1
