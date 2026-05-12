@@ -75,12 +75,16 @@ name: Tool catalog drift
 #     ``ci-helper-tests.yaml``; both workflows name their job
 #     ``test`` and GitHub registers the check context as the bare
 #     job-name + matrix suffix without a workflow-name prefix).
-#     The pre-watch polling guard
-#     in the wait-and-merge step times out after 90s with
-#     ``::error::`` and fails the workflow without merging when
-#     the required-check set never appears (rule absent or empty,
-#     paths-filter mismatch on the consumer, App events not
-#     firing).
+#     The wait-and-merge step has two distinct failure modes for
+#     this precondition: (a) if the rule is absent or empty,
+#     ``gh api repos/.../rules/branches/main`` returns a count of
+#     0 contexts and the workflow hard-fails immediately with
+#     ``::error::Could not determine the expected required-check
+#     count...``; (b) if the rule is present but the listed checks
+#     don't register on the PR (paths-filter mismatch on the
+#     consumer, App events not firing), the pre-watch polling guard
+#     times out after 90s with ``::error::Only N of M required
+#     check runs appeared...``.
 #   * ``.github/CODEOWNERS`` does not cover
 #     ``skill-system-foundry/scripts/lib/configuration.yaml``.  If it
 #     did, ``require_code_owner_review: true`` on the branch ruleset
@@ -100,15 +104,18 @@ name: Tool catalog drift
 # auto-merge correctness.  Without ANY of the Tier-2
 # preconditions, drift detection and PR open/update still
 # succeed end-to-end; only the auto-merge path is unsafe or
-# non-functional.  Specifically: without required_status_checks,
-# the pre-watch polling guard in the wait-and-merge step times
-# out after 90s with ``::error::`` and fails the workflow
-# without merging because no required checks ever appear;
-# without "Allow auto-merge", the fallback ``gh pr merge
-# --auto`` errors out with ``::error::``; with the catalog file
-# in CODEOWNERS, ``require_code_owner_review: true`` blocks
-# every auto-merge attempt because the bot cannot approve its
-# own PR.
+# non-functional.  Specifically: a missing or empty
+# required_status_checks rule causes the wait-and-merge step to
+# hard-fail immediately at the expected-count query with
+# ``::error::Could not determine the expected required-check
+# count...`` (the rule-present-but-checks-don't-register case
+# fails after 90s instead, with a different ``::error::Only N of
+# M required check runs appeared...`` diagnostic — see the
+# precondition bullet above for the distinction); without "Allow
+# auto-merge", the fallback ``gh pr merge --auto`` errors out
+# with ``::error::``; with the catalog file in CODEOWNERS,
+# ``require_code_owner_review: true`` blocks every auto-merge
+# attempt because the bot cannot approve its own PR.
 
 on:
   schedule:
