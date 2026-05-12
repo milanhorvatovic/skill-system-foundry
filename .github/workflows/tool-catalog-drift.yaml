@@ -442,13 +442,24 @@ jobs:
           # would be silently stranded — surface the failure as a
           # workflow error instead of pretending success.
           verify_auto_merge_or_terminal() {
-            local state_json pr_state has_auto
-            if ! state_json=$(gh pr view "$PR_NUMBER" --json state,autoMergeRequest); then
+            local pr_state has_auto state_line
+            # Single ``gh`` invocation that emits both fields in one
+            # delimited line, parsed via shell ``read`` instead of a
+            # separate ``jq`` invocation.  Avoids the implicit
+            # ``jq`` binary dependency the workflow doesn't otherwise
+            # need (consistent with the inline ``--jq`` form used at
+            # the disarm step's ``gh pr view ... --json
+            # autoMergeRequest --jq '.autoMergeRequest'``).  The
+            # ``|`` delimiter is safe because both fields are simple
+            # values: PR ``state`` is always one of the GitHub
+            # enum strings (OPEN / CLOSED / MERGED, no pipe), and
+            # the ``autoMergeRequest != null`` boolean prints as
+            # the literal ``true`` / ``false``.
+            if ! state_line=$(gh pr view "$PR_NUMBER" --json state,autoMergeRequest --jq '"\(.state)|\(.autoMergeRequest != null)"'); then
               echo "::error::Failed to verify PR state after the gh pr merge --auto call. Cannot confirm whether auto-merge was enabled; manual intervention required."
               return 1
             fi
-            pr_state=$(jq -r '.state' <<<"$state_json")
-            has_auto=$(jq -r '.autoMergeRequest != null' <<<"$state_json")
+            IFS='|' read -r pr_state has_auto <<<"$state_line"
             case "$pr_state" in
               MERGED|CLOSED)
                 echo "PR is $pr_state; nothing more to do."
