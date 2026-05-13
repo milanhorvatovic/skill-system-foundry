@@ -39,13 +39,23 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  helper-tests:
     # Matrix mirrors ``python-tests.yaml`` so the helper test surface
     # is exercised on the same OS/Python pair as the meta-skill.  The
     # helper script uses portable APIs (os.path, tempfile, open with
     # explicit encoding and newline) and the test suite already runs
     # locally on POSIX; running on windows-latest closes the
     # cross-platform contract gap without expanding scope.
+    #
+    # Job id is ``helper-tests`` (not ``test``) so this workflow's
+    # check contexts (``helper-tests (ubuntu-latest, 3.12)`` and
+    # ``helper-tests (windows-latest, 3.12)``) are distinct from
+    # ``python-tests.yaml``'s ``test (...)`` contexts.  GitHub
+    # registers the context as the bare job-name + matrix suffix,
+    # so reusing the ``test`` id would produce duplicate context
+    # names across workflows and leave branch protection unable to
+    # cleanly distinguish meta-skill vs helper failures (raised in
+    # PR #143 review by both Codex and Copilot).
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
