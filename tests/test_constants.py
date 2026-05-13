@@ -454,8 +454,11 @@ class AllowedToolsCatalogTests(unittest.TestCase):
 
     def test_harness_tools_includes_canonical_pascalcase_set(self) -> None:
         # Names listed in the Claude Code skills documentation.
+        # ``Task`` was split upstream into the granular ``TaskCreate`` /
+        # ``TaskGet`` / ``TaskList`` / ``TaskOutput`` / ``TaskStop`` /
+        # ``TaskUpdate`` tools and is no longer present in the catalog.
         for tool in ("Bash", "Read", "Edit", "Write", "Grep", "Glob",
-                     "WebFetch", "WebSearch", "NotebookEdit", "Task", "Skill"):
+                     "WebFetch", "WebSearch", "NotebookEdit", "Skill"):
             self.assertIn(tool, constants.HARNESS_TOOLS_CLAUDE_CODE)
 
     def test_cli_tools_excludes_pascalcase_harness_names(self) -> None:
