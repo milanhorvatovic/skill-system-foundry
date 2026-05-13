@@ -1044,6 +1044,26 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 3)
             self.assertIn("catalog_provenance", stderr.getvalue())
 
+    def test_summary_out_help_describes_json_interaction(self) -> None:
+        # The --summary-out help text must describe its interaction
+        # with --json — under --json, stdout receives the JSON payload
+        # and the markdown summary goes ONLY to the summary-out file.
+        # The workflow at .github/workflows/tool-catalog-drift.yaml
+        # runs the helper with both flags together
+        # (``--json --summary-out "$SUMMARY_PATH" > "$STATE_PATH"``),
+        # so a help text that claims stdout always receives the
+        # summary would misdocument the contract this workflow relies
+        # on.  Assert a small substring set rather than the exact
+        # wording so future polish does not pin the test.
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit):
+                mod.main(["--help"])
+        help_text = stdout.getvalue()
+        self.assertIn("--summary-out", help_text)
+        self.assertIn("--json", help_text)
+        self.assertIn("only to this file", help_text)
+
     def test_summary_out_writes_file(self) -> None:
         markdown = _load_fixture_markdown()
         fd, summary_path = tempfile.mkstemp(suffix=".md")

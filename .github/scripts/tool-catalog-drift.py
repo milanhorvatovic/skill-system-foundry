@@ -897,9 +897,12 @@ def main(argv: list[str] | None = None) -> int:
         "--summary-out",
         default=None,
         help=(
-            "If set, write the rendered summary to this path "
-            "(in addition to printing it to stdout). Used by the "
-            "workflow to compose the PR body."
+            "If set, write the rendered markdown summary to this "
+            "path. With --json, stdout receives the JSON payload "
+            "and the markdown summary goes only to this file; "
+            "without --json, the markdown summary goes to both "
+            "stdout and this file. Used by the workflow to compose "
+            "the PR body."
         ),
     )
     parser.add_argument(
