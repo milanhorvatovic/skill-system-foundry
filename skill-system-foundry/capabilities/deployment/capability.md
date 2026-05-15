@@ -17,7 +17,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
 
-After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing — skills do not auto-sync between tools ([anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync)).
+After updating canonical content, verify each pointer still resolves correctly. Symlinks read the canonical source live, so a content change propagates immediately — but the link itself breaks if the canonical path moves or the file is deleted. Wrapper files duplicate content, so they must be re-synced manually after any canonical edit and will silently drift if the sync step is skipped ([anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync)).
 
 **Per-tool instructions (wrapper-file fallback):**
 

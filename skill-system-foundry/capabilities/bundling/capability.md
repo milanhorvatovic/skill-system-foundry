@@ -11,7 +11,7 @@ Package a skill as a self-contained zip bundle for distribution. The archive pac
 - The skill must pass `validate_skill.py` (spec compliance)
 - The skill's description must not exceed 200 characters (Claude.ai limit)
 - All file references in the skill must resolve to existing files
-- No external reference may point to another skill (cross-skill boundary violation) — unless `--inline-orchestrated-skills` is used for Path 1 coordination skills. Cross-skill references are a structural anti-pattern that produces incomplete bundles ([anti-patterns.md#capability-aware-capabilities](../../references/anti-patterns.md#capability-aware-capabilities)).
+- No external reference may point to another skill (cross-skill boundary violation) — unless `--inline-orchestrated-skills` is used for Path 1 coordination skills. Cross-skill references would produce incomplete bundles; keep dependencies inside the bundled skill, or use `--inline-orchestrated-skills` for coordination skills that intentionally orchestrate other skills.
 
 ## Usage
 
@@ -68,6 +68,8 @@ python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --system-r
 
 ## Key Resources
 
-**Scripts and configuration** — load by trigger:
+**Scripts** — run by trigger:
 - [bundle.py](../../scripts/bundle.py) — run when packaging a skill for distribution (Claude.ai upload, release asset, marketplace).
+
+**Configuration** — read by trigger:
 - [configuration.yaml](../../scripts/lib/configuration.yaml) — read when a file or directory is unexpectedly excluded from a bundle, or when adding a new exclusion pattern under `bundle_exclusions`.

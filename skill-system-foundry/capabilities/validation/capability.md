@@ -25,7 +25,7 @@ For registered skills, the validator checks: frontmatter fields (`name`, `descri
 
 ## Validation Pipeline as Plan-Validate-Execute
 
-The validation surface implements the **plan-validate-execute** pattern (see [authoring-principles.md](../../references/authoring-principles.md#workflows-and-feedback-loops)) across three layers. `validate_skill.py` checks a single skill against the spec (per-skill plan validation). `audit_skill_system.py` checks cross-skill consistency — dependency direction, role composition, orphan references, version consistency at the repo root (system-level plan validation). Together they let an integrator validate at each scope before any execute step (bundle, deploy, release) acts on the artifacts. Run validation top-down: single skill → system audit → repo-root audit for distribution.
+The validation surface implements the **plan-validate-execute** pattern (see [authoring-principles.md](../../references/authoring-principles.md#workflows-and-feedback-loops)) across three layers. `validate_skill.py` checks a single skill against the spec (per-skill plan validation). `audit_skill_system.py` checks cross-skill consistency — dependency direction, role composition, orphan references — and, when invoked in distribution-repo mode (root contains both `.claude-plugin/plugin.json` and `skill-system-foundry/SKILL.md`), additionally fires the version-consistency rule that catches manifest drift across `SKILL.md`, `plugin.json`, and `marketplace.json`. Together they let an integrator validate at each scope before any execute step (bundle, deploy, release) acts on the artifacts. Run validation top-down: single skill → system audit → distribution-repo audit before release.
 
 ## Auditing System Consistency
 
