@@ -26,9 +26,11 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>] [
 
 ## What the Bundler Does
 
-1. **Pre-validates** — runs spec validation, checks description length, scans references, and rejects broken links, cross-skill references, and cycles.
+`bundle.py` implements the **plan-validate-execute** pattern (see [authoring-principles.md](../../references/authoring-principles.md#workflows-and-feedback-loops)): build a structured plan, validate it against the source of truth, then execute — only after validation passes. Concretely:
+
+1. **Pre-validates** — runs spec validation, checks description length, scans references, and rejects broken links, cross-skill references, and cycles. This is the plan-validation step: a broken reference graph fails the bundle before any file is touched.
 2. **Assembles the bundle** — copies skill files and resolved external dependencies, then rewrites markdown paths to bundle-relative form.
-3. **Post-validates** — verifies all markdown references resolve within the bundle and exactly one SKILL.md exists.
+3. **Post-validates** — verifies all markdown references resolve within the bundle and exactly one SKILL.md exists. This is the execute-verification step: rewriting a path is a destructive transform on the bundle copy, so the post-pass confirms the assembled artifact still resolves cleanly.
 4. **Creates the zip** with the skill folder as the archive root.
 
 The archive root contains a `<skill-name>/` wrapper directory matching the skill's `name` field. Files must not be placed directly at the archive root. Any system-level `roles/` referenced by the skill are inlined under the skill directory to make the bundle self-contained.

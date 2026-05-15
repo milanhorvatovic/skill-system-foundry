@@ -23,6 +23,10 @@ python scripts/validate_skill.py <skill-path> [--capability] [--verbose] [--allo
 
 For registered skills, the validator checks: frontmatter fields (`name`, `description`), naming conventions (lowercase + hyphens, max 64 chars, matches directory), line counts (recommended max 500 lines), and resource directory structure. In `--capability` mode it only validates the body (line counts, nested-reference rules) and, if frontmatter is present, reports name/description as informational notes without enforcing frontmatter or directory checks.
 
+## Validation Pipeline as Plan-Validate-Execute
+
+The validation surface implements the **plan-validate-execute** pattern (see [authoring-principles.md](../../references/authoring-principles.md#workflows-and-feedback-loops)) across three layers. `validate_skill.py` checks a single skill against the spec (per-skill plan validation). `audit_skill_system.py` checks cross-skill consistency — dependency direction, role composition, orphan references, version consistency at the repo root (system-level plan validation). Together they let an integrator validate at each scope before any execute step (bundle, deploy, release) acts on the artifacts. Run validation top-down: single skill → system audit → repo-root audit for distribution.
+
 ## Auditing System Consistency
 
 Run the automated audit against a deployed system root — the directory containing a `skills/` subdirectory (e.g., `.agents/`):
