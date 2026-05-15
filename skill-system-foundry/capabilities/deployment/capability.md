@@ -17,7 +17,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
 
-After updating canonical content, verify each pointer still resolves correctly. Symlinks read the canonical source live, so a content change propagates immediately — but the link itself breaks if the canonical path moves or the file is deleted. Wrapper files duplicate content, so they must be re-synced manually after any canonical edit and will silently drift if the sync step is skipped ([anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync)).
+After updating canonical content, verify each pointer still resolves correctly. Symlinks read the canonical source live, so a content change propagates immediately — but the link itself breaks if the canonical path moves or the file is deleted. Wrapper files are thin pointers that re-state the trigger phrase and link to the canonical skill (per [tool-integration.md#deployment-pointer-guidelines](../../references/tool-integration.md#deployment-pointer-guidelines) — never duplicate skill content); they must be re-checked after any canonical rename or move and silently drift if a tool-specific convention in the wrapper is forgotten ([anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync)).
 
 **Per-tool instructions (wrapper-file fallback):**
 
@@ -47,7 +47,7 @@ Read the relevant extension reference when using tool-specific features:
 
 - **Symlinks without team OS verification.** Symlinks are the default but degrade silently on Windows checkouts without Developer Mode (or `git config core.symlinks=true`). On a mixed-OS team that cannot guarantee Developer Mode, fall back to wrapper files. See [anti-patterns.md#symlinks-without-team-platform-verification](../../references/anti-patterns.md#symlinks-without-team-platform-verification).
 - **Absolute symlink paths.** Symlink targets must be relative (`../../.agents/skills/my-skill`), not absolute (`/home/user/project/.agents/...`). Absolute paths break on every other clone. See [anti-patterns.md#absolute-symlink-paths](../../references/anti-patterns.md#absolute-symlink-paths).
-- **Cross-surface sync assumed.** Skills do not auto-sync between tools. After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing. See [anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync).
+- **Cross-surface sync assumed.** Wrappers do not auto-sync — content edits must be re-applied manually. Symlinks propagate content live but break if the canonical path moves or is deleted. After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing. See [anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync).
 
 ## Key Resources
 

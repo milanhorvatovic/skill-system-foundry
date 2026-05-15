@@ -70,4 +70,4 @@ Scripts should handle errors explicitly with helpful messages.
 Always validate new skills. Treat spec compliance as a hard requirement.
 
 ### Assuming Cross-Surface Sync
-Skills don't sync. Distribute manually. See the [deployment capability](../capabilities/deployment/capability.md) for per-tool instructions.
+Pointer mechanism dictates sync behavior. **Symlinks** read the canonical source live, so content changes propagate with no extra step — but the symlink itself breaks if the canonical path moves or is deleted. **Wrapper files** are thin pointers that link to the canonical skill (never content copies), so canonical content edits propagate without action — but the wrapper must be re-checked after any canonical rename or move, and tool-specific conventions inside the wrapper drift silently if not maintained. See the [deployment capability](../capabilities/deployment/capability.md) for per-tool instructions.
