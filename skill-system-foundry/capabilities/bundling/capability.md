@@ -62,8 +62,6 @@ python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --system-r
 
 ## Key Resources
 
-**Scripts:**
-- [bundle.py](../../scripts/bundle.py) — Bundle entry point
-- [bundling.py](../../scripts/lib/bundling.py) — Core bundling logic
-- [references.py](../../scripts/lib/references.py) — Reference scanning, resolution, and graph traversal
-- [configuration.yaml](../../scripts/lib/configuration.yaml) — Bundle exclusion patterns and limits
+**Scripts and configuration** — load by trigger:
+- [bundle.py](../../scripts/bundle.py) — run when packaging a skill for distribution (Claude.ai upload, release asset, marketplace).
+- [configuration.yaml](../../scripts/lib/configuration.yaml) — read when a file or directory is unexpectedly excluded from a bundle, or when adding a new exclusion pattern under `bundle_exclusions`.

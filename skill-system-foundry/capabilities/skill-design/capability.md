@@ -110,21 +110,15 @@ Only add a capability when the integrator explicitly requests it or when the dom
 
 ## Key Resources
 
-**Templates** — copy and fill in when creating components:
-- [skill-standalone.md](../../assets/skill-standalone.md) — Standalone skill template
-- [skill-router.md](../../assets/skill-router.md) — Router skill template
-- [capability.md](../../assets/capability.md) — Capability template
-- [role.md](../../assets/role.md) — Role template
-- [manifest.yaml](../../assets/manifest.yaml) — Manifest schema template
+**Templates** — copy when creating components (each entry above already links the template at the body step where it applies; the index is here for cross-step navigation):
+- [skill-standalone.md](../../assets/skill-standalone.md), [skill-router.md](../../assets/skill-router.md), [capability.md](../../assets/capability.md), [role.md](../../assets/role.md), [manifest.yaml](../../assets/manifest.yaml).
 
-**References** — read when you need guidance:
-- [authoring-principles.md](../../references/authoring-principles.md) — Shared skill authoring principles
-- [architecture-patterns.md](../../references/architecture-patterns.md) — Standalone vs router decisions
-- [agentskills-spec.md](../../references/agentskills-spec.md) — Specification compliance
-- [directory-structure.md](../../references/directory-structure.md) — Full directory layout and conventions
-- [anti-patterns.md](../../references/anti-patterns.md) — Common mistakes and how to avoid them
+**References** — load by trigger:
+- [authoring-principles.md](../../references/authoring-principles.md) — read when writing or reviewing a description, picking degrees-of-freedom, or structuring progressive disclosure.
+- [architecture-patterns.md](../../references/architecture-patterns.md) — read when deciding standalone vs router, or choosing between coordination-only and self-contained orchestration paths.
+- [agentskills-spec.md](../../references/agentskills-spec.md) — read when a frontmatter field, naming rule, or file-reference convention is in question.
+- [directory-structure.md](../../references/directory-structure.md) — read when deciding where to place a new file or what the on-disk layout should look like.
+- [anti-patterns.md](../../references/anti-patterns.md) — read before scaffolding capabilities, defining a role, or extracting shared resources; the foot-guns concentrate there.
 
-**Scripts** — run for scaffolding and validation:
-- [scaffold.py](../../scripts/scaffold.py) — Scaffold new skills or roles from templates
-- [validation.py](../../scripts/lib/validation.py) — Shared name validation logic
-- [manifest.py](../../scripts/lib/manifest.py) — Manifest parsing and validation
+**Scripts** — run by trigger:
+- [scaffold.py](../../scripts/scaffold.py) — run when starting a new skill, capability, or role from a template.

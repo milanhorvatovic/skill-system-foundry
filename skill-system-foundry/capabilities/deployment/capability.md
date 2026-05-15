@@ -43,12 +43,10 @@ Read the relevant extension reference when using tool-specific features:
 
 ## Key Resources
 
-**References:**
-- [symlink-setup.md](references/symlink-setup.md) — Platform-specific symlink commands (Linux/macOS/Windows)
-- [tool-integration.md](../../references/tool-integration.md) — Tool-specific paths, discovery, and deployment
-- [claude-code-extensions.md](../../references/claude-code-extensions.md) — Claude Code extensions
-- [codex-extensions.md](../../references/codex-extensions.md) — Codex extensions
-- [cursor-extensions.md](../../references/cursor-extensions.md) — Cursor extensions
+**References** — load by trigger:
+- [symlink-setup.md](references/symlink-setup.md) — read when creating any symlink-based pointer (the default mechanism); contains the platform-specific commands.
+- [tool-integration.md](../../references/tool-integration.md) — read when choosing the pointer mechanism for a mixed-OS team, or when the tool-specific discovery path is unclear.
+- [claude-code-extensions.md](../../references/claude-code-extensions.md), [codex-extensions.md](../../references/codex-extensions.md), [cursor-extensions.md](../../references/cursor-extensions.md) — read when using a tool-specific extension (frontmatter, subagent config, rules, six-level discovery) on the named tool.
 
-**Scripts:**
-- [bundle.py](../../scripts/bundle.py) — Bundle a skill for distribution (needed for Claude.ai upload)
+**Scripts** — run by trigger:
+- [bundle.py](../../scripts/bundle.py) — run when uploading to Claude.ai or producing a release-asset zip; not needed for symlink or wrapper deployment.

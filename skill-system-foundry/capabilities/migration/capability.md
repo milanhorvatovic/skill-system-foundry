@@ -30,10 +30,10 @@ Convert existing flat skill structures into the router+capabilities pattern. Con
 
 ## Key Resources
 
-**References:**
-- [architecture-patterns.md](../../references/architecture-patterns.md) — Standalone vs router decision checklist
-- [anti-patterns.md](../../references/anti-patterns.md) — Common migration mistakes
+**References** — load by trigger:
+- [architecture-patterns.md](../../references/architecture-patterns.md) — read at step 1 (audit existing skills) to confirm the domain actually warrants router migration, not just reorganization.
+- [anti-patterns.md](../../references/anti-patterns.md) — read at step 5 (extracting shared resources) before creating any `shared/` entry; the foot-guns "Premature Capability Creation", "Inlining Rare, Extracting Common", and "Orphaned Shared Resources" all apply here.
 
-**Scripts:**
-- [scaffold.py](../../scripts/scaffold.py) — Scaffold router from template
-- [audit_skill_system.py](../../scripts/audit_skill_system.py) — Verify structure after migration
+**Scripts** — run by trigger:
+- [scaffold.py](../../scripts/scaffold.py) — run at step 2 to scaffold the router skeleton.
+- [audit_skill_system.py](../../scripts/audit_skill_system.py) — run at step 6 to verify dependency direction and capability isolation after migration.

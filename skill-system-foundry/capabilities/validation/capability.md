@@ -67,14 +67,10 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 
 ## Key Resources
 
-**References:**
-- [agentskills-spec.md](../../references/agentskills-spec.md) — Agent Skills specification compliance guide
-- [yaml-support.md](../../references/yaml-support.md) — Supported YAML grammar surface, divergence guarantees, and conformance scope
+**References** — load by trigger:
+- [agentskills-spec.md](../../references/agentskills-spec.md) — read when a validator finding cites a spec rule and the rule itself needs verification.
+- [yaml-support.md](../../references/yaml-support.md) — read when a frontmatter or doc-snippet YAML fence triggers a parser error or warning, or when the supported grammar surface is unclear.
 
-**Scripts:**
-- [validate_skill.py](../../scripts/validate_skill.py) — Single skill spec validation
-- [audit_skill_system.py](../../scripts/audit_skill_system.py) — Full skill system audit
-- [validation.py](../../scripts/lib/validation.py) — Shared name/metadata/license/allowed-tools validation
-- [frontmatter.py](../../scripts/lib/frontmatter.py) — Frontmatter extraction and body utilities
-- [discovery.py](../../scripts/lib/discovery.py) — Component discovery for system audit
-- [codex_config.py](../../scripts/lib/codex_config.py) — Codex agents/openai.yaml validation
+**Scripts** — run by trigger:
+- [validate_skill.py](../../scripts/validate_skill.py) — run before any commit that touches a `SKILL.md`, `capability.md`, or skill-root frontmatter.
+- [audit_skill_system.py](../../scripts/audit_skill_system.py) — run before any release, after adding or removing a skill or role, or to confirm dependency direction and orphan references.
