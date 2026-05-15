@@ -10,17 +10,14 @@ Deploy skills to AI tools, set up deployment pointers (wrapper files or symlinks
 
 Skills placed in `.agents/skills/` are natively discovered by most tools (Codex, Gemini CLI, Warp, OpenCode, Windsurf). For tools that do not scan this path, create a deployment pointer in the tool's discovery path. See [tool-integration.md](../../references/tool-integration.md) for per-tool details.
 
-**First, determine the pointer mechanism.** Ask the user before creating any deployment pointers:
+**Default to symlinks.** Symlinks provide zero-maintenance pointers that always read the canonical source, matching the foundry's "Write Once, Adapt Everywhere" principle. Follow [Setting Up Symlink-Based Pointers](references/symlink-setup.md). Fall back to wrapper files only when:
 
-```
-How should deployment pointers be created?
-> [ ] Wrapper files (portable, works everywhere)
-> [ ] Symlinks (zero maintenance, but platform requirements apply)
-```
+- The team includes Windows contributors without Developer Mode (symlinks degrade silently on those checkouts — see [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for verification steps).
+- The tool requires tool-specific adaptation in its pointer file (rare; most tools read the canonical SKILL.md verbatim).
 
-See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide. If symlinks are chosen, follow the [Setting Up Symlink-Based Pointers](references/symlink-setup.md) reference.
+See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
 
-**Per-tool instructions (wrapper files):**
+**Per-tool instructions (wrapper-file fallback):**
 
 **Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source (registered skills only — not capability files). Or use the plugin marketplace.
 
