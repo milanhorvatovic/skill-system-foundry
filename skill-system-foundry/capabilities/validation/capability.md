@@ -8,7 +8,7 @@ Validate individual skills against the Agent Skills specification and audit enti
 
 ## Validating a Single Skill
 
-Run the spec validator against a skill directory:
+Run the spec validator against a skill directory before any commit that touches a `SKILL.md` or `capability.md` — treating spec compliance as something to fix later means it never gets fixed ([anti-patterns.md#specification-drift](../../references/anti-patterns.md#specification-drift)):
 
 ```bash
 python scripts/validate_skill.py <skill-path> [--capability] [--verbose] [--allow-nested-references] [--json]

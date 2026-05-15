@@ -19,7 +19,7 @@ If a tool requires a tool-specific canonical path, capture that path separately 
 
 ## 3. Create Symlinks
 
-Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`.
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`. Never use absolute paths — they break on every other clone ([anti-patterns.md#absolute-symlink-paths](../../../references/anti-patterns.md#absolute-symlink-paths)).
 
 **Linux / macOS:**
 

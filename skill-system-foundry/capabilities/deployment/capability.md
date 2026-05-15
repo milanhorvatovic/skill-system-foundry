@@ -17,6 +17,8 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
 
+After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing — skills do not auto-sync between tools ([anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync)).
+
 **Per-tool instructions (wrapper-file fallback):**
 
 **Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source (registered skills only — not capability files). Or use the plugin marketplace.

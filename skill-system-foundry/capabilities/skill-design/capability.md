@@ -8,7 +8,7 @@ Create skills, capabilities, roles, and manifests. Decide architecture (standalo
 
 ## Creating a New Skill
 
-1. **Determine scope** — Default to standalone. Only use the router pattern when 3+ distinct operations with different trigger contexts justify it. Capabilities are optional and should be added incrementally, not upfront.
+1. **Determine scope** — Default to standalone. Only use the router pattern when 3+ distinct operations with different trigger contexts justify it. Capabilities are optional and should be added incrementally, not upfront ([anti-patterns.md#premature-capability-creation](../../references/anti-patterns.md#premature-capability-creation)).
 
 2. **Scaffold** (optional):
    ```bash
@@ -101,10 +101,10 @@ A skill can serve as the orchestration entry point. Two forms exist — choose b
 
 ## Adding a Capability to an Existing Router
 
-Only add a capability when the integrator explicitly requests it or when the domain clearly warrants a new distinct operation. Do not create capabilities speculatively.
+Only add a capability when the integrator explicitly requests it or when the domain clearly warrants a new distinct operation. Do not create capabilities speculatively ([anti-patterns.md#premature-capability-creation](../../references/anti-patterns.md#premature-capability-creation)).
 
 1. Create `skills/<domain>/capabilities/<new-cap>/capability.md`.
-2. Add row to router's Capabilities table.
+2. Add row to router's Capabilities table. Each capability trigger must be mutually exclusive and action-oriented — if you cannot unambiguously route a request, tighten the wording before merging ([anti-patterns.md#vague-router-descriptions](../../references/anti-patterns.md#vague-router-descriptions)).
 3. Update router's `description` if new triggers needed (max 1024 chars).
 4. Update manifest.yaml.
 
