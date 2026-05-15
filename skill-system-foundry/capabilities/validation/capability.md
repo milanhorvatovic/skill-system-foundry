@@ -69,7 +69,7 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 
 - **Specification drift.** Treating spec compliance as something to fix later means it never gets fixed. Run `validate_skill.py` before any commit that touches a `SKILL.md` or `capability.md`. See [anti-patterns.md#specification-drift](../../references/anti-patterns.md#specification-drift).
 - **`--allow-nested-references` as a fix, not a waiver.** The flag suppresses the depth warning; it does not make deep references a good idea. Use it only for skills (like this meta-skill) where the cross-reference depth is structurally unavoidable. For new skills, restructure first.
-- **Audit only at the deployed-system root.** `audit_skill_system.py` runs in two modes (system-root for `.agents/`, skill-root for a single skill). The version-consistency rule fires only when the root contains `.claude-plugin/plugin.json` AND `skill-system-foundry/SKILL.md` — running from the skill root skips it by design. Run from the repo root before any release.
+- **Skipping the repo-root release audit.** `audit_skill_system.py` has three modes — system-root (`.agents/` with `skills/` subtree), skill-root (a single skill directory), and distribution-repo (the foundry repo root). The version-consistency rule that catches manifest version drift across `SKILL.md`, `plugin.json`, and `marketplace.json` fires only in distribution-repo mode — when the root contains both `.claude-plugin/plugin.json` AND `skill-system-foundry/SKILL.md`. Skill-root and system-root modes both skip it by design. Always run from the repo root before any release.
 
 ## Key Resources
 
