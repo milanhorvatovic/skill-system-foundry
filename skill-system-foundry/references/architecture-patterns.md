@@ -40,8 +40,9 @@ Ask these questions in order. Stop at the first "no":
 1. Does the domain have 3+ operations with **different trigger phrases**? → No: stay standalone.
 2. Can you write **mutually exclusive** trigger descriptions for each? → No: the operations are too intertwined — stay standalone.
 3. Are the operations **independently useful** (not steps in a single workflow)? → No: stay standalone; use sections or references for internal structure.
-4. Would a user reasonably invoke **only one** of these operations per task? → No: stay standalone; the model would load multiple capabilities anyway, negating the token savings.
-5. Is the combined SKILL.md **growing past maintainability** (~500 lines body)? → If yes and the above hold: split. If no: stay standalone even with 3+ operations — size alone isn't a reason to split.
+4. Does this skill encapsulate a **coherent unit of work** that composes well with other skills, rather than two unrelated capabilities sharing a name? → No: split into separate top-level skills instead of one router with disparate capabilities. A skill scoped too broadly becomes hard to activate precisely.
+5. Would a user reasonably invoke **only one** of these operations per task? → No: stay standalone; the model would load multiple capabilities anyway, negating the token savings.
+6. Is the combined SKILL.md **growing past maintainability** (~500 lines body)? → If yes and the above hold: split. If no: stay standalone even with 3+ operations — size alone isn't a reason to split.
 
 ### Progression Path
 
