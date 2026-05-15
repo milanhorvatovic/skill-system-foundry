@@ -183,11 +183,11 @@ Deployment pointers are optional, user-managed files — not Skill System Foundr
 
 ## Symlink-Based Deployment Pointers
 
-Symlinks are an alternative to wrapper files for deployment pointers. Instead of creating a thin `SKILL.md` that references canonical content, a symlink points the tool's discovery path directly to the canonical source — zero maintenance, no content duplication.
+Symlinks are the **default** deployment-pointer mechanism — they match the foundry's "Write Once, Adapt Everywhere" principle: the symlink points the tool's discovery path directly at the canonical source, so a change to the canonical file is read live by every consuming tool with zero wrapper-sync work. Wrapper files are the documented fallback when the platform or the tool's contract makes symlinks unworkable.
 
-### When to Use Symlinks vs Wrapper Files
+### Default vs Fallback
 
-| Criteria | Symlinks | Wrapper files |
+| Criteria | Symlinks (default) | Wrapper files (fallback) |
 |---|---|---|
 | Maintenance | Zero — canonical source always read | Must keep wrapper in sync |
 | Content duplication | None | Risk of divergence |
@@ -195,9 +195,9 @@ Symlinks are an alternative to wrapper files for deployment pointers. Instead of
 | Tool-specific adaptation | Not possible — content is identical | Can add tool-specific conventions |
 | Team OS mix | Requires all contributors to support symlinks | No platform constraints |
 
-**Use symlinks when:** the team is on Linux/macOS (or Windows with Developer Mode), no tool-specific adaptation is needed, and you want zero-maintenance pointers.
+**Default to symlinks** unless one of the fallback conditions below applies.
 
-**Use wrapper files when:** the team includes Windows users without Developer Mode, the tool requires specific conventions in its pointer, or platform reliability is more important than maintenance savings.
+**Fall back to wrapper files when:** the team includes Windows users without Developer Mode (and `core.symlinks=true` cannot be guaranteed), the tool requires specific conventions in its pointer that cannot be satisfied by a transparent symlink, or platform reliability is more important than maintenance savings for the deployment surface in question.
 
 ### Symlink Forms
 
