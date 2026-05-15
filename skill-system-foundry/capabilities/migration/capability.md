@@ -19,7 +19,7 @@ Convert existing flat skill structures into the router+capabilities pattern. Con
 
 4. **Move skills to capabilities** under `capabilities/<name>/`. Rename the entry point from `SKILL.md` to `capability.md`. Frontmatter is optional for capabilities — remove it or keep it for documentation, but it will not be used for discovery.
 
-5. **Extract shared resources** to `shared/`. Each must be used by 2+. This is the standard layout for router skills (see the [router template](../../assets/skill-router.md)). Note: the foundry itself places shared resources directly at the skill root (`references/`, `assets/`, `scripts/`) rather than under `shared/` — this is an intentional exception because the foundry's scripts depend on fixed relative paths from the skill root.
+5. **Extract shared resources** to `shared/`. Each must be used by 2+ capabilities — premature `shared/` extraction is a common migration foot-gun ([anti-patterns.md#orphaned-shared-resources](../../references/anti-patterns.md)). This is the standard layout for router skills (see the [router template](../../assets/skill-router.md)). Note: the foundry itself places shared resources directly at the skill root (`references/`, `assets/`, `scripts/`) rather than under `shared/` — this is an intentional exception because the foundry's scripts depend on fixed relative paths from the skill root.
 
 6. **Audit:**
    ```bash
@@ -27,6 +27,12 @@ Convert existing flat skill structures into the router+capabilities pattern. Con
    ```
 
 7. **Update manifest.yaml.**
+
+## Gotchas
+
+- **Premature `shared/` extraction.** A `shared/` resource must be used by 2+ capabilities. Extracting on first use bloats the structure and creates orphans. See [anti-patterns.md#orphaned-shared-resources](../../references/anti-patterns.md). Inline callout is at step 5 above.
+- **Inlining rare, extracting common.** The router stays lean if rare operations live in capabilities and frequently used operations stay in the router body. Reverse the rule and the router bloats with seldom-used logic. See [anti-patterns.md#inlining-rare-extracting-common](../../references/anti-patterns.md).
+- **1:1 role-to-capability mapping during migration.** When promoting a flat skill to a router, do not auto-create one role per capability. Roles compose 2+ — if there is no role to add, do not add one. See [anti-patterns.md#11-role-to-capability-mapping](../../references/anti-patterns.md).
 
 ## Key Resources
 

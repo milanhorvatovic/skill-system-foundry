@@ -108,6 +108,12 @@ Only add a capability when the integrator explicitly requests it or when the dom
 3. Update router's `description` if new triggers needed (max 1024 chars).
 4. Update manifest.yaml.
 
+## Gotchas
+
+- **Style-only role definitions.** A role without explicit responsibility, authority, and constraints (plus handoff rules) is just a tone preset. See [anti-patterns.md#style-only-role-definitions](../../references/anti-patterns.md).
+- **1:1 role-to-capability mapping.** Roles compose 2+ skills or capabilities. Wrapping a single capability in a role adds overhead without value. See [anti-patterns.md#11-role-to-capability-mapping](../../references/anti-patterns.md).
+- **Vague router descriptions.** Capability triggers in the router table must be mutually exclusive and action-oriented. If you can't unambiguously route a request, tighten the wording. See [anti-patterns.md#vague-router-descriptions](../../references/anti-patterns.md).
+
 ## Key Resources
 
 **Templates** — copy when creating components (each entry above already links the template at the body step where it applies; the index is here for cross-step navigation):

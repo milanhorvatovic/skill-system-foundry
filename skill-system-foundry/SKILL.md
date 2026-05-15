@@ -102,3 +102,14 @@ Match specificity to the task's fragility. High freedom for flexible tasks, low 
 ### 5. Write Once, Adapt Everywhere
 
 Domain knowledge is authored exactly once in the canonical layer (skills and roles). When domain knowledge changes, one file changes. Tool-specific deployment pointers, if needed, are optional user-managed customizations. **Default to symlinks** — zero-maintenance, single source of truth, alignment with this principle. Fall back to wrapper files only when the team includes Windows contributors without Developer Mode or the tool requires tool-specific adaptation in its pointer. See [`references/tool-integration.md`](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide.
+
+## Gotchas
+
+The most common foot-guns when working with this meta-skill. Surfaced here because by the time you'd think to load `references/anti-patterns.md`, you've usually already hit them. Each entry links to the long-form treatment.
+
+- **Premature capability decomposition.** Capabilities are optional. Default to standalone. Only split when 3+ distinct operations with mutually exclusive triggers exist. See [anti-patterns.md#premature-capability-creation](references/anti-patterns.md).
+- **Sibling capability references.** Capabilities are independent — never reference a sibling capability. Cross-capability orchestration is a role's job. See [anti-patterns.md#capability-aware-capabilities](references/anti-patterns.md).
+- **Deep nesting.** Two levels max (router → capability). Need sub-routers? Split into separate top-level skills. See [anti-patterns.md#deep-nesting](references/anti-patterns.md).
+- **Mixing file-reference conventions.** Skill-root and capability-root each have their own resolution scope. Capability internal refs resolve from the capability root; references to shared skill-root resources use `../../<dir>/<file>`. See [path-resolution.md](references/path-resolution.md).
+- **Descriptions as documentation, not triggers.** The `description` field is the primary discovery mechanism. Write it for the model selecting between 100+ skills, not as a README summary. Be specific, third-person, include trigger phrases. See [authoring-principles.md#writing-descriptions](references/authoring-principles.md#writing-descriptions).
+- **Symlinks without team OS verification.** Symlinks are the default deployment-pointer mechanism, but degrade silently on Windows checkouts without Developer Mode (or `git config core.symlinks=true`). Verify the team's OS mix before defaulting; fall back to wrapper files when in doubt. See [anti-patterns.md#symlinks-without-team-platform-verification](references/anti-patterns.md).

@@ -60,6 +60,12 @@ python scripts/bundle.py /path/to/project/.agents/skills/project-mgmt --system-r
 - Path rewriting is performed only in `.md` files. References in scripts (Python, shell, etc.) are detected and reported as warnings but not rewritten — update them manually.
 - The bundler does not modify the original skill files. All changes are made in the bundle copy.
 
+## Gotchas
+
+- **Description over 200 chars on Claude.ai target.** Spec allows 1024; Claude.ai rejects over 200. The bundler fails-fast at pre-validation when `--target claude` (default). Either shorten the description or switch to `--target gemini|generic` (downgrades to WARNING).
+- **Cross-skill references reject the bundle.** A reference from one skill into another skill's directory is a structural violation — the bundle would be incomplete. For Path 1 coordination skills only, use `--inline-orchestrated-skills` to inline the orchestrated skills. For other cases, fix the reference or inline the content.
+- **Path rewriting touches `.md` files only.** Script paths (Python imports, shell `python scripts/...` invocations, `--help` output, docstrings) are detected and warned about, never rewritten. Update them manually before bundling, or expect them to break in the bundle.
+
 ## Key Resources
 
 **Scripts and configuration** — load by trigger:

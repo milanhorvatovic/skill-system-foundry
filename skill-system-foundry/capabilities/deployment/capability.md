@@ -41,6 +41,12 @@ Read the relevant extension reference when using tool-specific features:
 - [codex-extensions.md](../../references/codex-extensions.md) — Codex agents/openai.yaml, six-level discovery hierarchy, invocation methods
 - [cursor-extensions.md](../../references/cursor-extensions.md) — Cursor cross-vendor discovery paths, rules system, AGENTS.md support
 
+## Gotchas
+
+- **Symlinks without team OS verification.** Symlinks are the default but degrade silently on Windows checkouts without Developer Mode (or `git config core.symlinks=true`). On a mixed-OS team that cannot guarantee Developer Mode, fall back to wrapper files. See [anti-patterns.md#symlinks-without-team-platform-verification](../../references/anti-patterns.md).
+- **Absolute symlink paths.** Symlink targets must be relative (`../../.agents/skills/my-skill`), not absolute (`/home/user/project/.agents/...`). Absolute paths break on every other clone. See [anti-patterns.md#absolute-symlink-paths](../../references/anti-patterns.md).
+- **Cross-surface sync assumed.** Skills do not auto-sync between tools. After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing. See [anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md).
+
 ## Key Resources
 
 **References** — load by trigger:
