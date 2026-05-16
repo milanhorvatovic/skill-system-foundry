@@ -413,7 +413,7 @@ To package a skill as a zip bundle, run `bundle.py` from the project root. The b
 
 ### Skills Don't Sync
 
-- Wrapper-file pointers don't auto-sync — content edits in the canonical source propagate (wrappers point at it, never copy it), but tool-specific conventions inside the wrapper must be maintained manually
+- Wrapper-file pointers don't auto-sync — even when minimal, a wrapper is an independent `.md` file whose literal text is what the tool reads, so canonical content edits do not appear in the wrapper until it is manually re-synced; tool-specific conventions inside the wrapper must also be maintained manually
 - Symlink pointers propagate canonical content live, but degrade silently on Windows checkouts without Developer Mode (see [Symlink-Based Deployment Pointers](#symlink-based-deployment-pointers))
 - Installation is per surface
 - Deployment pointers are needed only for tools that do not natively scan `.agents/skills/`
