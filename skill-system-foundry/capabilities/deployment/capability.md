@@ -17,7 +17,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
 
-After updating canonical content, verify each pointer still resolves correctly. Symlinks read the canonical source live, so a content change propagates immediately — but the link itself breaks if the canonical path moves or the file is deleted. Wrapper files are independent `.md` files in the tool's discovery path; even when they are minimal pointers that link to the canonical skill (per [tool-integration.md#deployment-pointer-guidelines](../../references/tool-integration.md#deployment-pointer-guidelines) — never duplicate skill content), the tool reads the wrapper's literal text, so canonical content edits do not appear in the wrapper until it is manually re-synced. Wrappers must be re-checked after any canonical edit, rename, or move, and any tool-specific convention inside the wrapper drifts silently if not maintained ([anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync)).
+After updating canonical content, verify each pointer (symlink or wrapper) still resolves correctly. Wrapper files are independent `.md` files in the tool's discovery path — even when minimal pointers per [tool-integration.md#deployment-pointer-guidelines](../../references/tool-integration.md#deployment-pointer-guidelines) (never duplicate skill content), the tool reads their literal text. See the **Cross-surface sync assumed** gotcha below for symlink-vs-wrapper sync behavior and the failure modes to verify against.
 
 **Per-tool instructions (wrapper-file fallback):**
 
