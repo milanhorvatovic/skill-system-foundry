@@ -411,7 +411,7 @@ To package a skill as a zip bundle, run `bundle.py` from the project root. The b
 
 ## Cross-Surface Limitations
 
-### Skills Don't Sync
+### Pointer Sync Behavior
 
 - Wrapper-file pointers don't auto-sync — even when minimal, a wrapper is an independent `.md` file whose literal text is what the tool reads, so canonical content edits do not appear in the wrapper until it is manually re-synced; tool-specific conventions inside the wrapper must also be maintained manually
 - Symlink pointers propagate canonical content live, but degrade silently on Windows checkouts without Developer Mode (see [Symlink-Based Deployment Pointers](#symlink-based-deployment-pointers))

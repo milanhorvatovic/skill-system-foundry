@@ -4,7 +4,7 @@ Symlinks are the default deployment-pointer mechanism. Platform compatibility an
 
 ## 1. Determine Scope
 
-**Default: same canonical path for all tools.** Skills authored under `.agents/skills/<name>` are reused by every tool that supports `.agents/` natively, and the symlinks from tool-specific paths (`.claude/skills/`, `.cursor/skills/`, `.kiro/skills/`) all point to the same canonical location. Use a different path per tool only when a tool requires content tailored to that tool — rare; flag it explicitly.
+**Default: same canonical path for all tools.** Skills authored under `.agents/skills/<name>` are reused by every tool that supports `.agents/` natively, and the symlinks from tool-specific paths (`.claude/skills/`, `.cursor/skills/`, `.kiro/skills/`) all point to the same canonical location. When a tool requires content tailored to that tool, do **not** create a tool-specific canonical path — fall back to a wrapper file in that tool's discovery path instead (see [deployment/capability.md](../capability.md) for the wrapper-file fallback rule).
 
 ## 2. Capture the Canonical Path
 
