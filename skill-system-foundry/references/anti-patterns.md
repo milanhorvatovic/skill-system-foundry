@@ -29,7 +29,7 @@ Skills own domain execution; roles own workflow logic. In a coordination-only sk
 Symlink targets must use relative paths (`../../.agents/skills/my-skill`), not absolute paths (`/home/user/project/.agents/skills/my-skill`). Absolute paths break when the repository is cloned to a different location or by a different user. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers).
 
 ### Symlinks Without Team Platform Verification
-Using symlinks as deployment pointers on a mixed-OS team without verifying that all Windows contributors have Developer Mode enabled (or equivalent). Symlinks that cannot be resolved degrade silently — the tool sees a broken pointer instead of skill content. Prefer wrapper files when platform support cannot be guaranteed across all contributors.
+Using symlinks as deployment pointers on a mixed-OS team without verifying that all Windows contributors have both Developer Mode enabled (the OS-level permission that lets non-admin processes create symlinks) and `core.symlinks=true` set in their git config (controls whether git materializes symlinks at checkout time rather than writing plain text files containing the target path). Symlinks that cannot be resolved degrade silently — the tool sees a broken pointer instead of skill content. Prefer wrapper files when either prerequisite cannot be guaranteed across all contributors.
 
 ### Discovery Layer Bloat
 One registered skill per domain. Consolidate related skills under routers.
@@ -70,4 +70,4 @@ Scripts should handle errors explicitly with helpful messages.
 Always validate new skills. Treat spec compliance as a hard requirement.
 
 ### Assuming Cross-Surface Sync
-Skills don't sync. Distribute manually. See the [deployment capability](../capabilities/deployment/capability.md) for per-tool instructions.
+Pointer mechanism dictates sync behavior. **Symlinks** read the canonical source live, so content changes propagate with no extra step — but the symlink itself breaks if the canonical path moves or is deleted. **Wrapper files** are independent `.md` files in the tool's discovery path; even when they are minimal pointers that link to the canonical skill (never content copies), the tool reads the wrapper's literal text, so canonical content edits do not appear in the wrapper until it is manually re-synced. Wrappers must be re-checked after any canonical edit, rename, or move, and tool-specific conventions inside the wrapper drift silently if not maintained. See the [deployment capability](../capabilities/deployment/capability.md) for per-tool instructions.

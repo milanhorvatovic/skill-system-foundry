@@ -8,7 +8,7 @@ Validate individual skills against the Agent Skills specification and audit enti
 
 ## Validating a Single Skill
 
-Run the spec validator against a skill directory:
+Run the spec validator against a skill directory before any commit that touches a `SKILL.md` or `capability.md` — treating spec compliance as something to fix later means it never gets fixed ([anti-patterns.md#specification-drift](../../references/anti-patterns.md#specification-drift)):
 
 ```bash
 python scripts/validate_skill.py <skill-path> [--capability] [--verbose] [--allow-nested-references] [--json]
@@ -22,6 +22,10 @@ python scripts/validate_skill.py <skill-path> [--capability] [--verbose] [--allo
 - `--foundry-self`: Run this skill the way the foundry runs itself (currently implies `--check-prose-yaml`).
 
 For registered skills, the validator checks: frontmatter fields (`name`, `description`), naming conventions (lowercase + hyphens, max 64 chars, matches directory), line counts (recommended max 500 lines), and resource directory structure. In `--capability` mode it only validates the body (line counts, nested-reference rules) and, if frontmatter is present, reports name/description as informational notes without enforcing frontmatter or directory checks.
+
+## Validation Pipeline as Plan-Validate-Execute
+
+The validation surface implements the **plan-validate-execute** pattern (see [authoring-principles.md](../../references/authoring-principles.md#workflows-and-feedback-loops)) across three layers. `validate_skill.py` checks a single skill against the spec (per-skill plan validation). `audit_skill_system.py` checks cross-skill consistency — dependency direction, role composition, orphan references — and, when invoked in distribution-repo mode (root contains both `.claude-plugin/plugin.json` and `skill-system-foundry/SKILL.md`), additionally fires the version-consistency rule that catches manifest drift across `SKILL.md`, `plugin.json`, and `marketplace.json`. Together they let an integrator validate at each scope before any execute step (bundle, deploy, release) acts on the artifacts. Run validation top-down: single skill → system audit → distribution-repo audit before release.
 
 ## Auditing System Consistency
 
@@ -61,16 +65,18 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 - [ ] Complete and matches filesystem
 - [ ] No phantom entries (orphaned reference files are flagged automatically — see the orphan-reference rule above)
 
+## Gotchas
+
+- **Specification drift.** Treating spec compliance as something to fix later means it never gets fixed. Run `validate_skill.py` before any commit that touches a `SKILL.md` or `capability.md`. See [anti-patterns.md#specification-drift](../../references/anti-patterns.md#specification-drift).
+- **`--allow-nested-references` as a fix, not a waiver.** The flag suppresses the depth warning; it does not make deep references a good idea. Use it only for skills (like this meta-skill) where the cross-reference depth is structurally unavoidable. For new skills, restructure first.
+- **Skipping the repo-root release audit.** `audit_skill_system.py` has three modes — system-root (`.agents/` with `skills/` subtree), skill-root (a single skill directory), and distribution-repo (the foundry repo root). The version-consistency rule that catches manifest version drift across `SKILL.md`, `plugin.json`, and `marketplace.json` fires only in distribution-repo mode — when the root contains both `.claude-plugin/plugin.json` AND `skill-system-foundry/SKILL.md`. Skill-root and system-root modes both skip it by design. Always run from the repo root before any release.
+
 ## Key Resources
 
-**References:**
-- [agentskills-spec.md](../../references/agentskills-spec.md) — Agent Skills specification compliance guide
-- [yaml-support.md](../../references/yaml-support.md) — Supported YAML grammar surface, divergence guarantees, and conformance scope
+**References** — load by trigger:
+- [agentskills-spec.md](../../references/agentskills-spec.md) — read when a validator finding cites a spec rule and the rule itself needs verification.
+- [yaml-support.md](../../references/yaml-support.md) — read when a frontmatter or doc-snippet YAML fence triggers a parser error or warning, or when the supported grammar surface is unclear.
 
-**Scripts:**
-- [validate_skill.py](../../scripts/validate_skill.py) — Single skill spec validation
-- [audit_skill_system.py](../../scripts/audit_skill_system.py) — Full skill system audit
-- [validation.py](../../scripts/lib/validation.py) — Shared name/metadata/license/allowed-tools validation
-- [frontmatter.py](../../scripts/lib/frontmatter.py) — Frontmatter extraction and body utilities
-- [discovery.py](../../scripts/lib/discovery.py) — Component discovery for system audit
-- [codex_config.py](../../scripts/lib/codex_config.py) — Codex agents/openai.yaml validation
+**Scripts** — run by trigger:
+- [validate_skill.py](../../scripts/validate_skill.py) — run before any commit that touches a `SKILL.md`, `capability.md`, or skill-root frontmatter.
+- [audit_skill_system.py](../../scripts/audit_skill_system.py) — run before any release, after adding or removing a skill or role, or to confirm dependency direction and orphan references.

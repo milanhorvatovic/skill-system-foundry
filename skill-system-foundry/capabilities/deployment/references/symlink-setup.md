@@ -1,36 +1,25 @@
 # Setting Up Symlink-Based Pointers
 
-Use this workflow when the user chose symlinks as the deployment pointer mechanism. Platform compatibility and tool support details are documented in the deployment capability.
+Symlinks are the default deployment-pointer mechanism. Platform compatibility and tool support details are documented in the deployment capability.
 
 ## 1. Determine Scope
 
+**Default: same canonical path for all tools.** Skills authored under `.agents/skills/<name>` are reused by every tool that supports `.agents/` natively, and the symlinks from tool-specific paths (`.claude/skills/`, `.cursor/skills/`, `.kiro/skills/`) all point to the same canonical location. When a tool requires content tailored to that tool, do **not** create a tool-specific canonical path — fall back to a wrapper file in that tool's discovery path instead (see [deployment/capability.md](../capability.md) for the wrapper-file fallback rule).
+
+## 2. Capture the Canonical Path
+
+Ask once:
+
 ```
-Is the canonical skill path the same for all AI tool integrations,
-or should each tool point to a different location?
-> [ ] Same path for all tools
-> [ ] Different path per tool
+Where is the canonical skill located?
+> .agents/skills/my-skill
 ```
 
-## 2. Prompt for Canonical Paths
-
-- **Same path for all tools** — ask once:
-  ```
-  Where is the canonical skill located?
-  > .agents/skills/my-skill
-  ```
-
-- **Different path per tool** — ask per tool being configured:
-  ```
-  Canonical path for Claude Code?
-  > .agents/skills/my-skill
-
-  Canonical path for Cursor?
-  > .agents/skills/my-skill
-  ```
+If a tool requires tool-specific content in its discovery path, stop the symlink workflow for that tool and create a wrapper file instead (per the wrapper-file fallback rule in the [deployment capability](../capability.md)).
 
 ## 3. Create Symlinks
 
-Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`.
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`. Never use absolute paths — they break on every other clone. (The foot-gun, "Absolute symlink paths," is documented in the deployment capability's Gotchas section.)
 
 **Linux / macOS:**
 

@@ -10,17 +10,16 @@ Deploy skills to AI tools, set up deployment pointers (wrapper files or symlinks
 
 Skills placed in `.agents/skills/` are natively discovered by most tools (Codex, Gemini CLI, Warp, OpenCode, Windsurf). For tools that do not scan this path, create a deployment pointer in the tool's discovery path. See [tool-integration.md](../../references/tool-integration.md) for per-tool details.
 
-**First, determine the pointer mechanism.** Ask the user before creating any deployment pointers:
+**Default to symlinks.** Symlinks provide zero-maintenance pointers that always read the canonical source, matching the foundry's "Write Once, Adapt Everywhere" principle. Follow [Setting Up Symlink-Based Pointers](references/symlink-setup.md). Fall back to wrapper files only when:
 
-```
-How should deployment pointers be created?
-> [ ] Wrapper files (portable, works everywhere)
-> [ ] Symlinks (zero maintenance, but platform requirements apply)
-```
+- The team includes Windows contributors without Developer Mode or without `core.symlinks=true` in git config (symlinks degrade silently on those checkouts — see [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for verification steps).
+- The tool requires tool-specific adaptation in its pointer file (rare; most tools read the canonical SKILL.md verbatim).
 
-See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide. If symlinks are chosen, follow the [Setting Up Symlink-Based Pointers](references/symlink-setup.md) reference.
+See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
 
-**Per-tool instructions (wrapper files):**
+After updating canonical content, verify each pointer (symlink or wrapper) still resolves correctly. Wrapper files are independent `.md` files in the tool's discovery path — even when minimal pointers per [tool-integration.md#deployment-pointer-guidelines](../../references/tool-integration.md#deployment-pointer-guidelines) (never duplicate skill content), the tool reads their literal text. See the **Cross-surface sync assumed** gotcha below for symlink-vs-wrapper sync behavior and the failure modes to verify against.
+
+**Per-tool instructions (wrapper-file fallback):**
 
 **Claude Code:** Create a pointer at `.claude/skills/<domain>/SKILL.md` that references the canonical source (registered skills only — not capability files). Or use the plugin marketplace.
 
@@ -44,14 +43,18 @@ Read the relevant extension reference when using tool-specific features:
 - [codex-extensions.md](../../references/codex-extensions.md) — Codex agents/openai.yaml, six-level discovery hierarchy, invocation methods
 - [cursor-extensions.md](../../references/cursor-extensions.md) — Cursor cross-vendor discovery paths, rules system, AGENTS.md support
 
+## Gotchas
+
+- **Symlinks without team OS verification.** Symlinks are the default but degrade silently on Windows checkouts that lack either Developer Mode (OS-level symlink permission) or `core.symlinks=true` in git config (controls whether git materializes symlinks at checkout time, set with `git config core.symlinks true`). On a mixed-OS team that cannot guarantee both prerequisites, fall back to wrapper files. See [anti-patterns.md#symlinks-without-team-platform-verification](../../references/anti-patterns.md#symlinks-without-team-platform-verification).
+- **Absolute symlink paths.** Symlink targets must be relative (`../../.agents/skills/my-skill`), not absolute (`/home/user/project/.agents/...`). Absolute paths break on every other clone. See [anti-patterns.md#absolute-symlink-paths](../../references/anti-patterns.md#absolute-symlink-paths).
+- **Cross-surface sync assumed.** Wrappers do not auto-sync — content edits must be re-applied manually. Symlinks propagate content live but break if the canonical path moves or is deleted. After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing. See [anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync).
+
 ## Key Resources
 
-**References:**
-- [symlink-setup.md](references/symlink-setup.md) — Platform-specific symlink commands (Linux/macOS/Windows)
-- [tool-integration.md](../../references/tool-integration.md) — Tool-specific paths, discovery, and deployment
-- [claude-code-extensions.md](../../references/claude-code-extensions.md) — Claude Code extensions
-- [codex-extensions.md](../../references/codex-extensions.md) — Codex extensions
-- [cursor-extensions.md](../../references/cursor-extensions.md) — Cursor extensions
+**References** — load by trigger:
+- [symlink-setup.md](references/symlink-setup.md) — read when creating any symlink-based pointer (the default mechanism); contains the platform-specific commands.
+- [tool-integration.md](../../references/tool-integration.md) — read when choosing the pointer mechanism for a mixed-OS team, or when the tool-specific discovery path is unclear.
+- [claude-code-extensions.md](../../references/claude-code-extensions.md), [codex-extensions.md](../../references/codex-extensions.md), [cursor-extensions.md](../../references/cursor-extensions.md) — read when using a tool-specific extension (frontmatter, subagent config, rules, six-level discovery) on the named tool.
 
-**Scripts:**
-- [bundle.py](../../scripts/bundle.py) — Bundle a skill for distribution (needed for Claude.ai upload)
+**Scripts** — run by trigger:
+- [bundle.py](../../scripts/bundle.py) — run when uploading to Claude.ai or producing a release-asset zip; not needed for symlink or wrapper deployment.

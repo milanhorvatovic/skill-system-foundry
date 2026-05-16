@@ -8,7 +8,7 @@ Create skills, capabilities, roles, and manifests. Decide architecture (standalo
 
 ## Creating a New Skill
 
-1. **Determine scope** — Default to standalone. Only use the router pattern when 3+ distinct operations with different trigger contexts justify it. Capabilities are optional and should be added incrementally, not upfront.
+1. **Determine scope** — Default to standalone. Only use the router pattern when 3+ distinct operations with different trigger contexts justify it. Capabilities are optional and should be added incrementally, not upfront ([anti-patterns.md#premature-capability-creation](../../references/anti-patterns.md#premature-capability-creation)).
 
 2. **Scaffold** (optional):
    ```bash
@@ -101,30 +101,30 @@ A skill can serve as the orchestration entry point. Two forms exist — choose b
 
 ## Adding a Capability to an Existing Router
 
-Only add a capability when the integrator explicitly requests it or when the domain clearly warrants a new distinct operation. Do not create capabilities speculatively.
+Only add a capability when the integrator explicitly requests it or when the domain clearly warrants a new distinct operation. Do not create capabilities speculatively ([anti-patterns.md#premature-capability-creation](../../references/anti-patterns.md#premature-capability-creation)).
 
-1. Create `skills/<domain>/capabilities/<new-cap>/capability.md`.
-2. Add row to router's Capabilities table.
+1. Create `skills/<domain>/capabilities/<new-cap>/capability.md` (copy from the [capability template](../../assets/capability.md)).
+2. Add row to router's Capabilities table. Each capability trigger must be mutually exclusive and action-oriented — if you cannot unambiguously route a request, tighten the wording before merging ([anti-patterns.md#vague-router-descriptions](../../references/anti-patterns.md#vague-router-descriptions)).
 3. Update router's `description` if new triggers needed (max 1024 chars).
 4. Update manifest.yaml.
 
+## Gotchas
+
+- **Style-only role definitions.** A role without explicit responsibility, authority, and constraints (plus handoff rules) is just a tone preset. See [anti-patterns.md#style-only-role-definitions](../../references/anti-patterns.md#style-only-role-definitions).
+- **1:1 role-to-capability mapping.** Roles compose 2+ skills or capabilities. Wrapping a single capability in a role adds overhead without value. See [anti-patterns.md#11-role-to-capability-mapping](../../references/anti-patterns.md#11-role-to-capability-mapping).
+- **Vague router descriptions.** Capability triggers in the router table must be mutually exclusive and action-oriented. If you can't unambiguously route a request, tighten the wording. See [anti-patterns.md#vague-router-descriptions](../../references/anti-patterns.md#vague-router-descriptions).
+
 ## Key Resources
 
-**Templates** — copy and fill in when creating components:
-- [skill-standalone.md](../../assets/skill-standalone.md) — Standalone skill template
-- [skill-router.md](../../assets/skill-router.md) — Router skill template
-- [capability.md](../../assets/capability.md) — Capability template
-- [role.md](../../assets/role.md) — Role template
-- [manifest.yaml](../../assets/manifest.yaml) — Manifest schema template
+**Templates** — copy when creating components (the skill, role, and capability templates are linked inline at the body step where they apply; the manifest template is indexed here only since `manifest.yaml` is referenced across multiple body steps without a single canonical insertion point):
+- [skill-standalone.md](../../assets/skill-standalone.md), [skill-router.md](../../assets/skill-router.md), [capability.md](../../assets/capability.md), [role.md](../../assets/role.md), [manifest.yaml](../../assets/manifest.yaml).
 
-**References** — read when you need guidance:
-- [authoring-principles.md](../../references/authoring-principles.md) — Shared skill authoring principles
-- [architecture-patterns.md](../../references/architecture-patterns.md) — Standalone vs router decisions
-- [agentskills-spec.md](../../references/agentskills-spec.md) — Specification compliance
-- [directory-structure.md](../../references/directory-structure.md) — Full directory layout and conventions
-- [anti-patterns.md](../../references/anti-patterns.md) — Common mistakes and how to avoid them
+**References** — load by trigger:
+- [authoring-principles.md](../../references/authoring-principles.md) — read when writing or reviewing a description, picking degrees-of-freedom, or structuring progressive disclosure.
+- [architecture-patterns.md](../../references/architecture-patterns.md) — read when deciding standalone vs router, or choosing between coordination-only and self-contained orchestration paths.
+- [agentskills-spec.md](../../references/agentskills-spec.md) — read when a frontmatter field, naming rule, or file-reference convention is in question.
+- [directory-structure.md](../../references/directory-structure.md) — read when deciding where to place a new file or what the on-disk layout should look like.
+- [anti-patterns.md](../../references/anti-patterns.md) — read before scaffolding capabilities, defining a role, or extracting shared resources; the foot-guns concentrate there.
 
-**Scripts** — run for scaffolding and validation:
-- [scaffold.py](../../scripts/scaffold.py) — Scaffold new skills or roles from templates
-- [validation.py](../../scripts/lib/validation.py) — Shared name validation logic
-- [manifest.py](../../scripts/lib/manifest.py) — Manifest parsing and validation
+**Scripts** — run by trigger:
+- [scaffold.py](../../scripts/scaffold.py) — run when starting a new skill, capability, or role from a template.

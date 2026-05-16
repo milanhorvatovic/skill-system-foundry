@@ -58,7 +58,7 @@ Read only the relevant capability file. Do not load multiple capabilities unless
 
 ## Shared Resources
 
-Shared resources live at the skill root and are referenced by capabilities via relative paths. Individual files are listed in each capability's Key Resources section — the router indexes directories, capabilities index files.
+Shared resources live at the skill root and are referenced by capabilities via relative paths. Each capability's tail `## Key Resources` block lists cross-cutting resources with **load triggers** (when to read, not what they contain); action-specific resources are linked inline at the body step where they apply. The router indexes directories, capabilities index files.
 
 ### references/ — Guidance loaded on demand by capabilities
 
@@ -101,4 +101,15 @@ Match specificity to the task's fragility. High freedom for flexible tasks, low 
 
 ### 5. Write Once, Adapt Everywhere
 
-Domain knowledge is authored exactly once in the canonical layer (skills and roles). When domain knowledge changes, one file changes. Tool-specific deployment pointers, if needed, are optional user-managed customizations — implemented as wrapper files or symlinks. When deploying, always ask the user which mechanism to use. See [`references/tool-integration.md`](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide.
+Domain knowledge is authored exactly once in the canonical layer (skills and roles). When domain knowledge changes, one file changes. Tool-specific deployment pointers, if needed, are optional user-managed customizations. **Default to symlinks** — zero-maintenance, single source of truth, alignment with this principle. Fall back to wrapper files only when the team includes Windows contributors without Developer Mode or without `core.symlinks=true` in git config, or the tool requires tool-specific adaptation in its pointer. See [`references/tool-integration.md`](references/tool-integration.md#symlink-based-deployment-pointers) for the decision guide.
+
+## Gotchas
+
+The most common foot-guns when working with this meta-skill. Surfaced here because by the time you'd think to load `references/anti-patterns.md`, you've usually already hit them. Each entry links to the long-form treatment.
+
+- **Premature capability decomposition.** Capabilities are optional. Default to standalone. Only split when 3+ distinct operations with mutually exclusive triggers exist. See [anti-patterns.md#premature-capability-creation](references/anti-patterns.md#premature-capability-creation).
+- **Sibling capability references.** Capabilities are independent — never reference a sibling capability. Cross-capability orchestration is a role's job. See [anti-patterns.md#capability-aware-capabilities](references/anti-patterns.md#capability-aware-capabilities).
+- **Deep nesting.** Two levels max (router → capability). Need sub-routers? Split into separate top-level skills. See [anti-patterns.md#deep-nesting](references/anti-patterns.md#deep-nesting).
+- **Mixing file-reference conventions.** Markdown links resolve from the file that contains them — standard markdown semantics, not a foundry-specific rule. From a capability entry point (`capability.md`), capability-local references use `references/<file>`; references to shared skill-root resources use `../../<dir>/<file>`. From a nested capability reference file (`capabilities/<name>/references/foo.md`), the offsets shift accordingly. See [path-resolution.md](references/path-resolution.md).
+- **Descriptions as documentation, not triggers.** The `description` field is the primary discovery mechanism. Write it for the model selecting between 100+ skills, not as a README summary. Be specific, third-person, include trigger phrases. See [authoring-principles.md#writing-descriptions](references/authoring-principles.md#writing-descriptions).
+- **Symlinks without team OS verification.** Symlinks are the default deployment-pointer mechanism, but degrade silently on Windows checkouts that lack either Developer Mode (OS-level symlink permission) or `core.symlinks=true` in git config (controls whether git materializes symlinks at checkout time, set with `git config core.symlinks true`). Verify the team's OS mix before defaulting; fall back to wrapper files when either prerequisite cannot be guaranteed. See [anti-patterns.md#symlinks-without-team-platform-verification](references/anti-patterns.md#symlinks-without-team-platform-verification).
