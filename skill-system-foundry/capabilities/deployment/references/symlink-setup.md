@@ -19,7 +19,7 @@ If a tool requires tool-specific content in its discovery path, stop the symlink
 
 ## 3. Create Symlinks
 
-Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`. Never use absolute paths — they break on every other clone ([anti-patterns.md#absolute-symlink-paths](../../../references/anti-patterns.md#absolute-symlink-paths)).
+Relative-path rule: compute the target from the **directory that contains the link**. For `.claude/skills/my-skill` use `../../.agents/...`; for `.claude/skills/my-skill/SKILL.md` use `../../../.agents/...`. Never use absolute paths — they break on every other clone. (The foot-gun, "Absolute symlink paths," is documented in the deployment capability's Gotchas section.)
 
 **Linux / macOS:**
 
