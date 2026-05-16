@@ -29,7 +29,7 @@ Skills own domain execution; roles own workflow logic. In a coordination-only sk
 Symlink targets must use relative paths (`../../.agents/skills/my-skill`), not absolute paths (`/home/user/project/.agents/skills/my-skill`). Absolute paths break when the repository is cloned to a different location or by a different user. See [tool-integration.md](tool-integration.md#symlink-based-deployment-pointers).
 
 ### Symlinks Without Team Platform Verification
-Using symlinks as deployment pointers on a mixed-OS team without verifying that all Windows contributors have Developer Mode enabled (or equivalent). Symlinks that cannot be resolved degrade silently — the tool sees a broken pointer instead of skill content. Prefer wrapper files when platform support cannot be guaranteed across all contributors.
+Using symlinks as deployment pointers on a mixed-OS team without verifying that all Windows contributors have both Developer Mode enabled (the OS-level permission that lets non-admin processes create symlinks) and `core.symlinks=true` set in their git config (controls whether git materializes symlinks at checkout time rather than writing plain text files containing the target path). Symlinks that cannot be resolved degrade silently — the tool sees a broken pointer instead of skill content. Prefer wrapper files when either prerequisite cannot be guaranteed across all contributors.
 
 ### Discovery Layer Bloat
 One registered skill per domain. Consolidate related skills under routers.

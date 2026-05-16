@@ -197,7 +197,7 @@ Symlinks are the **default** deployment-pointer mechanism — they match the fou
 
 **Default to symlinks** unless one of the fallback conditions below applies.
 
-**Fall back to wrapper files when:** the team includes Windows users without Developer Mode (and `core.symlinks=true` cannot be guaranteed), or the tool requires specific conventions in its pointer that cannot be satisfied by a transparent symlink.
+**Fall back to wrapper files when:** the team includes Windows users on checkouts that lack either Developer Mode or `core.symlinks=true`, or the tool requires specific conventions in its pointer that cannot be satisfied by a transparent symlink.
 
 ### Symlink Forms
 
@@ -414,7 +414,7 @@ To package a skill as a zip bundle, run `bundle.py` from the project root. The b
 ### Pointer Sync Behavior
 
 - Wrapper-file pointers don't auto-sync — even when minimal, a wrapper is an independent `.md` file whose literal text is what the tool reads, so canonical content edits do not appear in the wrapper until it is manually re-synced; tool-specific conventions inside the wrapper must also be maintained manually
-- Symlink pointers propagate canonical content live, but degrade silently on Windows checkouts without Developer Mode (see [Symlink-Based Deployment Pointers](#symlink-based-deployment-pointers))
+- Symlink pointers propagate canonical content live, but degrade silently on Windows checkouts that lack either Developer Mode or `core.symlinks=true` (see [Symlink-Based Deployment Pointers](#symlink-based-deployment-pointers))
 - Installation is per surface
 - Deployment pointers are needed only for tools that do not natively scan `.agents/skills/`
 

@@ -12,7 +12,7 @@ Skills placed in `.agents/skills/` are natively discovered by most tools (Codex,
 
 **Default to symlinks.** Symlinks provide zero-maintenance pointers that always read the canonical source, matching the foundry's "Write Once, Adapt Everywhere" principle. Follow [Setting Up Symlink-Based Pointers](references/symlink-setup.md). Fall back to wrapper files only when:
 
-- The team includes Windows contributors without Developer Mode (symlinks degrade silently on those checkouts — see [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for verification steps).
+- The team includes Windows contributors without Developer Mode or without `core.symlinks=true` in git config (symlinks degrade silently on those checkouts — see [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for verification steps).
 - The tool requires tool-specific adaptation in its pointer file (rare; most tools read the canonical SKILL.md verbatim).
 
 See [tool-integration.md](../../references/tool-integration.md#symlink-based-deployment-pointers) for the full decision guide.
@@ -45,7 +45,7 @@ Read the relevant extension reference when using tool-specific features:
 
 ## Gotchas
 
-- **Symlinks without team OS verification.** Symlinks are the default but degrade silently on Windows checkouts that lack both Developer Mode (OS-level symlink permission) and `core.symlinks=true` in git config (controls whether git materializes symlinks at checkout time, set with `git config core.symlinks true`). On a mixed-OS team that cannot guarantee both prerequisites, fall back to wrapper files. See [anti-patterns.md#symlinks-without-team-platform-verification](../../references/anti-patterns.md#symlinks-without-team-platform-verification).
+- **Symlinks without team OS verification.** Symlinks are the default but degrade silently on Windows checkouts that lack either Developer Mode (OS-level symlink permission) or `core.symlinks=true` in git config (controls whether git materializes symlinks at checkout time, set with `git config core.symlinks true`). On a mixed-OS team that cannot guarantee both prerequisites, fall back to wrapper files. See [anti-patterns.md#symlinks-without-team-platform-verification](../../references/anti-patterns.md#symlinks-without-team-platform-verification).
 - **Absolute symlink paths.** Symlink targets must be relative (`../../.agents/skills/my-skill`), not absolute (`/home/user/project/.agents/...`). Absolute paths break on every other clone. See [anti-patterns.md#absolute-symlink-paths](../../references/anti-patterns.md#absolute-symlink-paths).
 - **Cross-surface sync assumed.** Wrappers do not auto-sync — content edits must be re-applied manually. Symlinks propagate content live but break if the canonical path moves or is deleted. After updating canonical content, verify each pointer (symlink or wrapper) still resolves to the right thing. See [anti-patterns.md#assuming-cross-surface-sync](../../references/anti-patterns.md#assuming-cross-surface-sync).
 
