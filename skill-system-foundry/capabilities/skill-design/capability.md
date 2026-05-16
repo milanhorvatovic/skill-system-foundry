@@ -103,7 +103,7 @@ A skill can serve as the orchestration entry point. Two forms exist — choose b
 
 Only add a capability when the integrator explicitly requests it or when the domain clearly warrants a new distinct operation. Do not create capabilities speculatively ([anti-patterns.md#premature-capability-creation](../../references/anti-patterns.md#premature-capability-creation)).
 
-1. Create `skills/<domain>/capabilities/<new-cap>/capability.md`.
+1. Create `skills/<domain>/capabilities/<new-cap>/capability.md` (copy from the [capability template](../../assets/capability.md)).
 2. Add row to router's Capabilities table. Each capability trigger must be mutually exclusive and action-oriented — if you cannot unambiguously route a request, tighten the wording before merging ([anti-patterns.md#vague-router-descriptions](../../references/anti-patterns.md#vague-router-descriptions)).
 3. Update router's `description` if new triggers needed (max 1024 chars).
 4. Update manifest.yaml.
@@ -116,7 +116,7 @@ Only add a capability when the integrator explicitly requests it or when the dom
 
 ## Key Resources
 
-**Templates** — copy when creating components (each entry above already links the template at the body step where it applies; the index is here for cross-step navigation):
+**Templates** — copy when creating components (the skill, role, and capability templates are linked inline at the body step where they apply; the manifest template is indexed here only since `manifest.yaml` is referenced across multiple body steps without a single canonical insertion point):
 - [skill-standalone.md](../../assets/skill-standalone.md), [skill-router.md](../../assets/skill-router.md), [capability.md](../../assets/capability.md), [role.md](../../assets/role.md), [manifest.yaml](../../assets/manifest.yaml).
 
 **References** — load by trigger:

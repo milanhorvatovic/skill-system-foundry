@@ -15,7 +15,7 @@ Where is the canonical skill located?
 > .agents/skills/my-skill
 ```
 
-If a tool requires tool-specific content in its discovery path, stop the symlink workflow for that tool and create a wrapper file instead (per the wrapper-file fallback rule in [deployment/capability.md](../capability.md)).
+If a tool requires tool-specific content in its discovery path, stop the symlink workflow for that tool and create a wrapper file instead (per the wrapper-file fallback rule in the [deployment capability](../capability.md)).
 
 ## 3. Create Symlinks
 
