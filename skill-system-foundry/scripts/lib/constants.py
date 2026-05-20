@@ -332,6 +332,181 @@ for _phrase in DESCRIPTION_TRIGGER_PHRASES:
         break
 DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
 
+# --- Structural description-quality rules (validate_skill.py only) ---
+# Eight checks layered on top of the length / XML-tag / voice /
+# trigger-presence rules.  All settings live under
+# skill.description.structural_rules in configuration.yaml.  The custom
+# YAML parser returns every scalar as a string, so counts go through
+# int() and the ratio through float(); phrase lists pass through as
+# tuples and the stopword list as a frozenset.  Fail-fast on a missing
+# or malformed section mirrors the trigger_phrases / evaluation loaders
+# above so a stale checkout errors loudly at import.
+if "structural_rules" not in _skill_desc:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.description.structural_rules'; update your checkout "
+        "or restore the full configuration file."
+    )
+_structural = _skill_desc["structural_rules"]
+if not isinstance(_structural, dict):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules': expected a mapping, got "
+        f"{_structural!r}."
+    )
+
+
+def _require_structural_key(structural: dict, key: str) -> object:
+    """Return ``structural[key]`` or raise a clear RuntimeError.
+
+    Takes the mapping as an argument (rather than closing over a
+    module global) so the helper can be deleted after import without
+    leaving a dangling reference.
+    """
+    if key not in structural:
+        raise RuntimeError(
+            "configuration.yaml is missing required key "
+            f"'skill.description.structural_rules.{key}'; update your "
+            "checkout or restore the full configuration file."
+        )
+    return structural[key]
+
+
+def _normalize_structural_phrases(
+    structural: dict, key: str, *,
+    strip: bool = True, allow_empty_list: bool = False,
+) -> tuple[str, ...]:
+    """Normalize a structural-rules phrase list to a lowercased tuple.
+
+    Rejects non-list values, empty lists (unless *allow_empty_list*),
+    non-string entries, blank entries, and duplicates — each would
+    silently neuter the rule it feeds.  When *strip* is False the entry
+    text is preserved verbatim apart from lowercasing (boundary clauses
+    rely on significant leading/trailing spaces, e.g. ``" vs "``); a
+    whitespace-only entry is still rejected.
+    """
+    raw = _require_structural_key(structural, key)
+    if not isinstance(raw, list) or (not raw and not allow_empty_list):
+        raise RuntimeError(
+            "configuration.yaml has invalid value for "
+            f"'skill.description.structural_rules.{key}': expected a "
+            f"{'list' if allow_empty_list else 'non-empty list'}, got {raw!r}."
+        )
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            raise RuntimeError(
+                "configuration.yaml has a non-string entry in "
+                f"'skill.description.structural_rules.{key}': {item!r}."
+            )
+        candidate = item.lower()
+        if strip:
+            candidate = candidate.strip()
+        if not candidate.strip():
+            raise RuntimeError(
+                "configuration.yaml has an empty / whitespace-only entry "
+                f"in 'skill.description.structural_rules.{key}'; remove it "
+                "or replace it with a real value."
+            )
+        if candidate in seen:
+            raise RuntimeError(
+                f"configuration.yaml has a duplicate entry '{item}' in "
+                f"'skill.description.structural_rules.{key}'; remove the "
+                "redundant entry."
+            )
+        seen.add(candidate)
+        normalized.append(candidate)
+    return tuple(normalized)
+
+
+DESCRIPTION_TRIGGER_MIN_COUNT = int(
+    _require_structural_key(_structural, "trigger_minimum_count")
+)
+if DESCRIPTION_TRIGGER_MIN_COUNT < 1:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules.trigger_minimum_count': "
+        f"{DESCRIPTION_TRIGGER_MIN_COUNT} (must be >= 1)."
+    )
+DESCRIPTION_NEGATIVE_TRIGGER_PHRASES = _normalize_structural_phrases(
+    _structural, "negative_trigger_phrases",
+)
+DESCRIPTION_FILLER_PHRASES = _normalize_structural_phrases(
+    _structural, "filler_phrases",
+)
+DESCRIPTION_FILLER_LOOKAHEAD = int(
+    _require_structural_key(_structural, "filler_lookahead_tokens")
+)
+if DESCRIPTION_FILLER_LOOKAHEAD < 1:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules.filler_lookahead_tokens': "
+        f"{DESCRIPTION_FILLER_LOOKAHEAD} (must be >= 1)."
+    )
+# Boundary clauses keep significant edge spaces (" vs "): lowercase
+# only, do not strip.
+DESCRIPTION_BOUNDARY_PHRASES = _normalize_structural_phrases(
+    _structural, "boundary_clause_phrases", strip=False,
+)
+DESCRIPTION_LENGTH_WARN_BELOW = int(
+    _require_structural_key(_structural, "length_tier_warn_below")
+)
+DESCRIPTION_LENGTH_WARN_ABOVE = int(
+    _require_structural_key(_structural, "length_tier_warn_above")
+)
+if DESCRIPTION_LENGTH_WARN_BELOW < 0 or DESCRIPTION_LENGTH_WARN_ABOVE < 0:
+    raise RuntimeError(
+        "configuration.yaml has invalid length-tier values: "
+        f"below={DESCRIPTION_LENGTH_WARN_BELOW}, "
+        f"above={DESCRIPTION_LENGTH_WARN_ABOVE}; both must be non-negative."
+    )
+if DESCRIPTION_LENGTH_WARN_BELOW >= DESCRIPTION_LENGTH_WARN_ABOVE:
+    raise RuntimeError(
+        "configuration.yaml has "
+        "'skill.description.structural_rules.length_tier_warn_below' "
+        f"({DESCRIPTION_LENGTH_WARN_BELOW}) >= 'length_tier_warn_above' "
+        f"({DESCRIPTION_LENGTH_WARN_ABOVE}); the advisory tiers would "
+        "overlap."
+    )
+DESCRIPTION_VOCABULARY_MINIMUM = int(
+    _require_structural_key(_structural, "vocabulary_minimum")
+)
+if DESCRIPTION_VOCABULARY_MINIMUM < 1:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules.vocabulary_minimum': "
+        f"{DESCRIPTION_VOCABULARY_MINIMUM} (must be >= 1)."
+    )
+# An empty vocabulary list is legal — it disables R7 for integrators
+# who do not curate a domain vocabulary.
+DESCRIPTION_VOCABULARY_LIST = _normalize_structural_phrases(
+    _structural, "vocabulary_list", allow_empty_list=True,
+)
+DESCRIPTION_REDUNDANCY_MIN_COUNT = int(
+    _require_structural_key(_structural, "redundancy_min_count")
+)
+if DESCRIPTION_REDUNDANCY_MIN_COUNT < 2:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules.redundancy_min_count': "
+        f"{DESCRIPTION_REDUNDANCY_MIN_COUNT} (must be >= 2)."
+    )
+DESCRIPTION_REDUNDANCY_MAX_RATIO = float(
+    _require_structural_key(_structural, "redundancy_max_ratio")
+)
+if not 0.0 < DESCRIPTION_REDUNDANCY_MAX_RATIO <= 1.0:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules.redundancy_max_ratio': "
+        f"{DESCRIPTION_REDUNDANCY_MAX_RATIO!r}. Expected a number in "
+        "(0.0, 1.0]."
+    )
+DESCRIPTION_STRUCTURAL_STOPWORDS = frozenset(
+    _normalize_structural_phrases(_structural, "stopwords")
+)
+del _structural, _require_structural_key, _normalize_structural_phrases
+
 # --- Path Resolution ---
 # Loaded before the skill body reference patterns because the body's
 # ``markdown_link`` regex carries a ``__EXT_ALT__`` placeholder that

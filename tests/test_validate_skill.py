@@ -283,11 +283,14 @@ class ValidateDescriptionTests(unittest.TestCase):
         self.assertEqual(len(voice_pass), 1)
 
     def test_description_with_trigger_phrase_emits_no_trigger_warn(self) -> None:
-        """A description containing a configured trigger phrase emits no
-        trigger-clause WARN through the end-to-end validate_description."""
+        """A description meeting the foundry trigger minimum emits no
+        trigger-clause WARN through the end-to-end validate_description.
+
+        validate_description requests DESCRIPTION_TRIGGER_MIN_COUNT (2)
+        distinct trigger phrases, so the fixture carries two."""
         desc = (
             "Manages project timelines and tracks milestones. Triggers when "
-            "a milestone changes."
+            "a milestone changes; use when planning a sprint."
         )
         errors, passes = validate_description(desc)
         trigger_warns = [
@@ -309,6 +312,34 @@ class ValidateDescriptionTests(unittest.TestCase):
         ]
         self.assertEqual(len(trigger_warns), 1)
         self.assertIn("[spec]", trigger_warns[0])
+
+    def test_structural_rules_invoked_end_to_end(self) -> None:
+        """validate_description routes through the structural rules: a poor
+        description surfaces the R6 (one-trigger), R5 (filler), and R3
+        (short) findings together."""
+        desc = "Validates skills. Use when needed. Handles."
+        errors, _ = validate_description(desc)
+        joined = " ".join(errors)
+        # R6: one distinct trigger, below the foundry minimum of two.
+        self.assertIn("at least", joined)
+        # R5: trailing filler phrase with no concrete qualifier.
+        self.assertIn("filler phrase", joined)
+        # R3: under the lower length tier.
+        self.assertIn("characters (<", joined)
+
+    def test_clean_description_has_no_warn_or_fail(self) -> None:
+        """A well-formed description (>= 2 triggers, >= 3 vocabulary tokens,
+        within the length tiers, no filler/redundancy) produces no FAIL or
+        WARN through the full validate_description path."""
+        desc = (
+            "Packages a minimal demo skill into a bundle and runs validation "
+            "over its manifest and frontmatter. Triggers when a skill is "
+            "scaffolded; use when running bundling smoke tests across the "
+            "workflow."
+        )
+        errors, _ = validate_description(desc)
+        self.assertEqual([e for e in errors if e.startswith(LEVEL_FAIL)], [])
+        self.assertEqual([e for e in errors if e.startswith(LEVEL_WARN)], [])
 
 
 # ===================================================================
@@ -4085,8 +4116,9 @@ class ValidateSkillOptionalFieldsTests(unittest.TestCase):
             write_text(
                 os.path.join(skill_dir, "SKILL.md"),
                 "---\nname: demo-skill\n"
-                "description: Validates data files and generates reports. "
-                "Triggers when a data file is touched.\n"
+                "description: Validates data files and generates reports over "
+                "a configured pipeline. Triggers when a data file changes; "
+                "use when running the validation workflow.\n"
                 "compatibility: Requires Python 3.12 or later.\n"
                 "allowed-tools: bash git python\n"
                 "license: MIT\n"

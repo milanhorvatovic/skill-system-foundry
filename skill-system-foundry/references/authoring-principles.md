@@ -113,6 +113,18 @@ description: >
 description: Helps with deployments.
 ```
 
+### Structural checks
+
+`validate_skill.py` enforces eight structural description checks on top of the length, XML-tag, voice, and trigger-presence rules above. The structural checks themselves are advisory — they emit INFO or WARN, never FAIL. (`validate_description` still FAILs separately when the description is empty or exceeds the 1024-character spec limit.) Phrase lists and thresholds live under `skill.description.structural_rules` in [configuration.yaml](../scripts/lib/configuration.yaml), the canonical source; integrators tune them to their own domain.
+
+- **Trigger-clause strength** — at least two distinct trigger phrases (WARN below two). Reuses `skill.description.trigger_phrases`; the audit keeps the historical one-phrase minimum.
+- **Negative trigger** — notes a "don't use when…" clause when present (INFO).
+- **Length tiers** — advisory INFO below the lower tier or above the upper tier; the lower tier sits below the bundler's `claude`-target description cap (`bundle.description_max_length`) so a description sized right up to that cap is never simultaneously flagged as too short.
+- **Filler detection** — WARN on "helps with" / "handles" / … only when no concrete qualifier follows.
+- **Domain vocabulary** — INFO when fewer than the configured number of domain terms appear; the vocabulary list is integrator-owned and an empty list disables the check.
+- **Boundary clause** — notes an "X vs Y" / "use Y instead" clause when present (INFO).
+- **Over-repetition** — WARN when one content word both repeats past a floor and dominates the description (a length-normalized ratio, so legitimately repeating a subject noun does not trip it).
+
 ### Testing activation
 
 Well-formed is not the same as well-targeted — a description can pass every rule above and still under- or over-trigger. Measure activation precision and recall against a prompt corpus with [evaluate_descriptions.py](../scripts/evaluate_descriptions.py) (a deterministic, stdlib-only heuristic check); the corpus format is documented in the validation capability's "Description-Quality Evaluation" section.

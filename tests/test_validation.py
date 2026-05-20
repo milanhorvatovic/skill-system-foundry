@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -18,11 +19,19 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from helpers import write_capability_md, write_skill_md, write_text
+from lib import validation as validation_mod
 from lib.validation import (
     aggregate_capability_allowed_tools,
     parse_allowed_tools_tokens,
     validate_capability_skill_only_fields,
+    count_trigger_phrases,
     validate_description_triggers,
+    validate_description_negative_triggers,
+    validate_description_filler,
+    validate_description_boundary,
+    validate_description_length_tiers,
+    validate_description_vocabulary,
+    validate_description_redundancy,
     validate_name,
     validate_tool_coherence,
 )
@@ -1118,6 +1127,271 @@ class ValidateDescriptionTriggersTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(matched)
+
+    # --- count_trigger_phrases helper ---
+
+    def test_count_trigger_phrases_returns_distinct_sorted(self) -> None:
+        # Two distinct phrases present; helper returns both in the
+        # configured (sorted) order.
+        desc = (
+            "Audits skill systems. Triggers on drift; use when the "
+            "structure may have changed."
+        )
+        matched = count_trigger_phrases(desc)
+        self.assertEqual(matched, sorted(matched))
+        self.assertIn("triggers on", matched)
+        self.assertIn("use when", matched)
+
+    def test_count_trigger_phrases_empty_input(self) -> None:
+        for value in ("", "   ", "\n\t "):
+            self.assertEqual(count_trigger_phrases(value), [])
+
+    def test_count_trigger_phrases_no_match(self) -> None:
+        self.assertEqual(
+            count_trigger_phrases("Validates skills and reports findings."), []
+        )
+
+    # --- Graduated minimum_count behaviour ---
+
+    def test_default_minimum_count_passes_at_one(self) -> None:
+        # Default minimum_count=1 reproduces the historical behaviour:
+        # a single trigger phrase passes (keeps audit_skill_system.py
+        # unchanged).
+        desc = "Validates skills. Triggers when a skill is created."
+        errors, passes = validate_description_triggers(desc)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_minimum_count_two_one_match_emits_foundry_warn(self) -> None:
+        desc = "Validates skills. Triggers when a skill is created."
+        errors, passes = validate_description_triggers(desc, minimum_count=2)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("[foundry]", warns[0])
+        self.assertIn("at least 2", warns[0])
+        self.assertEqual(passes, [])
+
+    def test_minimum_count_two_zero_match_emits_spec_warn(self) -> None:
+        # Zero matches always emits the unchanged spec WARN regardless
+        # of the minimum — never the foundry "add another" message.
+        desc = "Validates skills and reports findings to stdout."
+        errors, _ = validate_description_triggers(desc, minimum_count=2)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("[spec]", warns[0])
+        self.assertIn("when the skill activates", warns[0])
+
+    def test_minimum_count_two_two_matches_pass(self) -> None:
+        desc = (
+            "Validates skills. Triggers on creation; use when the "
+            "structure may have drifted."
+        )
+        errors, passes = validate_description_triggers(desc, minimum_count=2)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+        self.assertIn(">= 2", passes[0])
+
+
+# ===================================================================
+# Structural description rules (R2, R3/R4, R5, R7, R8, R9)
+# ===================================================================
+
+
+class StructuralDescriptionRuleTests(unittest.TestCase):
+    """Tests for the structural description-quality validators."""
+
+    # --- R2: negative triggers (INFO when present) ---
+
+    def test_negative_trigger_present_emits_info(self) -> None:
+        errors, passes = validate_description_negative_triggers(
+            "Processes data. Do not use for raw log analysis."
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("negative trigger", infos[0])
+        self.assertEqual(passes, [])
+
+    def test_negative_trigger_absent_is_silent_pass(self) -> None:
+        errors, passes = validate_description_negative_triggers(
+            "Processes data. Triggers when a file changes."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_negative_trigger_empty_short_circuits(self) -> None:
+        for value in ("", "   "):
+            errors, passes = validate_description_negative_triggers(value)
+            self.assertEqual((errors, passes), ([], []))
+
+    # --- R5: filler detection (WARN when no qualifier follows) ---
+
+    def test_filler_trailing_emits_warn(self) -> None:
+        errors, _ = validate_description_filler("This skill handles.")
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("filler phrase", warns[0])
+
+    def test_filler_followed_by_stopword_emits_warn(self) -> None:
+        errors, _ = validate_description_filler("It handles the and the.")
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+
+    def test_filler_with_concrete_qualifier_passes(self) -> None:
+        errors, passes = validate_description_filler(
+            "It handles skill manifests and reports drift."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_filler_absent_passes(self) -> None:
+        errors, passes = validate_description_filler(
+            "Validates skills and audits systems."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_filler_handles_things_emits_warn(self) -> None:
+        # The documented vague case: "things" is a stopword, so it is
+        # not a concrete qualifier and the filler phrase trips.
+        errors, _ = validate_description_filler("This skill handles things.")
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+
+    def test_filler_substring_inside_word_not_flagged(self) -> None:
+        # "handles" must match on a word boundary, so a description that
+        # only contains it inside "mishandles" does not trip the rule.
+        errors, passes = validate_description_filler(
+            "Detects when the parser mishandles malformed manifest input."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    # --- R8: boundary clauses (INFO when present) ---
+
+    def test_boundary_vs_clause_emits_info(self) -> None:
+        errors, _ = validate_description_boundary(
+            "Routes requests for cache vs database lookups."
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("boundary clause", infos[0])
+
+    def test_boundary_use_instead_emits_info(self) -> None:
+        # Natural "use Y instead" wording is detected via the "instead"
+        # substring (the contiguous "use instead" never appears in real
+        # descriptions).
+        errors, _ = validate_description_boundary(
+            "Handles structured data; for raw logs use the log skill instead."
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+
+    def test_boundary_message_preserves_edge_spaces(self) -> None:
+        # The INFO message renders the matched phrase verbatim so the
+        # significant edge spaces of " vs " are visible (not stripped to
+        # the bare "vs", which would not match on its own).
+        errors, _ = validate_description_boundary(
+            "Routes cache vs database lookups."
+        )
+        self.assertIn("' vs '", errors[0])
+
+    def test_boundary_edge_spaces_avoid_substring_false_positive(self) -> None:
+        # " vs " carries significant edge spaces, so "vs" inside a word
+        # (e.g. "services") must not trip the rule.
+        errors, passes = validate_description_boundary(
+            "Manages services and servers across regions."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    # --- R3 / R4: length tiers (INFO at the soft edges) ---
+
+    def test_length_below_tier_emits_info(self) -> None:
+        errors, _ = validate_description_length_tiers("Short description.")
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("consider expanding", infos[0])
+
+    def test_length_above_tier_emits_info(self) -> None:
+        errors, _ = validate_description_length_tiers("x" * 801)
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("consider compressing", infos[0])
+
+    def test_length_within_tiers_passes(self) -> None:
+        errors, passes = validate_description_length_tiers("y" * 400)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_length_tiers_never_fail_or_warn(self) -> None:
+        for desc in ("a", "z" * 5000):
+            errors, _ = validate_description_length_tiers(desc)
+            self.assertFalse(
+                any(
+                    e.startswith(LEVEL_FAIL) or e.startswith(LEVEL_WARN)
+                    for e in errors
+                )
+            )
+
+    # --- R7: domain-vocabulary presence (INFO, opt-in) ---
+
+    def test_vocabulary_below_minimum_emits_info(self) -> None:
+        errors, _ = validate_description_vocabulary(
+            "Greets people warmly and remembers their names."
+        )
+        infos = [e for e in errors if e.startswith(LEVEL_INFO)]
+        self.assertEqual(len(infos), 1)
+        self.assertIn("domain-vocabulary", infos[0])
+
+    def test_vocabulary_meets_minimum_passes(self) -> None:
+        errors, passes = validate_description_vocabulary(
+            "Validation, audit, and bundling of skill manifests."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_vocabulary_empty_list_disables_rule(self) -> None:
+        # An empty vocabulary list makes the rule inert (no findings at
+        # all) so it never biases skills outside the foundry's domain.
+        with mock.patch.object(
+            validation_mod, "DESCRIPTION_VOCABULARY_LIST", (),
+        ):
+            errors, passes = validate_description_vocabulary(
+                "Greets people warmly with no domain terms at all."
+            )
+        self.assertEqual((errors, passes), ([], []))
+
+    # --- R9: over-repetition (ratio-gated WARN) ---
+
+    def test_redundancy_dominant_word_emits_warn(self) -> None:
+        errors, _ = validate_description_redundancy(
+            "data data data data data data analysis report summary."
+        )
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("repeats 'data'", warns[0])
+
+    def test_redundancy_varied_description_passes(self) -> None:
+        errors, passes = validate_description_redundancy(
+            "Validates skills, audits systems, bundles manifests, "
+            "scaffolds roles, and migrates routers."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_redundancy_high_count_low_ratio_passes(self) -> None:
+        # A word repeated >= the count floor but well under the ratio
+        # threshold (long, varied description) must not trip the rule.
+        body = " ".join(f"term{i}" for i in range(60))
+        desc = ("review " * 5) + body
+        errors, passes = validate_description_redundancy(desc)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_redundancy_empty_short_circuits(self) -> None:
+        for value in ("", "   ", "the a an of"):
+            errors, passes = validate_description_redundancy(value)
+            self.assertEqual((errors, passes), ([], []))
 
 
 # ===================================================================

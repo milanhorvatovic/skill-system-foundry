@@ -2,7 +2,9 @@ import os
 
 
 DEFAULT_DESCRIPTION = (
-    "Packages a minimal demo skill. Use when running bundling smoke tests."
+    "Packages a minimal demo skill into a bundle and runs validation over its "
+    "manifest and frontmatter. Triggers when a skill is scaffolded; use when "
+    "running bundling smoke tests across the workflow."
 )
 
 

@@ -2,12 +2,12 @@
 name: hello-router
 description: >
   Greets a recipient through one of two registered tones — formal or casual —
-  by dispatching to a dedicated capability. Activates whenever the
-  conversation asks for a tone-specific welcome, a switch between formal and
-  casual greetings, or a comparison of the two styles. Demonstrates the
-  router pattern in the Skill System Foundry — a thin SKILL.md entry point
-  routing to capability files that hold the actual instructions, with
-  allowed-tools declared so capability-level shell fences stay coherent.
+  by dispatching to a dedicated capability. Activates when the conversation
+  asks for a tone-specific welcome or a switch between formal and casual
+  greetings; use when comparing the two styles. Demonstrates the router
+  pattern in the Skill System Foundry — a thin SKILL.md entry point routing to
+  capability files, with allowed-tools declared in frontmatter so capability
+  shell fences pass validation.
 allowed-tools: Bash
 metadata:
   version: "1.0.0"

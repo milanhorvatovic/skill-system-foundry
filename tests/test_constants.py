@@ -143,6 +143,24 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      recommended_prompts_per_side: 8\n"
             "      stopwords:\n"
             "        - the\n"
+            "    structural_rules:\n"
+            "      trigger_minimum_count: 2\n"
+            "      negative_trigger_phrases:\n"
+            "        - do not use\n"
+            "      filler_phrases:\n"
+            "        - helps with\n"
+            "      filler_lookahead_tokens: 3\n"
+            "      boundary_clause_phrases:\n"
+            "        - \" vs \"\n"
+            "      length_tier_warn_below: 200\n"
+            "      length_tier_warn_above: 800\n"
+            "      vocabulary_minimum: 3\n"
+            "      vocabulary_list:\n"
+            "        - validation\n"
+            "      redundancy_min_count: 5\n"
+            "      redundancy_max_ratio: 0.22\n"
+            "      stopwords:\n"
+            "        - the\n"
             "  body:\n"
             "    max_lines: 500\n"
             "    reference_patterns:\n"
@@ -1095,6 +1113,67 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 self._full_config_minus_nested("description", "evaluation")
             )
         self.assertIn("evaluation", str(ctx.exception))
+
+    def test_missing_description_structural_rules_block_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested(
+                    "description", "structural_rules",
+                )
+            )
+        self.assertIn("structural_rules", str(ctx.exception))
+
+    def test_invalid_structural_trigger_minimum_count_raises(self) -> None:
+        # A minimum below 1 would make the graduated trigger rule
+        # meaningless.  Loader must refuse it.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "trigger_minimum_count: 2", "trigger_minimum_count: 0",
+                )
+            )
+        self.assertIn("trigger_minimum_count", str(ctx.exception))
+
+    def test_invalid_structural_redundancy_ratio_raises(self) -> None:
+        # The redundancy ratio is a fraction in (0.0, 1.0]; a value > 1
+        # could never fire and signals a config edit accident.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "redundancy_max_ratio: 0.22", "redundancy_max_ratio: 1.5",
+                )
+            )
+        self.assertIn("redundancy_max_ratio", str(ctx.exception))
+
+    def test_invalid_structural_filler_lookahead_raises(self) -> None:
+        # The filler look-ahead window must be at least one token.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "filler_lookahead_tokens: 3", "filler_lookahead_tokens: 0",
+                )
+            )
+        self.assertIn("filler_lookahead_tokens", str(ctx.exception))
+
+    def test_structural_filler_lookahead_loaded(self) -> None:
+        self.assertGreaterEqual(constants.DESCRIPTION_FILLER_LOOKAHEAD, 1)
+
+    def test_structural_stopwords_include_generic_things(self) -> None:
+        # "things" is a stopword so "handles things" trips the filler rule.
+        self.assertIn("things", constants.DESCRIPTION_STRUCTURAL_STOPWORDS)
+
+    def test_structural_boundary_phrases_preserve_edge_spaces(self) -> None:
+        # Boundary clauses rely on significant leading/trailing spaces
+        # (" vs " must not match "vs" inside a word), so the loader
+        # lowercases but does not strip them.
+        self.assertIn(" vs ", constants.DESCRIPTION_BOUNDARY_PHRASES)
+
+    def test_structural_stopwords_strip_trigger_scaffolding(self) -> None:
+        # Trigger-scaffolding words are stripped during R7/R9
+        # tokenization so the trigger phrasing R6 rewards is not also
+        # counted as over-repetition.
+        for word in ("when", "use", "triggers"):
+            self.assertIn(word, constants.DESCRIPTION_STRUCTURAL_STOPWORDS)
 
     def test_missing_evaluation_key_raises(self) -> None:
         with self.assertRaises(RuntimeError) as ctx:

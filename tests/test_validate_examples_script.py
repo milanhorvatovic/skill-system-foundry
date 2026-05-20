@@ -68,9 +68,10 @@ def _write(path: str, content: str) -> None:
 def _write_minimal_skill(skill_dir: str, *, name: str) -> None:
     """Create a minimal valid skill at *skill_dir* with directory name *name*."""
     description = (
-        "Greets a single recipient with a one-line message. "
-        "Test fixture used by the validate-examples CI helper. "
-        "Activates only when the conversation explicitly asks for a hello."
+        "Validates a minimal demo skill fixture for the validate-examples "
+        "helper, checking its manifest and frontmatter. Triggers when an "
+        "example skill is scaffolded; use when running validation smoke tests "
+        "across the workflow."
     )
     content = textwrap.dedent(
         f"""\

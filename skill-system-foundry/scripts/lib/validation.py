@@ -4,6 +4,8 @@ import difflib
 import glob
 import os
 import re
+from collections import Counter
+from itertools import islice
 
 from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
@@ -15,6 +17,12 @@ from .constants import (
     RE_MCP_TOOL_NAME, RE_HARNESS_TOOL_SHAPE,
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
     DESCRIPTION_TRIGGER_PHRASES, DESCRIPTION_TRIGGER_EXAMPLE_PHRASES,
+    DESCRIPTION_NEGATIVE_TRIGGER_PHRASES, DESCRIPTION_FILLER_PHRASES,
+    DESCRIPTION_FILLER_LOOKAHEAD, DESCRIPTION_BOUNDARY_PHRASES,
+    DESCRIPTION_LENGTH_WARN_BELOW, DESCRIPTION_LENGTH_WARN_ABOVE,
+    DESCRIPTION_VOCABULARY_MINIMUM, DESCRIPTION_VOCABULARY_LIST,
+    DESCRIPTION_REDUNDANCY_MIN_COUNT, DESCRIPTION_REDUNDANCY_MAX_RATIO,
+    DESCRIPTION_STRUCTURAL_STOPWORDS,
     CAPABILITY_SKILL_ONLY_FIELDS,
     DIR_CAPABILITIES, DIR_SCRIPTS,
     FILE_CAPABILITY_MD, FILE_SKILL_MD,
@@ -104,26 +112,61 @@ def _is_explicit_empty_allowed_tools(value: object) -> bool:
     return False
 
 
+def count_trigger_phrases(description: str) -> list[str]:
+    """Return the distinct trigger phrases present in *description*.
+
+    Pure helper extracted so the trigger heuristic has a single
+    matching implementation: lowercases once and does a
+    case-insensitive substring match against
+    ``DESCRIPTION_TRIGGER_PHRASES`` (configured under
+    ``skill.description.trigger_phrases``).  The result preserves the
+    configured tuple's order (already sorted and de-duplicated), so it
+    is deterministic across processes.  Empty / whitespace-only input
+    returns ``[]``.
+    """
+    if not description or not description.strip():
+        return []
+    lowered = description.lower()
+    return [
+        phrase for phrase in DESCRIPTION_TRIGGER_PHRASES if phrase in lowered
+    ]
+
+
 def validate_description_triggers(
     description: str,
+    *,
+    minimum_count: int = 1,
 ) -> tuple[list[str], list[str]]:
-    """Check that the description contains at least one trigger phrase.
+    """Check that the description states *when* the skill activates.
 
     The agentskills.io specification requires descriptions to state
     both *what* the skill does and *when* it activates.  This rule
-    enforces the "when" half by case-insensitive substring matching
-    against ``DESCRIPTION_TRIGGER_PHRASES`` (configured under
-    ``skill.description.trigger_phrases`` in ``configuration.yaml``).
+    enforces the "when" half via :func:`count_trigger_phrases`.
+
+    *minimum_count* (default ``1``) is the number of distinct trigger
+    phrases the description should contain.  The default reproduces the
+    historical behaviour — zero matches WARN, one or more pass — so
+    callers that do not opt in (notably the per-skill block in
+    ``audit_skill_system.py``) are unaffected.  ``validate_description``
+    in ``validate_skill.py`` passes ``DESCRIPTION_TRIGGER_MIN_COUNT``
+    (the foundry strictening) to require at least two distinct trigger
+    clauses.
+
+    Outcomes are graduated and non-blocking (WARN, never FAIL):
+
+    - zero matches → the spec-tagged "does not state when it activates"
+      WARN (unchanged wording);
+    - ``0 < matches < minimum_count`` → a foundry WARN recommending an
+      additional trigger clause;
+    - ``matches >= minimum_count`` → pass.
 
     Detection is heuristic — phrase matching cannot enumerate every
-    valid wording — so the rule emits WARN, not FAIL.  Empty /
-    whitespace-only inputs short-circuit silently: the spec-required
-    non-empty FAIL is owned by the caller (``validate_description``
-    in ``validate_skill.py`` and the per-skill block in
-    ``audit_skill_system.py``), and stacking a trigger WARN on top
-    of that FAIL would be redundant.  The guard is kept so direct
-    API callers (e.g. ad-hoc scripts) can invoke the helper without
-    a separate non-empty check of their own.
+    valid wording — so the rule never escalates to FAIL: a legitimate
+    but unlisted trigger wording must not block the author.  Empty /
+    whitespace-only inputs short-circuit silently — the spec-required
+    non-empty FAIL is owned by the caller (``validate_description`` in
+    ``validate_skill.py`` and the per-skill block in
+    ``audit_skill_system.py``).
 
     Returns ``(errors, passes)`` per the standard validator contract.
     """
@@ -133,28 +176,328 @@ def validate_description_triggers(
     if not description or not description.strip():
         return errors, passes
 
-    lowered = description.lower()
-    for phrase in DESCRIPTION_TRIGGER_PHRASES:
-        if phrase in lowered:
-            passes.append(
-                f"description: contains trigger phrase '{phrase}'"
-            )
-            return errors, passes
+    matched = count_trigger_phrases(description)
+    count = len(matched)
 
-    # Build the example list from the curated example subset so the
-    # message never drifts from the YAML.  Examples are first-word
-    # distinct (different root verbs) for educational variety; the
-    # YAML pointer remains the canonical source for the full list.
-    example_phrases = ", ".join(
-        f"'{phrase.capitalize()} ...'"
-        for phrase in DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
+    if count == 0:
+        # Unchanged spec-tagged WARN.  Examples come from the curated
+        # first-word-distinct subset so the message never drifts from
+        # the YAML.
+        example_phrases = ", ".join(
+            f"'{phrase.capitalize()} ...'"
+            for phrase in DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
+        )
+        errors.append(
+            f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
+            f"activates — add a trigger clause (e.g. {example_phrases}).  "
+            "Phrase list configured under skill.description.trigger_phrases "
+            "in configuration.yaml."
+        )
+        return errors, passes
+
+    if count < minimum_count:
+        errors.append(
+            f"{LEVEL_WARN}: [foundry] 'description' contains {count} distinct "
+            f"trigger phrase(s) (e.g. '{matched[0]}') but the foundry "
+            f"recommends at least {minimum_count} for routing precision — add "
+            "another trigger clause covering a different activation context.  "
+            "Phrase list configured under skill.description.trigger_phrases "
+            "in configuration.yaml."
+        )
+        return errors, passes
+
+    passes.append(
+        f"description: contains {count} trigger phrase(s) "
+        f"(>= {minimum_count}; e.g. '{matched[0]}')"
     )
-    errors.append(
-        f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
-        f"activates — add a trigger clause (e.g. {example_phrases}).  "
-        "Phrase list configured under skill.description.trigger_phrases "
-        "in configuration.yaml."
-    )
+    return errors, passes
+
+
+# Word-token pattern shared by the structural description rules.  Matches
+# a run beginning with an alphanumeric and optionally containing inner
+# apostrophes / hyphens (so "don't" and "ai-agnostic" tokenize as one
+# word).  Callers lowercase the text first.
+_RE_WORD_TOKEN = re.compile(r"[a-z0-9][a-z0-9'-]*")
+
+
+# Pre-compiled word-boundary patterns for each R5 filler phrase.  The
+# phrase list is fixed once ``constants`` loads, so recompiling per phrase
+# on every call is pure repeated work; build the ``(phrase, pattern)``
+# pairs once at import.  ``re.escape`` keeps a phrase containing regex
+# metacharacters literal, and the ``(?<![a-z0-9]) ... (?![a-z0-9])``
+# guards reproduce the word-boundary match exactly (so "handles" does not
+# fire inside "mishandles").
+_FILLER_PHRASE_PATTERNS = tuple(
+    (phrase, re.compile(r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])"))
+    for phrase in DESCRIPTION_FILLER_PHRASES
+)
+
+
+def _description_content_tokens(description: str) -> list[str]:
+    """Lowercase *description* and return word tokens with structural
+    stopwords removed.
+
+    Shared by the vocabulary (R7) and over-repetition (R9) rules so both
+    tokenize identically.  Trigger-scaffolding words (use / when /
+    triggers / ...) are part of ``DESCRIPTION_STRUCTURAL_STOPWORDS`` and
+    are therefore stripped here — the trigger phrasing R6 rewards must
+    not be re-counted as over-repetition.
+    """
+    return [
+        token
+        for token in _RE_WORD_TOKEN.findall(description.lower())
+        if token not in DESCRIPTION_STRUCTURAL_STOPWORDS
+    ]
+
+
+def validate_description_negative_triggers(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """R2 — note when the description includes a negative trigger.
+
+    Naming when the skill should *not* activate aids routing.  Presence
+    emits an INFO; absence emits an informational pass (the clause is
+    optional, so its absence is never a finding).  Case-insensitive
+    substring match against ``DESCRIPTION_NEGATIVE_TRIGGER_PHRASES``.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not description or not description.strip():
+        return errors, passes
+    lowered = description.lower()
+    found = [p for p in DESCRIPTION_NEGATIVE_TRIGGER_PHRASES if p in lowered]
+    if found:
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] 'description' includes a negative "
+            f"trigger ('{found[0]}') — this helps routing precision."
+        )
+    else:
+        passes.append("description: no negative trigger (optional)")
+    return errors, passes
+
+
+def validate_description_filler(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """R5 — flag a filler phrase with no concrete qualifier following.
+
+    Phrases match on word boundaries — ``handles`` matches the standalone
+    word but not a substring inside ``mishandles`` — so legitimate words
+    that merely contain a filler phrase do not trip the rule.  WARN only
+    when a matched phrase is followed by no content (non-stopword,
+    length >= 3) word within the next ``DESCRIPTION_FILLER_LOOKAHEAD``
+    tokens — i.e. the phrase trails into stopwords or the end of the
+    description.  "handles skill manifests" is fine; "handles things"
+    (``things`` is a stopword) or a trailing "handles" is not.  The
+    look-ahead guard keeps legitimate uses of "handles" / "works with"
+    from firing.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not description or not description.strip():
+        return errors, passes
+    lowered = description.lower()
+    flagged: list[str] = []
+    for phrase, pattern in _FILLER_PHRASE_PATTERNS:
+        # Patterns are pre-compiled at import (see _FILLER_PHRASE_PATTERNS);
+        # their word-boundary guards mean a single-word phrase like
+        # "handles" does not match inside "mishandles".  Phrases are
+        # already lowercased in constants.
+        for match in pattern.finditer(lowered):
+            # Look ahead at the next DESCRIPTION_FILLER_LOOKAHEAD word
+            # tokens after the phrase.  ``finditer`` with an explicit
+            # start position scans the original string in place (no tail
+            # slice), and ``islice`` halts the lazy scan once the window
+            # is full — so the work is bounded by the look-ahead window
+            # rather than the remaining description length.
+            following = [
+                m.group()
+                for m in islice(
+                    _RE_WORD_TOKEN.finditer(lowered, match.end()),
+                    DESCRIPTION_FILLER_LOOKAHEAD,
+                )
+            ]
+            has_qualifier = any(
+                token not in DESCRIPTION_STRUCTURAL_STOPWORDS and len(token) >= 3
+                for token in following
+            )
+            if not has_qualifier:
+                flagged.append(phrase)
+                break
+        if flagged:
+            # Only the first flagged phrase is reported, so stop scanning
+            # the remaining phrases once one trips — no need to keep
+            # matching across the whole phrase list.
+            break
+    if flagged:
+        errors.append(
+            f"{LEVEL_WARN}: [foundry] 'description' uses filler phrase "
+            f"'{flagged[0]}' with no concrete qualifier following — replace "
+            "it with a specific action or object."
+        )
+    else:
+        passes.append("description: no vague filler phrases")
+    return errors, passes
+
+
+def validate_description_boundary(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """R8 — note when the description names a boundary against an adjacent skill.
+
+    A boundary clause ("X vs Y", "use Y instead") aids routing between
+    overlapping skills.  Presence emits an INFO; absence emits an
+    informational pass (the clause is optional, so its absence is never
+    a finding).  Distinct from R2: R2 says "do not activate at all", R8
+    says "which adjacent skill to use instead".  Match is
+    case-insensitive substring; boundary phrases keep their significant
+    edge spaces (" vs ").
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not description or not description.strip():
+        return errors, passes
+    lowered = description.lower()
+    found = [p for p in DESCRIPTION_BOUNDARY_PHRASES if p in lowered]
+    if found:
+        # Render the matched phrase verbatim (no strip): boundary phrases
+        # keep significant edge spaces (" vs "), and stripping them would
+        # imply the bare word ("vs") matches when only " vs " does.
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] 'description' names a boundary clause "
+            f"('{found[0]}') — this aids routing between adjacent skills."
+        )
+    else:
+        passes.append("description: no boundary clause (optional)")
+    return errors, passes
+
+
+def validate_description_length_tiers(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """R3 / R4 — advisory length-tier guidance.
+
+    The hard FAIL above ``MAX_DESCRIPTION_CHARS`` (1024) lives in
+    ``validate_description``.  This rule adds advisory INFOs at the soft
+    edges: below ``DESCRIPTION_LENGTH_WARN_BELOW`` (likely too terse for
+    reliable routing) and above ``DESCRIPTION_LENGTH_WARN_ABOVE``
+    (descriptions tend to grow during optimization; consider
+    compressing).  Never WARN or FAIL.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not description or not description.strip():
+        return errors, passes
+    length = len(description)
+    if length < DESCRIPTION_LENGTH_WARN_BELOW:
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] 'description' is {length} characters "
+            f"(< {DESCRIPTION_LENGTH_WARN_BELOW}) — consider expanding it with "
+            "more trigger contexts for routing precision."
+        )
+    elif length > DESCRIPTION_LENGTH_WARN_ABOVE:
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] 'description' is {length} characters "
+            f"(> {DESCRIPTION_LENGTH_WARN_ABOVE}) — consider compressing it; "
+            "descriptions tend to grow during optimization."
+        )
+    else:
+        passes.append(
+            f"description: length {length} within advisory tiers "
+            f"({DESCRIPTION_LENGTH_WARN_BELOW}-{DESCRIPTION_LENGTH_WARN_ABOVE})"
+        )
+    return errors, passes
+
+
+def validate_description_vocabulary(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """R7 — optional domain-vocabulary presence.
+
+    Counts the distinct tokens from ``DESCRIPTION_VOCABULARY_LIST``
+    present in the description and emits an INFO when fewer than
+    ``DESCRIPTION_VOCABULARY_MINIMUM`` appear.  The list is
+    integrator-owned: when it is empty the rule is inert (returns no
+    findings at all) so it never biases skills outside the foundry's
+    domain.  INFO only — "specificity" is a soft signal.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not DESCRIPTION_VOCABULARY_LIST:
+        return errors, passes
+    if not description or not description.strip():
+        return errors, passes
+    present = set(_description_content_tokens(description))
+    matched = sorted(present.intersection(DESCRIPTION_VOCABULARY_LIST))
+    if len(matched) >= DESCRIPTION_VOCABULARY_MINIMUM:
+        passes.append(
+            f"description: {len(matched)} domain-vocabulary token(s) "
+            f"(>= {DESCRIPTION_VOCABULARY_MINIMUM})"
+        )
+    else:
+        errors.append(
+            f"{LEVEL_INFO}: [foundry] 'description' includes {len(matched)} "
+            f"domain-vocabulary token(s) (recommended >= "
+            f"{DESCRIPTION_VOCABULARY_MINIMUM}) — consider adding more specific "
+            "domain terms.  Vocabulary configured under "
+            "skill.description.structural_rules.vocabulary_list."
+        )
+    return errors, passes
+
+
+def validate_description_redundancy(
+    description: str,
+) -> tuple[list[str], list[str]]:
+    """R9 — flag a single content word that dominates the description.
+
+    A word that both repeats at least ``DESCRIPTION_REDUNDANCY_MIN_COUNT``
+    times and makes up at least ``DESCRIPTION_REDUNDANCY_MAX_RATIO`` of
+    all content tokens signals padding.  The ratio gate makes the rule
+    length-independent: a long, varied description that repeats its
+    subject noun a dozen times stays silent, while a short description
+    where one word is a fifth of the content trips.  Stopwords (incl.
+    trigger scaffolding) are stripped first; tokens shorter than three
+    characters are not counted.  WARN only.
+
+    Returns ``(errors, passes)`` per the standard validator contract.
+    """
+    errors: list[str] = []
+    passes: list[str] = []
+    if not description or not description.strip():
+        return errors, passes
+    content = [
+        token
+        for token in _description_content_tokens(description)
+        if len(token) >= 3
+    ]
+    if not content:
+        return errors, passes
+    word, occurrences = Counter(content).most_common(1)[0]
+    ratio = occurrences / len(content)
+    if (
+        occurrences >= DESCRIPTION_REDUNDANCY_MIN_COUNT
+        and ratio >= DESCRIPTION_REDUNDANCY_MAX_RATIO
+    ):
+        errors.append(
+            f"{LEVEL_WARN}: [foundry] 'description' repeats '{word}' "
+            f"{occurrences} times ({ratio:.0%} of content words) — likely "
+            "padding; vary the wording or compress."
+        )
+    else:
+        passes.append(
+            f"description: no over-repeated content word "
+            f"(top '{word}' {occurrences}x, {ratio:.0%})"
+        )
     return errors, passes
 
 
