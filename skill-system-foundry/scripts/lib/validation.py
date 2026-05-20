@@ -366,10 +366,12 @@ def validate_description_boundary(
     lowered = description.lower()
     found = [p for p in DESCRIPTION_BOUNDARY_PHRASES if p in lowered]
     if found:
+        # Render the matched phrase verbatim (no strip): boundary phrases
+        # keep significant edge spaces (" vs "), and stripping them would
+        # imply the bare word ("vs") matches when only " vs " does.
         errors.append(
             f"{LEVEL_INFO}: [foundry] 'description' names a boundary clause "
-            f"('{found[0].strip()}') — this aids routing between adjacent "
-            "skills."
+            f"('{found[0]}') — this aids routing between adjacent skills."
         )
     else:
         passes.append("description: no boundary clause (optional)")

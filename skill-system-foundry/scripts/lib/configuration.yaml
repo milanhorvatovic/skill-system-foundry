@@ -186,7 +186,11 @@ skill:
       filler_lookahead_tokens: 3
 
       # R8 — Boundary clauses.  INFO.  Names the boundary against an
-      # adjacent skill ("X vs Y", "use Y instead").  Distinct from R2:
+      # adjacent skill ("X vs Y", "use Y instead").  Matching is plain
+      # case-insensitive substring, so each phrase must appear
+      # contiguously — use "instead" (which catches "use Y instead",
+      # "Y instead of Z", etc.) rather than "use instead", which would
+      # only match the unnatural contiguous wording.  Distinct from R2:
       # R2 = "do not activate at all", R8 = "which adjacent skill to use
       # instead".  Keep this list to phrases that genuinely imply an
       # adjacent alternative — do NOT add bare negative-activation
@@ -198,7 +202,7 @@ skill:
       # strip these.
       boundary_clause_phrases:
         - " vs "
-        - use instead
+        - instead
         - rather than
 
       # R3 + R4 — Length tier guidance.  The hard FAIL at >1024 stays

@@ -1277,11 +1277,23 @@ class StructuralDescriptionRuleTests(unittest.TestCase):
         self.assertIn("boundary clause", infos[0])
 
     def test_boundary_use_instead_emits_info(self) -> None:
+        # Natural "use Y instead" wording is detected via the "instead"
+        # substring (the contiguous "use instead" never appears in real
+        # descriptions).
         errors, _ = validate_description_boundary(
-            "Handles structured data; for logs use instead the log skill."
+            "Handles structured data; for raw logs use the log skill instead."
         )
         infos = [e for e in errors if e.startswith(LEVEL_INFO)]
         self.assertEqual(len(infos), 1)
+
+    def test_boundary_message_preserves_edge_spaces(self) -> None:
+        # The INFO message renders the matched phrase verbatim so the
+        # significant edge spaces of " vs " are visible (not stripped to
+        # the bare "vs", which would not match on its own).
+        errors, _ = validate_description_boundary(
+            "Routes cache vs database lookups."
+        )
+        self.assertIn("' vs '", errors[0])
 
     def test_boundary_edge_spaces_avoid_substring_false_positive(self) -> None:
         # " vs " carries significant edge spaces, so "vs" inside a word
