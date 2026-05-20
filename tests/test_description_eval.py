@@ -781,5 +781,72 @@ class CorpusDescriptionShaExtractionTests(LoadCorpusBaseMixin):
         self.assertIsNone(corpus.description_sha256)
 
 
+# ===================================================================
+# backfill_corpus_hashes
+# ===================================================================
+
+
+class BackfillCorpusHashesTests(unittest.TestCase):
+    """The lib-level backfill: matching, idempotency, byte stability."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _corpus(self, data: dict, name: str = "skill-design.json") -> str:
+        path = os.path.join(self._tmp.name, name)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+        return path
+
+    def _unit(self, description: str) -> de.Unit:
+        return de.Unit(
+            name="skill-design", kind=de.KIND_CAPABILITY,
+            description=description, path="/skill-design",
+        )
+
+    def test_writes_expected_hash_and_reports_updated(self) -> None:
+        path = self._corpus(valid_corpus_dict())
+        outcome = de.backfill_corpus_hashes([path], [self._unit("design skills")])
+        self.assertEqual(outcome.updated, [path])
+        self.assertEqual(outcome.unchanged, [])
+        with open(path, "r", encoding="utf-8") as handle:
+            written = json.load(handle)
+        self.assertEqual(
+            written["description_sha256"],
+            de.compute_description_sha256("design skills"),
+        )
+
+    def test_second_run_is_a_byte_for_byte_no_op(self) -> None:
+        path = self._corpus(valid_corpus_dict())
+        units = [self._unit("design skills")]
+        de.backfill_corpus_hashes([path], units)
+        with open(path, "r", encoding="utf-8") as handle:
+            after_first = handle.read()
+        outcome = de.backfill_corpus_hashes([path], units)
+        with open(path, "r", encoding="utf-8") as handle:
+            after_second = handle.read()
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [path])
+        self.assertEqual(after_first, after_second)
+
+    def test_unmatched_target_warns_and_leaves_file_untouched(self) -> None:
+        path = self._corpus(valid_corpus_dict())
+        with open(path, "r", encoding="utf-8") as handle:
+            before = handle.read()
+        outcome = de.backfill_corpus_hashes([path], [])  # no candidate units
+        self.assertEqual(outcome.updated, [])
+        self.assertTrue(any("not found" in f for f in outcome.findings))
+        with open(path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_malformed_corpus_surfaces_fail_and_skips(self) -> None:
+        path = self._corpus({"target": "skill-design", "kind": "capability"})
+        outcome = de.backfill_corpus_hashes([path], [self._unit("design")])
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+
+
 if __name__ == "__main__":
     unittest.main()

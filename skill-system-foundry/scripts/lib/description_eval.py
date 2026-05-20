@@ -405,6 +405,82 @@ def check_cross_target_overlap(corpora: list[Corpus]) -> list[str]:
     return findings
 
 
+# --- corpus hash backfill ---------------------------------------------------
+
+
+@dataclass
+class BackfillOutcome:
+    """Result of a ``--backfill-hash`` sweep over a set of corpus files."""
+
+    updated: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
+
+
+def _write_corpus_hash(path: str, new_hash: str) -> bool:
+    """Set ``description_sha256`` in the corpus file; return True if bytes changed.
+
+    Re-reads the raw file so every other key (``_comment``, thresholds, …) is
+    preserved, then re-renders with the project's canonical JSON shape
+    (``indent=2``, ``ensure_ascii=False``, trailing newline, LF terminators).
+    A file already carrying the correct hash renders byte-identically and is
+    left untouched, which is what makes repeated backfills no-ops.
+    """
+    with open(path, "r", encoding="utf-8") as handle:
+        raw = handle.read()
+    data = json.loads(raw)
+    data["description_sha256"] = new_hash
+    rendered = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    if rendered == raw:
+        return False
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(rendered)
+    return True
+
+
+def backfill_corpus_hashes(
+    corpus_paths: list[str], candidates: list[Unit],
+) -> BackfillOutcome:
+    """Write ``description_sha256`` into each corpus header in place.
+
+    For every corpus that loads cleanly and maps to exactly one discovered
+    unit, compute the SHA-256 of that unit's resolved description and write it
+    into the corpus JSON.  Idempotent: a corpus already carrying the correct
+    hash is left byte-for-byte unchanged.  Corpora that fail to load (FAIL),
+    or whose target is missing / ambiguous among *candidates*, are skipped
+    with a finding; lower-severity shape findings are the runner's and audit's
+    concern, not backfill's, so they are not surfaced here.
+    """
+    outcome = BackfillOutcome()
+    for path in corpus_paths:
+        corpus, load_findings = load_corpus(path)
+        outcome.findings.extend(
+            f for f in load_findings if f.startswith(LEVEL_FAIL)
+        )
+        if corpus is None:
+            continue
+        base = to_posix(path)
+        matches = _matching_units(corpus, candidates)
+        if not matches:
+            outcome.findings.append(
+                f"{LEVEL_WARN}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) not found among discovered units — skipped"
+            )
+            continue
+        if len(matches) > 1:
+            parents = sorted((unit.parent or "<skill-root>") for unit in matches)
+            outcome.findings.append(
+                f"{LEVEL_WARN}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) is ambiguous — it matches units under "
+                f"{parents}; point --skill-set at a single skill root — skipped"
+            )
+            continue
+        new_hash = compute_description_sha256(matches[0].description)
+        changed = _write_corpus_hash(path, new_hash)
+        (outcome.updated if changed else outcome.unchanged).append(path)
+    return outcome
+
+
 # --- unit discovery + card extraction ---------------------------------------
 
 
