@@ -137,7 +137,6 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      default_min_precision: 0.85\n"
             "      default_min_recall: 0.85\n"
             "      heuristic_min_overlap: 0.05\n"
-            "      train_validation_ratio: 0.6\n"
             "      max_prompt_chars: 2000\n"
             "      diversity_distinct_bigram_min_ratio: 0.6\n"
             "      stopwords:\n"

@@ -226,7 +226,6 @@ _eval = _skill_desc["evaluation"]
 EVAL_DEFAULT_MIN_PRECISION = float(_eval["default_min_precision"])
 EVAL_DEFAULT_MIN_RECALL = float(_eval["default_min_recall"])
 EVAL_HEURISTIC_MIN_OVERLAP = float(_eval["heuristic_min_overlap"])
-EVAL_TRAIN_VALIDATION_RATIO = float(_eval["train_validation_ratio"])
 EVAL_MAX_PROMPT_CHARS = int(_eval["max_prompt_chars"])
 EVAL_DIVERSITY_RATIO = float(_eval["diversity_distinct_bigram_min_ratio"])
 EVAL_STOPWORDS = frozenset(str(_w) for _w in _eval["stopwords"])

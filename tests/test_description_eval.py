@@ -433,43 +433,8 @@ class ScoreHeuristicTests(unittest.TestCase):
 
 
 # ===================================================================
-# Split + metrics + pairwise
+# Metrics + pairwise
 # ===================================================================
-
-
-class SplitTrainValidationTests(unittest.TestCase):
-    def _corpus(self) -> de.Corpus:
-        return de.Corpus(
-            target="skill-design", kind=de.KIND_CAPABILITY,
-            positive=tuple(f"pos {i}" for i in range(10)),
-            negative=tuple(f"neg {i}" for i in range(10)),
-            min_precision=0.9, min_recall=0.8, source_path="/x.json",
-        )
-
-    def test_split_is_deterministic_for_same_seed(self) -> None:
-        corpus = self._corpus()
-        first = de.split_train_validation(corpus, 0.6, seed=7)
-        second = de.split_train_validation(corpus, 0.6, seed=7)
-        self.assertEqual(first, second)
-
-    def test_split_preserves_stratification_and_counts(self) -> None:
-        corpus = self._corpus()
-        train, validation = de.split_train_validation(corpus, 0.6, seed=7)
-        self.assertEqual(len(train.positive), 6)
-        self.assertEqual(len(validation.positive), 4)
-        self.assertEqual(len(train.negative), 6)
-        self.assertEqual(len(validation.negative), 4)
-        self.assertEqual(
-            set(train.positive) | set(validation.positive), set(corpus.positive),
-        )
-
-    def test_split_carries_metadata(self) -> None:
-        corpus = self._corpus()
-        train, validation = de.split_train_validation(corpus, 0.6, seed=1)
-        for half in (train, validation):
-            self.assertEqual(half.target, "skill-design")
-            self.assertEqual(half.min_precision, 0.9)
-            self.assertEqual(half.min_recall, 0.8)
 
 
 class AggregateTests(unittest.TestCase):
@@ -571,7 +536,7 @@ class EvaluateTests(unittest.TestCase):
 
     @staticmethod
     def _opts(**overrides: object) -> dict:
-        base = {"min_precision": 0.85, "min_recall": 0.85, "split_seed": None, "ratio": 0.6}
+        base = {"min_precision": 0.85, "min_recall": 0.85}
         base.update(overrides)
         return base
 
@@ -592,15 +557,6 @@ class EvaluateTests(unittest.TestCase):
         self.assertFalse(report.success)
         self.assertEqual(report.targets, [])
         self.assertTrue(any("was not found" in e for e in report.errors))
-
-    def test_split_uses_validation_half_as_gate(self) -> None:
-        report = de.evaluate(
-            [self._corpus()], self.candidates, self._opts(split_seed=1),
-        )
-        result = report.targets[0]
-        self.assertIsNotNone(result.validation_metrics)
-        self.assertEqual(report.split, {"seed": 1, "ratio": 0.6})
-        self.assertIs(result.gate_metrics, result.validation_metrics)
 
     def test_skill_target_competes_with_skills(self) -> None:
         other = de.Unit("other", de.KIND_SKILL, "unrelated skill", "/o")

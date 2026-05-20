@@ -171,14 +171,6 @@ class InProcessCliTests(CliBaseMixin):
         self.assertEqual(soft_code, 0)
         self.assertFalse(json.loads(soft_out)["success"])
 
-    def test_split_seed_reports_validation(self) -> None:
-        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        code, out, _err = _run_main(self._argv("--split-seed", "1", "--json"))
-        self.assertEqual(code, 0)
-        payload = json.loads(out)
-        self.assertEqual(payload["split"], {"seed": 1, "ratio": 0.6})
-        self.assertIsNotNone(payload["targets"][0]["validation_metrics"])
-
     def test_missing_corpus_errors(self) -> None:
         code, out, _err = _run_main(
             ["evaluate_descriptions.py", os.path.join(self.root, "nope"),

@@ -23,7 +23,6 @@ if _scripts_dir not in sys.path:
 from lib.constants import (
     EVAL_DEFAULT_MIN_PRECISION,
     EVAL_DEFAULT_MIN_RECALL,
-    EVAL_TRAIN_VALIDATION_RATIO,
     LEVEL_FAIL,
 )
 from lib.description_eval import (
@@ -56,10 +55,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--min-precision", dest="min_precision", type=float, default=None)
     parser.add_argument("--min-recall", dest="min_recall", type=float, default=None)
-    parser.add_argument(
-        "--split-seed", dest="split_seed", type=int, default=None,
-        help="Enable a stratified train/validation split with this seed.",
-    )
     parser.add_argument(
         "--soft", action="store_true",
         help="Exit 0 even on threshold breach (findings still emitted).",
@@ -116,10 +111,6 @@ def _target_to_dict(result: TargetResult) -> dict:
         "kind": result.kind,
         "candidate_count": result.candidate_count,
         "metrics": _metrics_to_dict(result.metrics),
-        "validation_metrics": (
-            _metrics_to_dict(result.validation_metrics)
-            if result.validation_metrics is not None else None
-        ),
         "advisory": result.advisory,
     }
 
@@ -132,7 +123,6 @@ def _report_to_json(report: EvalReport) -> str:
             "min_precision": report.min_precision,
             "min_recall": report.min_recall,
         },
-        "split": report.split,
         "targets": [_target_to_dict(t) for t in report.targets],
         "findings": categorize_errors_for_json(report.errors),
     })
@@ -140,7 +130,7 @@ def _report_to_json(report: EvalReport) -> str:
 
 def _print_human(report: EvalReport, verbose: bool) -> None:
     for result in report.targets:
-        metrics = result.gate_metrics
+        metrics = result.metrics
         status = "PASS" if metrics.passed else "FAIL"
         print(
             f"[{status}] {result.kind} {result.target}: "
@@ -189,8 +179,6 @@ def main() -> None:
             args.min_recall if args.min_recall is not None
             else EVAL_DEFAULT_MIN_RECALL
         ),
-        "split_seed": args.split_seed,
-        "ratio": EVAL_TRAIN_VALIDATION_RATIO,
     }
 
     report = evaluate(corpora, units, opts)

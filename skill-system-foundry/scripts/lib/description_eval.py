@@ -30,8 +30,8 @@ For a target unit ``T`` each prompt's prediction is the single selected unit or
 
 ``precision = TP / (TP + FP)`` and ``recall = TP / (TP + FN)``; each defaults to
 ``1.0`` when its denominator is ``0``.  The threshold gate compares these point
-estimates (the validation half when a split is active).  Pairwise confusion is
-reported in the JSON payload but never gates exit status.
+estimates.  Pairwise confusion is reported in the JSON payload but never gates
+exit status.
 
 Library contract
 ----------------
@@ -42,7 +42,6 @@ No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
 
 import json
 import os
-import random
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -138,13 +137,7 @@ class TargetResult:
     candidate_count: int
     metrics: Metrics
     scored: tuple[ScoredQuery, ...]
-    validation_metrics: Metrics | None = None
     advisory: dict = field(default_factory=dict)
-
-    @property
-    def gate_metrics(self) -> Metrics:
-        """Metrics that decide pass/fail: the validation half if split, else full."""
-        return self.validation_metrics or self.metrics
 
 
 @dataclass
@@ -153,14 +146,13 @@ class EvalReport:
 
     min_precision: float
     min_recall: float
-    split: dict | None
     targets: list[TargetResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
-        """True when every target cleared its gate and no FAIL finding fired."""
-        return all(t.gate_metrics.passed for t in self.targets) and not any(
+        """True when every target cleared its threshold and no FAIL fired."""
+        return all(t.metrics.passed for t in self.targets) and not any(
             e.startswith(LEVEL_FAIL) for e in self.errors
         )
 
@@ -492,40 +484,6 @@ def score_heuristic(prompt: str, candidates: list[Unit]) -> str | None:
     return best_name
 
 
-# --- deterministic split ----------------------------------------------------
-
-
-def split_train_validation(
-    corpus: Corpus, ratio: float, seed: int,
-) -> tuple[Corpus, Corpus]:
-    """Stratified, deterministic train/validation split keyed by *seed*.
-
-    *ratio* is the train fraction; positives and negatives are split
-    independently (stratified) so both halves keep the corpus's pos/neg
-    structure.  Identical *seed* yields identical splits.
-    """
-    rng = random.Random(seed)
-
-    def split_side(items: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        ordered = list(items)
-        rng.shuffle(ordered)
-        cut = int(round(len(ordered) * ratio))
-        return tuple(ordered[:cut]), tuple(ordered[cut:])
-
-    pos_train, pos_val = split_side(corpus.positive)
-    neg_train, neg_val = split_side(corpus.negative)
-
-    def rebuild(positive: tuple[str, ...], negative: tuple[str, ...]) -> Corpus:
-        return Corpus(
-            target=corpus.target, kind=corpus.kind,
-            positive=positive, negative=negative,
-            min_precision=corpus.min_precision, min_recall=corpus.min_recall,
-            source_path=corpus.source_path,
-        )
-
-    return rebuild(pos_train, neg_train), rebuild(pos_val, neg_val)
-
-
 # --- metrics aggregation ----------------------------------------------------
 
 
@@ -613,19 +571,12 @@ def evaluate(
 ) -> EvalReport:
     """Score every corpus against *candidates* and assemble the report.
 
-    *opts* carries the resolved options: ``min_precision``, ``min_recall``,
-    ``split_seed`` (``None`` to disable), and ``ratio``.  The exit-affecting
-    gate compares point estimates — the validation half when a split is active;
-    pairwise confusion is advisory.
+    *opts* carries the resolved options: ``min_precision`` and ``min_recall``.
+    The exit-affecting gate compares the point estimate; pairwise confusion is
+    advisory.
     """
-    split_seed = opts.get("split_seed")
-    split_info = (
-        {"seed": split_seed, "ratio": opts["ratio"]}
-        if split_seed is not None else None
-    )
     report = EvalReport(
         min_precision=opts["min_precision"], min_recall=opts["min_recall"],
-        split=split_info,
     )
 
     for corpus in corpora:
@@ -649,26 +600,13 @@ def evaluate(
 
         scored = _score_corpus(corpus, candidate_set)
         metrics = aggregate(scored, corpus.target, min_precision, min_recall)
-
-        validation_metrics = None
-        if split_seed is not None:
-            _train, validation = split_train_validation(
-                corpus, opts["ratio"], split_seed,
-            )
-            held_out = set(validation.positive) | set(validation.negative)
-            validation_scored = [q for q in scored if q.prompt in held_out]
-            validation_metrics = aggregate(
-                validation_scored, corpus.target, min_precision, min_recall,
-            )
-
         advisory = {"pairwise_confusion": pairwise_confusion(scored, corpus.target)}
 
         report.targets.append(
             TargetResult(
                 target=corpus.target, kind=corpus.kind,
                 candidate_count=len(candidate_set), metrics=metrics,
-                scored=tuple(scored), validation_metrics=validation_metrics,
-                advisory=advisory,
+                scored=tuple(scored), advisory=advisory,
             )
         )
 

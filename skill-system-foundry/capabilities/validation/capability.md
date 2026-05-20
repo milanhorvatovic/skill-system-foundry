@@ -70,7 +70,7 @@ The script checks: spec compliance (frontmatter fields, naming, line counts), de
 Structural checks confirm a description is *well-formed*; they do not confirm it *activates* on the right prompts. `evaluate_descriptions.py` measures activation precision and recall against a corpus of positive prompts (should activate the unit) and negative prompts (should not):
 
 ```bash
-python scripts/evaluate_descriptions.py <corpus-path> [--skill-set <dir>] [--min-precision <f>] [--min-recall <f>] [--split-seed <int>] [--soft] [--json] [--verbose]
+python scripts/evaluate_descriptions.py <corpus-path> [--skill-set <dir>] [--min-precision <f>] [--min-recall <f>] [--soft] [--json] [--verbose]
 ```
 
 **Corpus format.** A corpus is one JSON file per discoverable unit, or a directory of them. Each file declares `target` (the unit name), `kind` (`"skill"` or `"capability"`), and `positive` / `negative` prompt lists; optional `min_precision` / `min_recall` override the CLI thresholds. The meta-skill's own corpus lives under `tests/skill-corpus/skill-system-foundry/`; integrators place theirs anywhere and pass the path. The starter template is [assets/description-test-cases/skill.json](../../assets/description-test-cases/skill.json). The loader enforces shape rules (minimum 4 prompts per side, no duplicates, no pos/neg contradiction, length and control-character limits); their thresholds live under `skill.description.evaluation` in [configuration.yaml](../../scripts/lib/configuration.yaml).
@@ -79,7 +79,7 @@ python scripts/evaluate_descriptions.py <corpus-path> [--skill-set <dir>] [--min
 
 **Heuristic scoring.** Pure stdlib, deterministic, free. It selects the highest Jaccard token overlap between the prompt and each candidate card, or `none` below `heuristic_min_overlap`. It runs on every PR with `--soft` — a smoke check on description-vocabulary coverage, not ground truth, since the corpus author also writes the description. Higher-fidelity activation testing against a real model is a separate, opt-in workstream and is intentionally not bundled here, so the meta-skill stays stdlib-only and AI-agnostic.
 
-**Thresholds and exit code.** `--min-precision` / `--min-recall` gate the exit code on the point estimate (the validation half when `--split-seed` is given); `--soft` reports findings but always exits 0. Per-target pairwise confusion (which other unit stole a prompt) is advisory JSON output only.
+**Thresholds and exit code.** `--min-precision` / `--min-recall` gate the exit code on the point estimate; `--soft` reports findings but always exits 0. Per-target pairwise confusion (which other unit stole a prompt) is advisory JSON output only.
 
 ## Gotchas
 

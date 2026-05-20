@@ -93,9 +93,6 @@ skill:
       # a prompt and any candidate card falls below this, the heuristic
       # scorer predicts `none` instead of forcing a pick.  Tune via PR.
       heuristic_min_overlap: 0.05
-      # Stratified train/validation split ratio when --split-seed is
-      # given.  The held-out half is used for the threshold gate.
-      train_validation_ratio: 0.6
       # Per-prompt length cap (chars).  Above this, corpus rule FAILs.
       max_prompt_chars: 2000
       # Phrasing-diversity threshold: at least this fraction of prompts
