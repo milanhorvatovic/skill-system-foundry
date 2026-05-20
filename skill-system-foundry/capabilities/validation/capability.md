@@ -79,7 +79,7 @@ python scripts/evaluate_descriptions.py <corpus-path> [--skill-set <dir>] [--min
 
 **Heuristic scoring.** Pure stdlib, deterministic, free. It selects the highest Jaccard token overlap between the prompt and each candidate card, or `none` below `heuristic_min_overlap`. It runs on every PR with `--soft` — a smoke check on description-vocabulary coverage, not ground truth, since the corpus author also writes the description. Higher-fidelity activation testing against a real model is a separate, opt-in workstream and is intentionally not bundled here, so the meta-skill stays stdlib-only and AI-agnostic.
 
-**Thresholds and exit code.** `--min-precision` / `--min-recall` gate the exit code on the point estimate; `--soft` reports findings but always exits 0. Per-target pairwise confusion (which other unit stole a prompt) is advisory JSON output only.
+**Thresholds and exit code.** `--min-precision` / `--min-recall` gate the exit code on the point estimate; `--soft` reports findings but always exits 0. Per-target pairwise confusion (which sibling a target's own positive prompts were misrouted to) is advisory — emitted in JSON, and in human output under `--verbose`.
 
 ## Gotchas
 

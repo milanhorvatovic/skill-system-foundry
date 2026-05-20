@@ -11,7 +11,7 @@
   "negative": [
     "Bundle this skill into a zip",
     "Validate my skill against the spec",
-    "Deploy the skill to Claude Code",
+    "Set up a deployment pointer with symlinks",
     "Help me write a web scraper"
   ]
 }
