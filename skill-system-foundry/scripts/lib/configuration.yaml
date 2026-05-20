@@ -194,8 +194,13 @@ skill:
 
       # R3 + R4 — Length tier guidance.  The hard FAIL at >1024 stays
       # in the existing length rule (description.max_length).  These
-      # are advisory INFOs at the soft edges of the spectrum.
-      length_tier_warn_below: 200
+      # are advisory INFOs at the soft edges of the spectrum.  The
+      # lower tier sits below the bundle.description_max_length cap
+      # (200, enforced as an error for the 'claude' target) so a
+      # maximally-sized claude description is not simultaneously
+      # flagged as "too short" — it also keeps every shipped foundry
+      # description (meta-skill, examples, .agents/skills) clean.
+      length_tier_warn_below: 160
       length_tier_warn_above: 800
 
       # R7 — Domain-vocabulary presence (INFO, opt-in).  Counts

@@ -43,6 +43,12 @@ from lib.validation import (
     validate_name,
     validate_allowed_tools,
     validate_description_triggers,
+    validate_description_negative_triggers,
+    validate_description_filler,
+    validate_description_boundary,
+    validate_description_length_tiers,
+    validate_description_vocabulary,
+    validate_description_redundancy,
     validate_metadata,
     validate_license,
     validate_known_keys,
@@ -58,6 +64,7 @@ from lib.constants import (
     MAX_BODY_LINES, MAX_COMPATIBILITY_CHARS,
     RE_XML_TAG, RE_FIRST_PERSON, RE_FIRST_PERSON_PLURAL,
     RE_SECOND_PERSON, RE_IMPERATIVE_START,
+    DESCRIPTION_TRIGGER_MIN_COUNT,
     RECOGNIZED_DIRS,
     DIR_CAPABILITIES,
     FILE_SKILL_MD, FILE_CAPABILITY_MD, SEPARATOR_WIDTH,
@@ -147,9 +154,27 @@ def validate_description(description: str) -> tuple[list[str], list[str]]:
     else:
         passes.append("description: third-person voice")
 
-    trigger_errors, trigger_passes = validate_description_triggers(description)
+    trigger_errors, trigger_passes = validate_description_triggers(
+        description, minimum_count=DESCRIPTION_TRIGGER_MIN_COUNT,
+    )
     errors.extend(trigger_errors)
     passes.extend(trigger_passes)
+
+    # Structural description-quality rules (R2-R9).  Each returns
+    # (errors, passes) and accumulates into the existing FAIL / WARN /
+    # INFO streams; all are advisory (INFO / WARN), none introduce a
+    # FAIL.  Settings live under skill.description.structural_rules.
+    for structural_rule in (
+        validate_description_negative_triggers,
+        validate_description_filler,
+        validate_description_boundary,
+        validate_description_length_tiers,
+        validate_description_vocabulary,
+        validate_description_redundancy,
+    ):
+        rule_errors, rule_passes = structural_rule(description)
+        errors.extend(rule_errors)
+        passes.extend(rule_passes)
 
     return errors, passes
 

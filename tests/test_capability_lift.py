@@ -115,8 +115,9 @@ def _mechanical_lift(parent_skill: str, capability_name: str, dest: str) -> None
             "---\n"
             f"name: {capability_name}\n"
             "description: >\n"
-            f"  Lifted from a capability for testing — triggers when "
-            f"exercising the {capability_name} workflow end to end.\n"
+            f"  Lifted from the {capability_name} capability for testing — "
+            f"triggers when exercising the {capability_name} workflow; use "
+            "when validating the lift end to end.\n"
             "---\n"
         )
         with open(skill_md, "w", encoding="utf-8") as f:
