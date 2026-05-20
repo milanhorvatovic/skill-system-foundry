@@ -5,6 +5,7 @@ import glob
 import os
 import re
 from collections import Counter
+from itertools import islice
 
 from .constants import (
     MAX_NAME_CHARS, MIN_NAME_CHARS,
@@ -219,6 +220,19 @@ def validate_description_triggers(
 _RE_WORD_TOKEN = re.compile(r"[a-z0-9][a-z0-9'-]*")
 
 
+# Pre-compiled word-boundary patterns for each R5 filler phrase.  The
+# phrase list is fixed once ``constants`` loads, so recompiling per phrase
+# on every call is pure repeated work; build the ``(phrase, pattern)``
+# pairs once at import.  ``re.escape`` keeps a phrase containing regex
+# metacharacters literal, and the ``(?<![a-z0-9]) ... (?![a-z0-9])``
+# guards reproduce the word-boundary match exactly (so "handles" does not
+# fire inside "mishandles").
+_FILLER_PHRASE_PATTERNS = tuple(
+    (phrase, re.compile(r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])"))
+    for phrase in DESCRIPTION_FILLER_PHRASES
+)
+
+
 def _description_content_tokens(description: str) -> list[str]:
     """Lowercase *description* and return word tokens with structural
     stopwords removed.
@@ -288,16 +302,25 @@ def validate_description_filler(
         return errors, passes
     lowered = description.lower()
     flagged: list[str] = []
-    for phrase in DESCRIPTION_FILLER_PHRASES:
-        # Word-boundary guards (no alphanumeric immediately before/after)
-        # so a single-word phrase like "handles" does not match inside
-        # "mishandles".  Phrases are already lowercased in constants.
-        pattern = re.compile(
-            r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])"
-        )
+    for phrase, pattern in _FILLER_PHRASE_PATTERNS:
+        # Patterns are pre-compiled at import (see _FILLER_PHRASE_PATTERNS);
+        # their word-boundary guards mean a single-word phrase like
+        # "handles" does not match inside "mishandles".  Phrases are
+        # already lowercased in constants.
         for match in pattern.finditer(lowered):
-            after = lowered[match.end():]
-            following = _RE_WORD_TOKEN.findall(after)[:DESCRIPTION_FILLER_LOOKAHEAD]
+            # Look ahead at the next DESCRIPTION_FILLER_LOOKAHEAD word
+            # tokens after the phrase.  ``finditer`` with an explicit
+            # start position scans the original string in place (no tail
+            # slice), and ``islice`` halts the lazy scan once the window
+            # is full — so the work is bounded by the look-ahead window
+            # rather than the remaining description length.
+            following = [
+                m.group()
+                for m in islice(
+                    _RE_WORD_TOKEN.finditer(lowered, match.end()),
+                    DESCRIPTION_FILLER_LOOKAHEAD,
+                )
+            ]
             has_qualifier = any(
                 token not in DESCRIPTION_STRUCTURAL_STOPWORDS and len(token) >= 3
                 for token in following
