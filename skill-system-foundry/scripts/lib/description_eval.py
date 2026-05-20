@@ -44,6 +44,7 @@ import json
 import os
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .constants import (
@@ -167,7 +168,7 @@ def _has_control_chars(text: str) -> bool:
 
 def _check_prompt_rules(
     positive: list[str], negative: list[str],
-    fail, warn,
+    fail: Callable[[str], None], warn: Callable[[str], None],
 ) -> None:
     """Apply the prompt-level corpus-shape rules.
 
@@ -252,7 +253,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             raw = handle.read()
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         fail(f"cannot read corpus file ({exc.__class__.__name__})")
         return None, findings
     try:
@@ -382,14 +383,30 @@ def _first_paragraph_after_heading(body: str) -> str:
     return " ".join(paragraph).strip()
 
 
+def _safe_load_frontmatter(path: str) -> tuple[dict, str]:
+    """Load frontmatter defensively for discovery.
+
+    Unreadable, undecodable, or YAML-parse-error files yield an empty card
+    ``({}, "")`` rather than crashing the evaluator; a file without frontmatter
+    yields ``({}, <full body>)``.
+    """
+    try:
+        frontmatter, body, _findings = load_frontmatter(path)
+    except (OSError, UnicodeError):
+        return {}, ""
+    if isinstance(frontmatter, dict) and "_parse_error" in frontmatter:
+        return {}, ""
+    return (frontmatter if isinstance(frontmatter, dict) else {}), (body or "")
+
+
 def extract_capability_card(capability_md_path: str, dir_name: str) -> tuple[str, str]:
     """Return ``(name, description)`` for a capability.
 
     Name is *dir_name* (capabilities carry no frontmatter ``name``); description
     is the first non-empty body paragraph after the ``# Heading`` line in
-    *capability_md_path* (empty when none exists).
+    *capability_md_path* (empty when none exists or the file is unreadable).
     """
-    _frontmatter, body, _findings = load_frontmatter(capability_md_path)
+    _frontmatter, body = _safe_load_frontmatter(capability_md_path)
     return dir_name, _first_paragraph_after_heading(body)
 
 
@@ -397,8 +414,7 @@ def _units_for_skill(skill_dir: str) -> list[Unit]:
     """Build the skill Unit plus a Unit for each of its capabilities."""
     units: list[Unit] = []
     skill_md = os.path.join(skill_dir, FILE_SKILL_MD)
-    frontmatter, _body, _findings = load_frontmatter(skill_md)
-    frontmatter = frontmatter or {}
+    frontmatter, _body = _safe_load_frontmatter(skill_md)
     name = str(frontmatter.get("name") or os.path.basename(skill_dir))
     description = str(frontmatter.get("description") or "")
     units.append(
@@ -518,10 +534,17 @@ def aggregate(
 def pairwise_confusion(
     scored: list[ScoredQuery], target: str,
 ) -> dict[str, int]:
-    """Count, per wrongly-selected unit, how often it stole *target*'s prompts."""
+    """Count, per sibling unit, how often a *positive* prompt for *target* was
+    misrouted to that unit (a real boundary confusion).
+
+    Only positive prompts count: a negative prompt that correctly selects a
+    different unit is the expected outcome, not confusion against *target*.
+    """
     votes = Counter(
         query.prediction for query in scored
-        if query.prediction is not None and query.prediction != target
+        if query.label == LABEL_POSITIVE
+        and query.prediction is not None
+        and query.prediction != target
     )
     return dict(sorted(votes.items()))
 
@@ -529,23 +552,21 @@ def pairwise_confusion(
 # --- orchestrator -----------------------------------------------------------
 
 
-def _candidate_set(corpus: Corpus, candidates: list[Unit]) -> list[Unit] | None:
-    """Resolve the candidate units a target discriminates against.
+def _matching_units(corpus: Corpus, candidates: list[Unit]) -> list[Unit]:
+    """All discovered units whose name and kind match the corpus target."""
+    return [
+        unit for unit in candidates
+        if unit.name == corpus.target and unit.kind == corpus.kind
+    ]
+
+
+def _candidate_set(target_unit: Unit, candidates: list[Unit]) -> list[Unit]:
+    """Resolve the candidate units *target_unit* discriminates against.
 
     Skills compete with sibling skills; capabilities with sibling capabilities
-    under the same parent skill.  Returns ``None`` when the corpus target is not
-    among the discovered units.
+    under the same parent skill.
     """
-    target_unit = next(
-        (
-            unit for unit in candidates
-            if unit.name == corpus.target and unit.kind == corpus.kind
-        ),
-        None,
-    )
-    if target_unit is None:
-        return None
-    if corpus.kind == KIND_SKILL:
+    if target_unit.kind == KIND_SKILL:
         return [unit for unit in candidates if unit.kind == KIND_SKILL]
     return [
         unit for unit in candidates
@@ -580,14 +601,23 @@ def evaluate(
     )
 
     for corpus in corpora:
-        candidate_set = _candidate_set(corpus, candidates)
-        if candidate_set is None:
+        base = os.path.basename(corpus.source_path)
+        matches = _matching_units(corpus, candidates)
+        if not matches:
             report.errors.append(
-                f"{LEVEL_FAIL}: [foundry] {os.path.basename(corpus.source_path)}: "
-                f"target '{corpus.target}' ({corpus.kind}) was not found among "
-                "the discovered units"
+                f"{LEVEL_FAIL}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) was not found among the discovered units"
             )
             continue
+        if len(matches) > 1:
+            parents = sorted((unit.parent or "<skill-root>") for unit in matches)
+            report.errors.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) is ambiguous — it matches units under "
+                f"{parents}; point --skill-set at a single skill root"
+            )
+            continue
+        candidate_set = _candidate_set(matches[0], candidates)
 
         min_precision = (
             corpus.min_precision if corpus.min_precision is not None

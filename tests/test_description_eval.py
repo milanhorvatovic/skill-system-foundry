@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -390,6 +391,19 @@ class CapabilityCardTests(unittest.TestCase):
         _name, description = de.extract_capability_card(path, "x")
         self.assertEqual(description, "Plain intro line.")
 
+    def test_unreadable_file_yields_empty_description(self) -> None:
+        path = os.path.join(self._tmp.name, "binary.md")
+        with open(path, "wb") as handle:
+            handle.write(b"\xff\xfe not valid utf-8 \x00")
+        self.assertEqual(de.extract_capability_card(path, "broken"), ("broken", ""))
+
+    def test_parse_error_frontmatter_yields_empty_card(self) -> None:
+        with mock.patch.object(
+            de, "load_frontmatter",
+            return_value=({"_parse_error": "boom"}, "# H\n\nIntro\n", []),
+        ):
+            self.assertEqual(de._safe_load_frontmatter("/x"), ({}, ""))
+
 
 # ===================================================================
 # Heuristic scorer
@@ -488,17 +502,18 @@ class AggregateTests(unittest.TestCase):
 
 
 class PairwiseConfusionTests(unittest.TestCase):
-    def test_counts_only_wrong_units(self) -> None:
+    def test_counts_only_misrouted_positives(self) -> None:
         scored = [
-            de.ScoredQuery(de.LABEL_POSITIVE, de.LABEL_POSITIVE, "skill-design"),
-            de.ScoredQuery("a", de.LABEL_NEGATIVE, None),
-            de.ScoredQuery("b", de.LABEL_NEGATIVE, "bundling"),
-            de.ScoredQuery("c", de.LABEL_POSITIVE, "bundling"),
-            de.ScoredQuery("d", de.LABEL_NEGATIVE, "validation"),
+            de.ScoredQuery("p1", de.LABEL_POSITIVE, "skill-design"),  # correct
+            de.ScoredQuery("p2", de.LABEL_POSITIVE, "bundling"),      # misrouted positive
+            de.ScoredQuery("p3", de.LABEL_POSITIVE, "bundling"),      # misrouted positive
+            de.ScoredQuery("p4", de.LABEL_POSITIVE, None),            # missed, not a steal
+            de.ScoredQuery("n1", de.LABEL_NEGATIVE, "bundling"),      # negative correctly off-target
+            de.ScoredQuery("n2", de.LABEL_NEGATIVE, "validation"),    # negative correctly off-target
         ]
+        # Only positive prompts misrouted to a sibling count.
         self.assertEqual(
-            de.pairwise_confusion(scored, "skill-design"),
-            {"bundling": 2, "validation": 1},
+            de.pairwise_confusion(scored, "skill-design"), {"bundling": 2},
         )
 
 
@@ -548,7 +563,8 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(result.metrics.tp, 4)
         self.assertEqual(result.metrics.fp, 0)
         self.assertTrue(result.metrics.passed)
-        self.assertEqual(result.advisory["pairwise_confusion"], {"bundling": 2})
+        # Positives all route correctly, so there is no boundary confusion.
+        self.assertEqual(result.advisory["pairwise_confusion"], {})
 
     def test_missing_target_records_fail(self) -> None:
         report = de.evaluate(
@@ -566,6 +582,20 @@ class EvaluateTests(unittest.TestCase):
             candidates, self._opts(),
         )
         self.assertEqual(report.targets[0].candidate_count, 2)
+
+    def test_ambiguous_capability_target_fails(self) -> None:
+        # Two skills, each with a 'validation' capability — the corpus target
+        # cannot be disambiguated, so it must FAIL rather than score the wrong one.
+        candidates = [
+            de.Unit("alpha", de.KIND_SKILL, "alpha skill", "/a"),
+            de.Unit("validation", de.KIND_CAPABILITY, "validate alpha", "/a/v", parent="alpha"),
+            de.Unit("beta", de.KIND_SKILL, "beta skill", "/b"),
+            de.Unit("validation", de.KIND_CAPABILITY, "validate beta", "/b/v", parent="beta"),
+        ]
+        report = de.evaluate([self._corpus()], candidates, self._opts())
+        self.assertFalse(report.success)
+        self.assertEqual(report.targets, [])
+        self.assertTrue(any("ambiguous" in e for e in report.errors))
 
 
 # ===================================================================
