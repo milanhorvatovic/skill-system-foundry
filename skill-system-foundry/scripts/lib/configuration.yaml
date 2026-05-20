@@ -140,6 +140,135 @@ skill:
         - as
         - do
         - does
+    # Structural description-quality rules (validate_skill.py only).
+    # Eight checks layered on top of the length / character-set /
+    # voice / trigger-presence rules above.  All route through the
+    # existing FAIL / WARN / INFO machinery; none introduce a new
+    # entry point or require a corpus.  Numeric scalars load as
+    # strings (custom YAML parser) and are converted in constants.py.
+    structural_rules:
+      # R6 — Trigger-clause strength.  Reuses the trigger_phrases list
+      # above (single source of truth — there is no separate
+      # imperative_phrases list; the agentskills.io "use imperative
+      # phrasing" guidance is satisfied by those phrases).  Graduated
+      # and non-blocking: 0 distinct triggers -> WARN, 1 -> WARN,
+      # >=2 -> pass.  validate_description opts into this minimum;
+      # validate_description_triggers defaults to minimum_count=1, so
+      # audit_skill_system.py keeps its existing behaviour unchanged.
+      trigger_minimum_count: 2
+
+      # R2 — Negative triggers.  INFO when present — naming when the
+      # skill should NOT activate aids routing.  Case-insensitive
+      # substring on the lowered description.
+      negative_trigger_phrases:
+        - don't use when
+        - do not use
+        - not for
+        - skip when
+        - avoid when
+
+      # R5 — Filler detection.  WARN only when one of these phrases is
+      # followed by no concrete (non-stopword) word within the next
+      # few tokens — i.e. the phrase trails into a stopword or the end
+      # of the description.  "handles skill manifests" is fine;
+      # "handles things"/"handles" trailing is not.  The look-ahead
+      # guard is what keeps legitimate uses of "handles" from firing.
+      filler_phrases:
+        - helps with
+        - useful for
+        - handles
+        - works with
+        - deals with
+
+      # R8 — Boundary clauses.  INFO.  Names the boundary against an
+      # adjacent skill ("X vs Y", "use Y instead").  Distinct from R2:
+      # R2 = "do not activate at all", R8 = "which adjacent skill to
+      # use instead".  Leading/trailing spaces in quoted entries are
+      # significant and preserved (" vs " must not match "vs" inside a
+      # word) — constants.py lowercases but does not strip these.
+      boundary_clause_phrases:
+        - " vs "
+        - " not for "
+        - use instead
+        - rather than
+
+      # R3 + R4 — Length tier guidance.  The hard FAIL at >1024 stays
+      # in the existing length rule (description.max_length).  These
+      # are advisory INFOs at the soft edges of the spectrum.
+      length_tier_warn_below: 200
+      length_tier_warn_above: 800
+
+      # R7 — Domain-vocabulary presence (INFO, opt-in).  Counts
+      # DISTINCT matching tokens; INFO when below the minimum.  The
+      # list is integrator-owned: an EMPTY vocabulary_list DISABLES
+      # the rule entirely, so it never biases skills outside the
+      # foundry's domain.  The foundry ships its own vocabulary here
+      # for its own dogfood; integrators replace it (or empty it).
+      vocabulary_minimum: 3
+      vocabulary_list:
+        - validation
+        - audit
+        - bundling
+        - scaffolding
+        - corpus
+        - frontmatter
+        - manifest
+        - capability
+        - skill
+        - workflow
+        - migration
+        - changelog
+        - release
+        - pipeline
+        - configuration
+
+      # R9 — Over-repetition.  A content word that dominates the
+      # description signals padding.  Length-normalized so the rule is
+      # universal across short and long descriptions: WARN only when a
+      # word's raw count >= redundancy_min_count AND its share of all
+      # content tokens >= redundancy_max_ratio.  Tuned against the
+      # meta-skill + .agents/skills/ corpus (top content-word ratios
+      # run ~4-20%) so good "pushy" descriptions that repeat their
+      # subject noun stay silent and only genuine padding trips it.
+      redundancy_min_count: 5
+      redundancy_max_ratio: 0.22
+
+      # Stopwords for R7 and R9 tokenization.  Distinct from the
+      # eval-runner stopwords above (those are tuned for prompt
+      # tokenization).  Trigger-scaffolding words (use/when/triggers/
+      # ...) are stripped too so the trigger phrasing R6 rewards does
+      # not count as R9 over-repetition.
+      stopwords:
+        - the
+        - a
+        - an
+        - of
+        - in
+        - on
+        - at
+        - to
+        - for
+        - with
+        - by
+        - from
+        - is
+        - are
+        - this
+        - that
+        - and
+        - or
+        - also
+        - use
+        - used
+        - using
+        - when
+        - whenever
+        - triggers
+        - trigger
+        - activates
+        - activate
+        - invoked
+        - invoke
   body:
     max_lines: 500
     # Cross-file reference patterns.
