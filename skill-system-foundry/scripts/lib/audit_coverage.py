@@ -200,10 +200,11 @@ def find_missing_corpora(
         status, corpus = _classify_coverage(unit, loaded)
         if status == _COVERAGE_UNSAFE:
             findings.append(
-                f"{LEVEL_WARN}: [foundry] {qual} has a name with a path "
-                f"separator or '..' segment — refusing to map it to a corpus "
-                f"path (it could escape {EVAL_COVERAGE_CORPUS_ROOT}); rename "
-                f"the unit"
+                f"{LEVEL_WARN}: [foundry] {qual} has an unsafe name or skill "
+                f"name (a path separator, '..', or drive-letter prefix) — "
+                f"refusing to map it to a corpus path (it could escape "
+                f"{EVAL_COVERAGE_CORPUS_ROOT}); rename the offending unit or "
+                f"skill"
             )
             continue
         if qual in allowed:

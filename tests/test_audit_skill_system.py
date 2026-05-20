@@ -2869,6 +2869,20 @@ class CorpusCoverageWiringTests(unittest.TestCase):
         self.assertIn("no discoverable units", out)
         self.assertNotIn("complete and fresh", out)
 
+    def test_verbose_notes_freshness_disabled(self) -> None:
+        # With freshness_check_enabled false the verbose line must not claim
+        # "fresh" — freshness was never checked, so corpora could be stale.
+        import audit_skill_system as ass
+
+        self._write_all()
+        buf = io.StringIO()
+        with mock.patch.object(ass, "EVAL_COVERAGE_FRESHNESS_ENABLED", False), \
+                contextlib.redirect_stdout(buf):
+            audit_skill_system(self.root, verbose=True)
+        out = buf.getvalue()
+        self.assertIn("freshness check disabled", out)
+        self.assertNotIn("complete and fresh", out)
+
 
 if __name__ == "__main__":
     unittest.main()

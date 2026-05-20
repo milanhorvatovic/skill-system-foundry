@@ -180,6 +180,9 @@ class IdentitySafetyTests(CoverageBaseMixin):
         self.assertEqual(len(findings), 1)
         self.assertTrue(findings[0].startswith(LEVEL_WARN))
         self.assertIn("path separator", findings[0])
+        # The message must name both fields, since an unsafe parent (skill
+        # name) trips the same guard — don't point users at the wrong field.
+        self.assertIn("skill name", findings[0])
 
 
 # ===================================================================

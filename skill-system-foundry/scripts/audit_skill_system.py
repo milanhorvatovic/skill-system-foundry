@@ -89,6 +89,7 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     PATH_RESOLUTION_DOC_PATH,
     PATH_RESOLUTION_RULE_NAME,
+    EVAL_COVERAGE_FRESHNESS_ENABLED,
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
@@ -1078,7 +1079,15 @@ def audit_skill_system(
         coverage_findings = audit_corpus_coverage(system_root)
         errors.extend(coverage_findings)
         if not coverage_findings and verbose:
-            print("  ✓ corpus coverage: complete and fresh")
+            # Only claim freshness when the freshness rule actually ran; with
+            # freshness_check_enabled: false the corpora could be stale.
+            if EVAL_COVERAGE_FRESHNESS_ENABLED:
+                print("  ✓ corpus coverage: complete and fresh")
+            else:
+                print(
+                    "  ✓ corpus coverage: complete "
+                    "(freshness check disabled)"
+                )
 
     # --- Manifest ---
     if verbose:
