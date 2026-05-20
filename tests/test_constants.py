@@ -139,6 +139,8 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      heuristic_min_overlap: 0.05\n"
             "      max_prompt_chars: 2000\n"
             "      diversity_distinct_bigram_min_ratio: 0.6\n"
+            "      min_prompts_per_side: 4\n"
+            "      recommended_prompts_per_side: 8\n"
             "      stopwords:\n"
             "        - the\n"
             "  body:\n"

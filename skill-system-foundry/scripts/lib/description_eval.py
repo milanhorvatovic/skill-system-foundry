@@ -52,6 +52,8 @@ from .constants import (
     EVAL_DIVERSITY_RATIO,
     EVAL_HEURISTIC_MIN_OVERLAP,
     EVAL_MAX_PROMPT_CHARS,
+    EVAL_MIN_PROMPTS,
+    EVAL_RECOMMENDED_PROMPTS,
     EVAL_STOPWORDS,
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
@@ -198,13 +200,19 @@ def _check_prompt_rules(
                     f"characters: {prompt!r}"
                 )
 
-    # Per-side counts.
+    # Per-side counts (thresholds from configuration.yaml).
     for label, prompts in sides:
         count = len(prompts)
-        if count < 4:
-            fail(f"'{label}' has {count} prompts; at least 4 are required")
-        elif count <= 7:
-            warn(f"'{label}' has {count} prompts; 8-10 are recommended")
+        if count < EVAL_MIN_PROMPTS:
+            fail(
+                f"'{label}' has {count} prompts; at least {EVAL_MIN_PROMPTS} "
+                "are required"
+            )
+        elif count < EVAL_RECOMMENDED_PROMPTS:
+            warn(
+                f"'{label}' has {count} prompts; {EVAL_RECOMMENDED_PROMPTS}-10 "
+                "are recommended"
+            )
 
     # Duplicate prompts within a side.
     for label, prompts in sides:

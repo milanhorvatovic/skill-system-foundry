@@ -98,6 +98,10 @@ skill:
       # Phrasing-diversity threshold: at least this fraction of prompts
       # within a target must begin with distinct bigrams.
       diversity_distinct_bigram_min_ratio: 0.6
+      # Corpus prompt-count policy (per side): fewer than the minimum FAILs;
+      # at least the minimum but below the recommended count WARNs.
+      min_prompts_per_side: 4
+      recommended_prompts_per_side: 8
       # Stopwords stripped during heuristic tokenization.  Tune via PR.
       stopwords:
         - the
