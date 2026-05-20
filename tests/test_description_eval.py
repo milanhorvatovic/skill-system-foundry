@@ -412,5 +412,46 @@ class ScoreHeuristicTests(unittest.TestCase):
         self.assertIsNone(de.score_heuristic("anything", []))
 
 
+class SplitTrainValidationTests(unittest.TestCase):
+    def _corpus(self) -> de.Corpus:
+        return de.Corpus(
+            target="skill-design", kind=de.KIND_CAPABILITY,
+            positive=tuple(f"pos {i}" for i in range(10)),
+            negative=tuple(f"neg {i}" for i in range(10)),
+            min_precision=0.9, min_recall=0.8, source_path="/x.json",
+        )
+
+    def test_split_is_deterministic_for_same_seed(self) -> None:
+        corpus = self._corpus()
+        first = de.split_train_validation(corpus, 0.6, seed=7)
+        second = de.split_train_validation(corpus, 0.6, seed=7)
+        self.assertEqual(first, second)
+
+    def test_split_preserves_stratification_and_counts(self) -> None:
+        corpus = self._corpus()
+        train, validation = de.split_train_validation(corpus, 0.6, seed=7)
+        # 60% train of 10 -> 6 train / 4 validation, per side.
+        self.assertEqual(len(train.positive), 6)
+        self.assertEqual(len(validation.positive), 4)
+        self.assertEqual(len(train.negative), 6)
+        self.assertEqual(len(validation.negative), 4)
+        # No prompt is lost or duplicated across halves.
+        self.assertEqual(
+            set(train.positive) | set(validation.positive), set(corpus.positive),
+        )
+        self.assertEqual(
+            len(train.positive) + len(validation.positive), len(corpus.positive),
+        )
+
+    def test_split_carries_metadata(self) -> None:
+        corpus = self._corpus()
+        train, validation = de.split_train_validation(corpus, 0.6, seed=1)
+        for half in (train, validation):
+            self.assertEqual(half.target, "skill-design")
+            self.assertEqual(half.kind, de.KIND_CAPABILITY)
+            self.assertEqual(half.min_precision, 0.9)
+            self.assertEqual(half.min_recall, 0.8)
+
+
 if __name__ == "__main__":
     unittest.main()

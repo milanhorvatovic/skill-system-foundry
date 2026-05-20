@@ -53,6 +53,7 @@ No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
 
 import json
 import os
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -514,8 +515,32 @@ def score_heuristic(prompt: str, candidates: list[Unit]) -> str | None:
 def split_train_validation(
     corpus: Corpus, ratio: float, seed: int,
 ) -> tuple[Corpus, Corpus]:
-    """Stratified, deterministic train/validation split keyed by *seed*."""
-    raise NotImplementedError
+    """Stratified, deterministic train/validation split keyed by *seed*.
+
+    *ratio* is the train fraction; positives and negatives are split
+    independently (stratified) so both halves keep the corpus's pos/neg
+    structure.  Identical *seed* yields identical splits.
+    """
+    rng = random.Random(seed)
+
+    def split_side(items: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        ordered = list(items)
+        rng.shuffle(ordered)
+        cut = int(round(len(ordered) * ratio))
+        return tuple(ordered[:cut]), tuple(ordered[cut:])
+
+    pos_train, pos_val = split_side(corpus.positive)
+    neg_train, neg_val = split_side(corpus.negative)
+
+    def rebuild(positive: tuple[str, ...], negative: tuple[str, ...]) -> Corpus:
+        return Corpus(
+            target=corpus.target, kind=corpus.kind,
+            positive=positive, negative=negative,
+            min_precision=corpus.min_precision, min_recall=corpus.min_recall,
+            source_path=corpus.source_path,
+        )
+
+    return rebuild(pos_train, neg_train), rebuild(pos_val, neg_val)
 
 
 # --- metrics aggregation (step 8) -------------------------------------------
