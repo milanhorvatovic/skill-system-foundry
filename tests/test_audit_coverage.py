@@ -143,6 +143,22 @@ class IdentitySafetyTests(CoverageBaseMixin):
         )
         self.assertFalse(ac._has_safe_corpus_identity(evil))
 
+    def test_drive_letter_name_is_unsafe(self) -> None:
+        # "D:escape" has no separator and is not "..", but os.path.join
+        # resolves it to a drive-relative path on Windows, escaping the
+        # corpus root.  The guard must reject it like constants.py does.
+        evil = de.Unit(
+            name="D:escape", kind=de.KIND_SKILL, description="x", path="x",
+        )
+        self.assertFalse(ac._has_safe_corpus_identity(evil))
+
+    def test_drive_letter_parent_is_unsafe(self) -> None:
+        evil = de.Unit(
+            name="cap", kind=de.KIND_CAPABILITY,
+            description="x", path="x", parent="C:evil",
+        )
+        self.assertFalse(ac._has_safe_corpus_identity(evil))
+
     def test_loader_never_reads_outside_corpus_root(self) -> None:
         # Plant a file where a "../escape" traversal would resolve; the unsafe
         # unit must be skipped, never probed or read.

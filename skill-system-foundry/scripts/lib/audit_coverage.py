@@ -112,17 +112,20 @@ def _has_safe_corpus_identity(unit: Unit) -> bool:
     """True when *unit*'s name (and parent) cannot escape the corpus root.
 
     A unit's ``name`` — and a capability's ``parent`` — come straight from
-    untrusted ``SKILL.md`` frontmatter.  A value containing a path separator or
-    a bare ``..`` segment would interpolate into the corpus path and let the
-    audit probe (or read) files outside the corpus tree, so it is rejected
-    before any path is built.  Mirrors the guard ``constants.py`` applies to
-    ``corpus_root_relative``.
+    untrusted ``SKILL.md`` frontmatter.  A value containing a path separator, a
+    bare ``..`` segment, or a Windows drive-letter prefix (``D:escape``, which
+    ``os.path.join`` resolves to a drive-relative path) would interpolate into
+    the corpus path and let the audit probe (or read) files outside the corpus
+    tree, so it is rejected before any path is built.  Mirrors the guard
+    ``constants.py`` applies to ``corpus_root_relative``.
     """
     parts: list[str] = [unit.name]
     if unit.kind == KIND_CAPABILITY and unit.parent is not None:
         parts.append(unit.parent)
     for value in parts:
         if not value or "/" in value or "\\" in value or value == "..":
+            return False
+        if len(value) >= 2 and value[0].isalpha() and value[1] == ":":
             return False
     return True
 
