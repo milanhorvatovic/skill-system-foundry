@@ -180,6 +180,17 @@ The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocat
 
 In addition, `python scripts/yaml_conformance_report.py` runs the YAML 1.2.2 conformance corpus and emits the same `yaml_conformance.corpus` JSON slot for tooling consumers; exit 0 on all-pass, non-zero on any failure.
 
+### Evaluating Description Quality
+
+Structural validation does not test whether a description actually *activates* on the prompts it should. `evaluate_descriptions.py` measures activation precision and recall against a JSON corpus of positive (should activate) and negative (should not) prompts:
+
+```bash
+cd skill-system-foundry
+python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --skill-set . --soft --json
+```
+
+The meta-skill ships its own corpus under `tests/skill-corpus/skill-system-foundry/` (`skill.json` plus one file per capability). Heuristic mode (default) is pure stdlib, deterministic, and free; it runs on every PR via the `validate-examples` job in `python-tests.yaml` with `--soft` (advisory — never blocks a merge). LLM mode (`--llm`) classifies via a configured provider over `urllib` and needs that provider's API-key environment variable (`ANTHROPIC_API_KEY` for the default `anthropic` provider); run it locally or via the maintainer-only `.github/workflows/description-eval-llm.yaml` (`workflow_dispatch`, reads `secrets.ANTHROPIC_API_KEY`). Both new files are held to the 90% per-file branch-coverage bar in `python-tests.yaml`. Evaluation settings (thresholds, stopwords, providers) live under `skill.description.evaluation` in `scripts/lib/configuration.yaml`; the corpus format and unit card model are documented in `capabilities/validation/capability.md`.
+
 ### Measuring the Meta-Skill's Token Budget
 
 ```bash
