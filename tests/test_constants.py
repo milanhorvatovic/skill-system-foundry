@@ -142,7 +142,7 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      min_prompts_per_side: 4\n"
             "      recommended_prompts_per_side: 8\n"
             "      coverage:\n"
-            "        corpus_root_relative: tests/skill-corpus\n"
+            "        corpus_root_relative: tests/skill-corpus/\n"
             "        allowed_missing_corpus:\n"
             "          - demo/capabilities/alpha\n"
             "          - ./demo/capabilities/beta\n"
@@ -310,8 +310,8 @@ class AllowedOrphansConfigTests(unittest.TestCase):
                     "skills/foo/references/audit.md",
                 ),
             )
-            # Coverage block: corpus root verbatim, freshness coerced to bool,
-            # allow-list entries normalized (leading ./ stripped).
+            # Coverage block: corpus root trailing slash stripped, freshness
+            # coerced to bool, allow-list entries normalized (leading ./).
             self.assertEqual(
                 constants.EVAL_COVERAGE_CORPUS_ROOT, "tests/skill-corpus"
             )
@@ -1435,6 +1435,16 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 self._full_config_with_substitution(
                     "corpus_root_relative: tests/skill-corpus",
                     "corpus_root_relative: /absolute/path",
+                )
+            )
+        self.assertIn("corpus_root_relative", str(ctx.exception))
+
+    def test_coverage_corpus_root_parent_traversal_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "corpus_root_relative: tests/skill-corpus",
+                    "corpus_root_relative: ../tests/skill-corpus",
                 )
             )
         self.assertIn("corpus_root_relative", str(ctx.exception))

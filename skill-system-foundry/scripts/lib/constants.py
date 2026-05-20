@@ -294,11 +294,25 @@ EVAL_COVERAGE_CORPUS_ROOT = str(_coverage["corpus_root_relative"]).replace(
 ).strip()
 if EVAL_COVERAGE_CORPUS_ROOT.startswith("./"):
     EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT[2:]
-if not EVAL_COVERAGE_CORPUS_ROOT or EVAL_COVERAGE_CORPUS_ROOT.startswith("/"):
+EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT.rstrip("/")
+# Reject anything that would let the audit read outside the audit root, the
+# same way orphan_references.allowed_orphans entries are validated: empty,
+# absolute, drive-letter, or ``..``-bearing paths.
+if (
+    not EVAL_COVERAGE_CORPUS_ROOT
+    or EVAL_COVERAGE_CORPUS_ROOT.startswith("/")
+    or (
+        len(EVAL_COVERAGE_CORPUS_ROOT) >= 2
+        and EVAL_COVERAGE_CORPUS_ROOT[0].isalpha()
+        and EVAL_COVERAGE_CORPUS_ROOT[1] == ":"
+    )
+    or ".." in EVAL_COVERAGE_CORPUS_ROOT.split("/")
+):
     raise RuntimeError(
         "configuration.yaml has invalid value for "
         "'skill.description.evaluation.coverage.corpus_root_relative': "
-        "expected a non-empty relative POSIX path."
+        "expected a non-empty relative POSIX path without a leading '/', a "
+        "drive-letter prefix, or '..' segments."
     )
 _cov_freshness = str(
     _coverage.get("freshness_check_enabled", "true")
