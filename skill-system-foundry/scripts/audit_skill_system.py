@@ -92,6 +92,7 @@ from lib.constants import (
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
+from lib.audit_coverage import audit_corpus_coverage, resolve_corpus_root
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.router_table import audit_router_table
@@ -1051,6 +1052,26 @@ def audit_skill_system(
     errors.extend(stale_findings)
     if not stale_findings and verbose and ALLOWED_ORPHANS:
         print("  ✓ allowed_orphans: every entry resolves to an existing file")
+
+    # --- Corpus Coverage ---
+    # Audit-level description-quality coverage: every discoverable unit should
+    # have a corpus, each corpus stays fresh against its live description,
+    # capability corpora are consistent within a skill, and a committed corpus
+    # is large enough.  Units come from discover_units (a skill at the audit
+    # root or as an immediate subdirectory) — not find_skill_dirs — so the
+    # rules fire at the repo root where tests/skill-corpus resolves, while the
+    # skill-root self-check (no corpus under the skill) self-skips.
+    if verbose:
+        print("\n== Corpus Coverage ==")
+    coverage_root = resolve_corpus_root(system_root)
+    if not os.path.isdir(coverage_root):
+        if verbose:
+            print(f"  - skipped (no corpus root at {to_posix(coverage_root)})")
+    else:
+        coverage_findings = audit_corpus_coverage(system_root)
+        errors.extend(coverage_findings)
+        if not coverage_findings and verbose:
+            print("  ✓ corpus coverage: complete and fresh")
 
     # --- Manifest ---
     if verbose:

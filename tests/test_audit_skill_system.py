@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from helpers import write_text, write_skill_md
+from helpers import write_text, write_skill_md, write_capability_md
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -2775,6 +2775,86 @@ class AuditCrossPlatformChecksTests(unittest.TestCase):
                 f"SKILL.md); got infrastructure findings={scripts_labelled}"
             ),
         )
+
+
+# ===================================================================
+# Corpus-coverage wiring
+# ===================================================================
+
+
+class CorpusCoverageWiringTests(unittest.TestCase):
+    """audit_skill_system threads the corpus-coverage rules through its
+    finding stream, discovering units the way the eval runner does.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+        # 'demo' is an immediate subdirectory holding a SKILL.md, so
+        # discover_units (and therefore the coverage rules) find it even
+        # though there is no skills/ tree (distribution-repo mode).
+        skill_dir = os.path.join(self.root, "demo")
+        write_skill_md(
+            skill_dir, name="demo",
+            description="Designs and audits demo skill systems when asked",
+            body="# Demo\n",
+        )
+        write_capability_md(
+            skill_dir, "alpha", body="# Alpha\n\nalpha capability description\n",
+        )
+        write_capability_md(
+            skill_dir, "beta", body="# Beta\n\nbeta capability description\n",
+        )
+        self.corpus_root = os.path.join(self.root, "tests", "skill-corpus")
+
+    def _write_corpus(self, rel: str, target: str, kind: str, n: int = 8) -> None:
+        path = os.path.join(self.corpus_root, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = {
+            "target": target, "kind": kind,
+            "positive": [f"pos {target} {i} handle case" for i in range(n)],
+            "negative": [f"neg {target} {i} reject case" for i in range(n)],
+        }
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+
+    def _write_all(self) -> None:
+        self._write_corpus("demo/skill.json", "demo", "skill")
+        self._write_corpus("demo/capabilities/alpha.json", "alpha", "capability")
+        self._write_corpus("demo/capabilities/beta.json", "beta", "capability")
+
+    def test_no_corpus_root_emits_no_coverage_findings(self) -> None:
+        errors = audit_skill_system(self.root, verbose=False)
+        self.assertFalse(any("has no corpus" in e for e in errors))
+
+    def test_missing_corpora_warn_through_audit(self) -> None:
+        os.makedirs(self.corpus_root, exist_ok=True)  # root exists, files absent
+        errors = audit_skill_system(self.root, verbose=False)
+        missing = [e for e in errors if "has no corpus" in e]
+        self.assertEqual(len(missing), 3)  # skill + 2 capabilities
+        self.assertTrue(all(e.startswith(LEVEL_WARN) for e in missing))
+
+    def test_full_coverage_has_no_coverage_findings(self) -> None:
+        self._write_all()
+        errors = audit_skill_system(self.root, verbose=False)
+        for marker in ("has no corpus", "sibling parity", "is stale", "smaller side"):
+            self.assertFalse(
+                any(marker in e for e in errors),
+                f"unexpected coverage finding containing {marker!r}: {errors}",
+            )
+
+    def test_undersized_corpus_fails_through_audit(self) -> None:
+        self._write_corpus("demo/skill.json", "demo", "skill")
+        self._write_corpus("demo/capabilities/alpha.json", "alpha", "capability")
+        self._write_corpus(
+            "demo/capabilities/beta.json", "beta", "capability", n=5
+        )
+        errors = audit_skill_system(self.root, verbose=False)
+        size_fails = [
+            e for e in errors if e.startswith(LEVEL_FAIL) and "smaller side" in e
+        ]
+        self.assertEqual(len(size_fails), 1)
 
 
 if __name__ == "__main__":
