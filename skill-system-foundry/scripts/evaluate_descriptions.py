@@ -183,8 +183,9 @@ def main() -> None:
 
     parser.error = _json_aware_error  # type: ignore[assignment]
     args = parser.parse_args()
-    # Post-parse, honor argparse's parsed value: it handles flag abbreviation
-    # (e.g. --js -> --json) that the pre-parse argv scan above would miss.
+    # Post-parse, honor argparse's parsed value for the early-exit paths below.
+    # Abbreviation is disabled (allow_abbrev=False), so this only guards against
+    # argument-ordering differences, not `--js` -> `--json` expansion.
     json_mode = args.json_output
 
     for flag, value in (
