@@ -10,7 +10,6 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -84,6 +83,10 @@ class CoverageBaseMixin(unittest.TestCase):
         for unit in self.units:
             self._write_corpus(unit)
 
+    def _loaded(self) -> "ac.LoadedCorpora":
+        """The shared single-read corpus cache the rules now consume."""
+        return ac.load_present_corpora(self.units, self.corpus_root)
+
 
 # ===================================================================
 # Identity + path helpers
@@ -117,6 +120,53 @@ class HelperTests(CoverageBaseMixin):
 
 
 # ===================================================================
+# Identity safety (path-traversal guard)
+# ===================================================================
+
+
+class IdentitySafetyTests(CoverageBaseMixin):
+    def test_plain_names_are_safe(self) -> None:
+        for unit in self.units:
+            self.assertTrue(ac._has_safe_corpus_identity(unit))
+
+    def test_separator_in_name_is_unsafe(self) -> None:
+        evil = de.Unit(
+            name="../../etc/secrets", kind=de.KIND_SKILL,
+            description="x", path="x",
+        )
+        self.assertFalse(ac._has_safe_corpus_identity(evil))
+
+    def test_dotdot_parent_is_unsafe(self) -> None:
+        evil = de.Unit(
+            name="cap", kind=de.KIND_CAPABILITY,
+            description="x", path="x", parent="..",
+        )
+        self.assertFalse(ac._has_safe_corpus_identity(evil))
+
+    def test_loader_never_reads_outside_corpus_root(self) -> None:
+        # Plant a file where a "../escape" traversal would resolve; the unsafe
+        # unit must be skipped, never probed or read.
+        outside = os.path.join(self.corpus_root, "..", "escape", "skill.json")
+        os.makedirs(os.path.dirname(outside), exist_ok=True)
+        with open(outside, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("{}\n")
+        evil = de.Unit(
+            name="../escape", kind=de.KIND_SKILL, description="x", path="x",
+        )
+        loaded = ac.load_present_corpora([evil], self.corpus_root)
+        self.assertEqual(loaded, {})
+
+    def test_missing_rule_warns_on_unsafe_name(self) -> None:
+        evil = de.Unit(
+            name="../escape", kind=de.KIND_SKILL, description="x", path="x",
+        )
+        findings = ac.find_missing_corpora([evil], [], {})
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].startswith(LEVEL_WARN))
+        self.assertIn("path separator", findings[0])
+
+
+# ===================================================================
 # Rule 1 — Missing corpus
 # ===================================================================
 
@@ -124,13 +174,13 @@ class HelperTests(CoverageBaseMixin):
 class MissingCorpusTests(CoverageBaseMixin):
     def test_all_present_no_findings(self) -> None:
         self._write_all()
-        findings = ac.find_missing_corpora(self.units, self.corpus_root, [])
+        findings = ac.find_missing_corpora(self.units, [], self._loaded())
         self.assertEqual(findings, [])
 
     def test_missing_corpus_warns_per_unit(self) -> None:
         # Only the skill corpus exists; both capabilities are missing.
         self._write_corpus(self.by_qual["demo"])
-        findings = ac.find_missing_corpora(self.units, self.corpus_root, [])
+        findings = ac.find_missing_corpora(self.units, [], self._loaded())
         self.assertEqual(len(findings), 2)
         self.assertTrue(all(f.startswith(LEVEL_WARN) for f in findings))
         self.assertTrue(any("demo/capabilities/alpha" in f for f in findings))
@@ -139,8 +189,26 @@ class MissingCorpusTests(CoverageBaseMixin):
         self._write_corpus(self.by_qual["demo"])
         self._write_corpus(self.by_qual["demo/capabilities/beta"])
         findings = ac.find_missing_corpora(
-            self.units, self.corpus_root, ["demo/capabilities/alpha"]
+            self.units, ["demo/capabilities/alpha"], self._loaded()
         )
+        self.assertEqual(findings, [])
+
+    def test_mismatched_target_is_not_coverage(self) -> None:
+        # A corpus exists at the expected path but its target/kind names a
+        # different unit — no effective coverage, so the unit is still missing.
+        unit = self.by_qual["demo"]
+        self._write_corpus(unit, _corpus_dict("someone-else", de.KIND_SKILL))
+        findings = ac.find_missing_corpora([unit], [], self._loaded())
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].startswith(LEVEL_WARN))
+        self.assertIn("targets a different unit", findings[0])
+
+    def test_present_but_unloadable_not_reported_missing(self) -> None:
+        # A present corpus that failed to load is the size rule's concern (it
+        # owns the load FAIL); the missing rule must not double-report it.
+        unit = self.by_qual["demo"]
+        loaded = {unit: (None, [f"{LEVEL_FAIL}: [foundry] x: broken"])}
+        findings = ac.find_missing_corpora([unit], [], loaded)
         self.assertEqual(findings, [])
 
 
@@ -173,7 +241,7 @@ class StaleAllowListTests(CoverageBaseMixin):
 class FreshnessTests(CoverageBaseMixin):
     def test_no_hash_skips(self) -> None:
         self._write_all()  # corpora carry no description_sha256
-        findings = ac.find_stale_corpora(self.units, self.corpus_root)
+        findings = ac.find_stale_corpora(self.units, self._loaded())
         self.assertEqual(findings, [])
 
     def test_matching_hash_no_finding(self) -> None:
@@ -181,7 +249,7 @@ class FreshnessTests(CoverageBaseMixin):
         data = _corpus_dict("demo", de.KIND_SKILL)
         data["description_sha256"] = de.compute_description_sha256(unit.description)
         self._write_corpus(unit, data)
-        findings = ac.find_stale_corpora([unit], self.corpus_root)
+        findings = ac.find_stale_corpora([unit], self._loaded())
         self.assertEqual(findings, [])
 
     def test_mismatched_hash_warns(self) -> None:
@@ -189,13 +257,23 @@ class FreshnessTests(CoverageBaseMixin):
         data = _corpus_dict("alpha", de.KIND_CAPABILITY)
         data["description_sha256"] = "0" * 64
         self._write_corpus(unit, data)
-        findings = ac.find_stale_corpora([unit], self.corpus_root)
+        findings = ac.find_stale_corpora([unit], self._loaded())
         self.assertEqual(len(findings), 1)
         self.assertTrue(findings[0].startswith(LEVEL_WARN))
         self.assertIn("stale", findings[0])
 
+    def test_mismatched_target_skips_freshness(self) -> None:
+        # A hash-bearing corpus that targets a different unit is the missing
+        # rule's concern, not freshness — comparing its hash here would be noise.
+        unit = self.by_qual["demo"]
+        data = _corpus_dict("someone-else", de.KIND_SKILL)
+        data["description_sha256"] = "0" * 64
+        self._write_corpus(unit, data)
+        findings = ac.find_stale_corpora([unit], self._loaded())
+        self.assertEqual(findings, [])
+
     def test_absent_corpus_skips(self) -> None:
-        findings = ac.find_stale_corpora(self.units, self.corpus_root)
+        findings = ac.find_stale_corpora(self.units, self._loaded())
         self.assertEqual(findings, [])
 
 
@@ -208,7 +286,7 @@ class SiblingParityTests(CoverageBaseMixin):
     def test_all_capabilities_covered_no_finding(self) -> None:
         self._write_all()
         findings = ac.find_sibling_parity_violations(
-            self.units, self.corpus_root, []
+            self.units, [], self._loaded()
         )
         self.assertEqual(findings, [])
 
@@ -216,14 +294,14 @@ class SiblingParityTests(CoverageBaseMixin):
         # Only the skill corpus exists; both caps uncovered -> not "mixed".
         self._write_corpus(self.by_qual["demo"])
         findings = ac.find_sibling_parity_violations(
-            self.units, self.corpus_root, []
+            self.units, [], self._loaded()
         )
         self.assertEqual(findings, [])
 
     def test_mixed_coverage_warns(self) -> None:
         self._write_corpus(self.by_qual["demo/capabilities/alpha"])
         findings = ac.find_sibling_parity_violations(
-            self.units, self.corpus_root, []
+            self.units, [], self._loaded()
         )
         self.assertEqual(len(findings), 1)
         self.assertTrue(findings[0].startswith(LEVEL_WARN))
@@ -232,8 +310,42 @@ class SiblingParityTests(CoverageBaseMixin):
     def test_allow_listed_gap_is_neutral(self) -> None:
         self._write_corpus(self.by_qual["demo/capabilities/alpha"])
         findings = ac.find_sibling_parity_violations(
-            self.units, self.corpus_root, ["demo/capabilities/beta"]
+            self.units, ["demo/capabilities/beta"], self._loaded()
         )
+        self.assertEqual(findings, [])
+
+    def test_mismatched_capability_counts_as_missing(self) -> None:
+        # alpha is effectively covered; beta's file targets a different unit, so
+        # it is uncovered -> the skill is in the mixed (parity-violating) state.
+        self._write_corpus(self.by_qual["demo/capabilities/alpha"])
+        self._write_corpus(
+            self.by_qual["demo/capabilities/beta"],
+            _corpus_dict("not-beta", de.KIND_CAPABILITY),
+        )
+        findings = ac.find_sibling_parity_violations(
+            self.units, [], self._loaded()
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sibling parity", findings[0])
+
+    def test_unsafe_capability_is_neutral_for_parity(self) -> None:
+        # An unsafe-named capability is neither covered nor missing here (the
+        # missing rule surfaces it), so it cannot trip sibling parity.
+        good = de.Unit(
+            name="alpha", kind=de.KIND_CAPABILITY,
+            description="x", path="x", parent="demo",
+        )
+        evil = de.Unit(
+            name="../evil", kind=de.KIND_CAPABILITY,
+            description="x", path="x", parent="demo",
+        )
+        corpus = de.Corpus(
+            target="alpha", kind=de.KIND_CAPABILITY,
+            positive=("p",) * 8, negative=("n",) * 8,
+            min_precision=None, min_recall=None, source_path="x",
+        )
+        loaded = {good: (corpus, [])}
+        findings = ac.find_sibling_parity_violations([good, evil], [], loaded)
         self.assertEqual(findings, [])
 
 
@@ -245,13 +357,13 @@ class SiblingParityTests(CoverageBaseMixin):
 class SizeEscalationTests(CoverageBaseMixin):
     def test_at_floor_no_finding(self) -> None:
         self._write_all()  # 8/8 == floor
-        findings = ac.find_undersized_corpora(self.units, self.corpus_root, 8)
+        findings = ac.find_undersized_corpora(self.units, self._loaded(), 8)
         self.assertEqual(findings, [])
 
     def test_below_floor_fails(self) -> None:
         unit = self.by_qual["demo/capabilities/alpha"]
         self._write_corpus(unit, _corpus_dict("alpha", de.KIND_CAPABILITY, n=5))
-        findings = ac.find_undersized_corpora([unit], self.corpus_root, 8)
+        findings = ac.find_undersized_corpora([unit], self._loaded(), 8)
         self.assertEqual(len(findings), 1)
         self.assertTrue(findings[0].startswith(LEVEL_FAIL))
         self.assertIn("5 prompts", findings[0])
@@ -260,22 +372,21 @@ class SizeEscalationTests(CoverageBaseMixin):
         # 3 per side fails to load (< EVAL_MIN_PROMPTS); the load FAIL surfaces.
         unit = self.by_qual["demo/capabilities/beta"]
         self._write_corpus(unit, _corpus_dict("beta", de.KIND_CAPABILITY, n=3))
-        findings = ac.find_undersized_corpora([unit], self.corpus_root, 8)
+        findings = ac.find_undersized_corpora([unit], self._loaded(), 8)
         self.assertTrue(any(f.startswith(LEVEL_FAIL) for f in findings))
 
     def test_load_fail_alongside_corpus_is_not_dropped(self) -> None:
         # Defensive: if load_corpus ever returns a Corpus alongside a FAIL,
         # the size rule must still surface that FAIL (not silently drop it).
         unit = self.by_qual["demo/capabilities/alpha"]
-        self._write_corpus(unit)  # file must exist; its content is mocked away
         corpus = de.Corpus(
             target="alpha", kind=de.KIND_CAPABILITY,
             positive=("p",) * 8, negative=("n",) * 8,
             min_precision=None, min_recall=None, source_path="x",
         )
         fail = f"{LEVEL_FAIL}: [foundry] x: forced load failure"
-        with mock.patch.object(ac, "load_corpus", return_value=(corpus, [fail])):
-            findings = ac.find_undersized_corpora([unit], self.corpus_root, 8)
+        loaded = {unit: (corpus, [fail])}
+        findings = ac.find_undersized_corpora([unit], loaded, 8)
         self.assertIn(fail, findings)
 
 

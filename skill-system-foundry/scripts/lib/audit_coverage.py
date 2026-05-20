@@ -48,18 +48,29 @@ from .constants import (
 )
 from .description_eval import (
     KIND_CAPABILITY,
-    KIND_SKILL,
+    Corpus,
     Unit,
     compute_description_sha256,
     discover_units,
     load_corpus,
 )
-from .reporting import to_posix
 
 # Corpus file names by unit kind (skill -> skill.json at the skill's root;
 # capability -> capabilities/<cap>.json sibling), matching the layout the
 # eval runner ships and the backfill writes.
 SKILL_CORPUS_FILENAME = "skill.json"
+
+# A unit's coverage status against the corpus root, as classified by
+# :func:`_classify_coverage`.  These are internal structural constants (not
+# validation rules), so they live in Python rather than configuration.yaml.
+_COVERAGE_PRESENT = "present"  # corpus file present and effective (or unloadable)
+_COVERAGE_ABSENT = "absent"  # no corpus file at the expected path
+_COVERAGE_MISMATCH = "mismatch"  # file present but its target/kind names another unit
+_COVERAGE_UNSAFE = "unsafe"  # unit name/parent would escape the corpus root
+
+# Each present corpus is loaded once into this cache (keyed by unit) and shared
+# across every rule, so an audit pass reads each corpus file at most once.
+LoadedCorpora = dict[Unit, tuple[Corpus | None, list[str]]]
 
 
 # ===================================================================
@@ -97,22 +108,112 @@ def resolve_corpus_root(system_root: str) -> str:
     )
 
 
+def _has_safe_corpus_identity(unit: Unit) -> bool:
+    """True when *unit*'s name (and parent) cannot escape the corpus root.
+
+    A unit's ``name`` — and a capability's ``parent`` — come straight from
+    untrusted ``SKILL.md`` frontmatter.  A value containing a path separator or
+    a bare ``..`` segment would interpolate into the corpus path and let the
+    audit probe (or read) files outside the corpus tree, so it is rejected
+    before any path is built.  Mirrors the guard ``constants.py`` applies to
+    ``corpus_root_relative``.
+    """
+    parts: list[str] = [unit.name]
+    if unit.kind == KIND_CAPABILITY and unit.parent is not None:
+        parts.append(unit.parent)
+    for value in parts:
+        if not value or "/" in value or "\\" in value or value == "..":
+            return False
+    return True
+
+
+def load_present_corpora(units: list[Unit], corpus_root: str) -> LoadedCorpora:
+    """Load every present corpus once, keyed by unit.
+
+    A unit earns an entry only when its identity is safe (see
+    :func:`_has_safe_corpus_identity`) and a file exists at its expected path;
+    the entry is the full ``load_corpus`` result so freshness, size, missing,
+    and parity all consume one read per file.  Units that are unsafe or absent
+    are simply missing from the map.
+    """
+    loaded: LoadedCorpora = {}
+    for unit in units:
+        if not _has_safe_corpus_identity(unit):
+            continue
+        path = _corpus_abspath(corpus_root, unit)
+        if not os.path.isfile(path):
+            continue
+        loaded[unit] = load_corpus(path)
+    return loaded
+
+
+def _classify_coverage(
+    unit: Unit, loaded: LoadedCorpora,
+) -> tuple[str, Corpus | None]:
+    """Classify *unit*'s coverage from the shared *loaded* cache.
+
+    Returns ``(status, corpus)`` where *status* is one of the ``_COVERAGE_*``
+    constants and *corpus* is the loaded corpus when one was parsed (used by the
+    missing-corpus rule to name the mis-targeted unit).  A file that exists but
+    fails to load counts as ``_COVERAGE_PRESENT`` — the size rule surfaces its
+    load FAIL, so the missing rule must not double-report it.
+    """
+    if not _has_safe_corpus_identity(unit):
+        return _COVERAGE_UNSAFE, None
+    result = loaded.get(unit)
+    if result is None:
+        return _COVERAGE_ABSENT, None
+    corpus, _findings = result
+    if corpus is None:
+        return _COVERAGE_PRESENT, None
+    if corpus.target == unit.name and corpus.kind == unit.kind:
+        return _COVERAGE_PRESENT, corpus
+    return _COVERAGE_MISMATCH, corpus
+
+
 # ===================================================================
 # Rule 1 — Missing corpus (WARN)
 # ===================================================================
 
 
 def find_missing_corpora(
-    units: list[Unit], corpus_root: str, allowed_missing: tuple[str, ...] | list[str],
+    units: list[Unit],
+    allowed_missing: tuple[str, ...] | list[str],
+    loaded: LoadedCorpora,
 ) -> list[str]:
-    """WARN for every unit with no corpus file that is not opted out."""
+    """WARN for every unit with no *effective* corpus that is not opted out.
+
+    A corpus only counts as coverage when it exists at the expected path *and*
+    its ``target``/``kind`` name this unit: a file copied from — or misnamed
+    after — another unit (``_COVERAGE_MISMATCH``) leaves this unit effectively
+    uncovered while the evaluator just re-scores the duplicate target.  An
+    unsafe unit name is surfaced regardless of the allow-list because it can
+    never map to a valid corpus path.
+    """
     allowed = set(allowed_missing)
     findings: list[str] = []
     for unit in units:
         qual = unit_qualified_name(unit)
+        status, corpus = _classify_coverage(unit, loaded)
+        if status == _COVERAGE_UNSAFE:
+            findings.append(
+                f"{LEVEL_WARN}: [foundry] {qual} has a name with a path "
+                f"separator or '..' segment — refusing to map it to a corpus "
+                f"path (it could escape {EVAL_COVERAGE_CORPUS_ROOT}); rename "
+                f"the unit"
+            )
+            continue
         if qual in allowed:
             continue
-        if os.path.isfile(_corpus_abspath(corpus_root, unit)):
+        if status == _COVERAGE_PRESENT:
+            continue
+        if status == _COVERAGE_MISMATCH and corpus is not None:
+            findings.append(
+                f"{LEVEL_WARN}: [foundry] {qual} has no corpus — the file at "
+                f"{EVAL_COVERAGE_CORPUS_ROOT}/{expected_corpus_relpath(unit)} "
+                f"targets a different unit ('{corpus.target}' / {corpus.kind}); "
+                f"replace it with a corpus for '{qual}'"
+            )
             continue
         findings.append(
             f"{LEVEL_WARN}: [foundry] {qual} has no corpus at "
@@ -149,19 +250,20 @@ def find_stale_allowed_missing(
 # ===================================================================
 
 
-def find_stale_corpora(units: list[Unit], corpus_root: str) -> list[str]:
+def find_stale_corpora(units: list[Unit], loaded: LoadedCorpora) -> list[str]:
     """WARN for every corpus whose recorded hash no longer matches the live
-    description.  Corpora that are absent, fail to load, or carry no hash are
-    silently skipped — the freshness rule only speaks to corpora that opted in
-    by recording a hash via ``--backfill-hash``.
+    description.  Corpora that are absent, fail to load, carry no hash, or
+    target a different unit are silently skipped — the freshness rule only
+    speaks to corpora that effectively cover the unit and opted in by recording
+    a hash via ``--backfill-hash`` (a mis-targeted file is flagged by the
+    missing-corpus rule instead, so comparing its hash here would be noise).
     """
     findings: list[str] = []
     for unit in units:
-        path = _corpus_abspath(corpus_root, unit)
-        if not os.path.isfile(path):
+        status, corpus = _classify_coverage(unit, loaded)
+        if status != _COVERAGE_PRESENT or corpus is None:
             continue
-        corpus, _load_findings = load_corpus(path)
-        if corpus is None or corpus.description_sha256 is None:
+        if corpus.description_sha256 is None:
             continue
         live = compute_description_sha256(unit.description)
         if live != corpus.description_sha256:
@@ -181,14 +283,19 @@ def find_stale_corpora(units: list[Unit], corpus_root: str) -> list[str]:
 
 
 def find_sibling_parity_violations(
-    units: list[Unit], corpus_root: str, allowed_missing: tuple[str, ...] | list[str],
+    units: list[Unit],
+    allowed_missing: tuple[str, ...] | list[str],
+    loaded: LoadedCorpora,
 ) -> list[str]:
     """WARN per skill that covers some — but not all — of its capabilities.
 
-    A capability is *covered* when its corpus file exists and *exempt* when it
-    is allow-listed; an exempt capability is neutral.  The rule fires only on
-    the genuinely mixed case: at least one covered capability and at least one
-    uncovered, non-exempt capability under the same skill.
+    A capability is *covered* when it has an effective corpus (present and
+    targeting the capability), *exempt* when it is allow-listed, and neutral
+    when its name is unsafe (the missing-corpus rule surfaces that separately).
+    A present-but-mis-targeted file is not effective coverage, so it counts
+    toward the missing side.  The rule fires only on the genuinely mixed case:
+    at least one covered capability and at least one uncovered, non-exempt
+    capability under the same skill.
     """
     allowed = set(allowed_missing)
     findings: list[str] = []
@@ -202,7 +309,10 @@ def find_sibling_parity_violations(
         covered = 0
         missing = 0
         for cap in caps:
-            if os.path.isfile(_corpus_abspath(corpus_root, cap)):
+            status, _corpus = _classify_coverage(cap, loaded)
+            if status == _COVERAGE_UNSAFE:
+                continue
+            if status == _COVERAGE_PRESENT:
                 covered += 1
             elif unit_qualified_name(cap) not in allowed:
                 missing += 1
@@ -221,21 +331,20 @@ def find_sibling_parity_violations(
 
 
 def find_undersized_corpora(
-    units: list[Unit], corpus_root: str, size_floor: int,
+    units: list[Unit], loaded: LoadedCorpora, size_floor: int,
 ) -> list[str]:
     """FAIL for every committed corpus below *size_floor* on its smaller side.
 
-    This rule owns reading each corpus's content, so it also surfaces the
-    load-time FAILs (malformed JSON, fewer than ``EVAL_MIN_PROMPTS`` prompts)
-    that prevent a corpus from loading at all — keeping a structurally broken
-    committed corpus from passing the audit silently.
+    This rule surfaces the load-time FAILs (malformed JSON, fewer than
+    ``EVAL_MIN_PROMPTS`` prompts) cached for each present corpus, keeping a
+    structurally broken committed corpus from passing the audit silently.
     """
     findings: list[str] = []
     for unit in units:
-        path = _corpus_abspath(corpus_root, unit)
-        if not os.path.isfile(path):
+        result = loaded.get(unit)
+        if result is None:
             continue
-        corpus, load_findings = load_corpus(path)
+        corpus, load_findings = result
         # Surface load-time FAILs before the None check.  load_corpus returns
         # None whenever it emits a FAIL today, but forwarding regardless keeps
         # a structurally broken committed corpus from passing the audit if that
@@ -280,13 +389,16 @@ def audit_corpus_coverage(
     if not units:
         return []
 
+    # Read each present corpus exactly once; every rule consumes this cache.
+    loaded = load_present_corpora(units, corpus_root)
+
     findings: list[str] = []
-    findings.extend(find_missing_corpora(units, corpus_root, allowed_missing))
+    findings.extend(find_missing_corpora(units, allowed_missing, loaded))
     findings.extend(find_stale_allowed_missing(units, allowed_missing))
     findings.extend(
-        find_sibling_parity_violations(units, corpus_root, allowed_missing)
+        find_sibling_parity_violations(units, allowed_missing, loaded)
     )
-    findings.extend(find_undersized_corpora(units, corpus_root, size_floor))
+    findings.extend(find_undersized_corpora(units, loaded, size_floor))
     if freshness_enabled:
-        findings.extend(find_stale_corpora(units, corpus_root))
+        findings.extend(find_stale_corpora(units, loaded))
     return findings
