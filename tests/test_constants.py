@@ -1449,6 +1449,20 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("corpus_root_relative", str(ctx.exception))
 
+    def test_coverage_corpus_root_non_string_raises(self) -> None:
+        # A YAML list value survives str(...) as "['tests/skill-corpus']" — the
+        # loader must reject non-strings rather than accept a bogus path.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "corpus_root_relative: tests/skill-corpus",
+                    "corpus_root_relative:\n          - tests/skill-corpus",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("corpus_root_relative", message)
+        self.assertIn("string", message)
+
 
 if __name__ == "__main__":
     unittest.main()

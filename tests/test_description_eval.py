@@ -883,6 +883,19 @@ class BackfillCorpusHashesTests(unittest.TestCase):
         with open(path, "r", encoding="utf-8") as handle:
             self.assertEqual(handle.read(), before)  # not mutated
 
+    def test_write_failure_is_recorded_as_finding(self) -> None:
+        # An OSError during the write (e.g. read-only file, race) must become a
+        # structured FAIL finding, not an uncaught traceback, and not abort.
+        path = self._corpus(valid_corpus_dict())
+        with mock.patch.object(
+            de, "_write_corpus_hash", side_effect=OSError("read-only"),
+        ):
+            outcome = de.backfill_corpus_hashes([path], [self._unit("design")])
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+        self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
+
 
 if __name__ == "__main__":
     unittest.main()

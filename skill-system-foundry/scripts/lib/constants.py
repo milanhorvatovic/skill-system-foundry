@@ -289,9 +289,17 @@ if "corpus_root_relative" not in _coverage:
         "configuration.yaml is missing required key "
         "'skill.description.evaluation.coverage.corpus_root_relative'."
     )
-EVAL_COVERAGE_CORPUS_ROOT = str(_coverage["corpus_root_relative"]).replace(
-    "\\", "/"
-).strip()
+# Reject non-string YAML values (a list / mapping survives ``str(...)`` as a
+# bogus path like ``['tests/skill-corpus']`` and would self-skip coverage
+# instead of failing fast) — the loader exposes typed, fail-fast constants.
+_corpus_root_raw = _coverage["corpus_root_relative"]
+if not isinstance(_corpus_root_raw, str):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.coverage.corpus_root_relative': "
+        f"expected a string, got {type(_corpus_root_raw).__name__}."
+    )
+EVAL_COVERAGE_CORPUS_ROOT = _corpus_root_raw.replace("\\", "/").strip()
 if EVAL_COVERAGE_CORPUS_ROOT.startswith("./"):
     EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT[2:]
 EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT.rstrip("/")
@@ -1245,3 +1253,4 @@ del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf
 del _eval, _required_eval_keys, _missing_eval, _stopwords, _normalized_stopwords
 del _coverage, _cov_freshness, _raw_allowed_missing, _normalized_missing
+del _corpus_root_raw

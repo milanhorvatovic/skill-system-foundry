@@ -93,6 +93,7 @@ from lib.constants import (
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
 from lib.audit_coverage import audit_corpus_coverage, resolve_corpus_root
+from lib.description_eval import discover_units
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.router_table import audit_router_table
@@ -1067,6 +1068,12 @@ def audit_skill_system(
     if not os.path.isdir(coverage_root):
         if verbose:
             print(f"  - skipped (no corpus root at {to_posix(coverage_root)})")
+    elif not discover_units(system_root):
+        # audit_corpus_coverage also returns [] when it self-skips for lack of
+        # discoverable units; surface that as a skip rather than a clean pass so
+        # the verbose line never claims coverage that did not run.
+        if verbose:
+            print("  - skipped (no discoverable units under the audit root)")
     else:
         coverage_findings = audit_corpus_coverage(system_root)
         errors.extend(coverage_findings)

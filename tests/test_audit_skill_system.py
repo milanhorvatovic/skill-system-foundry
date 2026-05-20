@@ -2856,6 +2856,19 @@ class CorpusCoverageWiringTests(unittest.TestCase):
         ]
         self.assertEqual(len(size_fails), 1)
 
+    def test_verbose_skip_when_corpus_root_present_but_no_units(self) -> None:
+        # Corpus root exists but no skill is discoverable -> the verbose line
+        # must say "skipped", not falsely claim "complete and fresh".
+        bare = tempfile.TemporaryDirectory()
+        self.addCleanup(bare.cleanup)
+        os.makedirs(os.path.join(bare.name, "tests", "skill-corpus"))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            audit_skill_system(bare.name, verbose=True)
+        out = buf.getvalue()
+        self.assertIn("no discoverable units", out)
+        self.assertNotIn("complete and fresh", out)
+
 
 if __name__ == "__main__":
     unittest.main()

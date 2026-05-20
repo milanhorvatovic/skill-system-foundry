@@ -481,7 +481,17 @@ def backfill_corpus_hashes(
             )
             continue
         new_hash = compute_description_sha256(matches[0].description)
-        changed = _write_corpus_hash(path, new_hash)
+        # The write re-reads and re-parses the file; an unwritable path or a
+        # file that changed between load and write must surface as a structured
+        # FAIL (so --json stays machine-readable) and not abort the sweep.
+        try:
+            changed = _write_corpus_hash(path, new_hash)
+        except (OSError, ValueError) as exc:
+            outcome.findings.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: cannot write hash "
+                f"({format_exception(exc)})"
+            )
+            continue
         (outcome.updated if changed else outcome.unchanged).append(path)
     return outcome
 
