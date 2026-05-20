@@ -149,6 +149,7 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "        - do not use\n"
             "      filler_phrases:\n"
             "        - helps with\n"
+            "      filler_lookahead_tokens: 3\n"
             "      boundary_clause_phrases:\n"
             "        - \" vs \"\n"
             "      length_tier_warn_below: 200\n"
@@ -1143,6 +1144,23 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 )
             )
         self.assertIn("redundancy_max_ratio", str(ctx.exception))
+
+    def test_invalid_structural_filler_lookahead_raises(self) -> None:
+        # The filler look-ahead window must be at least one token.
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "filler_lookahead_tokens: 3", "filler_lookahead_tokens: 0",
+                )
+            )
+        self.assertIn("filler_lookahead_tokens", str(ctx.exception))
+
+    def test_structural_filler_lookahead_loaded(self) -> None:
+        self.assertGreaterEqual(constants.DESCRIPTION_FILLER_LOOKAHEAD, 1)
+
+    def test_structural_stopwords_include_generic_things(self) -> None:
+        # "things" is a stopword so "handles things" trips the filler rule.
+        self.assertIn("things", constants.DESCRIPTION_STRUCTURAL_STOPWORDS)
 
     def test_structural_boundary_phrases_preserve_edge_spaces(self) -> None:
         # Boundary clauses rely on significant leading/trailing spaces

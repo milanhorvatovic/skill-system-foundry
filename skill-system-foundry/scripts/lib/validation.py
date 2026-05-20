@@ -17,7 +17,7 @@ from .constants import (
     TOOL_FENCE_LANGUAGES, TOOLS_INDICATING_SCRIPTS,
     DESCRIPTION_TRIGGER_PHRASES, DESCRIPTION_TRIGGER_EXAMPLE_PHRASES,
     DESCRIPTION_NEGATIVE_TRIGGER_PHRASES, DESCRIPTION_FILLER_PHRASES,
-    DESCRIPTION_BOUNDARY_PHRASES,
+    DESCRIPTION_FILLER_LOOKAHEAD, DESCRIPTION_BOUNDARY_PHRASES,
     DESCRIPTION_LENGTH_WARN_BELOW, DESCRIPTION_LENGTH_WARN_ABOVE,
     DESCRIPTION_VOCABULARY_MINIMUM, DESCRIPTION_VOCABULARY_LIST,
     DESCRIPTION_REDUNDANCY_MIN_COUNT, DESCRIPTION_REDUNDANCY_MAX_RATIO,
@@ -269,11 +269,14 @@ def validate_description_filler(
 ) -> tuple[list[str], list[str]]:
     """R5 — flag a filler phrase with no concrete qualifier following.
 
-    WARN only when one of ``DESCRIPTION_FILLER_PHRASES`` appears and no
-    content (non-stopword, length >= 3) word follows it within the next
-    few tokens — i.e. the phrase trails into a stopword or the end of
-    the description.  "handles skill manifests" is fine; "handles
-    things" (no real qualifier) or a trailing "handles" is not.  The
+    Phrases match on word boundaries — ``handles`` matches the standalone
+    word but not a substring inside ``mishandles`` — so legitimate words
+    that merely contain a filler phrase do not trip the rule.  WARN only
+    when a matched phrase is followed by no content (non-stopword,
+    length >= 3) word within the next ``DESCRIPTION_FILLER_LOOKAHEAD``
+    tokens — i.e. the phrase trails into stopwords or the end of the
+    description.  "handles skill manifests" is fine; "handles things"
+    (``things`` is a stopword) or a trailing "handles" is not.  The
     look-ahead guard keeps legitimate uses of "handles" / "works with"
     from firing.
 
@@ -286,10 +289,15 @@ def validate_description_filler(
     lowered = description.lower()
     flagged: list[str] = []
     for phrase in DESCRIPTION_FILLER_PHRASES:
-        start = lowered.find(phrase)
-        while start != -1:
-            after = lowered[start + len(phrase):]
-            following = _RE_WORD_TOKEN.findall(after)[:3]
+        # Word-boundary guards (no alphanumeric immediately before/after)
+        # so a single-word phrase like "handles" does not match inside
+        # "mishandles".  Phrases are already lowercased in constants.
+        pattern = re.compile(
+            r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])"
+        )
+        for match in pattern.finditer(lowered):
+            after = lowered[match.end():]
+            following = _RE_WORD_TOKEN.findall(after)[:DESCRIPTION_FILLER_LOOKAHEAD]
             has_qualifier = any(
                 token not in DESCRIPTION_STRUCTURAL_STOPWORDS and len(token) >= 3
                 for token in following
@@ -297,7 +305,6 @@ def validate_description_filler(
             if not has_qualifier:
                 flagged.append(phrase)
                 break
-            start = lowered.find(phrase, start + 1)
     if flagged:
         errors.append(
             f"{LEVEL_WARN}: [foundry] 'description' uses filler phrase "

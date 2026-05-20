@@ -167,18 +167,23 @@ skill:
         - skip when
         - avoid when
 
-      # R5 — Filler detection.  WARN only when one of these phrases is
-      # followed by no concrete (non-stopword) word within the next
-      # few tokens — i.e. the phrase trails into a stopword or the end
-      # of the description.  "handles skill manifests" is fine;
-      # "handles things"/"handles" trailing is not.  The look-ahead
-      # guard is what keeps legitimate uses of "handles" from firing.
+      # R5 — Filler detection.  Phrases match on word boundaries (so
+      # "handles" does not match inside "mishandles").  WARN only when
+      # a matched phrase is followed by no concrete (non-stopword) word
+      # within the next filler_lookahead_tokens tokens — i.e. the phrase
+      # trails into stopwords or the end of the description.  "handles
+      # skill manifests" is fine; "handles things"/"handles" trailing is
+      # not (note "things" is a stopword below).  The look-ahead guard
+      # keeps legitimate uses of "handles" from firing.
       filler_phrases:
         - helps with
         - useful for
         - handles
         - works with
         - deals with
+      # How many tokens after a filler phrase are scanned for a concrete
+      # qualifier before the phrase is treated as vague.
+      filler_lookahead_tokens: 3
 
       # R8 — Boundary clauses.  INFO.  Names the boundary against an
       # adjacent skill ("X vs Y", "use Y instead").  Distinct from R2:
@@ -238,11 +243,13 @@ skill:
       redundancy_min_count: 5
       redundancy_max_ratio: 0.22
 
-      # Stopwords for R7 and R9 tokenization.  Distinct from the
+      # Stopwords for R5, R7, and R9 tokenization.  Distinct from the
       # eval-runner stopwords above (those are tuned for prompt
       # tokenization).  Trigger-scaffolding words (use/when/triggers/
       # ...) are stripped too so the trigger phrasing R6 rewards does
-      # not count as R9 over-repetition.
+      # not count as R9 over-repetition.  Generic placeholders like
+      # "things" count as stopwords so a filler phrase trailing into one
+      # (e.g. "handles things") is treated as vague (R5).
       stopwords:
         - the
         - a
@@ -260,6 +267,7 @@ skill:
         - are
         - this
         - that
+        - things
         - and
         - or
         - also

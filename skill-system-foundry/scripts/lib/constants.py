@@ -435,6 +435,15 @@ DESCRIPTION_NEGATIVE_TRIGGER_PHRASES = _normalize_structural_phrases(
 DESCRIPTION_FILLER_PHRASES = _normalize_structural_phrases(
     _structural, "filler_phrases",
 )
+DESCRIPTION_FILLER_LOOKAHEAD = int(
+    _require_structural_key(_structural, "filler_lookahead_tokens")
+)
+if DESCRIPTION_FILLER_LOOKAHEAD < 1:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.structural_rules.filler_lookahead_tokens': "
+        f"{DESCRIPTION_FILLER_LOOKAHEAD} (must be >= 1)."
+    )
 # Boundary clauses keep significant edge spaces (" vs "): lowercase
 # only, do not strip.
 DESCRIPTION_BOUNDARY_PHRASES = _normalize_structural_phrases(

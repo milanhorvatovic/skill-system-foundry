@@ -1250,6 +1250,22 @@ class StructuralDescriptionRuleTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(passes), 1)
 
+    def test_filler_handles_things_emits_warn(self) -> None:
+        # The documented vague case: "things" is a stopword, so it is
+        # not a concrete qualifier and the filler phrase trips.
+        errors, _ = validate_description_filler("This skill handles things.")
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+
+    def test_filler_substring_inside_word_not_flagged(self) -> None:
+        # "handles" must match on a word boundary, so a description that
+        # only contains it inside "mishandles" does not trip the rule.
+        errors, passes = validate_description_filler(
+            "Detects when the parser mishandles malformed manifest input."
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
     # --- R8: boundary clauses (INFO when present) ---
 
     def test_boundary_vs_clause_emits_info(self) -> None:
