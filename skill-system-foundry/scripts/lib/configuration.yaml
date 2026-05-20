@@ -187,13 +187,17 @@ skill:
 
       # R8 — Boundary clauses.  INFO.  Names the boundary against an
       # adjacent skill ("X vs Y", "use Y instead").  Distinct from R2:
-      # R2 = "do not activate at all", R8 = "which adjacent skill to
-      # use instead".  Leading/trailing spaces in quoted entries are
-      # significant and preserved (" vs " must not match "vs" inside a
-      # word) — constants.py lowercases but does not strip these.
+      # R2 = "do not activate at all", R8 = "which adjacent skill to use
+      # instead".  Keep this list to phrases that genuinely imply an
+      # adjacent alternative — do NOT add bare negative-activation
+      # fragments like "not for", which R2 already owns; listing such a
+      # phrase here would emit a contradictory second INFO for an
+      # ordinary negative-trigger description.  Leading/trailing spaces
+      # in quoted entries are significant and preserved (" vs " must not
+      # match "vs" inside a word) — constants.py lowercases but does not
+      # strip these.
       boundary_clause_phrases:
         - " vs "
-        - " not for "
         - use instead
         - rather than
 
