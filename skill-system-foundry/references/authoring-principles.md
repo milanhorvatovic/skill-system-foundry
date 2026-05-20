@@ -119,7 +119,7 @@ description: Helps with deployments.
 
 - **Trigger-clause strength** — at least two distinct trigger phrases (WARN below two). Reuses `skill.description.trigger_phrases`; the audit keeps the historical one-phrase minimum.
 - **Negative trigger** — notes a "don't use when…" clause when present (INFO).
-- **Length tiers** — advisory INFO below the lower tier or above the upper tier; the lower tier sits below the bundle description cap so a maximally sized claude description is never flagged as too short.
+- **Length tiers** — advisory INFO below the lower tier or above the upper tier; the lower tier sits below the bundler's `claude`-target description cap (`bundle.description_max_length`) so a description sized right up to that cap is never simultaneously flagged as too short.
 - **Filler detection** — WARN on "helps with" / "handles" / … only when no concrete qualifier follows.
 - **Domain vocabulary** — INFO when fewer than the configured number of domain terms appear; the vocabulary list is integrator-owned and an empty list disables the check.
 - **Boundary clause** — notes an "X vs Y" / "use Y instead" clause when present (INFO).
