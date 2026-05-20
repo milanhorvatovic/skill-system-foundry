@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -261,6 +262,21 @@ class SizeEscalationTests(CoverageBaseMixin):
         self._write_corpus(unit, _corpus_dict("beta", de.KIND_CAPABILITY, n=3))
         findings = ac.find_undersized_corpora([unit], self.corpus_root, 8)
         self.assertTrue(any(f.startswith(LEVEL_FAIL) for f in findings))
+
+    def test_load_fail_alongside_corpus_is_not_dropped(self) -> None:
+        # Defensive: if load_corpus ever returns a Corpus alongside a FAIL,
+        # the size rule must still surface that FAIL (not silently drop it).
+        unit = self.by_qual["demo/capabilities/alpha"]
+        self._write_corpus(unit)  # file must exist; its content is mocked away
+        corpus = de.Corpus(
+            target="alpha", kind=de.KIND_CAPABILITY,
+            positive=("p",) * 8, negative=("n",) * 8,
+            min_precision=None, min_recall=None, source_path="x",
+        )
+        fail = f"{LEVEL_FAIL}: [foundry] x: forced load failure"
+        with mock.patch.object(ac, "load_corpus", return_value=(corpus, [fail])):
+            findings = ac.find_undersized_corpora([unit], self.corpus_root, 8)
+        self.assertIn(fail, findings)
 
 
 # ===================================================================

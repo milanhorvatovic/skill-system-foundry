@@ -236,10 +236,12 @@ def find_undersized_corpora(
         if not os.path.isfile(path):
             continue
         corpus, load_findings = load_corpus(path)
+        # Surface load-time FAILs before the None check.  load_corpus returns
+        # None whenever it emits a FAIL today, but forwarding regardless keeps
+        # a structurally broken committed corpus from passing the audit if that
+        # contract ever changes.
+        findings.extend(f for f in load_findings if f.startswith(LEVEL_FAIL))
         if corpus is None:
-            findings.extend(
-                f for f in load_findings if f.startswith(LEVEL_FAIL)
-            )
             continue
         smaller = min(len(corpus.positive), len(corpus.negative))
         if smaller < size_floor:

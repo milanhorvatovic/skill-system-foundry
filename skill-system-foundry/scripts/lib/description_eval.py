@@ -418,23 +418,24 @@ class BackfillOutcome:
 
 
 def _write_corpus_hash(path: str, new_hash: str) -> bool:
-    """Set ``description_sha256`` in the corpus file; return True if bytes changed.
+    """Set ``description_sha256`` in the corpus file; return True if it was written.
 
-    Re-reads the raw file so every other key (``_comment``, thresholds, …) is
-    preserved, then re-renders with the project's canonical JSON shape
-    (``indent=2``, ``ensure_ascii=False``, trailing newline, LF terminators).
-    A file already carrying the correct hash renders byte-identically and is
-    left untouched, which is what makes repeated backfills no-ops.
+    When the recorded hash already equals *new_hash* the file's bytes are left
+    untouched — an already-correct corpus is a no-op regardless of its existing
+    formatting, so a non-canonical third-party corpus is not silently
+    re-rendered.  When the hash is missing or different, every other key
+    (``_comment``, thresholds, …) is preserved and the file is rewritten in the
+    project's canonical JSON shape (``indent=2``, ``ensure_ascii=False``,
+    trailing newline, LF terminators).
     """
     with open(path, "r", encoding="utf-8") as handle:
         raw = handle.read()
     data = json.loads(raw)
-    data["description_sha256"] = new_hash
-    rendered = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    if rendered == raw:
+    if data.get("description_sha256") == new_hash:
         return False
+    data["description_sha256"] = new_hash
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(rendered)
+        handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     return True
 
 
@@ -454,10 +455,14 @@ def backfill_corpus_hashes(
     outcome = BackfillOutcome()
     for path in corpus_paths:
         corpus, load_findings = load_corpus(path)
+        has_fail = any(f.startswith(LEVEL_FAIL) for f in load_findings)
         outcome.findings.extend(
             f for f in load_findings if f.startswith(LEVEL_FAIL)
         )
-        if corpus is None:
+        # load_corpus returns None whenever it emits a FAIL today; the explicit
+        # has_fail guard keeps backfill non-mutating for invalid corpora even
+        # if a future loader change returns a Corpus alongside FAIL findings.
+        if corpus is None or has_fail:
             continue
         base = to_posix(path)
         matches = _matching_units(corpus, candidates)

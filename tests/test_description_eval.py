@@ -847,6 +847,42 @@ class BackfillCorpusHashesTests(unittest.TestCase):
         self.assertEqual(outcome.updated, [])
         self.assertEqual(outcome.unchanged, [])
 
+    def test_correct_hash_in_noncanonical_file_is_left_untouched(self) -> None:
+        # A corpus already carrying the right hash must not be rewritten, even
+        # when its on-disk formatting is non-canonical (4-space indent here).
+        data = valid_corpus_dict()
+        data["description_sha256"] = de.compute_description_sha256("design skills")
+        path = os.path.join(self._tmp.name, "skill-design.json")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=4) + "\n")  # non-canonical
+        with open(path, "r", encoding="utf-8") as handle:
+            before = handle.read()
+        outcome = de.backfill_corpus_hashes([path], [self._unit("design skills")])
+        self.assertEqual(outcome.unchanged, [path])
+        self.assertEqual(outcome.updated, [])
+        with open(path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)  # bytes preserved
+
+    def test_load_fail_alongside_corpus_skips_write(self) -> None:
+        # Defensive: if load_corpus ever returns a Corpus alongside a FAIL,
+        # backfill must surface the FAIL and not mutate the file.
+        path = self._corpus(valid_corpus_dict())
+        with open(path, "r", encoding="utf-8") as handle:
+            before = handle.read()
+        corpus = de.Corpus(
+            target="skill-design", kind=de.KIND_CAPABILITY,
+            positive=("p",) * 8, negative=("n",) * 8,
+            min_precision=None, min_recall=None, source_path=path,
+        )
+        fail = f"{de.LEVEL_FAIL}: [foundry] {path}: forced load failure"
+        with mock.patch.object(de, "load_corpus", return_value=(corpus, [fail])):
+            outcome = de.backfill_corpus_hashes([path], [self._unit("design")])
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+        self.assertIn(fail, outcome.findings)
+        with open(path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)  # not mutated
+
 
 if __name__ == "__main__":
     unittest.main()
