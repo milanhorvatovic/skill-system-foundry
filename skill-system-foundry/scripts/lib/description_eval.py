@@ -53,18 +53,23 @@ No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 from .constants import (
     DIR_CAPABILITIES,
     EVAL_DIVERSITY_RATIO,
+    EVAL_HEURISTIC_MIN_OVERLAP,
     EVAL_MAX_PROMPT_CHARS,
+    EVAL_STOPWORDS,
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
     LEVEL_WARN,
 )
 from .frontmatter import load_frontmatter
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 # --- structural constants ---------------------------------------------------
 
@@ -467,16 +472,40 @@ def discover_units(skill_set_dir: str) -> list[Unit]:
 
 def tokenize(text: str) -> set[str]:
     """Lowercase, split on non-alphanumerics, drop stopwords -> token set."""
-    raise NotImplementedError
+    return {
+        token for token in _TOKEN_RE.findall(text.lower())
+        if token not in EVAL_STOPWORDS
+    }
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    """Jaccard overlap of two token sets; ``0.0`` when both are empty."""
+    union = left | right
+    if not union:
+        return 0.0
+    return len(left & right) / len(union)
 
 
 def score_heuristic(prompt: str, candidates: list[Unit]) -> str | None:
     """Predict the unit name with the highest Jaccard overlap, or ``None``.
 
-    Ties break deterministically by candidate name.  Returns ``None`` when the
-    best overlap is below ``EVAL_HEURISTIC_MIN_OVERLAP``.
+    Candidates are scanned in name order so ties resolve deterministically to
+    the alphabetically-first name.  Returns ``None`` when the best overlap is
+    below ``EVAL_HEURISTIC_MIN_OVERLAP`` (no candidate fits).
     """
-    raise NotImplementedError
+    if not candidates:
+        return None
+    prompt_tokens = tokenize(prompt)
+    best_name: str | None = None
+    best_score = -1.0
+    for candidate in sorted(candidates, key=lambda unit: unit.name):
+        score = _jaccard(prompt_tokens, tokenize(candidate.card_text))
+        if score > best_score:
+            best_score = score
+            best_name = candidate.name
+    if best_score < EVAL_HEURISTIC_MIN_OVERLAP:
+        return None
+    return best_name
 
 
 # --- deterministic split (step 7) -------------------------------------------

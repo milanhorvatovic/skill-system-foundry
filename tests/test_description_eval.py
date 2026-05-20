@@ -370,5 +370,47 @@ class CapabilityCardTests(unittest.TestCase):
         self.assertEqual(description, "Plain intro line.")
 
 
+def _unit(name: str, description: str) -> de.Unit:
+    return de.Unit(
+        name=name, kind=de.KIND_CAPABILITY, description=description, path=f"/{name}",
+    )
+
+
+class TokenizeTests(unittest.TestCase):
+    def test_lowercases_splits_and_drops_stopwords(self) -> None:
+        self.assertEqual(
+            de.tokenize("The Validation, Audit! of-systems"),
+            {"validation", "audit", "systems"},
+        )
+
+    def test_empty_text_yields_empty_set(self) -> None:
+        self.assertEqual(de.tokenize("the of and"), set())
+
+
+class ScoreHeuristicTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.candidates = [
+            _unit("validation", "Validate skills and audit systems for consistency"),
+            _unit("bundling", "Package a skill as a zip bundle"),
+        ]
+
+    def test_clear_winner_selected(self) -> None:
+        prediction = de.score_heuristic(
+            "audit skills and check systems for consistency", self.candidates,
+        )
+        self.assertEqual(prediction, "validation")
+
+    def test_below_threshold_returns_none(self) -> None:
+        prediction = de.score_heuristic("translate french text", self.candidates)
+        self.assertIsNone(prediction)
+
+    def test_tie_breaks_to_alphabetically_first(self) -> None:
+        candidates = [_unit("beta", "shared word"), _unit("alpha", "shared word")]
+        self.assertEqual(de.score_heuristic("shared word", candidates), "alpha")
+
+    def test_empty_candidate_set_returns_none(self) -> None:
+        self.assertIsNone(de.score_heuristic("anything", []))
+
+
 if __name__ == "__main__":
     unittest.main()
