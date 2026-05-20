@@ -55,6 +55,8 @@ import json
 import os
 import random
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 
 from .constants import (
@@ -82,6 +84,14 @@ PREDICTION_NONE = "none"  # the LLM's literal "no unit fits" answer
 
 MODE_HEURISTIC = "heuristic"
 MODE_LLM = "llm"
+
+# Anthropic Messages API version header value (stable).
+ANTHROPIC_API_VERSION = "2023-06-01"
+_CLASSIFIER_SYSTEM_PROMPT = (
+    "You are a skill router.  Given a user request and a list of skills, reply "
+    "with exactly one skill name from the list, or 'none' if no skill fits.  "
+    "Output only the name, with no punctuation or explanation."
+)
 
 # Top-level corpus keys.  Required keys plus the optional metadata keys the
 # schema validator tolerates; any other top-level key (except ``_*``) is a FAIL.
@@ -579,7 +589,19 @@ def aggregate(
 
 def build_classifier_prompt(prompt: str, candidates: list[Unit]) -> str:
     """Render the classifier instruction listing every candidate card."""
-    raise NotImplementedError
+    lines = ["Available skills:"]
+    for candidate in sorted(candidates, key=lambda unit: unit.name):
+        description = candidate.description.strip() or "(no description)"
+        lines.append(f"- {candidate.name}: {description}")
+    lines.append("- none: the request matches no skill above")
+    lines.append("")
+    lines.append(f"User request: {prompt}")
+    lines.append("")
+    lines.append(
+        "Reply with only the single most relevant skill name from the list "
+        "above (or 'none')."
+    )
+    return "\n".join(lines)
 
 
 def _anthropic_messages(
@@ -588,11 +610,63 @@ def _anthropic_messages(
 ) -> str:
     """POST one classification request to the Anthropic Messages API.
 
-    Returns the model's raw first non-blank answer line (caller maps it to a
-    unit name or ``None``).  Raises a ``RuntimeError`` with an actionable
-    message on HTTP / transport / decode failure.
+    Returns the model's first non-blank answer line (caller maps it to a unit
+    name or ``None``).  Raises a ``RuntimeError`` with an actionable message on
+    HTTP / transport / decode failure — no retry logic.
     """
-    raise NotImplementedError
+    body = json.dumps(
+        {
+            "model": model,
+            "max_tokens": 30,
+            "temperature": 0,
+            "system": _CLASSIFIER_SYSTEM_PROMPT,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": build_classifier_prompt(prompt, candidates),
+                }
+            ],
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": ANTHROPIC_API_VERSION,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        excerpt = ""
+        try:
+            excerpt = exc.read().decode("utf-8", "replace")[:200]
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"Anthropic API returned HTTP {exc.code}: {excerpt}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Anthropic API request failed: {exc.reason}"
+        ) from exc
+
+    try:
+        payload = json.loads(raw)
+        text = payload["content"][0]["text"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(
+            f"Anthropic API returned an unexpected payload ({exc})"
+        ) from exc
+
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
 
 
 def score_llm(

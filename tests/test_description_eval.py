@@ -5,11 +5,14 @@ counts (FAIL < 4, WARN 4-7), duplicates, empty prompts, pos/neg contradiction,
 cross-target overlap, phrasing diversity, length cap, and control characters.
 """
 
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
+import urllib.error
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -513,6 +516,84 @@ class AggregateTests(unittest.TestCase):
         self.assertAlmostEqual(metrics.precision, 0.8)
         self.assertEqual(metrics.recall, 1.0)
         self.assertFalse(metrics.passed)
+
+
+class _FakeResponse:
+    """Minimal context-manager stand-in for urllib's urlopen return value."""
+
+    def __init__(self, payload: object = None, raw: str | None = None) -> None:
+        if raw is not None:
+            self._data = raw.encode("utf-8")
+        else:
+            self._data = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._data
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class BuildClassifierPromptTests(unittest.TestCase):
+    def test_lists_candidates_none_and_request(self) -> None:
+        candidates = [_unit("validation", "Validate skills"), _unit("bundling", "Package as zip")]
+        text = de.build_classifier_prompt("audit my skills", candidates)
+        self.assertIn("- validation: Validate skills", text)
+        self.assertIn("- bundling: Package as zip", text)
+        self.assertIn("- none:", text)
+        self.assertIn("User request: audit my skills", text)
+
+    def test_missing_description_uses_placeholder(self) -> None:
+        text = de.build_classifier_prompt("x", [_unit("empty", "")])
+        self.assertIn("- empty: (no description)", text)
+
+
+class AnthropicMessagesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.candidates = [_unit("validation", "Validate skills")]
+
+    def _call(self) -> str:
+        return de._anthropic_messages(
+            "audit", self.candidates, "model-x", "key", "https://api/messages",
+        )
+
+    def test_success_returns_first_nonblank_line(self) -> None:
+        response = _FakeResponse({"content": [{"type": "text", "text": "\nvalidation\n"}]})
+        with unittest.mock.patch.object(de.urllib.request, "urlopen", return_value=response):
+            self.assertEqual(self._call(), "validation")
+
+    def test_http_error_raises_runtime_error_with_status(self) -> None:
+        error = urllib.error.HTTPError(
+            "https://api/messages", 401, "Unauthorized", {},
+            io.BytesIO(b'{"error":"bad key"}'),
+        )
+        with unittest.mock.patch.object(de.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(RuntimeError) as ctx:
+                self._call()
+        self.assertIn("401", str(ctx.exception))
+
+    def test_url_error_raises_runtime_error(self) -> None:
+        error = urllib.error.URLError("connection refused")
+        with unittest.mock.patch.object(de.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(RuntimeError):
+                self._call()
+
+    def test_malformed_json_raises(self) -> None:
+        with unittest.mock.patch.object(
+            de.urllib.request, "urlopen", return_value=_FakeResponse(raw="{ not json"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self._call()
+
+    def test_missing_content_key_raises(self) -> None:
+        with unittest.mock.patch.object(
+            de.urllib.request, "urlopen", return_value=_FakeResponse({"unexpected": "shape"}),
+        ):
+            with self.assertRaises(RuntimeError):
+                self._call()
 
 
 if __name__ == "__main__":
