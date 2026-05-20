@@ -102,6 +102,30 @@ skill:
       # at least the minimum but below the recommended count WARNs.
       min_prompts_per_side: 4
       recommended_prompts_per_side: 8
+      # Audit-level corpus-coverage rules (audit_skill_system.py).  The
+      # corpus root resolves relative to the audit root and the rules
+      # self-skip when it is absent, so the skill-root self-check (no
+      # corpus under the skill) stays quiet while the repo-root audit —
+      # where tests/skill-corpus resolves — runs them.  The size-
+      # escalation rule reuses min_prompts_per_side / recommended_
+      # prompts_per_side above rather than a parallel floor.
+      coverage:
+        # Corpus directory, relative to the audit root.  Convention:
+        # <audit-root>/tests/skill-corpus/<skill-name>/ with skill.json
+        # at the root and capabilities/<cap>.json siblings.
+        corpus_root_relative: tests/skill-corpus
+        # Units that intentionally ship no corpus.  Each entry is a unit
+        # qualified name: a skill name, or "<skill>/capabilities/<cap>".
+        # Stale entries (pointing at a unit that no longer exists)
+        # surface as INFO so the list cannot rot silently — mirrors
+        # orphan_references.allowed_orphans.  Leave blank (or list
+        # block-style entries beneath it) to keep the rule fully active.
+        allowed_missing_corpus:
+        # When true, the freshness rule compares each corpus header's
+        # description_sha256 against the SHA-256 of the live unit
+        # description and WARNs on mismatch.  Set false on integrator
+        # audits that don't ship corpora.
+        freshness_check_enabled: true
       # Stopwords stripped during heuristic tokenization.  Tune via PR.
       stopwords:
         - the

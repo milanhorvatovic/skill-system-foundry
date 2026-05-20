@@ -289,5 +289,96 @@ class InProcessCliTests(CliBaseMixin):
         self.assertIn("unrecognized arguments", err)
 
 
+# ===================================================================
+# --backfill-hash
+# ===================================================================
+
+
+class BackfillHashCliTests(CliBaseMixin):
+    """The --backfill-hash write mode: idempotent, header-preserving."""
+
+    def _corpus_path(self) -> str:
+        return os.path.join(self.corpus_dir, "validation.json")
+
+    def _read(self, path: str) -> dict:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def test_backfill_writes_expected_hash(self) -> None:
+        from lib.description_eval import compute_description_sha256
+
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, out, err = _run_main(
+            [ENTRY, self.corpus_dir, "--skill-set", self.skillset, "--backfill-hash"]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("updated", out)
+        # The "validation" capability's description is its first body paragraph.
+        expected = compute_description_sha256(
+            "validate skills audit systems consistency"
+        )
+        self.assertEqual(
+            self._read(self._corpus_path())["description_sha256"], expected
+        )
+
+    def test_backfill_is_idempotent(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        argv = [ENTRY, self.corpus_dir, "--skill-set", self.skillset, "--backfill-hash"]
+        _run_main(argv)
+        with open(self._corpus_path(), "r", encoding="utf-8") as handle:
+            after_first = handle.read()
+        code, out, _err = _run_main(argv)
+        with open(self._corpus_path(), "r", encoding="utf-8") as handle:
+            after_second = handle.read()
+        self.assertEqual(code, 0)
+        self.assertEqual(after_first, after_second)
+        self.assertIn("unchanged", out)
+
+    def test_backfill_preserves_other_keys(self) -> None:
+        os.makedirs(self.corpus_dir, exist_ok=True)
+        data = {
+            "target": "validation", "kind": "capability",
+            "_comment": "keep me", "positive": PASS_POSITIVES,
+            "negative": PASS_NEGATIVES,
+        }
+        with open(self._corpus_path(), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+        _run_main(
+            [ENTRY, self.corpus_dir, "--skill-set", self.skillset, "--backfill-hash"]
+        )
+        written = self._read(self._corpus_path())
+        self.assertEqual(written["_comment"], "keep me")
+        self.assertIn("description_sha256", written)
+
+    def test_backfill_json_shape(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, out, _err = _run_main([
+            ENTRY, self.corpus_dir, "--skill-set", self.skillset,
+            "--backfill-hash", "--json",
+        ])
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["mode"], "backfill")
+        self.assertTrue(payload["success"])
+        self.assertEqual(len(payload["updated"]), 1)
+        self.assertEqual(payload["unchanged"], [])
+
+    def test_backfill_unmatched_target_warns_and_skips_write(self) -> None:
+        os.makedirs(self.corpus_dir, exist_ok=True)
+        data = {
+            "target": "ghost", "kind": "capability",
+            "positive": PASS_POSITIVES, "negative": PASS_NEGATIVES,
+        }
+        with open(self._corpus_path(), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2))
+        code, out, _err = _run_main([
+            ENTRY, self.corpus_dir, "--skill-set", self.skillset, "--backfill-hash",
+        ])
+        # Unmatched target is a WARN, not a FAIL — exit stays 0.
+        self.assertEqual(code, 0)
+        self.assertIn("not found", out)
+        self.assertNotIn("description_sha256", self._read(self._corpus_path()))
+
+
 if __name__ == "__main__":
     unittest.main()

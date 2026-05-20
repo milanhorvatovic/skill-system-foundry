@@ -688,5 +688,237 @@ class ShippedMetaSkillCorpusTests(unittest.TestCase):
             self.assertIsNotNone(corpus)
 
 
+# ===================================================================
+# Description hashing
+# ===================================================================
+
+
+class ComputeDescriptionSha256Tests(unittest.TestCase):
+    """Tests for compute_description_sha256."""
+
+    def test_matches_hashlib_reference(self) -> None:
+        """Output equals a direct hashlib.sha256 hexdigest of UTF-8 bytes."""
+        import hashlib
+
+        text = "Validates skills against the specification."
+        expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self.assertEqual(de.compute_description_sha256(text), expected)
+
+    def test_stable_across_calls(self) -> None:
+        """Same input yields the same hex digest every call (deterministic)."""
+        text = "Designs AI-agnostic skill systems"
+        first = de.compute_description_sha256(text)
+        second = de.compute_description_sha256(text)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 64)
+
+    def test_distinct_inputs_differ(self) -> None:
+        """Different descriptions produce different digests."""
+        self.assertNotEqual(
+            de.compute_description_sha256("alpha"),
+            de.compute_description_sha256("beta"),
+        )
+
+    def test_unicode_is_utf8_encoded(self) -> None:
+        """Non-ASCII text hashes via its UTF-8 bytes, not str identity."""
+        import hashlib
+
+        text = "Designs skill systèms — naïve façade"
+        expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self.assertEqual(de.compute_description_sha256(text), expected)
+
+    def test_empty_string_hashes(self) -> None:
+        """An empty description still produces the canonical empty digest."""
+        import hashlib
+
+        self.assertEqual(
+            de.compute_description_sha256(""),
+            hashlib.sha256(b"").hexdigest(),
+        )
+
+
+# ===================================================================
+# Corpus description_sha256 extraction
+# ===================================================================
+
+
+class CorpusDescriptionShaExtractionTests(LoadCorpusBaseMixin):
+    """load_corpus surfaces description_sha256 with graceful tolerance."""
+
+    def test_absent_hash_is_none(self) -> None:
+        corpus, findings = self.load_dict(valid_corpus_dict())
+        self.assertIsNotNone(corpus)
+        self.assertIsNone(corpus.description_sha256)
+        self.assertEqual(findings, [])
+
+    def test_string_hash_is_preserved(self) -> None:
+        data = valid_corpus_dict()
+        data["description_sha256"] = "a" * 64
+        corpus, findings = self.load_dict(data)
+        self.assertEqual(corpus.description_sha256, "a" * 64)
+        self.assertEqual(findings, [])
+
+    def test_null_hash_is_none_without_finding(self) -> None:
+        data = valid_corpus_dict()
+        data["description_sha256"] = None
+        corpus, findings = self.load_dict(data)
+        self.assertIsNone(corpus.description_sha256)
+        self.assertEqual(findings, [])
+
+    def test_non_string_hash_is_treated_as_absent(self) -> None:
+        """A numeric / malformed hash is tolerated as None, not a crash."""
+        data = valid_corpus_dict()
+        data["description_sha256"] = 12345
+        corpus, findings = self.load_dict(data)
+        self.assertIsNotNone(corpus)
+        self.assertIsNone(corpus.description_sha256)
+        self.assertFalse(has_fail(findings))
+
+    def test_blank_string_hash_is_treated_as_absent(self) -> None:
+        data = valid_corpus_dict()
+        data["description_sha256"] = "   "
+        corpus, _ = self.load_dict(data)
+        self.assertIsNone(corpus.description_sha256)
+
+
+# ===================================================================
+# backfill_corpus_hashes
+# ===================================================================
+
+
+class BackfillCorpusHashesTests(unittest.TestCase):
+    """The lib-level backfill: matching, idempotency, byte stability."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _corpus(self, data: dict, name: str = "skill-design.json") -> str:
+        path = os.path.join(self._tmp.name, name)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+        return path
+
+    def _unit(self, description: str) -> de.Unit:
+        return de.Unit(
+            name="skill-design", kind=de.KIND_CAPABILITY,
+            description=description, path="/skill-design",
+        )
+
+    def test_writes_expected_hash_and_reports_updated(self) -> None:
+        path = self._corpus(valid_corpus_dict())
+        outcome = de.backfill_corpus_hashes([path], [self._unit("design skills")])
+        self.assertEqual(outcome.updated, [path])
+        self.assertEqual(outcome.unchanged, [])
+        with open(path, "r", encoding="utf-8") as handle:
+            written = json.load(handle)
+        self.assertEqual(
+            written["description_sha256"],
+            de.compute_description_sha256("design skills"),
+        )
+
+    def test_second_run_is_a_byte_for_byte_no_op(self) -> None:
+        path = self._corpus(valid_corpus_dict())
+        units = [self._unit("design skills")]
+        de.backfill_corpus_hashes([path], units)
+        with open(path, "r", encoding="utf-8") as handle:
+            after_first = handle.read()
+        outcome = de.backfill_corpus_hashes([path], units)
+        with open(path, "r", encoding="utf-8") as handle:
+            after_second = handle.read()
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [path])
+        self.assertEqual(after_first, after_second)
+
+    def test_unmatched_target_warns_and_leaves_file_untouched(self) -> None:
+        path = self._corpus(valid_corpus_dict())
+        with open(path, "r", encoding="utf-8") as handle:
+            before = handle.read()
+        outcome = de.backfill_corpus_hashes([path], [])  # no candidate units
+        self.assertEqual(outcome.updated, [])
+        self.assertTrue(any("not found" in f for f in outcome.findings))
+        with open(path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_malformed_corpus_surfaces_fail_and_skips(self) -> None:
+        path = self._corpus({"target": "skill-design", "kind": "capability"})
+        outcome = de.backfill_corpus_hashes([path], [self._unit("design")])
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+
+    def test_correct_hash_in_noncanonical_file_is_left_untouched(self) -> None:
+        # A corpus already carrying the right hash must not be rewritten, even
+        # when its on-disk formatting is non-canonical (4-space indent here).
+        data = valid_corpus_dict()
+        data["description_sha256"] = de.compute_description_sha256("design skills")
+        path = os.path.join(self._tmp.name, "skill-design.json")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=4) + "\n")  # non-canonical
+        with open(path, "r", encoding="utf-8") as handle:
+            before = handle.read()
+        outcome = de.backfill_corpus_hashes([path], [self._unit("design skills")])
+        self.assertEqual(outcome.unchanged, [path])
+        self.assertEqual(outcome.updated, [])
+        with open(path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)  # bytes preserved
+
+    def test_load_fail_alongside_corpus_skips_write(self) -> None:
+        # Defensive: if load_corpus ever returns a Corpus alongside a FAIL,
+        # backfill must surface the FAIL and not mutate the file.
+        path = self._corpus(valid_corpus_dict())
+        with open(path, "r", encoding="utf-8") as handle:
+            before = handle.read()
+        corpus = de.Corpus(
+            target="skill-design", kind=de.KIND_CAPABILITY,
+            positive=("p",) * 8, negative=("n",) * 8,
+            min_precision=None, min_recall=None, source_path=path,
+        )
+        fail = f"{de.LEVEL_FAIL}: [foundry] {path}: forced load failure"
+        with mock.patch.object(de, "load_corpus", return_value=(corpus, [fail])):
+            outcome = de.backfill_corpus_hashes([path], [self._unit("design")])
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+        self.assertIn(fail, outcome.findings)
+        with open(path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), before)  # not mutated
+
+    def test_write_failure_is_recorded_as_finding(self) -> None:
+        # An OSError during the write (e.g. read-only file, race) must become a
+        # structured FAIL finding, not an uncaught traceback, and not abort.
+        path = self._corpus(valid_corpus_dict())
+        with mock.patch.object(
+            de, "_write_corpus_hash", side_effect=OSError("read-only"),
+        ):
+            outcome = de.backfill_corpus_hashes([path], [self._unit("design")])
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+        self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
+
+    def test_nonobject_json_in_write_path_is_a_structured_fail(self) -> None:
+        # Race: load_corpus validated an object, but the file is replaced with
+        # valid-but-non-object JSON (``[]``) before the write re-reads it.
+        # json.loads succeeds, .get raises AttributeError — the shape guard in
+        # _write_corpus_hash must convert that into a ValueError that the caller
+        # records as a structured FAIL instead of crashing the sweep.
+        path = self._corpus(valid_corpus_dict())
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("[]\n")  # valid JSON, not an object
+        corpus = de.Corpus(
+            target="skill-design", kind=de.KIND_CAPABILITY,
+            positive=("p",) * 8, negative=("n",) * 8,
+            min_precision=None, min_recall=None, source_path=path,
+        )
+        with mock.patch.object(de, "load_corpus", return_value=(corpus, [])):
+            outcome = de.backfill_corpus_hashes(
+                [path], [self._unit("design")],
+            )
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+        self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
+
+
 if __name__ == "__main__":
     unittest.main()

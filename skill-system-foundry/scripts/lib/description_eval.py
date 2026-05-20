@@ -40,6 +40,7 @@ No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
 ``(value, findings)`` where each finding is a ``"SEVERITY: [tag] body"`` string.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -108,6 +109,10 @@ class Corpus:
     min_precision: float | None
     min_recall: float | None
     source_path: str
+    # Hex SHA-256 of the live unit description recorded at backfill time,
+    # or None when the header omits it or carries a non-string value.
+    # The audit's freshness rule recomputes and compares against this.
+    description_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +166,22 @@ class EvalReport:
         return all(t.metrics.passed for t in self.targets) and not any(
             e.startswith(LEVEL_FAIL) for e in self.errors
         )
+
+
+# --- description hashing -----------------------------------------------------
+
+
+def compute_description_sha256(description: str) -> str:
+    """Return the hex SHA-256 of *description*'s UTF-8 bytes.
+
+    *description* is the unit's resolved discovery description — for a skill
+    the (folded) frontmatter ``description``; for a capability the first body
+    paragraph after its ``# Heading`` (see :class:`Unit`).  Backfill and the
+    audit's freshness rule both hash ``Unit.description`` through this one
+    helper, so the two sides can never disagree on how the value is derived.
+    Deterministic across runs and platforms — same bytes in, same hex out.
+    """
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
 
 
 # --- corpus loading + schema validation -------------------------------------
@@ -326,6 +347,15 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
     min_precision = optional_threshold("min_precision")
     min_recall = optional_threshold("min_recall")
 
+    # Tolerated header field — populated by ``evaluate_descriptions.py
+    # --backfill-hash``.  A non-string or empty value is treated as absent
+    # so the audit's freshness rule skips it rather than crashing or
+    # reporting a spurious mismatch; the next backfill overwrites it.
+    raw_sha = data.get("description_sha256")
+    description_sha256 = (
+        raw_sha if isinstance(raw_sha, str) and raw_sha.strip() else None
+    )
+
     if positive is not None and negative is not None:
         _check_prompt_rules(positive, negative, fail, warn)
 
@@ -340,6 +370,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
         min_precision=min_precision,
         min_recall=min_recall,
         source_path=path,
+        description_sha256=description_sha256,
     )
     return corpus, findings
 
@@ -372,6 +403,106 @@ def check_cross_target_overlap(corpora: list[Corpus]) -> list[str]:
                     f"{kind} targets {sorted(targets)}: {prompt!r}"
                 )
     return findings
+
+
+# --- corpus hash backfill ---------------------------------------------------
+
+
+@dataclass
+class BackfillOutcome:
+    """Result of a ``--backfill-hash`` sweep over a set of corpus files."""
+
+    updated: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
+
+
+def _write_corpus_hash(path: str, new_hash: str) -> bool:
+    """Set ``description_sha256`` in the corpus file; return True if it was written.
+
+    When the recorded hash already equals *new_hash* the file's bytes are left
+    untouched — an already-correct corpus is a no-op regardless of its existing
+    formatting, so a non-canonical third-party corpus is not silently
+    re-rendered.  When the hash is missing or different, every other key
+    (``_comment``, thresholds, …) is preserved and the file is rewritten in the
+    project's canonical JSON shape (``indent=2``, ``ensure_ascii=False``,
+    trailing newline, LF terminators).
+    """
+    with open(path, "r", encoding="utf-8") as handle:
+        raw = handle.read()
+    data = json.loads(raw)
+    # json.loads accepts any valid JSON value; a non-object root (``[]``, a
+    # string, a number, ``null``) parses fine but has no ``.get`` — guard the
+    # shape so a file that changed between load and write routes through the
+    # caller's ``except (OSError, ValueError)`` as a structured FAIL rather than
+    # raising AttributeError out of the sweep.
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"corpus root is {type(data).__name__}, expected object"
+        )
+    if data.get("description_sha256") == new_hash:
+        return False
+    data["description_sha256"] = new_hash
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return True
+
+
+def backfill_corpus_hashes(
+    corpus_paths: list[str], candidates: list[Unit],
+) -> BackfillOutcome:
+    """Write ``description_sha256`` into each corpus header in place.
+
+    For every corpus that loads cleanly and maps to exactly one discovered
+    unit, compute the SHA-256 of that unit's resolved description and write it
+    into the corpus JSON.  Idempotent: a corpus already carrying the correct
+    hash is left byte-for-byte unchanged.  Corpora that fail to load (FAIL),
+    or whose target is missing / ambiguous among *candidates*, are skipped
+    with a finding; lower-severity shape findings are the runner's and audit's
+    concern, not backfill's, so they are not surfaced here.
+    """
+    outcome = BackfillOutcome()
+    for path in corpus_paths:
+        corpus, load_findings = load_corpus(path)
+        has_fail = any(f.startswith(LEVEL_FAIL) for f in load_findings)
+        outcome.findings.extend(
+            f for f in load_findings if f.startswith(LEVEL_FAIL)
+        )
+        # load_corpus returns None whenever it emits a FAIL today; the explicit
+        # has_fail guard keeps backfill non-mutating for invalid corpora even
+        # if a future loader change returns a Corpus alongside FAIL findings.
+        if corpus is None or has_fail:
+            continue
+        base = to_posix(path)
+        matches = _matching_units(corpus, candidates)
+        if not matches:
+            outcome.findings.append(
+                f"{LEVEL_WARN}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) not found among discovered units — skipped"
+            )
+            continue
+        if len(matches) > 1:
+            parents = sorted((unit.parent or "<skill-root>") for unit in matches)
+            outcome.findings.append(
+                f"{LEVEL_WARN}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) is ambiguous — it matches units under "
+                f"{parents}; point --skill-set at a single skill root — skipped"
+            )
+            continue
+        new_hash = compute_description_sha256(matches[0].description)
+        # The write re-reads and re-parses the file; an unwritable path or a
+        # file that changed between load and write must surface as a structured
+        # FAIL (so --json stays machine-readable) and not abort the sweep.
+        try:
+            changed = _write_corpus_hash(path, new_hash)
+        except (OSError, ValueError) as exc:
+            outcome.findings.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: cannot write hash "
+                f"({format_exception(exc)})"
+            )
+            continue
+        (outcome.updated if changed else outcome.unchanged).append(path)
+    return outcome
 
 
 # --- unit discovery + card extraction ---------------------------------------

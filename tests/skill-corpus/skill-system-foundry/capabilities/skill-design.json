@@ -21,5 +21,6 @@
     "Build a Python web scraper",
     "Debug a React component",
     "Set up a Postgres database"
-  ]
+  ],
+  "description_sha256": "899edeb3026ada10ac96c88c50e5480e6e53a649b1c29dcd3727431f26b03a6c"
 }

@@ -266,6 +266,118 @@ if "" in _normalized_stopwords:
     )
 EVAL_STOPWORDS = frozenset(_normalized_stopwords)
 
+# --- Description-quality corpus coverage (audit_skill_system.py) ---
+# Audit-level coverage rules read these.  The corpus root resolves
+# relative to the audit root; the rules self-skip when it is absent so
+# the skill-root self-check (no corpus under the skill) stays quiet.
+# The size-escalation rule reuses EVAL_MIN_PROMPTS / EVAL_RECOMMENDED_
+# PROMPTS above rather than a parallel floor that could drift.
+if "coverage" not in _eval:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'skill.description.evaluation.coverage'; update your checkout."
+    )
+_coverage = _eval["coverage"]
+if not isinstance(_coverage, dict):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.coverage': expected a mapping, got "
+        f"{type(_coverage).__name__}."
+    )
+if "corpus_root_relative" not in _coverage:
+    raise RuntimeError(
+        "configuration.yaml is missing required key "
+        "'skill.description.evaluation.coverage.corpus_root_relative'."
+    )
+# Reject non-string YAML values (a list / mapping survives ``str(...)`` as a
+# bogus path like ``['tests/skill-corpus']`` and would self-skip coverage
+# instead of failing fast) — the loader exposes typed, fail-fast constants.
+_corpus_root_raw = _coverage["corpus_root_relative"]
+if not isinstance(_corpus_root_raw, str):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.coverage.corpus_root_relative': "
+        f"expected a string, got {type(_corpus_root_raw).__name__}."
+    )
+EVAL_COVERAGE_CORPUS_ROOT = _corpus_root_raw.replace("\\", "/").strip()
+if EVAL_COVERAGE_CORPUS_ROOT.startswith("./"):
+    EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT[2:]
+EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT.rstrip("/")
+# Reject anything that would let the audit read outside the audit root, the
+# same way orphan_references.allowed_orphans entries are validated: empty,
+# absolute, drive-letter, or ``..``-bearing paths.
+if (
+    not EVAL_COVERAGE_CORPUS_ROOT
+    or EVAL_COVERAGE_CORPUS_ROOT.startswith("/")
+    or (
+        len(EVAL_COVERAGE_CORPUS_ROOT) >= 2
+        and EVAL_COVERAGE_CORPUS_ROOT[0].isalpha()
+        and EVAL_COVERAGE_CORPUS_ROOT[1] == ":"
+    )
+    or ".." in EVAL_COVERAGE_CORPUS_ROOT.split("/")
+):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.coverage.corpus_root_relative': "
+        "expected a non-empty relative POSIX path without a leading '/', a "
+        "drive-letter prefix, or '..' segments."
+    )
+_cov_freshness = str(
+    _coverage.get("freshness_check_enabled", "true")
+).strip().lower()
+if _cov_freshness not in ("true", "false"):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.coverage.freshness_check_enabled': "
+        f"expected 'true' or 'false', got "
+        f"{_coverage.get('freshness_check_enabled')!r}."
+    )
+EVAL_COVERAGE_FRESHNESS_ENABLED = _cov_freshness == "true"
+# allowed_missing_corpus mirrors orphan_references.allowed_orphans:
+# unit qualified names ("<skill>" or "<skill>/capabilities/<cap>"),
+# normalized to forward-slash form with absolute / drive-letter / ``..``
+# entries rejected so a malformed entry can never silently suppress the
+# rule.
+_raw_allowed_missing = _coverage.get("allowed_missing_corpus")
+if _raw_allowed_missing is None or _raw_allowed_missing == "":
+    _raw_allowed_missing = []
+if not isinstance(_raw_allowed_missing, list):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.coverage.allowed_missing_corpus': "
+        f"expected a list, got {type(_raw_allowed_missing).__name__}."
+    )
+_normalized_missing: list[str] = []
+for _entry in _raw_allowed_missing:
+    if not isinstance(_entry, str):
+        raise RuntimeError(
+            "configuration.yaml has a non-string entry in "
+            "'skill.description.evaluation.coverage.allowed_missing_corpus': "
+            f"{_entry!r}."
+        )
+    _candidate = _entry.replace("\\", "/").strip()
+    if _candidate.startswith("./"):
+        _candidate = _candidate[2:]
+    if not _candidate:
+        raise RuntimeError(
+            "configuration.yaml has an empty / whitespace-only entry in "
+            "'skill.description.evaluation.coverage.allowed_missing_corpus'; "
+            "remove the entry or replace it with a real unit name."
+        )
+    if _candidate.startswith("/") or (
+        len(_candidate) >= 2
+        and _candidate[0].isalpha()
+        and _candidate[1] == ":"
+    ) or (".." in _candidate.split("/")):
+        raise RuntimeError(
+            "configuration.yaml has an invalid entry in "
+            "'skill.description.evaluation.coverage.allowed_missing_corpus': "
+            f"{_entry!r}. Entries must be relative unit names without a "
+            "leading '/', a drive-letter prefix, or '..' segments."
+        )
+    _normalized_missing.append(_candidate)
+EVAL_COVERAGE_ALLOWED_MISSING = tuple(_normalized_missing)
+
 # Trigger-phrase heuristic: the agentskills.io spec requires
 # descriptions to state both *what* the skill does and *when* it
 # activates.  validate_description_triggers enforces the "when"
@@ -1140,3 +1252,5 @@ del _stats, _stats_le, _stats_le_enabled
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf
 del _eval, _required_eval_keys, _missing_eval, _stopwords, _normalized_stopwords
+del _coverage, _cov_freshness, _raw_allowed_missing, _normalized_missing
+del _corpus_root_raw

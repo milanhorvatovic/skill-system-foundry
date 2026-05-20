@@ -140,6 +140,17 @@ jobs:
         env:
           PYTHONUTF8: "1"
 
+      - name: Audit corpus coverage (repo root)
+        # The corpus-coverage rules fire only at the repo root, where
+        # tests/skill-corpus resolves and discover_units finds the
+        # meta-skill.  One "No skills/ directory" WARN is expected here
+        # (distribution-repo mode); the audit exits 0 on warnings and
+        # non-zero only on LEVEL_FAIL (e.g. an undersized committed
+        # corpus), so coverage drift surfaces on every PR per CLAUDE.md.
+        run: python skill-system-foundry/scripts/audit_skill_system.py .
+        env:
+          PYTHONUTF8: "1"
+
   reference-conformance:
     # Gates the meta-skill's link graph against the file-relative
     # path-resolution rule (see skill-system-foundry/references/path-resolution.md).

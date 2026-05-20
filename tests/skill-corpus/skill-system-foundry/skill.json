@@ -25,5 +25,6 @@
     "Configure an nginx reverse proxy",
     "Brew a pot of coffee",
     "Render an HTML invoice"
-  ]
+  ],
+  "description_sha256": "4f232c679ead6913d2fdb7908f13688982caa20625308d4c638d7b1852aab018"
 }

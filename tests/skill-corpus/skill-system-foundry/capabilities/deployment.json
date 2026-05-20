@@ -21,5 +21,6 @@
     "Brew a pot of coffee",
     "Plot a sine wave",
     "Render an HTML invoice"
-  ]
+  ],
+  "description_sha256": "600a16434bd2adb42990353d4ec521c887b8849ce47e1d053bee682247fb73d4"
 }

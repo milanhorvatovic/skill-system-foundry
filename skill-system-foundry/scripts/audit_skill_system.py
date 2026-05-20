@@ -89,9 +89,12 @@ from lib.constants import (
     LEVEL_FAIL, LEVEL_WARN, LEVEL_INFO,
     PATH_RESOLUTION_DOC_PATH,
     PATH_RESOLUTION_RULE_NAME,
+    EVAL_COVERAGE_FRESHNESS_ENABLED,
     collect_foundry_config_findings,
 )
 from lib.orphans import find_orphan_references, find_unresolved_allowed_orphans
+from lib.audit_coverage import audit_corpus_coverage, resolve_corpus_root
+from lib.description_eval import discover_units
 from lib.prose_yaml import collect_prose_findings, format_finding_as_string
 from lib.bundling import check_long_paths, check_reserved_path_components
 from lib.router_table import audit_router_table
@@ -1051,6 +1054,47 @@ def audit_skill_system(
     errors.extend(stale_findings)
     if not stale_findings and verbose and ALLOWED_ORPHANS:
         print("  ✓ allowed_orphans: every entry resolves to an existing file")
+
+    # --- Corpus Coverage ---
+    # Audit-level description-quality coverage: every discoverable unit should
+    # have a corpus, each corpus stays fresh against its live description,
+    # capability corpora are consistent within a skill, and a committed corpus
+    # is large enough.  Units come from discover_units (a skill at the audit
+    # root or as an immediate subdirectory) — not find_skill_dirs — so the
+    # rules fire at the repo root where tests/skill-corpus resolves, while the
+    # skill-root self-check (no corpus under the skill) self-skips.
+    if verbose:
+        print("\n== Corpus Coverage ==")
+    coverage_root = resolve_corpus_root(system_root)
+    if not os.path.isdir(coverage_root):
+        if verbose:
+            print(f"  - skipped (no corpus root at {to_posix(coverage_root)})")
+    else:
+        # Discover units once and reuse: the skip decision below and
+        # audit_corpus_coverage both need them, so pass them in to avoid a
+        # second tree walk (and any inconsistency from a mid-audit change).
+        coverage_units = discover_units(system_root)
+        if not coverage_units:
+            # audit_corpus_coverage also returns [] when it self-skips for lack
+            # of discoverable units; surface that as a skip rather than a clean
+            # pass so the verbose line never claims coverage that did not run.
+            if verbose:
+                print("  - skipped (no discoverable units under the audit root)")
+        else:
+            coverage_findings = audit_corpus_coverage(
+                system_root, units=coverage_units
+            )
+            errors.extend(coverage_findings)
+            if not coverage_findings and verbose:
+                # Only claim freshness when the freshness rule actually ran;
+                # with freshness_check_enabled: false the corpora could be stale.
+                if EVAL_COVERAGE_FRESHNESS_ENABLED:
+                    print("  ✓ corpus coverage: complete and fresh")
+                else:
+                    print(
+                        "  ✓ corpus coverage: complete "
+                        "(freshness check disabled)"
+                    )
 
     # --- Manifest ---
     if verbose:

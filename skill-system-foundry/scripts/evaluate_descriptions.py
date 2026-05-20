@@ -5,12 +5,20 @@ Usage:
     python scripts/evaluate_descriptions.py <corpus-path>
     python scripts/evaluate_descriptions.py <corpus-dir> --skill-set .
     python scripts/evaluate_descriptions.py <corpus-dir> --soft --json
+    python scripts/evaluate_descriptions.py <corpus-dir> --backfill-hash
 
 Heuristic mode is pure stdlib and deterministic: each prompt is scored by
 Jaccard token overlap against the candidate ``name + description`` cards.  Exit
 code is 0 when every target clears its precision/recall thresholds.  ``--soft``
 suppresses threshold breaches only (still exit 0); FAIL-level findings (malformed
 corpus, missing or ambiguous target) always exit 1.
+
+``--backfill-hash`` switches to a write mode: it recomputes each corpus's
+``description_sha256`` from the live unit description and writes it into the
+corpus header in place.  It is idempotent — a corpus already carrying the
+correct hash is left byte-for-byte unchanged — so the audit's freshness rule
+gets a one-command refresh.  The candidate units come from ``--skill-set``
+(default: current directory).
 """
 
 import argparse
@@ -27,9 +35,11 @@ from lib.constants import (
     LEVEL_FAIL,
 )
 from lib.description_eval import (
+    BackfillOutcome,
     EvalReport,
     Metrics,
     TargetResult,
+    backfill_corpus_hashes,
     check_cross_target_overlap,
     discover_units,
     evaluate,
@@ -39,6 +49,7 @@ from lib.reporting import (
     categorize_errors_for_json,
     print_error_line,
     to_json_output,
+    to_posix,
 )
 
 
@@ -62,6 +73,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--soft", action="store_true",
         help="Suppress threshold breaches (exit 0); FAIL findings still exit 1.",
+    )
+    parser.add_argument(
+        "--backfill-hash", dest="backfill_hash", action="store_true",
+        help=(
+            "Write description_sha256 into each corpus header (idempotent), "
+            "computed from the --skill-set unit descriptions. Skips scoring."
+        ),
     )
     parser.add_argument(
         "--json", dest="json_output", action="store_true",
@@ -158,6 +176,36 @@ def _print_human(report: EvalReport, verbose: bool) -> None:
     print(f"Overall: {'PASS' if report.success else 'FAIL'}")
 
 
+def _emit_backfill(outcome: BackfillOutcome, json_mode: bool) -> None:
+    """Print the backfill summary (JSON or human) and exit.
+
+    Exit 1 only when a FAIL-level finding fired (a corpus that could not be
+    read / parsed); skipped-target WARNs and a clean no-op both exit 0.
+    """
+    has_fail = any(f.startswith(LEVEL_FAIL) for f in outcome.findings)
+    if json_mode:
+        print(to_json_output({
+            "tool": "evaluate_descriptions",
+            "mode": "backfill",
+            "success": not has_fail,
+            "updated": [to_posix(p) for p in outcome.updated],
+            "unchanged": [to_posix(p) for p in outcome.unchanged],
+            "errors": categorize_errors_for_json(outcome.findings),
+        }))
+    else:
+        for path in outcome.updated:
+            print(f"updated  {to_posix(path)}")
+        for path in outcome.unchanged:
+            print(f"unchanged {to_posix(path)}")
+        for finding in outcome.findings:
+            print_error_line(finding)
+        print(
+            f"Backfill: {len(outcome.updated)} updated, "
+            f"{len(outcome.unchanged)} unchanged"
+        )
+    sys.exit(1 if has_fail else 0)
+
+
 def main() -> None:
     # Pre-parse scan: _json_aware_error fires during parse_args(), before `args`
     # exists, so it can only consult argv. Recomputed from args.json_output below.
@@ -199,6 +247,15 @@ def main() -> None:
     if not corpus_paths:
         _exit(f"no corpus JSON found at '{args.corpus_path}'", json_mode)
 
+    skill_set = args.skill_set or os.getcwd()
+
+    # Backfill is a write mode that short-circuits scoring entirely: it only
+    # needs the unit descriptions to recompute and persist each corpus's hash.
+    if args.backfill_hash:
+        outcome = backfill_corpus_hashes(corpus_paths, discover_units(skill_set))
+        _emit_backfill(outcome, json_mode)
+        return  # _emit_backfill calls sys.exit; return keeps flow obvious.
+
     corpora = []
     findings: list[str] = []
     for path in corpus_paths:
@@ -208,7 +265,6 @@ def main() -> None:
             corpora.append(corpus)
     findings.extend(check_cross_target_overlap(corpora))
 
-    skill_set = args.skill_set or os.getcwd()
     units = discover_units(skill_set)
 
     opts = {
