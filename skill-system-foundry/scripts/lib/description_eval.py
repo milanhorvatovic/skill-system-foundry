@@ -56,11 +56,15 @@ import os
 from dataclasses import dataclass, field
 
 from .constants import (
+    DIR_CAPABILITIES,
     EVAL_DIVERSITY_RATIO,
     EVAL_MAX_PROMPT_CHARS,
+    FILE_CAPABILITY_MD,
+    FILE_SKILL_MD,
     LEVEL_FAIL,
     LEVEL_WARN,
 )
+from .frontmatter import load_frontmatter
 
 # --- structural constants ---------------------------------------------------
 
@@ -90,6 +94,7 @@ class Unit:
     kind: str  # KIND_SKILL | KIND_CAPABILITY
     description: str
     path: str  # absolute path to SKILL.md or capability.md
+    parent: str | None = None  # owning skill name for a capability, else None
 
     @property
     def card_text(self) -> str:
@@ -372,23 +377,89 @@ def check_cross_target_overlap(corpora: list[Corpus]) -> list[str]:
 # --- unit discovery + card extraction (step 5) ------------------------------
 
 
-def discover_units(skill_set_dir: str) -> list[Unit]:
-    """Discover candidate units under *skill_set_dir*.
+def _first_paragraph_after_heading(body: str) -> str:
+    """Return the first non-empty paragraph following the body's H1 heading.
 
-    Accepts both the skill-root layout (``<dir>/SKILL.md`` plus
-    ``<dir>/capabilities/*/capability.md``) and the deployed layout
-    (``<dir>/<name>/SKILL.md`` plus ``<dir>/<name>/capabilities/*/...``).
+    Falls back to the first non-empty paragraph of *body* when no ``# `` H1 is
+    present, and to an empty string when the body has no prose at all.  A
+    paragraph is the run of consecutive non-blank lines, joined with single
+    spaces.
     """
-    raise NotImplementedError
+    lines = body.splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("# "):
+            start = index + 1
+            break
+    index = start
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    paragraph: list[str] = []
+    while index < len(lines) and lines[index].strip():
+        paragraph.append(lines[index].strip())
+        index += 1
+    return " ".join(paragraph).strip()
 
 
 def extract_capability_card(capability_md_path: str, dir_name: str) -> tuple[str, str]:
     """Return ``(name, description)`` for a capability.
 
-    Name is *dir_name*; description is the first non-empty body paragraph after
-    the ``# Heading`` line in *capability_md_path* (empty when none exists).
+    Name is *dir_name* (capabilities carry no frontmatter ``name``); description
+    is the first non-empty body paragraph after the ``# Heading`` line in
+    *capability_md_path* (empty when none exists).
     """
-    raise NotImplementedError
+    _frontmatter, body, _findings = load_frontmatter(capability_md_path)
+    return dir_name, _first_paragraph_after_heading(body)
+
+
+def _units_for_skill(skill_dir: str) -> list[Unit]:
+    """Build the skill Unit plus a Unit for each of its capabilities."""
+    units: list[Unit] = []
+    skill_md = os.path.join(skill_dir, FILE_SKILL_MD)
+    frontmatter, _body, _findings = load_frontmatter(skill_md)
+    frontmatter = frontmatter or {}
+    name = str(frontmatter.get("name") or os.path.basename(skill_dir))
+    description = str(frontmatter.get("description") or "")
+    units.append(
+        Unit(name=name, kind=KIND_SKILL, description=description, path=skill_md)
+    )
+
+    caps_dir = os.path.join(skill_dir, DIR_CAPABILITIES)
+    if os.path.isdir(caps_dir):
+        for entry in sorted(os.listdir(caps_dir)):
+            cap_md = os.path.join(caps_dir, entry, FILE_CAPABILITY_MD)
+            if os.path.isfile(cap_md):
+                cap_name, cap_desc = extract_capability_card(cap_md, entry)
+                units.append(
+                    Unit(
+                        name=cap_name, kind=KIND_CAPABILITY,
+                        description=cap_desc, path=cap_md, parent=name,
+                    )
+                )
+    return units
+
+
+def discover_units(skill_set_dir: str) -> list[Unit]:
+    """Discover candidate units under *skill_set_dir*.
+
+    Accepts both the skill-root layout (``<dir>/SKILL.md`` plus
+    ``<dir>/capabilities/*/capability.md``) and the deployed layout
+    (``<dir>/<name>/SKILL.md`` plus ``<dir>/<name>/capabilities/*/...``).  A
+    ``SKILL.md`` directly under *skill_set_dir* selects skill-root mode;
+    otherwise each immediate subdirectory holding a ``SKILL.md`` is a skill.
+    """
+    root = os.path.abspath(skill_set_dir)
+    if os.path.isfile(os.path.join(root, FILE_SKILL_MD)):
+        return _units_for_skill(root)
+
+    units: list[Unit] = []
+    if not os.path.isdir(root):
+        return units
+    for entry in sorted(os.listdir(root)):
+        sub = os.path.join(root, entry)
+        if os.path.isfile(os.path.join(sub, FILE_SKILL_MD)):
+            units.extend(_units_for_skill(sub))
+    return units
 
 
 # --- heuristic scoring (step 6) ---------------------------------------------

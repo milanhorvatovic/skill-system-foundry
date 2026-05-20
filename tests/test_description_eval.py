@@ -17,6 +17,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+import helpers
 from lib import description_eval as de
 
 
@@ -273,6 +274,100 @@ class CrossTargetOverlapTests(unittest.TestCase):
         a = self._corpus("alpha", ("alpha one", "alpha two"))
         b = self._corpus("beta", ("beta one", "beta two"))
         self.assertEqual(de.check_cross_target_overlap([a, b]), [])
+
+
+class DiscoveryBaseMixin(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+
+
+class DiscoverUnitsSkillRootTests(DiscoveryBaseMixin):
+    def test_skill_root_discovers_skill_and_capabilities(self) -> None:
+        helpers.write_skill_md(
+            self.root, name="skill-system-foundry",
+            description="Designs AI-agnostic skill systems.", body="# Foundry\n",
+        )
+        helpers.write_capability_md(
+            self.root, "validation", allowed_tools="Bash Read",
+            body="# Validation\n\nValidate skills and audit systems.\n",
+        )
+        helpers.write_capability_md(
+            self.root, "bundling", allowed_tools="Bash Read",
+            body="# Bundling\n\nPackage a skill as a zip bundle.\n",
+        )
+        by_name = {u.name: u for u in de.discover_units(self.root)}
+
+        self.assertEqual(by_name["skill-system-foundry"].kind, de.KIND_SKILL)
+        self.assertEqual(
+            by_name["skill-system-foundry"].description,
+            "Designs AI-agnostic skill systems.",
+        )
+        self.assertEqual(by_name["validation"].kind, de.KIND_CAPABILITY)
+        self.assertEqual(
+            by_name["validation"].description, "Validate skills and audit systems.",
+        )
+        self.assertEqual(by_name["validation"].parent, "skill-system-foundry")
+        self.assertEqual(by_name["bundling"].parent, "skill-system-foundry")
+        self.assertEqual(
+            by_name["validation"].card_text,
+            "validation Validate skills and audit systems.",
+        )
+
+    def test_skill_without_capabilities_returns_only_skill(self) -> None:
+        helpers.write_skill_md(self.root, name="lonely", description="Solo skill.")
+        units = de.discover_units(self.root)
+        self.assertEqual(len(units), 1)
+        self.assertEqual(units[0].kind, de.KIND_SKILL)
+        self.assertIsNone(units[0].parent)
+
+
+class DiscoverUnitsDeployedTests(DiscoveryBaseMixin):
+    def test_deployed_layout_discovers_each_skill(self) -> None:
+        helpers.write_skill_md(
+            os.path.join(self.root, "alpha"), name="alpha", description="Alpha skill.",
+        )
+        helpers.write_skill_md(
+            os.path.join(self.root, "beta"), name="beta", description="Beta skill.",
+        )
+        os.makedirs(os.path.join(self.root, "not-a-skill"))
+        units = de.discover_units(self.root)
+        self.assertEqual(sorted(u.name for u in units), ["alpha", "beta"])
+        self.assertTrue(all(u.kind == de.KIND_SKILL for u in units))
+
+    def test_missing_directory_returns_empty(self) -> None:
+        self.assertEqual(de.discover_units(os.path.join(self.root, "nope")), [])
+
+
+class CapabilityCardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _cap(self, text: str) -> str:
+        path = os.path.join(self._tmp.name, "capability.md")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        return path
+
+    def test_multiline_intro_paragraph_joined(self) -> None:
+        path = self._cap(
+            "---\nallowed-tools: Bash\n---\n\n# Migration\n\n"
+            "Convert flat skills\ninto routers.\n\nSecond paragraph.\n"
+        )
+        name, description = de.extract_capability_card(path, "migration")
+        self.assertEqual(name, "migration")
+        self.assertEqual(description, "Convert flat skills into routers.")
+
+    def test_heading_only_yields_empty_description(self) -> None:
+        path = self._cap("---\nallowed-tools: Bash\n---\n\n# OnlyHeading\n")
+        self.assertEqual(de.extract_capability_card(path, "lonely"), ("lonely", ""))
+
+    def test_no_heading_uses_first_paragraph(self) -> None:
+        path = self._cap("Plain intro line.\n\nMore.\n")
+        _name, description = de.extract_capability_card(path, "x")
+        self.assertEqual(description, "Plain intro line.")
 
 
 if __name__ == "__main__":
