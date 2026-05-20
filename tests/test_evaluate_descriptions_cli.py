@@ -280,13 +280,13 @@ class InProcessCliTests(CliBaseMixin):
         self.assertEqual(code, 1)
         self.assertIn("error:", err)
 
-    def test_abbreviated_json_flag_honored_on_error(self) -> None:
-        # argparse expands --js to --json; the post-parse error path must emit
-        # JSON because json_mode is recomputed from args.json_output.
+    def test_flag_abbreviation_disabled(self) -> None:
+        # allow_abbrev=False: --js is not accepted as --json, so the pre-parse
+        # scan and parsed value cannot diverge at parse time.
         self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        code, out, _err = _run_main(self._argv("--min-precision", "-1", "--js"))
+        code, _out, err = _run_main(self._argv("--min-precision", "0.9", "--js"))
         self.assertEqual(code, 1)
-        self.assertIn("between 0 and 1", json.loads(out)["error"])
+        self.assertIn("unrecognized arguments", err)
 
 
 if __name__ == "__main__":

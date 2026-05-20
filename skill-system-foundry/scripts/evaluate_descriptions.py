@@ -8,8 +8,9 @@ Usage:
 
 Heuristic mode is pure stdlib and deterministic: each prompt is scored by
 Jaccard token overlap against the candidate ``name + description`` cards.  Exit
-code is 0 when every target clears its precision/recall thresholds (or under
---soft); 1 otherwise.
+code is 0 when every target clears its precision/recall thresholds.  ``--soft``
+suppresses threshold breaches only (still exit 0); FAIL-level findings (malformed
+corpus, missing or ambiguous target) always exit 1.
 """
 
 import argparse
@@ -45,6 +46,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Evaluate description activation accuracy (heuristic).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        # Disable prefix abbreviation so the pre-parse `--json` scan and the
+        # parsed `args.json_output` agree (no `--js` -> `--json` divergence).
+        allow_abbrev=False,
     )
     parser.add_argument(
         "corpus_path", help="A corpus JSON file or a directory of corpus files.",
@@ -57,7 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-recall", dest="min_recall", type=float, default=None)
     parser.add_argument(
         "--soft", action="store_true",
-        help="Exit 0 even on threshold breach (findings still emitted).",
+        help="Suppress threshold breaches (exit 0); FAIL findings still exit 1.",
     )
     parser.add_argument(
         "--json", dest="json_output", action="store_true",
