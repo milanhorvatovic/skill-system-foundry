@@ -1,5 +1,5 @@
 {
-  "target": "example-capability",
+  "target": "your-capability-name",
   "kind": "capability",
   "_comment": "Starter corpus for one capability. 'target' is the capability directory name (capabilities carry no frontmatter 'name'). A capability competes against its sibling capabilities, so put sibling-capability prompts under 'negative' to test boundary precision, alongside fully out-of-scope prompts. Aim for 8-10 per side; 4 is the minimum.",
   "positive": [
