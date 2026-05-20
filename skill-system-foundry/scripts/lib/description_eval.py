@@ -431,6 +431,15 @@ def _write_corpus_hash(path: str, new_hash: str) -> bool:
     with open(path, "r", encoding="utf-8") as handle:
         raw = handle.read()
     data = json.loads(raw)
+    # json.loads accepts any valid JSON value; a non-object root (``[]``, a
+    # string, a number, ``null``) parses fine but has no ``.get`` — guard the
+    # shape so a file that changed between load and write routes through the
+    # caller's ``except (OSError, ValueError)`` as a structured FAIL rather than
+    # raising AttributeError out of the sweep.
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"corpus root is {type(data).__name__}, expected object"
+        )
     if data.get("description_sha256") == new_hash:
         return False
     data["description_sha256"] = new_hash

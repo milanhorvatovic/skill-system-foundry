@@ -896,6 +896,29 @@ class BackfillCorpusHashesTests(unittest.TestCase):
         self.assertEqual(outcome.unchanged, [])
         self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
 
+    def test_nonobject_json_in_write_path_is_a_structured_fail(self) -> None:
+        # Race: load_corpus validated an object, but the file is replaced with
+        # valid-but-non-object JSON (``[]``) before the write re-reads it.
+        # json.loads succeeds, .get raises AttributeError — the shape guard in
+        # _write_corpus_hash must convert that into a ValueError that the caller
+        # records as a structured FAIL instead of crashing the sweep.
+        path = self._corpus(valid_corpus_dict())
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("[]\n")  # valid JSON, not an object
+        corpus = de.Corpus(
+            target="skill-design", kind=de.KIND_CAPABILITY,
+            positive=("p",) * 8, negative=("n",) * 8,
+            min_precision=None, min_recall=None, source_path=path,
+        )
+        with mock.patch.object(de, "load_corpus", return_value=(corpus, [])):
+            outcome = de.backfill_corpus_hashes(
+                [path], [self._unit("design")],
+            )
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.updated, [])
+        self.assertEqual(outcome.unchanged, [])
+        self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
+
 
 if __name__ == "__main__":
     unittest.main()
