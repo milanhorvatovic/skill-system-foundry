@@ -86,6 +86,9 @@ PREDICTION_NONE = "none"  # the LLM's literal "no unit fits" answer
 MODE_HEURISTIC = "heuristic"
 MODE_LLM = "llm"
 
+# Fixed seed so advisory bootstrap CIs are reproducible across runs.
+_BOOTSTRAP_SEED = 20240517
+
 # Anthropic Messages API version header value (stable).
 ANTHROPIC_API_VERSION = "2023-06-01"
 _CLASSIFIER_SYSTEM_PROMPT = (
@@ -716,29 +719,68 @@ def score_llm(
 # --- advisory statistics (steps 11-13) --------------------------------------
 
 
+def _percentile(sorted_values: list[float], quantile: float) -> float:
+    """Nearest-rank percentile of an already-sorted list."""
+    if not sorted_values:
+        return 0.0
+    index = int(round((len(sorted_values) - 1) * quantile))
+    return sorted_values[index]
+
+
 def bootstrap_confidence_interval(
     scored: list[ScoredQuery], target: str,
     iterations: int, confidence: float,
 ) -> dict:
     """Resample *scored* with replacement -> CI bounds for precision/recall.
 
-    Advisory only — never gates.  Deterministic under a fixed internal seed.
+    Advisory only — never gates.  Deterministic under a fixed internal seed so
+    repeated runs report identical bounds.
     """
-    raise NotImplementedError
+    lower_q = (1.0 - confidence) / 2.0
+    upper_q = 1.0 - lower_q
+    if not scored:
+        return {
+            "precision": [1.0, 1.0], "recall": [1.0, 1.0],
+            "confidence": confidence, "iterations": iterations,
+        }
+
+    rng = random.Random(_BOOTSTRAP_SEED)
+    precisions: list[float] = []
+    recalls: list[float] = []
+    for _ in range(iterations):
+        resample = rng.choices(scored, k=len(scored))
+        metrics = aggregate(resample, target, 0.0, 0.0)
+        precisions.append(metrics.precision)
+        recalls.append(metrics.recall)
+    precisions.sort()
+    recalls.sort()
+    return {
+        "precision": [_percentile(precisions, lower_q), _percentile(precisions, upper_q)],
+        "recall": [_percentile(recalls, lower_q), _percentile(recalls, upper_q)],
+        "confidence": confidence,
+        "iterations": iterations,
+    }
 
 
 def flag_unstable_queries(
     scored: list[ScoredQuery], low: float, high: float,
 ) -> list[str]:
     """Return prompts whose LLM trigger rate falls within ``[low, high]``."""
-    raise NotImplementedError
+    return [
+        query.prompt for query in scored
+        if query.trigger_rate is not None and low <= query.trigger_rate <= high
+    ]
 
 
 def pairwise_confusion(
     scored: list[ScoredQuery], target: str,
 ) -> dict[str, int]:
     """Count, per wrongly-selected unit, how often it stole *target*'s prompts."""
-    raise NotImplementedError
+    votes = Counter(
+        query.prediction for query in scored
+        if query.prediction is not None and query.prediction != target
+    )
+    return dict(sorted(votes.items()))
 
 
 # --- orchestrator (step 14) -------------------------------------------------

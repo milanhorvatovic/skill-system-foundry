@@ -657,5 +657,70 @@ class ScoreLlmTests(unittest.TestCase):
         self.assertEqual(rate, 0.0)
 
 
+def _q(label: str, prediction: str | None, trigger_rate: float | None) -> de.ScoredQuery:
+    return de.ScoredQuery(
+        prompt=f"{label}:{prediction}:{trigger_rate}", label=label,
+        prediction=prediction, trigger_rate=trigger_rate, runs=3,
+    )
+
+
+class BootstrapConfidenceIntervalTests(unittest.TestCase):
+    def _mixed(self) -> list[de.ScoredQuery]:
+        return (
+            _scored(de.LABEL_POSITIVE, "skill-design", 3)
+            + _scored(de.LABEL_POSITIVE, None, 1)
+            + _scored(de.LABEL_NEGATIVE, None, 3)
+            + _scored(de.LABEL_NEGATIVE, "skill-design", 1)
+        )
+
+    def test_deterministic_for_same_input(self) -> None:
+        scored = self._mixed()
+        first = de.bootstrap_confidence_interval(scored, "skill-design", 200, 0.95)
+        second = de.bootstrap_confidence_interval(scored, "skill-design", 200, 0.95)
+        self.assertEqual(first, second)
+
+    def test_bounds_are_ordered_and_in_range(self) -> None:
+        result = de.bootstrap_confidence_interval(self._mixed(), "skill-design", 200, 0.95)
+        for key in ("precision", "recall"):
+            low, high = result[key]
+            self.assertLessEqual(0.0, low)
+            self.assertLessEqual(low, high)
+            self.assertLessEqual(high, 1.0)
+
+    def test_empty_scored_returns_unit_bounds(self) -> None:
+        result = de.bootstrap_confidence_interval([], "skill-design", 200, 0.95)
+        self.assertEqual(result["precision"], [1.0, 1.0])
+        self.assertEqual(result["recall"], [1.0, 1.0])
+
+
+class FlagUnstableQueriesTests(unittest.TestCase):
+    def test_flags_only_in_window_and_skips_none(self) -> None:
+        scored = [
+            _q(de.LABEL_POSITIVE, "skill-design", 1.0),   # stable, out of window
+            _q(de.LABEL_POSITIVE, "skill-design", 0.5),   # in window
+            _q(de.LABEL_NEGATIVE, None, 0.33),            # in window
+            _q(de.LABEL_NEGATIVE, None, None),            # heuristic mode, skipped
+        ]
+        flagged = de.flag_unstable_queries(scored, 0.3, 0.7)
+        self.assertEqual(len(flagged), 2)
+        self.assertIn(scored[1].prompt, flagged)
+        self.assertIn(scored[2].prompt, flagged)
+
+
+class PairwiseConfusionTests(unittest.TestCase):
+    def test_counts_only_wrong_units(self) -> None:
+        scored = [
+            _q(de.LABEL_POSITIVE, "skill-design", 1.0),   # correct, ignored
+            _q(de.LABEL_NEGATIVE, None, 0.0),             # none, ignored
+            _q(de.LABEL_NEGATIVE, "bundling", 0.0),       # wrong unit
+            _q(de.LABEL_POSITIVE, "bundling", 0.2),       # wrong unit
+            _q(de.LABEL_NEGATIVE, "validation", 0.0),     # wrong unit
+        ]
+        self.assertEqual(
+            de.pairwise_confusion(scored, "skill-design"),
+            {"bundling": 2, "validation": 1},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
