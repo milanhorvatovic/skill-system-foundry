@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -250,6 +251,11 @@ class StaleAllowListTests(CoverageBaseMixin):
         self.assertEqual(len(findings), 1)
         self.assertTrue(findings[0].startswith(LEVEL_INFO))
         self.assertIn("ghost", findings[0])
+        # The finding cites the full config path so users can locate the key.
+        self.assertIn(
+            "skill.description.evaluation.coverage.allowed_missing_corpus",
+            findings[0],
+        )
 
 
 # ===================================================================
@@ -449,6 +455,19 @@ class OrchestratorTests(CoverageBaseMixin):
         )
         self.assertTrue(any("stale" in f for f in with_fresh))
         self.assertFalse(any("stale" in f for f in without_fresh))
+
+    def test_units_param_bypasses_internal_discovery(self) -> None:
+        # When the caller passes pre-discovered units, the tree must not be
+        # walked again — proven by making discover_units explode if reached.
+        self._write_all()
+        with mock.patch.object(
+            ac, "discover_units",
+            side_effect=AssertionError("discover_units must not be called"),
+        ):
+            findings = ac.audit_corpus_coverage(
+                self.skill_root, units=self.units
+            )
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":

@@ -242,8 +242,9 @@ def find_stale_allowed_missing(
     for entry in allowed_missing:
         if entry not in known:
             findings.append(
-                f"{LEVEL_INFO}: [foundry] coverage.allowed_missing_corpus entry "
-                f"'{entry}' matches no discovered unit — remove it from "
+                f"{LEVEL_INFO}: [foundry] "
+                f"skill.description.evaluation.coverage.allowed_missing_corpus "
+                f"entry '{entry}' matches no discovered unit — remove it from "
                 f"configuration.yaml or update the name"
             )
     return findings
@@ -374,6 +375,7 @@ def find_undersized_corpora(
 def audit_corpus_coverage(
     system_root: str,
     *,
+    units: list[Unit] | None = None,
     allowed_missing: tuple[str, ...] | list[str] = EVAL_COVERAGE_ALLOWED_MISSING,
     freshness_enabled: bool = EVAL_COVERAGE_FRESHNESS_ENABLED,
     size_floor: int = EVAL_RECOMMENDED_PROMPTS,
@@ -385,11 +387,16 @@ def audit_corpus_coverage(
     aggregates rules 1, 2, 4, 5 and (when *freshness_enabled*) rule 3.  Corpora
     below ``EVAL_MIN_PROMPTS`` fail to load; that load FAIL is surfaced by the
     size rule rather than gated by a separate parameter here.
+
+    *units* lets a caller that already discovered them (the audit entry point
+    does, to decide its skip message) pass them in so the tree is walked once;
+    when None they are discovered here.
     """
     corpus_root = resolve_corpus_root(system_root)
     if not os.path.isdir(corpus_root):
         return []
-    units = discover_units(system_root)
+    if units is None:
+        units = discover_units(system_root)
     if not units:
         return []
 

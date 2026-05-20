@@ -1069,25 +1069,32 @@ def audit_skill_system(
     if not os.path.isdir(coverage_root):
         if verbose:
             print(f"  - skipped (no corpus root at {to_posix(coverage_root)})")
-    elif not discover_units(system_root):
-        # audit_corpus_coverage also returns [] when it self-skips for lack of
-        # discoverable units; surface that as a skip rather than a clean pass so
-        # the verbose line never claims coverage that did not run.
-        if verbose:
-            print("  - skipped (no discoverable units under the audit root)")
     else:
-        coverage_findings = audit_corpus_coverage(system_root)
-        errors.extend(coverage_findings)
-        if not coverage_findings and verbose:
-            # Only claim freshness when the freshness rule actually ran; with
-            # freshness_check_enabled: false the corpora could be stale.
-            if EVAL_COVERAGE_FRESHNESS_ENABLED:
-                print("  ✓ corpus coverage: complete and fresh")
-            else:
-                print(
-                    "  ✓ corpus coverage: complete "
-                    "(freshness check disabled)"
-                )
+        # Discover units once and reuse: the skip decision below and
+        # audit_corpus_coverage both need them, so pass them in to avoid a
+        # second tree walk (and any inconsistency from a mid-audit change).
+        coverage_units = discover_units(system_root)
+        if not coverage_units:
+            # audit_corpus_coverage also returns [] when it self-skips for lack
+            # of discoverable units; surface that as a skip rather than a clean
+            # pass so the verbose line never claims coverage that did not run.
+            if verbose:
+                print("  - skipped (no discoverable units under the audit root)")
+        else:
+            coverage_findings = audit_corpus_coverage(
+                system_root, units=coverage_units
+            )
+            errors.extend(coverage_findings)
+            if not coverage_findings and verbose:
+                # Only claim freshness when the freshness rule actually ran;
+                # with freshness_check_enabled: false the corpora could be stale.
+                if EVAL_COVERAGE_FRESHNESS_ENABLED:
+                    print("  ✓ corpus coverage: complete and fresh")
+                else:
+                    print(
+                        "  ✓ corpus coverage: complete "
+                        "(freshness check disabled)"
+                    )
 
     # --- Manifest ---
     if verbose:
