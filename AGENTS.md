@@ -71,7 +71,8 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── scaffold.py              ← scaffold new components from templates
 │       ├── bundle.py                ← bundle for distribution (zip)
 │       ├── stats.py                 ← report skill token-budget proxies
-│       └── yaml_conformance_report.py  ← run the YAML 1.2.2 corpus
+│       ├── yaml_conformance_report.py  ← run the YAML 1.2.2 corpus
+│       └── evaluate_descriptions.py    ← heuristic description activation evaluation
 ├── scripts/                         ← repository infrastructure (not part of the meta-skill)
 │   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
 │   └── lib/
