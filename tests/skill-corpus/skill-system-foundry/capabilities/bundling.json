@@ -21,5 +21,6 @@
     "Translate text to French",
     "Debug a React component",
     "Configure an nginx server"
-  ]
+  ],
+  "description_sha256": "0ef7fecc5ed24b94e6a3216ea715efddab3c160e439918d330c8091ae13ad8f9"
 }
