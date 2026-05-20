@@ -59,6 +59,7 @@ from .constants import (
     LEVEL_WARN,
 )
 from .frontmatter import load_frontmatter
+from .reporting import format_exception, to_posix
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -137,6 +138,8 @@ class TargetResult:
     kind: str
     candidate_count: int
     metrics: Metrics
+    min_precision: float
+    min_recall: float
     scored: tuple[ScoredQuery, ...]
     advisory: dict = field(default_factory=dict)
 
@@ -242,7 +245,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
     separately — see :func:`check_cross_target_overlap`.
     """
     findings: list[str] = []
-    label = os.path.basename(path)
+    label = to_posix(path)
 
     def fail(message: str) -> None:
         findings.append(f"{LEVEL_FAIL}: [foundry] {label}: {message}")
@@ -254,7 +257,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
         with open(path, "r", encoding="utf-8") as handle:
             raw = handle.read()
     except (OSError, UnicodeError) as exc:
-        fail(f"cannot read corpus file ({exc.__class__.__name__})")
+        fail(f"cannot read corpus file ({format_exception(exc)})")
         return None, findings
     try:
         data = json.loads(raw)
@@ -478,6 +481,35 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     return len(left & right) / len(union)
 
 
+def _candidate_tokens(candidates: list[Unit]) -> list[tuple[str, set[str]]]:
+    """Tokenize each candidate card once, ordered by name for deterministic ties."""
+    return [
+        (unit.name, tokenize(unit.card_text))
+        for unit in sorted(candidates, key=lambda unit: unit.name)
+    ]
+
+
+def _score_prompt(
+    prompt_tokens: set[str], candidate_tokens: list[tuple[str, set[str]]],
+) -> str | None:
+    """Pick the highest-overlap candidate from precomputed token sets, or ``None``.
+
+    *candidate_tokens* must be ordered by name so ties resolve deterministically
+    to the alphabetically-first name.  Returns ``None`` when the best overlap is
+    below ``EVAL_HEURISTIC_MIN_OVERLAP``.
+    """
+    best_name: str | None = None
+    best_score = -1.0
+    for name, tokens in candidate_tokens:
+        score = _jaccard(prompt_tokens, tokens)
+        if score > best_score:
+            best_score = score
+            best_name = name
+    if best_score < EVAL_HEURISTIC_MIN_OVERLAP:
+        return None
+    return best_name
+
+
 def score_heuristic(prompt: str, candidates: list[Unit]) -> str | None:
     """Predict the unit name with the highest Jaccard overlap, or ``None``.
 
@@ -487,17 +519,7 @@ def score_heuristic(prompt: str, candidates: list[Unit]) -> str | None:
     """
     if not candidates:
         return None
-    prompt_tokens = tokenize(prompt)
-    best_name: str | None = None
-    best_score = -1.0
-    for candidate in sorted(candidates, key=lambda unit: unit.name):
-        score = _jaccard(prompt_tokens, tokenize(candidate.card_text))
-        if score > best_score:
-            best_score = score
-            best_name = candidate.name
-    if best_score < EVAL_HEURISTIC_MIN_OVERLAP:
-        return None
-    return best_name
+    return _score_prompt(tokenize(prompt), _candidate_tokens(candidates))
 
 
 # --- metrics aggregation ----------------------------------------------------
@@ -575,14 +597,19 @@ def _candidate_set(target_unit: Unit, candidates: list[Unit]) -> list[Unit]:
 
 
 def _score_corpus(corpus: Corpus, candidate_set: list[Unit]) -> list[ScoredQuery]:
-    """Score every prompt of *corpus* heuristically against *candidate_set*."""
+    """Score every prompt of *corpus* heuristically against *candidate_set*.
+
+    Candidate cards are tokenized once per corpus (not per prompt) so cost stays
+    linear in prompts rather than prompts x candidates.
+    """
+    candidate_tokens = _candidate_tokens(candidate_set)
     scored: list[ScoredQuery] = []
     sides = (
         (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
     )
     for label, prompts in sides:
         for prompt in prompts:
-            prediction = score_heuristic(prompt, candidate_set)
+            prediction = _score_prompt(tokenize(prompt), candidate_tokens)
             scored.append(ScoredQuery(prompt, label, prediction))
     return scored
 
@@ -601,7 +628,7 @@ def evaluate(
     )
 
     for corpus in corpora:
-        base = os.path.basename(corpus.source_path)
+        base = to_posix(corpus.source_path)
         matches = _matching_units(corpus, candidates)
         if not matches:
             report.errors.append(
@@ -636,6 +663,7 @@ def evaluate(
             TargetResult(
                 target=corpus.target, kind=corpus.kind,
                 candidate_count=len(candidate_set), metrics=metrics,
+                min_precision=min_precision, min_recall=min_recall,
                 scored=tuple(scored), advisory=advisory,
             )
         )

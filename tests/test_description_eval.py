@@ -597,6 +597,22 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(report.targets, [])
         self.assertTrue(any("ambiguous" in e for e in report.errors))
 
+    def test_per_corpus_threshold_override_recorded(self) -> None:
+        corpus = de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY,
+            positive=self.positive, negative=self.negative,
+            min_precision=0.5, min_recall=0.6, source_path="/c.json",
+        )
+        result = de.evaluate([corpus], self.candidates, self._opts()).targets[0]
+        # Effective (overridden) thresholds are recorded on the result.
+        self.assertEqual(result.min_precision, 0.5)
+        self.assertEqual(result.min_recall, 0.6)
+
+    def test_default_thresholds_recorded_without_override(self) -> None:
+        result = de.evaluate([self._corpus()], self.candidates, self._opts()).targets[0]
+        self.assertEqual(result.min_precision, 0.85)
+        self.assertEqual(result.min_recall, 0.85)
+
 
 # ===================================================================
 # Shipped corpora
