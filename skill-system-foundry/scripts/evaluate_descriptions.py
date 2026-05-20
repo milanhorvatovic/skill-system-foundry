@@ -147,6 +147,8 @@ def _print_human(report: EvalReport, verbose: bool) -> None:
 
 
 def main() -> None:
+    # Pre-parse scan: _json_aware_error fires during parse_args(), before `args`
+    # exists, so it can only consult argv. Recomputed from args.json_output below.
     json_mode = "--json" in sys.argv
     if len(sys.argv) == 1:
         print(__doc__)
@@ -169,6 +171,9 @@ def main() -> None:
 
     parser.error = _json_aware_error  # type: ignore[assignment]
     args = parser.parse_args()
+    # Post-parse, honor argparse's parsed value: it handles flag abbreviation
+    # (e.g. --js -> --json) that the pre-parse argv scan above would miss.
+    json_mode = args.json_output
 
     for flag, value in (
         ("--min-precision", args.min_precision),
