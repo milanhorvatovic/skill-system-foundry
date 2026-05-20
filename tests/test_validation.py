@@ -22,6 +22,7 @@ from lib.validation import (
     aggregate_capability_allowed_tools,
     parse_allowed_tools_tokens,
     validate_capability_skill_only_fields,
+    count_trigger_phrases,
     validate_description_triggers,
     validate_name,
     validate_tool_coherence,
@@ -1118,6 +1119,69 @@ class ValidateDescriptionTriggersTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(matched)
+
+    # --- count_trigger_phrases helper ---
+
+    def test_count_trigger_phrases_returns_distinct_sorted(self) -> None:
+        # Two distinct phrases present; helper returns both in the
+        # configured (sorted) order.
+        desc = (
+            "Audits skill systems. Triggers on drift; use when the "
+            "structure may have changed."
+        )
+        matched = count_trigger_phrases(desc)
+        self.assertEqual(matched, sorted(matched))
+        self.assertIn("triggers on", matched)
+        self.assertIn("use when", matched)
+
+    def test_count_trigger_phrases_empty_input(self) -> None:
+        for value in ("", "   ", "\n\t "):
+            self.assertEqual(count_trigger_phrases(value), [])
+
+    def test_count_trigger_phrases_no_match(self) -> None:
+        self.assertEqual(
+            count_trigger_phrases("Validates skills and reports findings."), []
+        )
+
+    # --- Graduated minimum_count behaviour ---
+
+    def test_default_minimum_count_passes_at_one(self) -> None:
+        # Default minimum_count=1 reproduces the historical behaviour:
+        # a single trigger phrase passes (keeps audit_skill_system.py
+        # unchanged).
+        desc = "Validates skills. Triggers when a skill is created."
+        errors, passes = validate_description_triggers(desc)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+
+    def test_minimum_count_two_one_match_emits_foundry_warn(self) -> None:
+        desc = "Validates skills. Triggers when a skill is created."
+        errors, passes = validate_description_triggers(desc, minimum_count=2)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("[foundry]", warns[0])
+        self.assertIn("at least 2", warns[0])
+        self.assertEqual(passes, [])
+
+    def test_minimum_count_two_zero_match_emits_spec_warn(self) -> None:
+        # Zero matches always emits the unchanged spec WARN regardless
+        # of the minimum — never the foundry "add another" message.
+        desc = "Validates skills and reports findings to stdout."
+        errors, _ = validate_description_triggers(desc, minimum_count=2)
+        warns = [e for e in errors if e.startswith(LEVEL_WARN)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("[spec]", warns[0])
+        self.assertIn("when the skill activates", warns[0])
+
+    def test_minimum_count_two_two_matches_pass(self) -> None:
+        desc = (
+            "Validates skills. Triggers on creation; use when the "
+            "structure may have drifted."
+        )
+        errors, passes = validate_description_triggers(desc, minimum_count=2)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(passes), 1)
+        self.assertIn(">= 2", passes[0])
 
 
 # ===================================================================

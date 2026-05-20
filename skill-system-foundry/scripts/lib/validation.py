@@ -104,26 +104,61 @@ def _is_explicit_empty_allowed_tools(value: object) -> bool:
     return False
 
 
+def count_trigger_phrases(description: str) -> list[str]:
+    """Return the distinct trigger phrases present in *description*.
+
+    Pure helper extracted so the trigger heuristic has a single
+    matching implementation: lowercases once and does a
+    case-insensitive substring match against
+    ``DESCRIPTION_TRIGGER_PHRASES`` (configured under
+    ``skill.description.trigger_phrases``).  The result preserves the
+    configured tuple's order (already sorted and de-duplicated), so it
+    is deterministic across processes.  Empty / whitespace-only input
+    returns ``[]``.
+    """
+    if not description or not description.strip():
+        return []
+    lowered = description.lower()
+    return [
+        phrase for phrase in DESCRIPTION_TRIGGER_PHRASES if phrase in lowered
+    ]
+
+
 def validate_description_triggers(
     description: str,
+    *,
+    minimum_count: int = 1,
 ) -> tuple[list[str], list[str]]:
-    """Check that the description contains at least one trigger phrase.
+    """Check that the description states *when* the skill activates.
 
     The agentskills.io specification requires descriptions to state
     both *what* the skill does and *when* it activates.  This rule
-    enforces the "when" half by case-insensitive substring matching
-    against ``DESCRIPTION_TRIGGER_PHRASES`` (configured under
-    ``skill.description.trigger_phrases`` in ``configuration.yaml``).
+    enforces the "when" half via :func:`count_trigger_phrases`.
+
+    *minimum_count* (default ``1``) is the number of distinct trigger
+    phrases the description should contain.  The default reproduces the
+    historical behaviour — zero matches WARN, one or more pass — so
+    callers that do not opt in (notably the per-skill block in
+    ``audit_skill_system.py``) are unaffected.  ``validate_description``
+    in ``validate_skill.py`` passes ``DESCRIPTION_TRIGGER_MIN_COUNT``
+    (the foundry strictening) to require at least two distinct trigger
+    clauses.
+
+    Outcomes are graduated and non-blocking (WARN, never FAIL):
+
+    - zero matches → the spec-tagged "does not state when it activates"
+      WARN (unchanged wording);
+    - ``0 < matches < minimum_count`` → a foundry WARN recommending an
+      additional trigger clause;
+    - ``matches >= minimum_count`` → pass.
 
     Detection is heuristic — phrase matching cannot enumerate every
-    valid wording — so the rule emits WARN, not FAIL.  Empty /
-    whitespace-only inputs short-circuit silently: the spec-required
-    non-empty FAIL is owned by the caller (``validate_description``
-    in ``validate_skill.py`` and the per-skill block in
-    ``audit_skill_system.py``), and stacking a trigger WARN on top
-    of that FAIL would be redundant.  The guard is kept so direct
-    API callers (e.g. ad-hoc scripts) can invoke the helper without
-    a separate non-empty check of their own.
+    valid wording — so the rule never escalates to FAIL: a legitimate
+    but unlisted trigger wording must not block the author.  Empty /
+    whitespace-only inputs short-circuit silently — the spec-required
+    non-empty FAIL is owned by the caller (``validate_description`` in
+    ``validate_skill.py`` and the per-skill block in
+    ``audit_skill_system.py``).
 
     Returns ``(errors, passes)`` per the standard validator contract.
     """
@@ -133,27 +168,39 @@ def validate_description_triggers(
     if not description or not description.strip():
         return errors, passes
 
-    lowered = description.lower()
-    for phrase in DESCRIPTION_TRIGGER_PHRASES:
-        if phrase in lowered:
-            passes.append(
-                f"description: contains trigger phrase '{phrase}'"
-            )
-            return errors, passes
+    matched = count_trigger_phrases(description)
+    count = len(matched)
 
-    # Build the example list from the curated example subset so the
-    # message never drifts from the YAML.  Examples are first-word
-    # distinct (different root verbs) for educational variety; the
-    # YAML pointer remains the canonical source for the full list.
-    example_phrases = ", ".join(
-        f"'{phrase.capitalize()} ...'"
-        for phrase in DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
-    )
-    errors.append(
-        f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
-        f"activates — add a trigger clause (e.g. {example_phrases}).  "
-        "Phrase list configured under skill.description.trigger_phrases "
-        "in configuration.yaml."
+    if count == 0:
+        # Unchanged spec-tagged WARN.  Examples come from the curated
+        # first-word-distinct subset so the message never drifts from
+        # the YAML.
+        example_phrases = ", ".join(
+            f"'{phrase.capitalize()} ...'"
+            for phrase in DESCRIPTION_TRIGGER_EXAMPLE_PHRASES
+        )
+        errors.append(
+            f"{LEVEL_WARN}: [spec] 'description' does not state when the skill "
+            f"activates — add a trigger clause (e.g. {example_phrases}).  "
+            "Phrase list configured under skill.description.trigger_phrases "
+            "in configuration.yaml."
+        )
+        return errors, passes
+
+    if count < minimum_count:
+        errors.append(
+            f"{LEVEL_WARN}: [foundry] 'description' contains {count} distinct "
+            f"trigger phrase(s) (e.g. '{matched[0]}') but the foundry "
+            f"recommends at least {minimum_count} for routing precision — add "
+            "another trigger clause covering a different activation context.  "
+            "Phrase list configured under skill.description.trigger_phrases "
+            "in configuration.yaml."
+        )
+        return errors, passes
+
+    passes.append(
+        f"description: contains {count} trigger phrase(s) "
+        f"(>= {minimum_count}; e.g. '{matched[0]}')"
     )
     return errors, passes
 
