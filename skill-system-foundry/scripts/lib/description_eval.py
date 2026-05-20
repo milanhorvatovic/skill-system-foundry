@@ -57,6 +57,7 @@ import random
 import re
 import urllib.error
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .constants import (
@@ -669,17 +670,47 @@ def _anthropic_messages(
     return ""
 
 
+def _normalize_choice(answer: str, name_by_lower: dict[str, str]) -> str | None:
+    """Map a raw model answer to a candidate name or ``None``."""
+    cleaned = answer.strip().strip(".").strip().lower()
+    if cleaned == PREDICTION_NONE:
+        return None
+    return name_by_lower.get(cleaned)
+
+
 def score_llm(
-    prompt: str, candidates: list[Unit], runs: int,
+    prompt: str, target: str, candidates: list[Unit], runs: int,
     client_fn,
 ) -> tuple[str | None, float]:
     """Run *client_fn* *runs* times; return ``(prediction, trigger_rate)``.
 
-    The prediction is the target only when its trigger rate is >= 0.5.
-    *client_fn* has the signature of :func:`_anthropic_messages` bound to its
-    provider settings, so this scorer stays provider-agnostic and mockable.
+    *trigger_rate* is the fraction of runs that selected *target* (drives the
+    advisory variance flag).  *prediction* is the majority-voted unit across
+    runs — ``None`` when no unit reaches a 50% share — and is what the
+    confusion matrix and pairwise confusion consume, so a consistently
+    mis-selected sibling is still captured.  Ties among units break to the
+    alphabetically-first name.  *client_fn* takes ``(prompt, candidates)`` and
+    returns the raw answer line, so the Anthropic client is mockable.
     """
-    raise NotImplementedError
+    name_by_lower = {unit.name.lower(): unit.name for unit in candidates}
+    choices = [
+        _normalize_choice(client_fn(prompt, candidates), name_by_lower)
+        for _ in range(runs)
+    ]
+
+    trigger_rate = (
+        sum(1 for choice in choices if choice == target) / runs if runs else 0.0
+    )
+
+    unit_votes = Counter(choice for choice in choices if choice is not None)
+    prediction: str | None = None
+    if unit_votes and runs:
+        top_unit, top_count = sorted(
+            unit_votes.items(), key=lambda item: (-item[1], item[0]),
+        )[0]
+        if top_count / runs >= 0.5:
+            prediction = top_unit
+    return prediction, trigger_rate
 
 
 # --- advisory statistics (steps 11-13) --------------------------------------

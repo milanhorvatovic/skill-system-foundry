@@ -596,5 +596,66 @@ class AnthropicMessagesTests(unittest.TestCase):
                 self._call()
 
 
+class _ScriptedClient:
+    """Returns queued answers in order; repeats the last when exhausted."""
+
+    def __init__(self, answers: list[str]) -> None:
+        self._answers = answers
+        self._index = 0
+
+    def __call__(self, prompt: str, candidates: list) -> str:
+        answer = self._answers[min(self._index, len(self._answers) - 1)]
+        self._index += 1
+        return answer
+
+
+class ScoreLlmTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.candidates = [_unit("validation", "Validate"), _unit("bundling", "Bundle")]
+
+    def test_target_selected_every_run(self) -> None:
+        prediction, rate = de.score_llm(
+            "p", "validation", self.candidates, 3, _ScriptedClient(["validation"]),
+        )
+        self.assertEqual(prediction, "validation")
+        self.assertEqual(rate, 1.0)
+
+    def test_none_every_run(self) -> None:
+        prediction, rate = de.score_llm(
+            "p", "validation", self.candidates, 3, _ScriptedClient(["none"]),
+        )
+        self.assertIsNone(prediction)
+        self.assertEqual(rate, 0.0)
+
+    def test_sibling_majority_predicts_sibling_with_zero_trigger(self) -> None:
+        prediction, rate = de.score_llm(
+            "p", "validation", self.candidates, 3, _ScriptedClient(["bundling"]),
+        )
+        self.assertEqual(prediction, "bundling")
+        self.assertEqual(rate, 0.0)
+
+    def test_two_of_three_target_is_fp_rate(self) -> None:
+        client = _ScriptedClient(["validation", "validation", "none"])
+        prediction, rate = de.score_llm("p", "validation", self.candidates, 3, client)
+        self.assertEqual(prediction, "validation")
+        self.assertAlmostEqual(rate, 2 / 3)
+
+    def test_no_majority_predicts_none(self) -> None:
+        client = _ScriptedClient(["validation", "bundling", "none"])
+        prediction, rate = de.score_llm("p", "validation", self.candidates, 3, client)
+        self.assertIsNone(prediction)
+        self.assertAlmostEqual(rate, 1 / 3)
+
+    def test_case_insensitive_and_unknown_answers(self) -> None:
+        client = _ScriptedClient(["VALIDATION."])
+        prediction, rate = de.score_llm("p", "validation", self.candidates, 1, client)
+        self.assertEqual(prediction, "validation")
+        self.assertEqual(rate, 1.0)
+        unknown = _ScriptedClient(["something-else"])
+        prediction, rate = de.score_llm("p", "validation", self.candidates, 1, unknown)
+        self.assertIsNone(prediction)
+        self.assertEqual(rate, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
