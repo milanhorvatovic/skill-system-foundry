@@ -1087,6 +1087,22 @@ class MissingSectionFailFastTests(unittest.TestCase):
             )
         self.assertIn("trigger_phrases", str(ctx.exception))
 
+    def test_missing_description_evaluation_block_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("description", "evaluation")
+            )
+        self.assertIn("evaluation", str(ctx.exception))
+
+    def test_missing_evaluation_key_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "heuristic_min_overlap: 0.05", "renamed_overlap: 0.05"
+                )
+            )
+        self.assertIn("heuristic_min_overlap", str(ctx.exception))
+
     def test_empty_string_entry_in_trigger_phrases_raises(self) -> None:
         # An empty / whitespace-only entry would silently disable the
         # rule — substring-match against "" is always True.  Loader

@@ -222,7 +222,28 @@ RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 # The custom YAML parser returns every scalar as a string, so counts go
 # through int(), thresholds/ratios through float(); the stopword list passes
 # through as a frozenset.
+if "evaluation" not in _skill_desc:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.description.evaluation'; update your checkout or restore the "
+        "full configuration file."
+    )
 _eval = _skill_desc["evaluation"]
+if not isinstance(_eval, dict):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        f"'skill.description.evaluation': expected a mapping, got {_eval!r}."
+    )
+_required_eval_keys = (
+    "default_min_precision", "default_min_recall", "heuristic_min_overlap",
+    "max_prompt_chars", "diversity_distinct_bigram_min_ratio", "stopwords",
+)
+_missing_eval = [_k for _k in _required_eval_keys if _k not in _eval]
+if _missing_eval:
+    raise RuntimeError(
+        "configuration.yaml 'skill.description.evaluation' is missing required "
+        f"keys: {', '.join(_missing_eval)}."
+    )
 EVAL_DEFAULT_MIN_PRECISION = float(_eval["default_min_precision"])
 EVAL_DEFAULT_MIN_RECALL = float(_eval["default_min_recall"])
 EVAL_HEURISTIC_MIN_OVERLAP = float(_eval["heuristic_min_overlap"])
