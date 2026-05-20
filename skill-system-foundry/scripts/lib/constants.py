@@ -333,7 +333,7 @@ for _phrase in DESCRIPTION_TRIGGER_PHRASES:
 DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
 
 # --- Structural description-quality rules (validate_skill.py only) ---
-# Eight checks layered on top of the length / character-set / voice /
+# Eight checks layered on top of the length / XML-tag / voice /
 # trigger-presence rules.  All settings live under
 # skill.description.structural_rules in configuration.yaml.  The custom
 # YAML parser returns every scalar as a string, so counts go through

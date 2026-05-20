@@ -141,8 +141,8 @@ skill:
         - do
         - does
     # Structural description-quality rules (validate_skill.py only).
-    # Eight checks layered on top of the length / character-set /
-    # voice / trigger-presence rules above.  All route through the
+    # Eight checks layered on top of the length / XML-tag / voice /
+    # trigger-presence rules above.  All route through the
     # existing FAIL / WARN / INFO machinery; none introduce a new
     # entry point or require a corpus.  Numeric scalars load as
     # strings (custom YAML parser) and are converted in constants.py.
