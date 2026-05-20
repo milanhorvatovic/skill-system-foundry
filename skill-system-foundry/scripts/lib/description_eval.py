@@ -210,8 +210,8 @@ def _check_prompt_rules(
             )
         elif count < EVAL_RECOMMENDED_PROMPTS:
             warn(
-                f"'{label}' has {count} prompts; {EVAL_RECOMMENDED_PROMPTS}-10 "
-                "are recommended"
+                f"'{label}' has {count} prompts; at least "
+                f"{EVAL_RECOMMENDED_PROMPTS} are recommended"
             )
 
     # Duplicate prompts within a side.
@@ -345,26 +345,32 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
 
 
 def check_cross_target_overlap(corpora: list[Corpus]) -> list[str]:
-    """Flag a positive prompt shared across sibling targets.
+    """Flag a positive prompt shared across competing targets.
 
-    A prompt used as a positive for more than one target is a boundary
-    ambiguity (WARN): both descriptions claim it.  Cross-target by nature, so
-    it runs over the full corpus set rather than inside :func:`load_corpus`.
+    Targets only compete within the same kind (skills with skills, capabilities
+    with capabilities), so the check is scoped by kind — a prompt that is
+    legitimately positive for a skill and one of its capabilities is not an
+    ambiguity.  (Per-parent scoping for capabilities would need discovery; kind
+    scoping removes the common skill-vs-capability false positive.)
     """
     findings: list[str] = []
-    targets_by_prompt: dict[str, list[str]] = {}
+    by_kind: dict[str, list[Corpus]] = {}
     for corpus in corpora:
-        for prompt in corpus.positive:
-            key = prompt.strip()
-            bucket = targets_by_prompt.setdefault(key, [])
-            if corpus.target not in bucket:
-                bucket.append(corpus.target)
-    for prompt, targets in sorted(targets_by_prompt.items()):
-        if len(targets) > 1:
-            findings.append(
-                f"{LEVEL_WARN}: [foundry] positive prompt shared across "
-                f"targets {sorted(targets)}: {prompt!r}"
-            )
+        by_kind.setdefault(corpus.kind, []).append(corpus)
+    for kind, group in sorted(by_kind.items()):
+        targets_by_prompt: dict[str, list[str]] = {}
+        for corpus in group:
+            for prompt in corpus.positive:
+                key = prompt.strip()
+                bucket = targets_by_prompt.setdefault(key, [])
+                if corpus.target not in bucket:
+                    bucket.append(corpus.target)
+        for prompt, targets in sorted(targets_by_prompt.items()):
+            if len(targets) > 1:
+                findings.append(
+                    f"{LEVEL_WARN}: [foundry] positive prompt shared across "
+                    f"{kind} targets {sorted(targets)}: {prompt!r}"
+                )
     return findings
 
 

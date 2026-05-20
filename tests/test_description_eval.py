@@ -214,7 +214,7 @@ class PromptCountTests(LoadCorpusBaseMixin):
         corpus, findings = self.load_dict(data)
         self.assertIsNotNone(corpus)
         self.assertFalse(has_fail(findings))
-        self.assertTrue(any("8-10 are recommended" in f for f in findings))
+        self.assertTrue(any("at least 8 are recommended" in f for f in findings))
 
 
 class PromptHygieneTests(LoadCorpusBaseMixin):
@@ -333,6 +333,17 @@ class CrossTargetOverlapTests(unittest.TestCase):
         a = self._corpus("alpha", ("alpha one", "alpha two"))
         b = self._corpus("beta", ("beta one", "beta two"))
         self.assertEqual(de.check_cross_target_overlap([a, b]), [])
+
+    def test_overlap_across_kinds_not_flagged(self) -> None:
+        # A prompt positive for a skill and for a capability is not a real
+        # ambiguity — different kinds do not compete in the scorer.
+        skill = de.Corpus(
+            target="foundry", kind=de.KIND_SKILL,
+            positive=("shared prompt",), negative=(),
+            min_precision=None, min_recall=None, source_path="/s.json",
+        )
+        cap = self._corpus("validation", ("shared prompt", "cap only"))
+        self.assertEqual(de.check_cross_target_overlap([skill, cap]), [])
 
 
 # ===================================================================
