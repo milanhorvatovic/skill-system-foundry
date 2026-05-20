@@ -292,10 +292,11 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
         if not isinstance(value, list):
             fail(f"'{key}' must be a list of strings")
             return None
-        for item in value:
-            if not isinstance(item, str):
-                fail(f"'{key}' must contain only strings")
-                return None
+        non_strings = [item for item in value if not isinstance(item, str)]
+        for item in non_strings:
+            fail(f"'{key}' must contain only strings; got {item!r}")
+        if non_strings:
+            return None
         return value
 
     positive = string_list("positive") if "positive" in data else None
@@ -330,7 +331,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
         negative=tuple(negative or ()),
         min_precision=min_precision,
         min_recall=min_recall,
-        source_path=os.path.abspath(path),
+        source_path=path,
     )
     return corpus, findings
 

@@ -96,7 +96,8 @@ class LoadCorpusBaseMixin(unittest.TestCase):
 
 class ValidCorpusTests(LoadCorpusBaseMixin):
     def test_clean_corpus_returns_corpus_with_no_findings(self) -> None:
-        corpus, findings = self.load_dict(valid_corpus_dict())
+        path = self._write_dict(valid_corpus_dict())
+        corpus, findings = de.load_corpus(path)
         self.assertIsNotNone(corpus)
         self.assertEqual(findings, [])
         self.assertEqual(corpus.target, "skill-design")
@@ -104,7 +105,9 @@ class ValidCorpusTests(LoadCorpusBaseMixin):
         self.assertEqual(len(corpus.positive), 8)
         self.assertEqual(len(corpus.negative), 8)
         self.assertIsNone(corpus.min_precision)
-        self.assertTrue(os.path.isabs(corpus.source_path))
+        # source_path preserves the raw input path (no abspath) so load_corpus
+        # and evaluate() findings share one path representation.
+        self.assertEqual(corpus.source_path, path)
 
     def test_underscore_keys_and_optional_metadata_tolerated(self) -> None:
         data = valid_corpus_dict()
@@ -154,6 +157,17 @@ class RequiredKeyAndTypeTests(LoadCorpusBaseMixin):
         corpus, findings = self.load_dict(data)
         self.assertIsNone(corpus)
         self.assertTrue(any("'positive' must contain only strings" in f for f in findings))
+
+    def test_every_non_string_item_is_reported(self) -> None:
+        # The validator enumerates all offenders rather than stopping at the
+        # first, matching the unknown-key and required-key loops.
+        data = valid_corpus_dict()
+        data["positive"] = data["positive"][:6] + [123, {"x": 1}]
+        corpus, findings = self.load_dict(data)
+        self.assertIsNone(corpus)
+        offenders = [f for f in findings if "'positive' must contain only strings" in f]
+        self.assertEqual(len(offenders), 2)
+        self.assertTrue(any("123" in f for f in offenders))
 
     def test_unknown_top_level_key_fails(self) -> None:
         data = valid_corpus_dict()
@@ -267,6 +281,34 @@ class MalformedFileTests(LoadCorpusBaseMixin):
         corpus, findings = de.load_corpus(os.path.join(self._tmp.name, "nope.json"))
         self.assertIsNone(corpus)
         self.assertTrue(any("cannot read corpus file" in f for f in findings))
+
+
+class SourcePathLabelTests(LoadCorpusBaseMixin):
+    def test_source_path_is_raw_input_not_abspath(self) -> None:
+        # A '/./' segment survives to_posix but abspath would strip it; storing
+        # the raw path keeps load_corpus and evaluate() labels identical.
+        written = self._write_dict(valid_corpus_dict())
+        raw = os.path.join(
+            os.path.dirname(written), ".", os.path.basename(written),
+        )
+        corpus, _findings = de.load_corpus(raw)
+        self.assertIsNotNone(corpus)
+        self.assertEqual(corpus.source_path, raw)
+        self.assertNotEqual(corpus.source_path, os.path.abspath(raw))
+
+    def test_load_and_evaluate_share_path_label(self) -> None:
+        # A target-not-found error from evaluate() must quote the same path
+        # representation load_corpus uses — no relative/absolute divergence.
+        data = valid_corpus_dict()
+        data["target"] = "ghost"
+        raw = os.path.join(self._tmp.name, ".", "skill.json")
+        self._write_dict(data)  # writes to <tmp>/skill.json, reachable via raw
+        corpus, _findings = de.load_corpus(raw)
+        report = de.evaluate(
+            [corpus], [], {"min_precision": 0.85, "min_recall": 0.85},
+        )
+        self.assertTrue(report.errors)
+        self.assertIn(de.to_posix(raw), report.errors[0])
 
 
 class CrossTargetOverlapTests(unittest.TestCase):
