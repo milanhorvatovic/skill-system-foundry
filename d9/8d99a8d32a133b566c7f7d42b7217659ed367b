@@ -1,0 +1,13 @@
+AGENTS.md
+  ai_agent 193
+skill-system-foundry/assets/description-test-cases/capabilities/example.json
+  ai_agent 2
+skill-system-foundry/capabilities/validation/capability.md
+  ai_agent 80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "d98d99a8d32a133b566c7f7d42b7217659ed367b",
+  "prompts": {}
+}
