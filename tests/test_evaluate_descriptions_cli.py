@@ -217,10 +217,32 @@ class InProcessCliTests(CliBaseMixin):
         self.assertIn("recommended", out)
 
     def test_verbose_shows_pairwise(self) -> None:
-        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        code, out, _err = _run_main(self._argv("--verbose"))
-        self.assertEqual(code, 0)
+        # One positive uses bundling vocabulary, so it misroutes to the sibling
+        # 'bundling' capability -> pairwise confusion is non-empty.
+        positives = PASS_POSITIVES[:7] + ["package zip bundle distribution archive"]
+        self._write_corpus(positives, PASS_NEGATIVES)
+        code, out, _err = _run_main(self._argv("--verbose", "--soft"))
         self.assertIn("confused with", out)
+
+    def test_out_of_range_min_precision_errors(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, out, _err = _run_main(self._argv("--min-precision", "-1", "--json"))
+        self.assertEqual(code, 1)
+        self.assertIn("between 0 and 1", json.loads(out)["error"])
+
+    def test_invalid_arg_emits_json_error(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, out, _err = _run_main(self._argv("--min-precision", "notafloat", "--json"))
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertFalse(payload["success"])
+        self.assertIn("error", payload)
+
+    def test_invalid_arg_human_error(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, _out, err = _run_main(self._argv("--min-precision", "notafloat"))
+        self.assertEqual(code, 1)
+        self.assertIn("error:", err)
 
 
 if __name__ == "__main__":

@@ -152,7 +152,30 @@ def main() -> None:
         print(__doc__)
         sys.exit(1)
 
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+
+    def _json_aware_error(message: str) -> None:
+        # Emit the tool's JSON error shape on argparse failures under --json,
+        # matching validate_skill.py / bundle.py / stats.py.
+        if json_mode:
+            print(to_json_output({
+                "tool": "evaluate_descriptions", "success": False,
+                "error": message,
+            }))
+            sys.exit(1)
+        parser.print_usage(sys.stderr)
+        print(f"{parser.prog}: error: {message}", file=sys.stderr)
+        sys.exit(1)
+
+    parser.error = _json_aware_error  # type: ignore[assignment]
+    args = parser.parse_args()
+
+    for flag, value in (
+        ("--min-precision", args.min_precision),
+        ("--min-recall", args.min_recall),
+    ):
+        if value is not None and not 0.0 <= value <= 1.0:
+            _exit(f"{flag} must be a number between 0 and 1", json_mode)
 
     corpus_paths = _resolve_corpus_paths(args.corpus_path)
     if not corpus_paths:
