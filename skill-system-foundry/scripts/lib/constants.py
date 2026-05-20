@@ -217,6 +217,55 @@ RE_FIRST_PERSON_PLURAL = re.compile(_voice["first_person_plural"])
 RE_SECOND_PERSON = re.compile(_voice["second_person"])
 RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 
+# Description-quality evaluation constants — consumed by
+# lib/description_eval.py and the evaluate_descriptions.py entry point.
+# The custom YAML parser returns every scalar as a string, so counts go
+# through int(), thresholds/ratios through float(); the stopword list passes
+# through as a frozenset.
+if "evaluation" not in _skill_desc:
+    raise RuntimeError(
+        "configuration.yaml is missing required section "
+        "'skill.description.evaluation'; update your checkout or restore the "
+        "full configuration file."
+    )
+_eval = _skill_desc["evaluation"]
+if not isinstance(_eval, dict):
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        f"'skill.description.evaluation': expected a mapping, got {_eval!r}."
+    )
+_required_eval_keys = (
+    "default_min_precision", "default_min_recall", "heuristic_min_overlap",
+    "max_prompt_chars", "diversity_distinct_bigram_min_ratio",
+    "min_prompts_per_side", "recommended_prompts_per_side", "stopwords",
+)
+_missing_eval = [_k for _k in _required_eval_keys if _k not in _eval]
+if _missing_eval:
+    raise RuntimeError(
+        "configuration.yaml 'skill.description.evaluation' is missing required "
+        f"keys: {', '.join(_missing_eval)}."
+    )
+EVAL_DEFAULT_MIN_PRECISION = float(_eval["default_min_precision"])
+EVAL_DEFAULT_MIN_RECALL = float(_eval["default_min_recall"])
+EVAL_HEURISTIC_MIN_OVERLAP = float(_eval["heuristic_min_overlap"])
+EVAL_MAX_PROMPT_CHARS = int(_eval["max_prompt_chars"])
+EVAL_DIVERSITY_RATIO = float(_eval["diversity_distinct_bigram_min_ratio"])
+EVAL_MIN_PROMPTS = int(_eval["min_prompts_per_side"])
+EVAL_RECOMMENDED_PROMPTS = int(_eval["recommended_prompts_per_side"])
+_stopwords = _eval["stopwords"]
+if not isinstance(_stopwords, list) or not _stopwords:
+    raise RuntimeError(
+        "configuration.yaml has invalid value for "
+        "'skill.description.evaluation.stopwords': expected a non-empty list."
+    )
+_normalized_stopwords = [str(_w).strip() for _w in _stopwords]
+if "" in _normalized_stopwords:
+    raise RuntimeError(
+        "configuration.yaml 'skill.description.evaluation.stopwords' has an "
+        "empty / whitespace-only entry."
+    )
+EVAL_STOPWORDS = frozenset(_normalized_stopwords)
+
 # Trigger-phrase heuristic: the agentskills.io spec requires
 # descriptions to state both *what* the skill does and *when* it
 # activates.  validate_description_triggers enforces the "when"
@@ -915,3 +964,4 @@ del _path_resolution
 del _stats, _stats_le, _stats_le_enabled
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf
+del _eval, _required_eval_keys, _missing_eval, _stopwords, _normalized_stopwords

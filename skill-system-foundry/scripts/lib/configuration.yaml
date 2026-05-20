@@ -83,6 +83,63 @@ skill:
       first_person_plural: (?i)\b(we can|we will|we help|our tool|our skill)\b
       second_person: (?i)\b(you can|you will|your|you should)\b
       imperative_start: (?i)^(Create|Design|Build|Run|Execute|Deploy|Generate|Manage|Configure|Set up|Install|Analyze|Process|Handle|Implement|Define|Write|Read|Update|Delete|Check|Validate|Test|Review|Fix|Debug|Monitor|Track|Scan|Parse|Fetch|Send|Transform|Convert|Extract|Load|Save|Export|Import|Migrate|Provision|Orchestrate|Wire|Scaffold|Audit)\b
+    evaluation:
+      # Threshold defaults for --min-precision / --min-recall (point
+      # estimate).  Each corpus may override via min_precision /
+      # min_recall in its header.
+      default_min_precision: 0.85
+      default_min_recall: 0.85
+      # Heuristic `none` threshold: when the best Jaccard overlap between
+      # a prompt and any candidate card falls below this, the heuristic
+      # scorer predicts `none` instead of forcing a pick.  Tune via PR.
+      heuristic_min_overlap: 0.05
+      # Per-prompt length cap (chars).  Above this, corpus rule FAILs.
+      max_prompt_chars: 2000
+      # Phrasing-diversity threshold: at least this fraction of prompts
+      # within a target must begin with distinct bigrams.
+      diversity_distinct_bigram_min_ratio: 0.6
+      # Corpus prompt-count policy (per side): fewer than the minimum FAILs;
+      # at least the minimum but below the recommended count WARNs.
+      min_prompts_per_side: 4
+      recommended_prompts_per_side: 8
+      # Stopwords stripped during heuristic tokenization.  Tune via PR.
+      stopwords:
+        - the
+        - a
+        - an
+        - of
+        - in
+        - on
+        - at
+        - to
+        - for
+        - with
+        - by
+        - from
+        - is
+        - are
+        - was
+        - were
+        - be
+        - been
+        - being
+        - this
+        - that
+        - these
+        - those
+        - i
+        - you
+        - we
+        - they
+        - it
+        - and
+        - or
+        - but
+        - if
+        - so
+        - as
+        - do
+        - does
   body:
     max_lines: 500
     # Cross-file reference patterns.

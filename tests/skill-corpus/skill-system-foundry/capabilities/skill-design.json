@@ -1,0 +1,25 @@
+{
+  "target": "skill-design",
+  "kind": "capability",
+  "_comment": "Positives describe creating skills/capabilities/roles and choosing architecture; negatives lean on sibling capabilities or are out of scope.",
+  "positive": [
+    "Create a new standalone skill",
+    "Decide between standalone and router architecture",
+    "Write effective skill descriptions",
+    "Design skill manifests and roles",
+    "Understand directory conventions for skills",
+    "Create capabilities and roles",
+    "Write a manifest with the right architecture",
+    "Choose standalone vs router design"
+  ],
+  "negative": [
+    "Bundle the skill into a zip",
+    "Validate the skill against the specification",
+    "Deploy skills with symlinks",
+    "Convert a flat skill into the router",
+    "Audit structural consistency",
+    "Build a Python web scraper",
+    "Debug a React component",
+    "Set up a Postgres database"
+  ]
+}

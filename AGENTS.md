@@ -71,7 +71,8 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
 │       ├── scaffold.py              ← scaffold new components from templates
 │       ├── bundle.py                ← bundle for distribution (zip)
 │       ├── stats.py                 ← report skill token-budget proxies
-│       └── yaml_conformance_report.py  ← run the YAML 1.2.2 corpus
+│       ├── yaml_conformance_report.py  ← run the YAML 1.2.2 corpus
+│       └── evaluate_descriptions.py    ← heuristic description activation evaluation
 ├── scripts/                         ← repository infrastructure (not part of the meta-skill)
 │   ├── generate_changelog.py        ← changelog generator (git history → CHANGELOG.md)
 │   └── lib/
@@ -179,6 +180,17 @@ The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocat
 | `--verbose` | Prints per-file progress messages for the prose check (`Checking prose YAML: <path> (<N> fences)`) and shows passing checks otherwise. Silent under `--json`. | Local debugging / triage. |
 
 In addition, `python scripts/yaml_conformance_report.py` runs the YAML 1.2.2 conformance corpus and emits the same `yaml_conformance.corpus` JSON slot for tooling consumers; exit 0 on all-pass, non-zero on any failure.
+
+### Evaluating Description Quality
+
+Structural validation does not test whether a description actually *activates* on the prompts it should. `evaluate_descriptions.py` measures activation precision and recall against a JSON corpus of positive (should activate) and negative (should not) prompts:
+
+```bash
+cd skill-system-foundry
+python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --skill-set . --soft --json
+```
+
+The meta-skill ships its own corpus under `tests/skill-corpus/skill-system-foundry/` (`skill.json` plus one file per capability), exercised on every PR by the `validate-examples` job in `python-tests.yaml` (heuristic, `--soft`). Scoring is heuristic, stdlib-only, and key-free; higher-fidelity model-based testing is a separate, opt-in workstream, deliberately not bundled so the meta-skill stays stdlib-only and AI-agnostic. The corpus format, the unit card model, and the exact `--soft` exit-code semantics are documented in the validation capability's "Description-Quality Evaluation" section; evaluation settings (thresholds, stopwords) live under `skill.description.evaluation` in `scripts/lib/configuration.yaml`.
 
 ### Measuring the Meta-Skill's Token Budget
 

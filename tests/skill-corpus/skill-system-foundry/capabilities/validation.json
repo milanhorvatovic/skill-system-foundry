@@ -1,0 +1,25 @@
+{
+  "target": "validation",
+  "kind": "capability",
+  "_comment": "Positives describe validating/auditing skills; negatives lean on sibling capabilities (bundling, deployment, migration, skill-design) or are out of scope.",
+  "positive": [
+    "Validate a skill against the specification",
+    "Audit my skill system for consistency",
+    "Check structural consistency of skills",
+    "Validate individual skills against the specification",
+    "Run the Agent Skills specification validation",
+    "Audit the entire skill system for structural issues",
+    "Validate skills and audit consistency",
+    "Confirm specification compliance with validation"
+  ],
+  "negative": [
+    "Bundle this skill into a zip archive",
+    "Deploy skills with wrapper symlinks",
+    "Convert a flat skill into the router pattern",
+    "Create a standalone skill architecture",
+    "Decide between standalone and router design",
+    "Build a Python web scraper",
+    "Debug a React component",
+    "Set up a Postgres database"
+  ]
+}

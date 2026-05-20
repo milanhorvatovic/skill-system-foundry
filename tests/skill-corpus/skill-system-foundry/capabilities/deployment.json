@@ -1,0 +1,25 @@
+{
+  "target": "deployment",
+  "kind": "capability",
+  "_comment": "Positives describe deploying skills to tools via wrappers/symlinks; negatives lean on sibling capabilities or are out of scope.",
+  "positive": [
+    "Deploy a skill to an AI tool",
+    "Set up deployment pointers with symlinks",
+    "Set up wrapper files and symlinks",
+    "Use tool-specific extensions",
+    "Deploy skills to Claude with symlinks",
+    "Configure deployment wrapper pointers",
+    "Install the skill into AI tools",
+    "Set up symlinks for deployment"
+  ],
+  "negative": [
+    "Bundle the skill into a zip",
+    "Validate the skill specification",
+    "Convert a flat skill into the router pattern",
+    "Write effective skill descriptions and manifests",
+    "Audit structural consistency",
+    "Brew a pot of coffee",
+    "Plot a sine wave",
+    "Render an HTML invoice"
+  ]
+}

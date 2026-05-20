@@ -133,6 +133,16 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      first_person_plural: x\n"
             "      second_person: x\n"
             "      imperative_start: x\n"
+            "    evaluation:\n"
+            "      default_min_precision: 0.85\n"
+            "      default_min_recall: 0.85\n"
+            "      heuristic_min_overlap: 0.05\n"
+            "      max_prompt_chars: 2000\n"
+            "      diversity_distinct_bigram_min_ratio: 0.6\n"
+            "      min_prompts_per_side: 4\n"
+            "      recommended_prompts_per_side: 8\n"
+            "      stopwords:\n"
+            "        - the\n"
             "  body:\n"
             "    max_lines: 500\n"
             "    reference_patterns:\n"
@@ -1078,6 +1088,22 @@ class MissingSectionFailFastTests(unittest.TestCase):
                 )
             )
         self.assertIn("trigger_phrases", str(ctx.exception))
+
+    def test_missing_description_evaluation_block_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("description", "evaluation")
+            )
+        self.assertIn("evaluation", str(ctx.exception))
+
+    def test_missing_evaluation_key_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "heuristic_min_overlap: 0.05", "renamed_overlap: 0.05"
+                )
+            )
+        self.assertIn("heuristic_min_overlap", str(ctx.exception))
 
     def test_empty_string_entry_in_trigger_phrases_raises(self) -> None:
         # An empty / whitespace-only entry would silently disable the

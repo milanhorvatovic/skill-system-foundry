@@ -1,0 +1,17 @@
+{
+  "target": "your-skill-name",
+  "kind": "skill",
+  "_comment": "Starter corpus for a top-level skill. 'target' must match the skill's SKILL.md frontmatter 'name'. List prompts that SHOULD activate this skill under 'positive' and prompts that should NOT under 'negative' (e.g. requests that belong to other skills). Aim for 8-10 per side; 4 is the minimum. Optional 'min_precision'/'min_recall' override the CLI thresholds. Run: python scripts/evaluate_descriptions.py <corpus-dir> --skill-set <dir-containing-the-skill>",
+  "positive": [
+    "Create a new skill that validates JSON files",
+    "How do I scaffold a capability",
+    "Audit my skill system for consistency",
+    "Bundle this skill as a zip"
+  ],
+  "negative": [
+    "Help me write a Python web scraper",
+    "Debug this React component",
+    "Set up a Postgres database",
+    "Translate this paragraph to French"
+  ]
+}
