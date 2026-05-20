@@ -111,6 +111,11 @@ class HeuristicCliTests(CliBaseMixin):
         self.assertEqual(payload["targets"][0]["target"], "validation")
         self.assertEqual(payload["targets"][0]["candidate_count"], 2)
         self.assertTrue(payload["targets"][0]["metrics"]["passed"])
+        # Categorized stream uses the repo-convention "errors" key, not "findings".
+        self.assertIn("errors", payload)
+        self.assertNotIn("findings", payload)
+        # Effective per-target thresholds are surfaced.
+        self.assertIn("thresholds", payload["targets"][0])
 
     def test_passing_corpus_human_output(self) -> None:
         self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)

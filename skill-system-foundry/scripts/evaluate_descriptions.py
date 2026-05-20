@@ -111,6 +111,10 @@ def _target_to_dict(result: TargetResult) -> dict:
         "kind": result.kind,
         "candidate_count": result.candidate_count,
         "metrics": _metrics_to_dict(result.metrics),
+        "thresholds": {
+            "min_precision": result.min_precision,
+            "min_recall": result.min_recall,
+        },
         "advisory": result.advisory,
     }
 
@@ -124,7 +128,7 @@ def _report_to_json(report: EvalReport) -> str:
             "min_recall": report.min_recall,
         },
         "targets": [_target_to_dict(t) for t in report.targets],
-        "findings": categorize_errors_for_json(report.errors),
+        "errors": categorize_errors_for_json(report.errors),
     })
 
 
@@ -138,6 +142,10 @@ def _print_human(report: EvalReport, verbose: bool) -> None:
             f"(candidates={result.candidate_count})"
         )
         if verbose:
+            print(
+                f"    thresholds: min_precision={result.min_precision:.2f} "
+                f"min_recall={result.min_recall:.2f}"
+            )
             pairwise = result.advisory.get("pairwise_confusion") or {}
             if pairwise:
                 print(f"    confused with: {pairwise}")
