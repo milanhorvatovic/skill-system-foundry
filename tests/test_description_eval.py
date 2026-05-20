@@ -821,5 +821,21 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(report.targets[0].candidate_count, 2)
 
 
+class ShippedMetaSkillCorpusTests(unittest.TestCase):
+    def test_all_shipped_corpora_are_schema_valid(self) -> None:
+        corpus_root = os.path.join(os.path.dirname(__file__), "skill-corpus")
+        files = []
+        for dirpath, _dirnames, filenames in os.walk(corpus_root):
+            for name in filenames:
+                if name.endswith(".json"):
+                    files.append(os.path.join(dirpath, name))
+        self.assertTrue(files, "no shipped corpora found under tests/skill-corpus")
+        for path in sorted(files):
+            corpus, findings = de.load_corpus(path)
+            fails = [f for f in findings if f.startswith(de.LEVEL_FAIL)]
+            self.assertEqual(fails, [], f"{path} produced FAIL findings: {fails}")
+            self.assertIsNotNone(corpus)
+
+
 if __name__ == "__main__":
     unittest.main()

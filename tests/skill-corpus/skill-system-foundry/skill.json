@@ -1,0 +1,29 @@
+{
+  "target": "skill-system-foundry",
+  "kind": "skill",
+  "_comment": "Self-test corpus for the meta-skill's top-level description. Positives should activate skill-system-foundry; negatives are unrelated software requests it must not claim.",
+  "positive": [
+    "Design AI-agnostic skill systems",
+    "Evolve skills capabilities and roles",
+    "Audit skill system consistency",
+    "Handle router migration for capabilities",
+    "Define a role and capability",
+    "Improve token efficiency of the skill system",
+    "Designs skill systems with capabilities",
+    "Improve skill discovery and token efficiency",
+    "Create a capability and role definition",
+    "Build an AI agnostic foundry for skills"
+  ],
+  "negative": [
+    "Help me write a Python web scraper",
+    "Debug this React component",
+    "Set up a Postgres database",
+    "Translate this paragraph to French",
+    "Plot a sine wave with matplotlib",
+    "Refactor my Java service layer",
+    "Generate a marketing email draft",
+    "Configure an nginx reverse proxy",
+    "Brew a pot of coffee",
+    "Render an HTML invoice"
+  ]
+}

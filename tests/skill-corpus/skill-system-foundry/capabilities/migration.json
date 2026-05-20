@@ -1,0 +1,25 @@
+{
+  "target": "migration",
+  "kind": "capability",
+  "_comment": "Positives describe converting flat skills into the router+capabilities pattern; negatives lean on sibling capabilities or are out of scope.",
+  "positive": [
+    "Convert a flat skill into the router pattern",
+    "Consolidate duplicate logic across capabilities",
+    "Convert existing flat structures to capabilities",
+    "Reduce discovery tokens with the router pattern",
+    "Establish proper layering in the skill",
+    "Convert a flat skill into capabilities",
+    "Migrate duplicate logic into one pattern",
+    "Flatten nested logic into the router structure"
+  ],
+  "negative": [
+    "Bundle a skill into a zip archive",
+    "Validate the skill specification",
+    "Deploy skills with symlinks",
+    "Write effective skill descriptions and manifests",
+    "Create a standalone architecture",
+    "Brew a pot of coffee",
+    "Plot a sine wave",
+    "Render an HTML invoice"
+  ]
+}

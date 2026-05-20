@@ -1,0 +1,25 @@
+{
+  "target": "bundling",
+  "kind": "capability",
+  "_comment": "Positives describe packaging a skill as a zip; negatives lean on sibling capabilities or are out of scope.",
+  "positive": [
+    "Bundle a skill as a zip archive",
+    "Package the skill for distribution",
+    "Create a self-contained skill bundle",
+    "Zip the skill directory for distribution",
+    "Exclude assets and scripts from the bundle",
+    "Preserve the internal layout in the archive",
+    "Package the skill into a zip bundle",
+    "Build a distribution archive of the skill"
+  ],
+  "negative": [
+    "Validate the skill against the specification",
+    "Deploy skills with wrapper symlinks",
+    "Convert a flat skill into the router pattern",
+    "Decide between standalone and router architecture",
+    "Audit skill system consistency",
+    "Translate text to French",
+    "Debug a React component",
+    "Configure an nginx server"
+  ]
+}
