@@ -5,12 +5,11 @@ Usage:
     python scripts/evaluate_descriptions.py <corpus-path>
     python scripts/evaluate_descriptions.py <corpus-dir> --skill-set .
     python scripts/evaluate_descriptions.py <corpus-dir> --soft --json
-    python scripts/evaluate_descriptions.py <corpus-dir> --llm --model <name>
 
-Heuristic mode (default) is pure stdlib and deterministic.  LLM mode (--llm)
-classifies via a configured provider over ``urllib`` and needs the provider's
-API-key environment variable.  Exit code is 0 when every target clears its
-precision/recall thresholds (or under --soft); 1 otherwise.
+Heuristic mode is pure stdlib and deterministic: each prompt is scored by
+Jaccard token overlap against the candidate ``name + description`` cards.  Exit
+code is 0 when every target clears its precision/recall thresholds (or under
+--soft); 1 otherwise.
 """
 
 import argparse
@@ -24,19 +23,13 @@ if _scripts_dir not in sys.path:
 from lib.constants import (
     EVAL_DEFAULT_MIN_PRECISION,
     EVAL_DEFAULT_MIN_RECALL,
-    EVAL_PROVIDERS,
-    EVAL_RUNS_HEURISTIC,
-    EVAL_RUNS_LLM,
     EVAL_TRAIN_VALIDATION_RATIO,
     LEVEL_FAIL,
 )
 from lib.description_eval import (
-    MODE_HEURISTIC,
-    MODE_LLM,
     EvalReport,
     Metrics,
     TargetResult,
-    _anthropic_messages,
     check_cross_target_overlap,
     discover_units,
     evaluate,
@@ -48,15 +41,10 @@ from lib.reporting import (
     to_json_output,
 )
 
-# Maps a provider's ``client`` key (configuration.yaml) to its client function.
-_CLIENT_DISPATCH = {"anthropic_messages": _anthropic_messages}
-
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Evaluate description activation accuracy (heuristic or LLM mode)."
-        ),
+        description="Evaluate description activation accuracy (heuristic).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -65,15 +53,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skill-set", dest="skill_set", default=None,
         help="Directory of candidate skills (default: current directory).",
-    )
-    parser.add_argument("--llm", action="store_true", help="Opt-in LLM mode.")
-    parser.add_argument(
-        "--provider", default="anthropic", help="Provider name (default: anthropic).",
-    )
-    parser.add_argument("--model", default=None, help="Override the provider model.")
-    parser.add_argument(
-        "--runs", type=int, default=None,
-        help="Runs per query (default: 1 heuristic, 3 LLM).",
     )
     parser.add_argument("--min-precision", dest="min_precision", type=float, default=None)
     parser.add_argument("--min-recall", dest="min_recall", type=float, default=None)
@@ -148,9 +127,6 @@ def _target_to_dict(result: TargetResult) -> dict:
 def _report_to_json(report: EvalReport) -> str:
     return to_json_output({
         "tool": "evaluate_descriptions",
-        "mode": report.mode,
-        "provider": report.provider,
-        "model": report.model,
         "success": report.success,
         "thresholds": {
             "min_precision": report.min_precision,
@@ -175,34 +151,9 @@ def _print_human(report: EvalReport, verbose: bool) -> None:
             pairwise = result.advisory.get("pairwise_confusion") or {}
             if pairwise:
                 print(f"    confused with: {pairwise}")
-            unstable = result.advisory.get("unstable_queries") or []
-            if unstable:
-                print(f"    unstable prompts: {len(unstable)}")
     for finding in report.errors:
         print_error_line(finding)
     print(f"Overall: {'PASS' if report.success else 'FAIL'}")
-
-
-def _make_client_fn(provider: str, model_override: str | None, json_mode: bool):
-    """Bind the provider's client function; exits on misconfiguration."""
-    provider_cfg = EVAL_PROVIDERS.get(provider)
-    if provider_cfg is None:
-        _exit(f"unknown provider '{provider}'", json_mode)
-    client_key = provider_cfg.get("client")
-    client = _CLIENT_DISPATCH.get(client_key)
-    if client is None:
-        _exit(f"provider '{provider}' has no known client '{client_key}'", json_mode)
-    env_var = provider_cfg["env_var"]
-    api_key = os.environ.get(env_var)
-    if not api_key:
-        _exit(f"environment variable {env_var} is not set (required for --llm)", json_mode)
-    model = model_override or provider_cfg["default_model"]
-    endpoint = provider_cfg["endpoint"]
-
-    def client_fn(prompt: str, candidates: list) -> str:
-        return client(prompt, candidates, model, api_key, endpoint)
-
-    return client_fn, model
 
 
 def main() -> None:
@@ -212,7 +163,6 @@ def main() -> None:
         sys.exit(1)
 
     args = _build_parser().parse_args()
-    mode = MODE_LLM if args.llm else MODE_HEURISTIC
 
     corpus_paths = _resolve_corpus_paths(args.corpus_path)
     if not corpus_paths:
@@ -230,17 +180,7 @@ def main() -> None:
     skill_set = args.skill_set or os.getcwd()
     units = discover_units(skill_set)
 
-    provider = None
-    model = None
-    client_fn = None
-    if args.llm:
-        client_fn, model = _make_client_fn(args.provider, args.model, json_mode)
-        provider = args.provider
-
     opts = {
-        "runs": args.runs if args.runs is not None else (
-            EVAL_RUNS_LLM if args.llm else EVAL_RUNS_HEURISTIC
-        ),
         "min_precision": (
             args.min_precision if args.min_precision is not None
             else EVAL_DEFAULT_MIN_PRECISION
@@ -251,12 +191,9 @@ def main() -> None:
         ),
         "split_seed": args.split_seed,
         "ratio": EVAL_TRAIN_VALIDATION_RATIO,
-        "client_fn": client_fn,
-        "provider": provider,
-        "model": model,
     }
 
-    report = evaluate(corpora, units, mode, opts)
+    report = evaluate(corpora, units, opts)
     # Prepend corpus-load + cross-target findings so they share the report's
     # error stream (and feed report.success / the exit code).
     report.errors = findings + report.errors

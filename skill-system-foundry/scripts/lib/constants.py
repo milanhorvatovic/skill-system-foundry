@@ -220,24 +220,16 @@ RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 # Description-quality evaluation constants — consumed by
 # lib/description_eval.py and the evaluate_descriptions.py entry point.
 # The custom YAML parser returns every scalar as a string, so counts go
-# through int(), thresholds/ratios through float(); the stopword list and
-# provider registry pass through as a frozenset and a dict.
+# through int(), thresholds/ratios through float(); the stopword list passes
+# through as a frozenset.
 _eval = _skill_desc["evaluation"]
-EVAL_RUNS_HEURISTIC = int(_eval["runs_heuristic"])
-EVAL_RUNS_LLM = int(_eval["runs_llm"])
 EVAL_DEFAULT_MIN_PRECISION = float(_eval["default_min_precision"])
 EVAL_DEFAULT_MIN_RECALL = float(_eval["default_min_recall"])
 EVAL_HEURISTIC_MIN_OVERLAP = float(_eval["heuristic_min_overlap"])
 EVAL_TRAIN_VALIDATION_RATIO = float(_eval["train_validation_ratio"])
 EVAL_MAX_PROMPT_CHARS = int(_eval["max_prompt_chars"])
 EVAL_DIVERSITY_RATIO = float(_eval["diversity_distinct_bigram_min_ratio"])
-_eval_window = _eval["unstable_trigger_window"]
-EVAL_UNSTABLE_LOW = float(_eval_window["low"])
-EVAL_UNSTABLE_HIGH = float(_eval_window["high"])
-EVAL_BOOTSTRAP_ITERS = int(_eval["bootstrap_iterations"])
-EVAL_BOOTSTRAP_CONFIDENCE = float(_eval["bootstrap_confidence"])
 EVAL_STOPWORDS = frozenset(str(_w) for _w in _eval["stopwords"])
-EVAL_PROVIDERS = _eval["providers"]
 
 # Trigger-phrase heuristic: the agentskills.io spec requires
 # descriptions to state both *what* the skill does and *when* it

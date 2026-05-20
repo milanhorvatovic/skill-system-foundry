@@ -84,11 +84,6 @@ skill:
       second_person: (?i)\b(you can|you will|your|you should)\b
       imperative_start: (?i)^(Create|Design|Build|Run|Execute|Deploy|Generate|Manage|Configure|Set up|Install|Analyze|Process|Handle|Implement|Define|Write|Read|Update|Delete|Check|Validate|Test|Review|Fix|Debug|Monitor|Track|Scan|Parse|Fetch|Send|Transform|Convert|Extract|Load|Save|Export|Import|Migrate|Provision|Orchestrate|Wire|Scaffold|Audit)\b
     evaluation:
-      # Runs per query.  Heuristic is deterministic so 1 suffices; LLM
-      # mode runs N times to compute a trigger rate per the
-      # agentskills.io methodology.
-      runs_heuristic: 1
-      runs_llm: 3
       # Threshold defaults for --min-precision / --min-recall (point
       # estimate).  Each corpus may override via min_precision /
       # min_recall in its header.
@@ -106,14 +101,6 @@ skill:
       # Phrasing-diversity threshold: at least this fraction of prompts
       # within a target must begin with distinct bigrams.
       diversity_distinct_bigram_min_ratio: 0.6
-      # LLM-mode variance window (advisory).  Per-query trigger rate in
-      # [low, high] is flagged unstable in JSON output.
-      unstable_trigger_window:
-        low: 0.3
-        high: 0.7
-      # Bootstrap settings for LLM-mode CI (advisory only).
-      bootstrap_iterations: 1000
-      bootstrap_confidence: 0.95
       # Stopwords stripped during heuristic tokenization.  Tune via PR.
       stopwords:
         - the
@@ -152,14 +139,6 @@ skill:
         - as
         - do
         - does
-      # Provider registry.  Adding a provider is a YAML edit plus one
-      # client function in description_eval.py.
-      providers:
-        anthropic:
-          endpoint: https://api.anthropic.com/v1/messages
-          env_var: ANTHROPIC_API_KEY
-          default_model: claude-haiku-4-5-20251001
-          client: anthropic_messages
   body:
     max_lines: 500
     # Cross-file reference patterns.

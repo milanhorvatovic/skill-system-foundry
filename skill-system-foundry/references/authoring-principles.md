@@ -115,7 +115,7 @@ description: Helps with deployments.
 
 ### Testing activation
 
-Well-formed is not the same as well-targeted — a description can pass every rule above and still under- or over-trigger. Measure activation precision and recall against a prompt corpus with [evaluate_descriptions.py](../scripts/evaluate_descriptions.py); the corpus format and the heuristic-versus-LLM modes are documented in the validation capability's "Description-Quality Evaluation" section.
+Well-formed is not the same as well-targeted — a description can pass every rule above and still under- or over-trigger. Measure activation precision and recall against a prompt corpus with [evaluate_descriptions.py](../scripts/evaluate_descriptions.py) (a deterministic, stdlib-only heuristic check); the corpus format is documented in the validation capability's "Description-Quality Evaluation" section.
 
 ---
 

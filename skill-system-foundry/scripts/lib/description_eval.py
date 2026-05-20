@@ -1,19 +1,15 @@
-"""Description-quality evaluation: heuristic and opt-in LLM activation accuracy.
+"""Description-quality evaluation: heuristic activation accuracy.
 
 This module measures whether a skill's (or capability's) ``name + description``
 card causes the right activations on a corpus of positive prompts (should
 activate the unit) and negative prompts (should not).  It powers the
 ``evaluate_descriptions.py`` entry point.
 
-Two modes
----------
-* **heuristic** (default, pure stdlib, deterministic): Jaccard token overlap
-  between each prompt and every candidate card; the highest-overlap candidate
-  is selected, or ``none`` when the best overlap is below
-  ``EVAL_HEURISTIC_MIN_OVERLAP``.  Free, fast, runnable in CI on every PR.
-* **llm** (opt-in, ``urllib`` only): a classifier prompt asks a configured
-  provider to pick the single most relevant unit (or ``none``) from the same
-  candidate cards.  Each query runs ``runs`` times to produce a trigger rate.
+Heuristic mode (pure stdlib, deterministic, free): for each prompt it computes
+Jaccard token overlap against every candidate card and selects the highest, or
+``none`` when the best overlap is below ``EVAL_HEURISTIC_MIN_OVERLAP``.  It is a
+smoke check on description-vocabulary coverage — fast and reproducible, suitable
+for running in CI on every PR.
 
 Unit card model
 ---------------
@@ -21,28 +17,21 @@ Every discoverable unit is reduced to a ``name + description`` card.  Skills
 expose both in ``SKILL.md`` frontmatter.  Capabilities carry only
 ``allowed-tools`` in frontmatter, so a capability's name is its directory name
 and its description is the first body paragraph after the ``# Heading`` line in
-``capability.md``.  Both modes consume this identical card — neither reads the
-full body, so there is no information asymmetry between them.
+``capability.md``.
 
 Scoring semantics
 -----------------
 For a target unit ``T`` each prompt's prediction is the single selected unit or
-``None`` (``"none"``):
+``None``:
 
 * positive prompt -> ``TP`` if prediction == ``T`` else ``FN``.
 * negative prompt -> ``FP`` if prediction == ``T`` else ``TN`` (selecting
-  ``None`` *or* a different unit both count as correctly rejecting ``T``).
+  ``None`` or a different unit both reject ``T``).
 
 ``precision = TP / (TP + FP)`` and ``recall = TP / (TP + FN)``; each defaults to
 ``1.0`` when its denominator is ``0``.  The threshold gate compares these point
-estimates.
-
-Advisory statistics
--------------------
-Bootstrap confidence intervals, per-query variance flags, and pairwise
-confusion are computed for reporting only — they are emitted in the JSON
-payload but never affect exit status, because corpora of 8-10 prompts make them
-unreliable as pass/fail signals.
+estimates (the validation half when a split is active).  Pairwise confusion is
+reported in the JSON payload but never gates exit status.
 
 Library contract
 ----------------
@@ -55,21 +44,15 @@ import json
 import os
 import random
 import re
-import urllib.error
-import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
 
 from .constants import (
     DIR_CAPABILITIES,
-    EVAL_BOOTSTRAP_CONFIDENCE,
-    EVAL_BOOTSTRAP_ITERS,
     EVAL_DIVERSITY_RATIO,
     EVAL_HEURISTIC_MIN_OVERLAP,
     EVAL_MAX_PROMPT_CHARS,
     EVAL_STOPWORDS,
-    EVAL_UNSTABLE_HIGH,
-    EVAL_UNSTABLE_LOW,
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
@@ -85,21 +68,6 @@ KIND_SKILL = "skill"
 KIND_CAPABILITY = "capability"
 LABEL_POSITIVE = "positive"
 LABEL_NEGATIVE = "negative"
-PREDICTION_NONE = "none"  # the LLM's literal "no unit fits" answer
-
-MODE_HEURISTIC = "heuristic"
-MODE_LLM = "llm"
-
-# Fixed seed so advisory bootstrap CIs are reproducible across runs.
-_BOOTSTRAP_SEED = 20240517
-
-# Anthropic Messages API version header value (stable).
-ANTHROPIC_API_VERSION = "2023-06-01"
-_CLASSIFIER_SYSTEM_PROMPT = (
-    "You are a skill router.  Given a user request and a list of skills, reply "
-    "with exactly one skill name from the list, or 'none' if no skill fits.  "
-    "Output only the name, with no punctuation or explanation."
-)
 
 # Top-level corpus keys.  Required keys plus the optional metadata keys the
 # schema validator tolerates; any other top-level key (except ``_*``) is a FAIL.
@@ -122,7 +90,7 @@ class Unit:
 
     @property
     def card_text(self) -> str:
-        """The ``name + description`` text both modes score against."""
+        """The ``name + description`` text the scorer matches against."""
         return f"{self.name} {self.description}".strip()
 
 
@@ -145,9 +113,7 @@ class ScoredQuery:
 
     prompt: str
     label: str  # LABEL_POSITIVE | LABEL_NEGATIVE
-    prediction: str | None  # selected unit name, or None for "none"
-    trigger_rate: float | None  # LLM mode only; None in heuristic mode
-    runs: int
+    prediction: str | None  # selected unit name, or None for no activation
 
 
 @dataclass(frozen=True)
@@ -165,7 +131,7 @@ class Metrics:
 
 @dataclass
 class TargetResult:
-    """Per-target evaluation result, including advisory statistics."""
+    """Per-target evaluation result, including advisory pairwise confusion."""
 
     target: str
     kind: str
@@ -185,9 +151,6 @@ class TargetResult:
 class EvalReport:
     """The full evaluation outcome consumed by the entry point's formatter."""
 
-    mode: str
-    provider: str | None
-    model: str | None
     min_precision: float
     min_recall: float
     split: dict | None
@@ -196,13 +159,13 @@ class EvalReport:
 
     @property
     def success(self) -> bool:
-        """True when every target cleared its gate (ignores ``--soft``)."""
+        """True when every target cleared its gate and no FAIL finding fired."""
         return all(t.gate_metrics.passed for t in self.targets) and not any(
             e.startswith(LEVEL_FAIL) for e in self.errors
         )
 
 
-# --- corpus loading + schema validation (step 4) ----------------------------
+# --- corpus loading + schema validation -------------------------------------
 
 
 def _has_control_chars(text: str) -> bool:
@@ -214,15 +177,15 @@ def _check_prompt_rules(
     positive: list[str], negative: list[str],
     fail, warn,
 ) -> None:
-    """Apply the prompt-level corpus-shape rules (4-8, 10-12).
+    """Apply the prompt-level corpus-shape rules.
 
     *fail* / *warn* are the finding-appending closures from
-    :func:`load_corpus`.  Rule 9 is cross-target and lives in
+    :func:`load_corpus`.  Cross-target overlap lives in
     :func:`check_cross_target_overlap`.
     """
     sides = ((LABEL_POSITIVE, positive), (LABEL_NEGATIVE, negative))
 
-    # Rules 7, 11, 12 — per-prompt hygiene.
+    # Per-prompt hygiene: empty, over-length, control characters.
     for label, prompts in sides:
         for prompt in prompts:
             if not prompt.strip():
@@ -239,7 +202,7 @@ def _check_prompt_rules(
                     f"characters: {prompt!r}"
                 )
 
-    # Rules 4, 5 — per-side counts.
+    # Per-side counts.
     for label, prompts in sides:
         count = len(prompts)
         if count < 4:
@@ -247,7 +210,7 @@ def _check_prompt_rules(
         elif count <= 7:
             warn(f"'{label}' has {count} prompts; 8-10 are recommended")
 
-    # Rule 6 — duplicate prompts within a side.
+    # Duplicate prompts within a side.
     for label, prompts in sides:
         seen: set[str] = set()
         dupes: set[str] = set()
@@ -259,12 +222,12 @@ def _check_prompt_rules(
         for dupe in sorted(dupes):
             fail(f"duplicate prompt in '{label}': {dupe!r}")
 
-    # Rule 8 — same prompt on both sides (self-contradiction).
+    # Same prompt on both sides (self-contradiction).
     both = {p.strip() for p in positive} & {p.strip() for p in negative}
     for prompt in sorted(both):
         fail(f"prompt appears in both 'positive' and 'negative': {prompt!r}")
 
-    # Rule 10 — phrasing diversity by leading bigram.
+    # Phrasing diversity by leading bigram.
     non_empty = [p for p in (*positive, *negative) if p.strip()]
     if non_empty:
         leading_bigrams = {" ".join(p.lower().split()[:2]) for p in non_empty}
@@ -281,10 +244,9 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
     """Load and schema-validate one corpus JSON file.
 
     Returns ``(corpus, findings)``.  ``corpus`` is ``None`` when any FAIL-level
-    rule fired (the corpus cannot be scored safely); ``findings`` carries every
-    ``"SEVERITY: [tag] body"`` string from the per-file corpus-shape rules
-    (1-8, 10-12).  Rule 9 is cross-target — see
-    :func:`check_cross_target_overlap`.
+    rule fired; ``findings`` carries every ``"SEVERITY: [tag] body"`` string
+    from the per-file corpus-shape rules.  Cross-target overlap is checked
+    separately — see :func:`check_cross_target_overlap`.
     """
     findings: list[str] = []
     label = os.path.basename(path)
@@ -310,19 +272,18 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
         fail("top-level JSON value must be an object")
         return None, findings
 
-    # Rule 3 — unknown top-level keys (``_*`` and the optional metadata keys
-    # are tolerated).
+    # Unknown top-level keys (``_*`` and the optional metadata keys tolerated).
     allowed_keys = set(CORPUS_REQUIRED_KEYS) | set(CORPUS_OPTIONAL_KEYS)
     for key in data:
         if not key.startswith("_") and key not in allowed_keys:
             fail(f"unknown top-level key '{key}'")
 
-    # Rule 1 — required keys present.
+    # Required keys present.
     for key in CORPUS_REQUIRED_KEYS:
         if key not in data:
             fail(f"missing required key '{key}'")
 
-    # Rule 2 — types.
+    # Types.
     target = data.get("target")
     kind = data.get("kind")
     if "target" in data and not (isinstance(target, str) and target.strip()):
@@ -360,7 +321,6 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
     min_precision = optional_threshold("min_precision")
     min_recall = optional_threshold("min_recall")
 
-    # Prompt-level rules need both sides as well-formed string lists.
     if positive is not None and negative is not None:
         _check_prompt_rules(positive, negative, fail, warn)
 
@@ -380,7 +340,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
 
 
 def check_cross_target_overlap(corpora: list[Corpus]) -> list[str]:
-    """Rule 9 — flag a positive prompt shared across sibling targets.
+    """Flag a positive prompt shared across sibling targets.
 
     A prompt used as a positive for more than one target is a boundary
     ambiguity (WARN): both descriptions claim it.  Cross-target by nature, so
@@ -403,7 +363,7 @@ def check_cross_target_overlap(corpora: list[Corpus]) -> list[str]:
     return findings
 
 
-# --- unit discovery + card extraction (step 5) ------------------------------
+# --- unit discovery + card extraction ---------------------------------------
 
 
 def _first_paragraph_after_heading(body: str) -> str:
@@ -491,7 +451,7 @@ def discover_units(skill_set_dir: str) -> list[Unit]:
     return units
 
 
-# --- heuristic scoring (step 6) ---------------------------------------------
+# --- heuristic scoring ------------------------------------------------------
 
 
 def tokenize(text: str) -> set[str]:
@@ -532,7 +492,7 @@ def score_heuristic(prompt: str, candidates: list[Unit]) -> str | None:
     return best_name
 
 
-# --- deterministic split (step 7) -------------------------------------------
+# --- deterministic split ----------------------------------------------------
 
 
 def split_train_validation(
@@ -566,7 +526,7 @@ def split_train_validation(
     return rebuild(pos_train, neg_train), rebuild(pos_val, neg_val)
 
 
-# --- metrics aggregation (step 8) -------------------------------------------
+# --- metrics aggregation ----------------------------------------------------
 
 
 def aggregate(
@@ -578,7 +538,7 @@ def aggregate(
     A positive prompt predicting *target* is a TP (else FN); a negative prompt
     predicting *target* is an FP (else TN — selecting ``None`` or another unit
     both reject *target*).  Precision and recall default to ``1.0`` when their
-    denominator is ``0`` (section 4.6).
+    denominator is ``0``.
     """
     tp = fp = tn = fn = 0
     for query in scored:
@@ -597,190 +557,6 @@ def aggregate(
     )
 
 
-# --- LLM client + scorer (steps 9-10) ---------------------------------------
-
-
-def build_classifier_prompt(prompt: str, candidates: list[Unit]) -> str:
-    """Render the classifier instruction listing every candidate card."""
-    lines = ["Available skills:"]
-    for candidate in sorted(candidates, key=lambda unit: unit.name):
-        description = candidate.description.strip() or "(no description)"
-        lines.append(f"- {candidate.name}: {description}")
-    lines.append("- none: the request matches no skill above")
-    lines.append("")
-    lines.append(f"User request: {prompt}")
-    lines.append("")
-    lines.append(
-        "Reply with only the single most relevant skill name from the list "
-        "above (or 'none')."
-    )
-    return "\n".join(lines)
-
-
-def _anthropic_messages(
-    prompt: str, candidates: list[Unit], model: str,
-    api_key: str, endpoint: str,
-) -> str:
-    """POST one classification request to the Anthropic Messages API.
-
-    Returns the model's first non-blank answer line (caller maps it to a unit
-    name or ``None``).  Raises a ``RuntimeError`` with an actionable message on
-    HTTP / transport / decode failure — no retry logic.
-    """
-    body = json.dumps(
-        {
-            "model": model,
-            "max_tokens": 30,
-            "temperature": 0,
-            "system": _CLASSIFIER_SYSTEM_PROMPT,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": build_classifier_prompt(prompt, candidates),
-                }
-            ],
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint,
-        data=body,
-        method="POST",
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": ANTHROPIC_API_VERSION,
-        },
-    )
-    try:
-        with urllib.request.urlopen(request) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        excerpt = ""
-        try:
-            excerpt = exc.read().decode("utf-8", "replace")[:200]
-        except OSError:
-            pass
-        raise RuntimeError(
-            f"Anthropic API returned HTTP {exc.code}: {excerpt}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(
-            f"Anthropic API request failed: {exc.reason}"
-        ) from exc
-
-    try:
-        payload = json.loads(raw)
-        text = payload["content"][0]["text"]
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(
-            f"Anthropic API returned an unexpected payload ({exc})"
-        ) from exc
-
-    for line in text.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
-
-
-def _normalize_choice(answer: str, name_by_lower: dict[str, str]) -> str | None:
-    """Map a raw model answer to a candidate name or ``None``."""
-    cleaned = answer.strip().strip(".").strip().lower()
-    if cleaned == PREDICTION_NONE:
-        return None
-    return name_by_lower.get(cleaned)
-
-
-def score_llm(
-    prompt: str, target: str, candidates: list[Unit], runs: int,
-    client_fn,
-) -> tuple[str | None, float]:
-    """Run *client_fn* *runs* times; return ``(prediction, trigger_rate)``.
-
-    *trigger_rate* is the fraction of runs that selected *target* (drives the
-    advisory variance flag).  *prediction* is the majority-voted unit across
-    runs — ``None`` when no unit reaches a 50% share — and is what the
-    confusion matrix and pairwise confusion consume, so a consistently
-    mis-selected sibling is still captured.  Ties among units break to the
-    alphabetically-first name.  *client_fn* takes ``(prompt, candidates)`` and
-    returns the raw answer line, so the Anthropic client is mockable.
-    """
-    name_by_lower = {unit.name.lower(): unit.name for unit in candidates}
-    choices = [
-        _normalize_choice(client_fn(prompt, candidates), name_by_lower)
-        for _ in range(runs)
-    ]
-
-    trigger_rate = (
-        sum(1 for choice in choices if choice == target) / runs if runs else 0.0
-    )
-
-    unit_votes = Counter(choice for choice in choices if choice is not None)
-    prediction: str | None = None
-    if unit_votes and runs:
-        top_unit, top_count = sorted(
-            unit_votes.items(), key=lambda item: (-item[1], item[0]),
-        )[0]
-        if top_count / runs >= 0.5:
-            prediction = top_unit
-    return prediction, trigger_rate
-
-
-# --- advisory statistics (steps 11-13) --------------------------------------
-
-
-def _percentile(sorted_values: list[float], quantile: float) -> float:
-    """Nearest-rank percentile of an already-sorted list."""
-    if not sorted_values:
-        return 0.0
-    index = int(round((len(sorted_values) - 1) * quantile))
-    return sorted_values[index]
-
-
-def bootstrap_confidence_interval(
-    scored: list[ScoredQuery], target: str,
-    iterations: int, confidence: float,
-) -> dict:
-    """Resample *scored* with replacement -> CI bounds for precision/recall.
-
-    Advisory only — never gates.  Deterministic under a fixed internal seed so
-    repeated runs report identical bounds.
-    """
-    lower_q = (1.0 - confidence) / 2.0
-    upper_q = 1.0 - lower_q
-    if not scored:
-        return {
-            "precision": [1.0, 1.0], "recall": [1.0, 1.0],
-            "confidence": confidence, "iterations": iterations,
-        }
-
-    rng = random.Random(_BOOTSTRAP_SEED)
-    precisions: list[float] = []
-    recalls: list[float] = []
-    for _ in range(iterations):
-        resample = rng.choices(scored, k=len(scored))
-        metrics = aggregate(resample, target, 0.0, 0.0)
-        precisions.append(metrics.precision)
-        recalls.append(metrics.recall)
-    precisions.sort()
-    recalls.sort()
-    return {
-        "precision": [_percentile(precisions, lower_q), _percentile(precisions, upper_q)],
-        "recall": [_percentile(recalls, lower_q), _percentile(recalls, upper_q)],
-        "confidence": confidence,
-        "iterations": iterations,
-    }
-
-
-def flag_unstable_queries(
-    scored: list[ScoredQuery], low: float, high: float,
-) -> list[str]:
-    """Return prompts whose LLM trigger rate falls within ``[low, high]``."""
-    return [
-        query.prompt for query in scored
-        if query.trigger_rate is not None and low <= query.trigger_rate <= high
-    ]
-
-
 def pairwise_confusion(
     scored: list[ScoredQuery], target: str,
 ) -> dict[str, int]:
@@ -792,7 +568,7 @@ def pairwise_confusion(
     return dict(sorted(votes.items()))
 
 
-# --- orchestrator (step 14) -------------------------------------------------
+# --- orchestrator -----------------------------------------------------------
 
 
 def _candidate_set(corpus: Corpus, candidates: list[Unit]) -> list[Unit] | None:
@@ -819,41 +595,28 @@ def _candidate_set(corpus: Corpus, candidates: list[Unit]) -> list[Unit] | None:
     ]
 
 
-def _score_corpus(
-    corpus: Corpus, candidate_set: list[Unit], mode: str, opts: dict,
-) -> list[ScoredQuery]:
-    """Score every prompt of *corpus* under the chosen mode."""
+def _score_corpus(corpus: Corpus, candidate_set: list[Unit]) -> list[ScoredQuery]:
+    """Score every prompt of *corpus* heuristically against *candidate_set*."""
     scored: list[ScoredQuery] = []
     sides = (
         (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
     )
     for label, prompts in sides:
         for prompt in prompts:
-            if mode == MODE_LLM:
-                prediction, rate = score_llm(
-                    prompt, corpus.target, candidate_set,
-                    opts["runs"], opts["client_fn"],
-                )
-                scored.append(
-                    ScoredQuery(prompt, label, prediction, rate, opts["runs"])
-                )
-            else:
-                prediction = score_heuristic(prompt, candidate_set)
-                scored.append(ScoredQuery(prompt, label, prediction, None, 1))
+            prediction = score_heuristic(prompt, candidate_set)
+            scored.append(ScoredQuery(prompt, label, prediction))
     return scored
 
 
 def evaluate(
-    corpora: list[Corpus], candidates: list[Unit], mode: str, opts: dict,
+    corpora: list[Corpus], candidates: list[Unit], opts: dict,
 ) -> EvalReport:
     """Score every corpus against *candidates* and assemble the report.
 
-    *opts* carries the resolved options: ``runs``, ``min_precision``,
-    ``min_recall``, ``split_seed`` (``None`` to disable), ``ratio``,
-    ``client_fn`` (LLM mode), and optional ``provider`` / ``model``.  The
-    exit-affecting gate compares point estimates — the validation half when a
-    split is active; bootstrap CI, variance, and pairwise confusion are
-    advisory.
+    *opts* carries the resolved options: ``min_precision``, ``min_recall``,
+    ``split_seed`` (``None`` to disable), and ``ratio``.  The exit-affecting
+    gate compares point estimates — the validation half when a split is active;
+    pairwise confusion is advisory.
     """
     split_seed = opts.get("split_seed")
     split_info = (
@@ -861,7 +624,6 @@ def evaluate(
         if split_seed is not None else None
     )
     report = EvalReport(
-        mode=mode, provider=opts.get("provider"), model=opts.get("model"),
         min_precision=opts["min_precision"], min_recall=opts["min_recall"],
         split=split_info,
     )
@@ -885,7 +647,7 @@ def evaluate(
             else opts["min_recall"]
         )
 
-        scored = _score_corpus(corpus, candidate_set, mode, opts)
+        scored = _score_corpus(corpus, candidate_set)
         metrics = aggregate(scored, corpus.target, min_precision, min_recall)
 
         validation_metrics = None
@@ -899,19 +661,7 @@ def evaluate(
                 validation_scored, corpus.target, min_precision, min_recall,
             )
 
-        advisory = {
-            "bootstrap_ci": (
-                bootstrap_confidence_interval(
-                    scored, corpus.target,
-                    EVAL_BOOTSTRAP_ITERS, EVAL_BOOTSTRAP_CONFIDENCE,
-                )
-                if mode == MODE_LLM else None
-            ),
-            "unstable_queries": flag_unstable_queries(
-                scored, EVAL_UNSTABLE_LOW, EVAL_UNSTABLE_HIGH,
-            ),
-            "pairwise_confusion": pairwise_confusion(scored, corpus.target),
-        }
+        advisory = {"pairwise_confusion": pairwise_confusion(scored, corpus.target)}
 
         report.targets.append(
             TargetResult(

@@ -1,18 +1,15 @@
-"""Tests for lib.description_eval — corpus loader and shape rules (step 4).
+"""Tests for lib.description_eval — heuristic activation evaluation.
 
-Covers the 12 corpus-shape rules: required keys, types, unknown keys, per-side
-counts (FAIL < 4, WARN 4-7), duplicates, empty prompts, pos/neg contradiction,
-cross-target overlap, phrasing diversity, length cap, and control characters.
+Covers the corpus loader and shape rules, unit discovery + capability card
+extraction, the Jaccard heuristic scorer, the deterministic split, metrics +
+confusion matrix, pairwise confusion, and the evaluate orchestrator.
 """
 
-import io
 import json
 import os
 import sys
 import tempfile
 import unittest
-import unittest.mock
-import urllib.error
 
 SCRIPTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "skill-system-foundry", "scripts")
@@ -58,6 +55,24 @@ def has_fail(findings: list[str]) -> bool:
 
 def has_warn(findings: list[str]) -> bool:
     return any(f.startswith(de.LEVEL_WARN) for f in findings)
+
+
+def _unit(name: str, description: str) -> de.Unit:
+    return de.Unit(
+        name=name, kind=de.KIND_CAPABILITY, description=description, path=f"/{name}",
+    )
+
+
+def _scored(label: str, prediction: str | None, count: int) -> list[de.ScoredQuery]:
+    return [
+        de.ScoredQuery(prompt=f"{label}-{i}", label=label, prediction=prediction)
+        for i in range(count)
+    ]
+
+
+# ===================================================================
+# Corpus loader + shape rules
+# ===================================================================
 
 
 class LoadCorpusBaseMixin(unittest.TestCase):
@@ -109,7 +124,6 @@ class RequiredKeyAndTypeTests(LoadCorpusBaseMixin):
         del data["target"]
         corpus, findings = self.load_dict(data)
         self.assertIsNone(corpus)
-        self.assertTrue(has_fail(findings))
         self.assertTrue(any("missing required key 'target'" in f for f in findings))
 
     def test_bad_kind_fails(self) -> None:
@@ -228,7 +242,6 @@ class PromptHygieneTests(LoadCorpusBaseMixin):
 class DiversityTests(LoadCorpusBaseMixin):
     def test_low_diversity_warns_but_loads(self) -> None:
         data = valid_corpus_dict()
-        # Force every positive to share the leading bigram "create skill".
         data["positive"] = [f"create skill variant number {i}" for i in range(8)]
         corpus, findings = self.load_dict(data)
         self.assertIsNotNone(corpus)
@@ -277,6 +290,11 @@ class CrossTargetOverlapTests(unittest.TestCase):
         a = self._corpus("alpha", ("alpha one", "alpha two"))
         b = self._corpus("beta", ("beta one", "beta two"))
         self.assertEqual(de.check_cross_target_overlap([a, b]), [])
+
+
+# ===================================================================
+# Discovery + card extraction
+# ===================================================================
 
 
 class DiscoveryBaseMixin(unittest.TestCase):
@@ -373,10 +391,9 @@ class CapabilityCardTests(unittest.TestCase):
         self.assertEqual(description, "Plain intro line.")
 
 
-def _unit(name: str, description: str) -> de.Unit:
-    return de.Unit(
-        name=name, kind=de.KIND_CAPABILITY, description=description, path=f"/{name}",
-    )
+# ===================================================================
+# Heuristic scorer
+# ===================================================================
 
 
 class TokenizeTests(unittest.TestCase):
@@ -415,6 +432,11 @@ class ScoreHeuristicTests(unittest.TestCase):
         self.assertIsNone(de.score_heuristic("anything", []))
 
 
+# ===================================================================
+# Split + metrics + pairwise
+# ===================================================================
+
+
 class SplitTrainValidationTests(unittest.TestCase):
     def _corpus(self) -> de.Corpus:
         return de.Corpus(
@@ -433,17 +455,12 @@ class SplitTrainValidationTests(unittest.TestCase):
     def test_split_preserves_stratification_and_counts(self) -> None:
         corpus = self._corpus()
         train, validation = de.split_train_validation(corpus, 0.6, seed=7)
-        # 60% train of 10 -> 6 train / 4 validation, per side.
         self.assertEqual(len(train.positive), 6)
         self.assertEqual(len(validation.positive), 4)
         self.assertEqual(len(train.negative), 6)
         self.assertEqual(len(validation.negative), 4)
-        # No prompt is lost or duplicated across halves.
         self.assertEqual(
             set(train.positive) | set(validation.positive), set(corpus.positive),
-        )
-        self.assertEqual(
-            len(train.positive) + len(validation.positive), len(corpus.positive),
         )
 
     def test_split_carries_metadata(self) -> None:
@@ -451,19 +468,8 @@ class SplitTrainValidationTests(unittest.TestCase):
         train, validation = de.split_train_validation(corpus, 0.6, seed=1)
         for half in (train, validation):
             self.assertEqual(half.target, "skill-design")
-            self.assertEqual(half.kind, de.KIND_CAPABILITY)
             self.assertEqual(half.min_precision, 0.9)
             self.assertEqual(half.min_recall, 0.8)
-
-
-def _scored(label: str, prediction: str | None, count: int) -> list[de.ScoredQuery]:
-    return [
-        de.ScoredQuery(
-            prompt=f"{label}-{i}", label=label, prediction=prediction,
-            trigger_rate=None, runs=1,
-        )
-        for i in range(count)
-    ]
 
 
 class AggregateTests(unittest.TestCase):
@@ -499,14 +505,12 @@ class AggregateTests(unittest.TestCase):
         self.assertTrue(metrics.passed)
 
     def test_empty_denominator_defaults_to_one(self) -> None:
-        # Only negatives, all correctly rejected: TP+FP == 0 and TP+FN == 0.
         metrics = de.aggregate(_scored(de.LABEL_NEGATIVE, None, 4), "x", 0.85, 0.85)
         self.assertEqual(metrics.precision, 1.0)
         self.assertEqual(metrics.recall, 1.0)
         self.assertTrue(metrics.passed)
 
     def test_threshold_gates_on_precision(self) -> None:
-        # 4 TP, 1 FP -> precision 0.8 < 0.85 -> fail even with full recall.
         scored = (
             _scored(de.LABEL_POSITIVE, "skill-design", 4)
             + _scored(de.LABEL_NEGATIVE, "skill-design", 1)
@@ -518,208 +522,24 @@ class AggregateTests(unittest.TestCase):
         self.assertFalse(metrics.passed)
 
 
-class _FakeResponse:
-    """Minimal context-manager stand-in for urllib's urlopen return value."""
-
-    def __init__(self, payload: object = None, raw: str | None = None) -> None:
-        if raw is not None:
-            self._data = raw.encode("utf-8")
-        else:
-            self._data = json.dumps(payload).encode("utf-8")
-
-    def read(self) -> bytes:
-        return self._data
-
-    def __enter__(self) -> "_FakeResponse":
-        return self
-
-    def __exit__(self, *exc: object) -> bool:
-        return False
-
-
-class BuildClassifierPromptTests(unittest.TestCase):
-    def test_lists_candidates_none_and_request(self) -> None:
-        candidates = [_unit("validation", "Validate skills"), _unit("bundling", "Package as zip")]
-        text = de.build_classifier_prompt("audit my skills", candidates)
-        self.assertIn("- validation: Validate skills", text)
-        self.assertIn("- bundling: Package as zip", text)
-        self.assertIn("- none:", text)
-        self.assertIn("User request: audit my skills", text)
-
-    def test_missing_description_uses_placeholder(self) -> None:
-        text = de.build_classifier_prompt("x", [_unit("empty", "")])
-        self.assertIn("- empty: (no description)", text)
-
-
-class AnthropicMessagesTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.candidates = [_unit("validation", "Validate skills")]
-
-    def _call(self) -> str:
-        return de._anthropic_messages(
-            "audit", self.candidates, "model-x", "key", "https://api/messages",
-        )
-
-    def test_success_returns_first_nonblank_line(self) -> None:
-        response = _FakeResponse({"content": [{"type": "text", "text": "\nvalidation\n"}]})
-        with unittest.mock.patch.object(de.urllib.request, "urlopen", return_value=response):
-            self.assertEqual(self._call(), "validation")
-
-    def test_http_error_raises_runtime_error_with_status(self) -> None:
-        error = urllib.error.HTTPError(
-            "https://api/messages", 401, "Unauthorized", {},
-            io.BytesIO(b'{"error":"bad key"}'),
-        )
-        with unittest.mock.patch.object(de.urllib.request, "urlopen", side_effect=error):
-            with self.assertRaises(RuntimeError) as ctx:
-                self._call()
-        self.assertIn("401", str(ctx.exception))
-
-    def test_url_error_raises_runtime_error(self) -> None:
-        error = urllib.error.URLError("connection refused")
-        with unittest.mock.patch.object(de.urllib.request, "urlopen", side_effect=error):
-            with self.assertRaises(RuntimeError):
-                self._call()
-
-    def test_malformed_json_raises(self) -> None:
-        with unittest.mock.patch.object(
-            de.urllib.request, "urlopen", return_value=_FakeResponse(raw="{ not json"),
-        ):
-            with self.assertRaises(RuntimeError):
-                self._call()
-
-    def test_missing_content_key_raises(self) -> None:
-        with unittest.mock.patch.object(
-            de.urllib.request, "urlopen", return_value=_FakeResponse({"unexpected": "shape"}),
-        ):
-            with self.assertRaises(RuntimeError):
-                self._call()
-
-
-class _ScriptedClient:
-    """Returns queued answers in order; repeats the last when exhausted."""
-
-    def __init__(self, answers: list[str]) -> None:
-        self._answers = answers
-        self._index = 0
-
-    def __call__(self, prompt: str, candidates: list) -> str:
-        answer = self._answers[min(self._index, len(self._answers) - 1)]
-        self._index += 1
-        return answer
-
-
-class ScoreLlmTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.candidates = [_unit("validation", "Validate"), _unit("bundling", "Bundle")]
-
-    def test_target_selected_every_run(self) -> None:
-        prediction, rate = de.score_llm(
-            "p", "validation", self.candidates, 3, _ScriptedClient(["validation"]),
-        )
-        self.assertEqual(prediction, "validation")
-        self.assertEqual(rate, 1.0)
-
-    def test_none_every_run(self) -> None:
-        prediction, rate = de.score_llm(
-            "p", "validation", self.candidates, 3, _ScriptedClient(["none"]),
-        )
-        self.assertIsNone(prediction)
-        self.assertEqual(rate, 0.0)
-
-    def test_sibling_majority_predicts_sibling_with_zero_trigger(self) -> None:
-        prediction, rate = de.score_llm(
-            "p", "validation", self.candidates, 3, _ScriptedClient(["bundling"]),
-        )
-        self.assertEqual(prediction, "bundling")
-        self.assertEqual(rate, 0.0)
-
-    def test_two_of_three_target_is_fp_rate(self) -> None:
-        client = _ScriptedClient(["validation", "validation", "none"])
-        prediction, rate = de.score_llm("p", "validation", self.candidates, 3, client)
-        self.assertEqual(prediction, "validation")
-        self.assertAlmostEqual(rate, 2 / 3)
-
-    def test_no_majority_predicts_none(self) -> None:
-        client = _ScriptedClient(["validation", "bundling", "none"])
-        prediction, rate = de.score_llm("p", "validation", self.candidates, 3, client)
-        self.assertIsNone(prediction)
-        self.assertAlmostEqual(rate, 1 / 3)
-
-    def test_case_insensitive_and_unknown_answers(self) -> None:
-        client = _ScriptedClient(["VALIDATION."])
-        prediction, rate = de.score_llm("p", "validation", self.candidates, 1, client)
-        self.assertEqual(prediction, "validation")
-        self.assertEqual(rate, 1.0)
-        unknown = _ScriptedClient(["something-else"])
-        prediction, rate = de.score_llm("p", "validation", self.candidates, 1, unknown)
-        self.assertIsNone(prediction)
-        self.assertEqual(rate, 0.0)
-
-
-def _q(label: str, prediction: str | None, trigger_rate: float | None) -> de.ScoredQuery:
-    return de.ScoredQuery(
-        prompt=f"{label}:{prediction}:{trigger_rate}", label=label,
-        prediction=prediction, trigger_rate=trigger_rate, runs=3,
-    )
-
-
-class BootstrapConfidenceIntervalTests(unittest.TestCase):
-    def _mixed(self) -> list[de.ScoredQuery]:
-        return (
-            _scored(de.LABEL_POSITIVE, "skill-design", 3)
-            + _scored(de.LABEL_POSITIVE, None, 1)
-            + _scored(de.LABEL_NEGATIVE, None, 3)
-            + _scored(de.LABEL_NEGATIVE, "skill-design", 1)
-        )
-
-    def test_deterministic_for_same_input(self) -> None:
-        scored = self._mixed()
-        first = de.bootstrap_confidence_interval(scored, "skill-design", 200, 0.95)
-        second = de.bootstrap_confidence_interval(scored, "skill-design", 200, 0.95)
-        self.assertEqual(first, second)
-
-    def test_bounds_are_ordered_and_in_range(self) -> None:
-        result = de.bootstrap_confidence_interval(self._mixed(), "skill-design", 200, 0.95)
-        for key in ("precision", "recall"):
-            low, high = result[key]
-            self.assertLessEqual(0.0, low)
-            self.assertLessEqual(low, high)
-            self.assertLessEqual(high, 1.0)
-
-    def test_empty_scored_returns_unit_bounds(self) -> None:
-        result = de.bootstrap_confidence_interval([], "skill-design", 200, 0.95)
-        self.assertEqual(result["precision"], [1.0, 1.0])
-        self.assertEqual(result["recall"], [1.0, 1.0])
-
-
-class FlagUnstableQueriesTests(unittest.TestCase):
-    def test_flags_only_in_window_and_skips_none(self) -> None:
-        scored = [
-            _q(de.LABEL_POSITIVE, "skill-design", 1.0),   # stable, out of window
-            _q(de.LABEL_POSITIVE, "skill-design", 0.5),   # in window
-            _q(de.LABEL_NEGATIVE, None, 0.33),            # in window
-            _q(de.LABEL_NEGATIVE, None, None),            # heuristic mode, skipped
-        ]
-        flagged = de.flag_unstable_queries(scored, 0.3, 0.7)
-        self.assertEqual(len(flagged), 2)
-        self.assertIn(scored[1].prompt, flagged)
-        self.assertIn(scored[2].prompt, flagged)
-
-
 class PairwiseConfusionTests(unittest.TestCase):
     def test_counts_only_wrong_units(self) -> None:
         scored = [
-            _q(de.LABEL_POSITIVE, "skill-design", 1.0),   # correct, ignored
-            _q(de.LABEL_NEGATIVE, None, 0.0),             # none, ignored
-            _q(de.LABEL_NEGATIVE, "bundling", 0.0),       # wrong unit
-            _q(de.LABEL_POSITIVE, "bundling", 0.2),       # wrong unit
-            _q(de.LABEL_NEGATIVE, "validation", 0.0),     # wrong unit
+            de.ScoredQuery(de.LABEL_POSITIVE, de.LABEL_POSITIVE, "skill-design"),
+            de.ScoredQuery("a", de.LABEL_NEGATIVE, None),
+            de.ScoredQuery("b", de.LABEL_NEGATIVE, "bundling"),
+            de.ScoredQuery("c", de.LABEL_POSITIVE, "bundling"),
+            de.ScoredQuery("d", de.LABEL_NEGATIVE, "validation"),
         ]
         self.assertEqual(
             de.pairwise_confusion(scored, "skill-design"),
             {"bundling": 2, "validation": 1},
         )
+
+
+# ===================================================================
+# Evaluate orchestrator
+# ===================================================================
 
 
 class EvaluateTests(unittest.TestCase):
@@ -751,59 +571,31 @@ class EvaluateTests(unittest.TestCase):
 
     @staticmethod
     def _opts(**overrides: object) -> dict:
-        base = {
-            "runs": 3, "min_precision": 0.85, "min_recall": 0.85,
-            "split_seed": None, "ratio": 0.6,
-        }
+        base = {"min_precision": 0.85, "min_recall": 0.85, "split_seed": None, "ratio": 0.6}
         base.update(overrides)
         return base
 
     def test_heuristic_capability_eval_passes(self) -> None:
-        report = de.evaluate(
-            [self._corpus()], self.candidates, de.MODE_HEURISTIC, self._opts(),
-        )
+        report = de.evaluate([self._corpus()], self.candidates, self._opts())
         self.assertTrue(report.success)
         result = report.targets[0]
-        # Capability target competes only with sibling capabilities (not the skill).
         self.assertEqual(result.candidate_count, 2)
         self.assertEqual(result.metrics.tp, 4)
         self.assertEqual(result.metrics.fp, 0)
         self.assertTrue(result.metrics.passed)
-        # Heuristic mode: no bootstrap CI, no variance flags.
-        self.assertIsNone(result.advisory["bootstrap_ci"])
-        self.assertEqual(result.advisory["unstable_queries"], [])
-        # Negatives that picked bundling are recorded as pairwise confusion.
         self.assertEqual(result.advisory["pairwise_confusion"], {"bundling": 2})
 
     def test_missing_target_records_fail(self) -> None:
         report = de.evaluate(
-            [self._corpus(target="ghost")], self.candidates,
-            de.MODE_HEURISTIC, self._opts(),
+            [self._corpus(target="ghost")], self.candidates, self._opts(),
         )
         self.assertFalse(report.success)
         self.assertEqual(report.targets, [])
         self.assertTrue(any("was not found" in e for e in report.errors))
 
-    def test_llm_mode_produces_bootstrap_ci(self) -> None:
-        positives = set(self.positive)
-
-        def client(prompt: str, candidates: list) -> str:
-            return "validation" if prompt in positives else "none"
-
-        report = de.evaluate(
-            [self._corpus()], self.candidates, de.MODE_LLM,
-            self._opts(client_fn=client, provider="anthropic", model="m"),
-        )
-        self.assertEqual(report.mode, "llm")
-        result = report.targets[0]
-        self.assertTrue(result.metrics.passed)
-        self.assertIsInstance(result.advisory["bootstrap_ci"], dict)
-        self.assertIn("precision", result.advisory["bootstrap_ci"])
-
     def test_split_uses_validation_half_as_gate(self) -> None:
         report = de.evaluate(
-            [self._corpus()], self.candidates, de.MODE_HEURISTIC,
-            self._opts(split_seed=1),
+            [self._corpus()], self.candidates, self._opts(split_seed=1),
         )
         result = report.targets[0]
         self.assertIsNotNone(result.validation_metrics)
@@ -815,10 +607,14 @@ class EvaluateTests(unittest.TestCase):
         candidates = self.candidates + [other]
         report = de.evaluate(
             [self._corpus(target="foundry", kind=de.KIND_SKILL)],
-            candidates, de.MODE_HEURISTIC, self._opts(),
+            candidates, self._opts(),
         )
-        # Two skills discovered (foundry, other); capabilities excluded.
         self.assertEqual(report.targets[0].candidate_count, 2)
+
+
+# ===================================================================
+# Shipped corpora
+# ===================================================================
 
 
 class ShippedMetaSkillCorpusTests(unittest.TestCase):

@@ -1,7 +1,7 @@
-"""CLI smoke tests for scripts/evaluate_descriptions.py (step 15).
+"""CLI smoke tests for scripts/evaluate_descriptions.py.
 
-Exercises the entry point end-to-end via subprocess: heuristic pass, --soft on a
-failing corpus, --json shape, error paths, and the missing-API-key path.
+Exercises the entry point end-to-end via subprocess and in-process: heuristic
+pass, --soft on a failing corpus, --json shape, split, and error paths.
 """
 
 import contextlib
@@ -23,6 +23,21 @@ if SCRIPTS_DIR not in sys.path:
 import helpers
 
 ENTRY = os.path.join(SCRIPTS_DIR, "evaluate_descriptions.py")
+
+PASS_POSITIVES = [
+    "validate skills", "audit systems", "validate consistency", "skills consistency",
+    "audit skills", "validate systems", "systems consistency", "audit consistency",
+]
+PASS_NEGATIVES = [
+    "package zip", "bundle distribution", "package bundle", "zip distribution",
+    "translate french text", "debug react component", "configure postgres database",
+    "render html template",
+]
+FAIL_POSITIVES = [
+    "translate french text", "debug react component", "configure postgres database",
+    "render html template", "plot a sine wave", "brew fresh coffee",
+    "walk the dog", "paint the fence",
+]
 
 
 def _run_main(argv: list[str]) -> tuple[int, str, str]:
@@ -47,21 +62,6 @@ def _run_main(argv: list[str]) -> tuple[int, str, str]:
             else:
                 code = 1
     return code, stdout.getvalue(), stderr.getvalue()
-
-PASS_POSITIVES = [
-    "validate skills", "audit systems", "validate consistency", "skills consistency",
-    "audit skills", "validate systems", "systems consistency", "audit consistency",
-]
-PASS_NEGATIVES = [
-    "package zip", "bundle distribution", "package bundle", "zip distribution",
-    "translate french text", "debug react component", "configure postgres database",
-    "render html template",
-]
-FAIL_POSITIVES = [
-    "translate french text", "debug react component", "configure postgres database",
-    "render html template", "plot a sine wave", "brew fresh coffee",
-    "walk the dog", "paint the fence",
-]
 
 
 class CliBaseMixin(unittest.TestCase):
@@ -94,10 +94,9 @@ class CliBaseMixin(unittest.TestCase):
         with open(path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(data, indent=2))
 
-    def _run(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    def _run(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, ENTRY, *args],
-            capture_output=True, text=True, env=env,
+            [sys.executable, ENTRY, *args], capture_output=True, text=True,
         )
 
 
@@ -109,7 +108,6 @@ class HeuristicCliTests(CliBaseMixin):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["tool"], "evaluate_descriptions")
         self.assertTrue(payload["success"])
-        self.assertEqual(payload["mode"], "heuristic")
         self.assertEqual(payload["targets"][0]["target"], "validation")
         self.assertEqual(payload["targets"][0]["candidate_count"], 2)
         self.assertTrue(payload["targets"][0]["metrics"]["passed"])
@@ -132,26 +130,14 @@ class HeuristicCliTests(CliBaseMixin):
             self.corpus_dir, "--skill-set", self.skillset, "--soft", "--json",
         )
         self.assertEqual(result.returncode, 0)
-        # Findings still report the failure honestly.
         self.assertFalse(json.loads(result.stdout)["success"])
 
-
-class CliErrorPathTests(CliBaseMixin):
     def test_missing_corpus_path_errors(self) -> None:
         result = self._run(
             os.path.join(self.root, "nope"), "--skill-set", self.skillset, "--json",
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("error", json.loads(result.stdout))
-
-    def test_llm_without_api_key_errors(self) -> None:
-        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-        result = self._run(
-            self.corpus_dir, "--skill-set", self.skillset, "--llm", "--json", env=env,
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("ANTHROPIC_API_KEY", json.loads(result.stdout)["error"])
 
 
 class InProcessCliTests(CliBaseMixin):
@@ -201,61 +187,6 @@ class InProcessCliTests(CliBaseMixin):
         self.assertEqual(code, 1)
         self.assertIn("error", json.loads(out))
 
-    def test_llm_with_mocked_client(self) -> None:
-        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        import evaluate_descriptions as ed
-        positives = set(PASS_POSITIVES)
-
-        def fake_client(prompt, candidates, model, api_key, endpoint):  # noqa: ANN001
-            return "validation" if prompt in positives else "none"
-
-        with (
-            mock.patch.dict(ed._CLIENT_DISPATCH, {"anthropic_messages": fake_client}),
-            mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}),
-        ):
-            code, out, _err = _run_main(self._argv("--llm", "--json"))
-        self.assertEqual(code, 0)
-        payload = json.loads(out)
-        self.assertEqual(payload["mode"], "llm")
-        self.assertIsInstance(payload["targets"][0]["advisory"]["bootstrap_ci"], dict)
-
-    def test_llm_missing_key_errors(self) -> None:
-        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("ANTHROPIC_API_KEY", None)
-            code, out, _err = _run_main(self._argv("--llm", "--json"))
-        self.assertEqual(code, 1)
-        self.assertIn("ANTHROPIC_API_KEY", json.loads(out)["error"])
-
-    def test_unknown_provider_errors(self) -> None:
-        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}):
-            code, out, _err = _run_main(self._argv("--llm", "--provider", "ghost", "--json"))
-        self.assertEqual(code, 1)
-        self.assertIn("unknown provider", json.loads(out)["error"])
-
-    def test_human_failing_output(self) -> None:
-        self._write_corpus(FAIL_POSITIVES, PASS_NEGATIVES)
-        code, out, _err = _run_main(self._argv())
-        self.assertEqual(code, 1)
-        self.assertIn("Overall: FAIL", out)
-
-    def test_human_error_path_without_json(self) -> None:
-        code, out, _err = _run_main(
-            ["evaluate_descriptions.py", os.path.join(self.root, "nope"),
-             "--skill-set", self.skillset]
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("no corpus JSON", out)
-
-    def test_warn_finding_is_printed(self) -> None:
-        # Five positives -> rule 5 WARN, but the gate still passes.
-        self._write_corpus(PASS_POSITIVES[:5], PASS_NEGATIVES)
-        code, out, _err = _run_main(self._argv())
-        self.assertEqual(code, 0)
-        self.assertIn("Overall: PASS", out)
-        self.assertIn("recommended", out)
-
     def test_single_corpus_file_path(self) -> None:
         self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
         corpus_file = os.path.join(self.corpus_dir, "validation.json")
@@ -272,22 +203,32 @@ class InProcessCliTests(CliBaseMixin):
         code, _out, _err = _run_main(self._argv("--json"))
         self.assertEqual(code, 0)
 
-    def test_llm_verbose_flags_unstable(self) -> None:
+    def test_human_failing_output(self) -> None:
+        self._write_corpus(FAIL_POSITIVES, PASS_NEGATIVES)
+        code, out, _err = _run_main(self._argv())
+        self.assertEqual(code, 1)
+        self.assertIn("Overall: FAIL", out)
+
+    def test_human_error_path_without_json(self) -> None:
+        code, out, _err = _run_main(
+            ["evaluate_descriptions.py", os.path.join(self.root, "nope"),
+             "--skill-set", self.skillset]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("no corpus JSON", out)
+
+    def test_warn_finding_is_printed(self) -> None:
+        self._write_corpus(PASS_POSITIVES[:5], PASS_NEGATIVES)
+        code, out, _err = _run_main(self._argv())
+        self.assertEqual(code, 0)
+        self.assertIn("Overall: PASS", out)
+        self.assertIn("recommended", out)
+
+    def test_verbose_shows_pairwise(self) -> None:
         self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
-        import evaluate_descriptions as ed
-        state = {"i": 0}
-
-        def flaky(prompt, candidates, model, api_key, endpoint):  # noqa: ANN001
-            index = state["i"]
-            state["i"] += 1
-            return "validation" if index % 3 != 2 else "none"  # 2-of-3 -> rate 0.67
-
-        with (
-            mock.patch.dict(ed._CLIENT_DISPATCH, {"anthropic_messages": flaky}),
-            mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "k"}),
-        ):
-            _code, out, _err = _run_main(self._argv("--llm", "--verbose", "--soft"))
-        self.assertIn("unstable prompts", out)
+        code, out, _err = _run_main(self._argv("--verbose"))
+        self.assertEqual(code, 0)
+        self.assertIn("confused with", out)
 
 
 if __name__ == "__main__":
