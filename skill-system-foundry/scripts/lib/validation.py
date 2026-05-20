@@ -256,9 +256,9 @@ def validate_description_negative_triggers(
     """R2 — note when the description includes a negative trigger.
 
     Naming when the skill should *not* activate aids routing.  Presence
-    is informational (INFO); absence is silent (the clause is optional).
-    Case-insensitive substring match against
-    ``DESCRIPTION_NEGATIVE_TRIGGER_PHRASES``.
+    emits an INFO; absence emits an informational pass (the clause is
+    optional, so its absence is never a finding).  Case-insensitive
+    substring match against ``DESCRIPTION_NEGATIVE_TRIGGER_PHRASES``.
 
     Returns ``(errors, passes)`` per the standard validator contract.
     """
@@ -328,6 +328,11 @@ def validate_description_filler(
             if not has_qualifier:
                 flagged.append(phrase)
                 break
+        if flagged:
+            # Only the first flagged phrase is reported, so stop scanning
+            # the remaining phrases once one trips — no need to keep
+            # matching across the whole phrase list.
+            break
     if flagged:
         errors.append(
             f"{LEVEL_WARN}: [foundry] 'description' uses filler phrase "
@@ -345,11 +350,12 @@ def validate_description_boundary(
     """R8 — note when the description names a boundary against an adjacent skill.
 
     A boundary clause ("X vs Y", "use Y instead") aids routing between
-    overlapping skills.  Presence is informational (INFO); absence is
-    silent.  Distinct from R2: R2 says "do not activate at all", R8 says
-    "which adjacent skill to use instead".  Match is case-insensitive
-    substring; boundary phrases keep their significant edge spaces
-    (" vs ").
+    overlapping skills.  Presence emits an INFO; absence emits an
+    informational pass (the clause is optional, so its absence is never
+    a finding).  Distinct from R2: R2 says "do not activate at all", R8
+    says "which adjacent skill to use instead".  Match is
+    case-insensitive substring; boundary phrases keep their significant
+    edge spaces (" vs ").
 
     Returns ``(errors, passes)`` per the standard validator contract.
     """
