@@ -722,5 +722,104 @@ class PairwiseConfusionTests(unittest.TestCase):
         )
 
 
+class EvaluateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.skill = de.Unit("foundry", de.KIND_SKILL, "Designs skill systems", "/S")
+        self.validation = de.Unit(
+            "validation", de.KIND_CAPABILITY,
+            "validate skills audit systems consistency", "/v", parent="foundry",
+        )
+        self.bundling = de.Unit(
+            "bundling", de.KIND_CAPABILITY,
+            "package skill zip bundle distribution", "/b", parent="foundry",
+        )
+        self.candidates = [self.skill, self.validation, self.bundling]
+        self.positive = (
+            "validate skills", "audit systems consistency",
+            "validate audit consistency", "skills audit systems",
+        )
+        self.negative = (
+            "package zip bundle", "distribution package zip",
+            "translate french text", "debug react component",
+        )
+
+    def _corpus(self, target: str = "validation", kind: str = de.KIND_CAPABILITY) -> de.Corpus:
+        return de.Corpus(
+            target=target, kind=kind, positive=self.positive, negative=self.negative,
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+
+    @staticmethod
+    def _opts(**overrides: object) -> dict:
+        base = {
+            "runs": 3, "min_precision": 0.85, "min_recall": 0.85,
+            "split_seed": None, "ratio": 0.6,
+        }
+        base.update(overrides)
+        return base
+
+    def test_heuristic_capability_eval_passes(self) -> None:
+        report = de.evaluate(
+            [self._corpus()], self.candidates, de.MODE_HEURISTIC, self._opts(),
+        )
+        self.assertTrue(report.success)
+        result = report.targets[0]
+        # Capability target competes only with sibling capabilities (not the skill).
+        self.assertEqual(result.candidate_count, 2)
+        self.assertEqual(result.metrics.tp, 4)
+        self.assertEqual(result.metrics.fp, 0)
+        self.assertTrue(result.metrics.passed)
+        # Heuristic mode: no bootstrap CI, no variance flags.
+        self.assertIsNone(result.advisory["bootstrap_ci"])
+        self.assertEqual(result.advisory["unstable_queries"], [])
+        # Negatives that picked bundling are recorded as pairwise confusion.
+        self.assertEqual(result.advisory["pairwise_confusion"], {"bundling": 2})
+
+    def test_missing_target_records_fail(self) -> None:
+        report = de.evaluate(
+            [self._corpus(target="ghost")], self.candidates,
+            de.MODE_HEURISTIC, self._opts(),
+        )
+        self.assertFalse(report.success)
+        self.assertEqual(report.targets, [])
+        self.assertTrue(any("was not found" in e for e in report.errors))
+
+    def test_llm_mode_produces_bootstrap_ci(self) -> None:
+        positives = set(self.positive)
+
+        def client(prompt: str, candidates: list) -> str:
+            return "validation" if prompt in positives else "none"
+
+        report = de.evaluate(
+            [self._corpus()], self.candidates, de.MODE_LLM,
+            self._opts(client_fn=client, provider="anthropic", model="m"),
+        )
+        self.assertEqual(report.mode, "llm")
+        result = report.targets[0]
+        self.assertTrue(result.metrics.passed)
+        self.assertIsInstance(result.advisory["bootstrap_ci"], dict)
+        self.assertIn("precision", result.advisory["bootstrap_ci"])
+
+    def test_split_uses_validation_half_as_gate(self) -> None:
+        report = de.evaluate(
+            [self._corpus()], self.candidates, de.MODE_HEURISTIC,
+            self._opts(split_seed=1),
+        )
+        result = report.targets[0]
+        self.assertIsNotNone(result.validation_metrics)
+        self.assertEqual(report.split, {"seed": 1, "ratio": 0.6})
+        self.assertIs(result.gate_metrics, result.validation_metrics)
+
+    def test_skill_target_competes_with_skills(self) -> None:
+        other = de.Unit("other", de.KIND_SKILL, "unrelated skill", "/o")
+        candidates = self.candidates + [other]
+        report = de.evaluate(
+            [self._corpus(target="foundry", kind=de.KIND_SKILL)],
+            candidates, de.MODE_HEURISTIC, self._opts(),
+        )
+        # Two skills discovered (foundry, other); capabilities excluded.
+        self.assertEqual(report.targets[0].candidate_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

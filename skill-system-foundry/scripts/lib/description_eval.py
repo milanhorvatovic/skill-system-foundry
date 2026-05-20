@@ -62,10 +62,14 @@ from dataclasses import dataclass, field
 
 from .constants import (
     DIR_CAPABILITIES,
+    EVAL_BOOTSTRAP_CONFIDENCE,
+    EVAL_BOOTSTRAP_ITERS,
     EVAL_DIVERSITY_RATIO,
     EVAL_HEURISTIC_MIN_OVERLAP,
     EVAL_MAX_PROMPT_CHARS,
     EVAL_STOPWORDS,
+    EVAL_UNSTABLE_HIGH,
+    EVAL_UNSTABLE_LOW,
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
@@ -171,6 +175,11 @@ class TargetResult:
     validation_metrics: Metrics | None = None
     advisory: dict = field(default_factory=dict)
 
+    @property
+    def gate_metrics(self) -> Metrics:
+        """Metrics that decide pass/fail: the validation half if split, else full."""
+        return self.validation_metrics or self.metrics
+
 
 @dataclass
 class EvalReport:
@@ -188,7 +197,7 @@ class EvalReport:
     @property
     def success(self) -> bool:
         """True when every target cleared its gate (ignores ``--soft``)."""
-        return all(t.metrics.passed for t in self.targets) and not any(
+        return all(t.gate_metrics.passed for t in self.targets) and not any(
             e.startswith(LEVEL_FAIL) for e in self.errors
         )
 
@@ -786,14 +795,131 @@ def pairwise_confusion(
 # --- orchestrator (step 14) -------------------------------------------------
 
 
+def _candidate_set(corpus: Corpus, candidates: list[Unit]) -> list[Unit] | None:
+    """Resolve the candidate units a target discriminates against.
+
+    Skills compete with sibling skills; capabilities with sibling capabilities
+    under the same parent skill.  Returns ``None`` when the corpus target is not
+    among the discovered units.
+    """
+    target_unit = next(
+        (
+            unit for unit in candidates
+            if unit.name == corpus.target and unit.kind == corpus.kind
+        ),
+        None,
+    )
+    if target_unit is None:
+        return None
+    if corpus.kind == KIND_SKILL:
+        return [unit for unit in candidates if unit.kind == KIND_SKILL]
+    return [
+        unit for unit in candidates
+        if unit.kind == KIND_CAPABILITY and unit.parent == target_unit.parent
+    ]
+
+
+def _score_corpus(
+    corpus: Corpus, candidate_set: list[Unit], mode: str, opts: dict,
+) -> list[ScoredQuery]:
+    """Score every prompt of *corpus* under the chosen mode."""
+    scored: list[ScoredQuery] = []
+    sides = (
+        (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
+    )
+    for label, prompts in sides:
+        for prompt in prompts:
+            if mode == MODE_LLM:
+                prediction, rate = score_llm(
+                    prompt, corpus.target, candidate_set,
+                    opts["runs"], opts["client_fn"],
+                )
+                scored.append(
+                    ScoredQuery(prompt, label, prediction, rate, opts["runs"])
+                )
+            else:
+                prediction = score_heuristic(prompt, candidate_set)
+                scored.append(ScoredQuery(prompt, label, prediction, None, 1))
+    return scored
+
+
 def evaluate(
     corpora: list[Corpus], candidates: list[Unit], mode: str, opts: dict,
 ) -> EvalReport:
     """Score every corpus against *candidates* and assemble the report.
 
-    *opts* carries the resolved CLI options (runs, thresholds, split seed,
-    provider/model, client function).  The exit-affecting gate compares point
-    estimates (the validation half when a split is active); all statistical
-    output is advisory.
+    *opts* carries the resolved options: ``runs``, ``min_precision``,
+    ``min_recall``, ``split_seed`` (``None`` to disable), ``ratio``,
+    ``client_fn`` (LLM mode), and optional ``provider`` / ``model``.  The
+    exit-affecting gate compares point estimates — the validation half when a
+    split is active; bootstrap CI, variance, and pairwise confusion are
+    advisory.
     """
-    raise NotImplementedError
+    split_seed = opts.get("split_seed")
+    split_info = (
+        {"seed": split_seed, "ratio": opts["ratio"]}
+        if split_seed is not None else None
+    )
+    report = EvalReport(
+        mode=mode, provider=opts.get("provider"), model=opts.get("model"),
+        min_precision=opts["min_precision"], min_recall=opts["min_recall"],
+        split=split_info,
+    )
+
+    for corpus in corpora:
+        candidate_set = _candidate_set(corpus, candidates)
+        if candidate_set is None:
+            report.errors.append(
+                f"{LEVEL_FAIL}: [foundry] {os.path.basename(corpus.source_path)}: "
+                f"target '{corpus.target}' ({corpus.kind}) was not found among "
+                "the discovered units"
+            )
+            continue
+
+        min_precision = (
+            corpus.min_precision if corpus.min_precision is not None
+            else opts["min_precision"]
+        )
+        min_recall = (
+            corpus.min_recall if corpus.min_recall is not None
+            else opts["min_recall"]
+        )
+
+        scored = _score_corpus(corpus, candidate_set, mode, opts)
+        metrics = aggregate(scored, corpus.target, min_precision, min_recall)
+
+        validation_metrics = None
+        if split_seed is not None:
+            _train, validation = split_train_validation(
+                corpus, opts["ratio"], split_seed,
+            )
+            held_out = set(validation.positive) | set(validation.negative)
+            validation_scored = [q for q in scored if q.prompt in held_out]
+            validation_metrics = aggregate(
+                validation_scored, corpus.target, min_precision, min_recall,
+            )
+
+        advisory = {
+            "bootstrap_ci": (
+                bootstrap_confidence_interval(
+                    scored, corpus.target,
+                    EVAL_BOOTSTRAP_ITERS, EVAL_BOOTSTRAP_CONFIDENCE,
+                )
+                if mode == MODE_LLM else None
+            ),
+            "unstable_queries": flag_unstable_queries(
+                scored, EVAL_UNSTABLE_LOW, EVAL_UNSTABLE_HIGH,
+            ),
+            "pairwise_confusion": pairwise_confusion(scored, corpus.target),
+        }
+
+        report.targets.append(
+            TargetResult(
+                target=corpus.target, kind=corpus.kind,
+                candidate_count=len(candidate_set), metrics=metrics,
+                scored=tuple(scored), validation_metrics=validation_metrics,
+                advisory=advisory,
+            )
+        )
+
+    return report
