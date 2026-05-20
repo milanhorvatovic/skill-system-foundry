@@ -550,8 +550,28 @@ def aggregate(
     scored: list[ScoredQuery], target: str,
     min_precision: float, min_recall: float,
 ) -> Metrics:
-    """Build the confusion matrix and derive precision/recall + pass verdict."""
-    raise NotImplementedError
+    """Build the confusion matrix and derive precision/recall + pass verdict.
+
+    A positive prompt predicting *target* is a TP (else FN); a negative prompt
+    predicting *target* is an FP (else TN — selecting ``None`` or another unit
+    both reject *target*).  Precision and recall default to ``1.0`` when their
+    denominator is ``0`` (section 4.6).
+    """
+    tp = fp = tn = fn = 0
+    for query in scored:
+        hit = query.prediction == target
+        if query.label == LABEL_POSITIVE:
+            tp, fn = (tp + 1, fn) if hit else (tp, fn + 1)
+        else:
+            fp, tn = (fp + 1, tn) if hit else (fp, tn + 1)
+
+    precision = tp / (tp + fp) if (tp + fp) else 1.0
+    recall = tp / (tp + fn) if (tp + fn) else 1.0
+    passed = precision >= min_precision and recall >= min_recall
+    return Metrics(
+        tp=tp, fp=fp, tn=tn, fn=fn,
+        precision=precision, recall=recall, passed=passed,
+    )
 
 
 # --- LLM client + scorer (steps 9-10) ---------------------------------------

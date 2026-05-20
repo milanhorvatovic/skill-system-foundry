@@ -453,5 +453,67 @@ class SplitTrainValidationTests(unittest.TestCase):
             self.assertEqual(half.min_recall, 0.8)
 
 
+def _scored(label: str, prediction: str | None, count: int) -> list[de.ScoredQuery]:
+    return [
+        de.ScoredQuery(
+            prompt=f"{label}-{i}", label=label, prediction=prediction,
+            trigger_rate=None, runs=1,
+        )
+        for i in range(count)
+    ]
+
+
+class AggregateTests(unittest.TestCase):
+    def test_all_correct_passes(self) -> None:
+        scored = (
+            _scored(de.LABEL_POSITIVE, "skill-design", 4)
+            + _scored(de.LABEL_NEGATIVE, None, 4)
+        )
+        metrics = de.aggregate(scored, "skill-design", 0.85, 0.85)
+        self.assertEqual((metrics.tp, metrics.fp, metrics.tn, metrics.fn), (4, 0, 4, 0))
+        self.assertEqual(metrics.precision, 1.0)
+        self.assertEqual(metrics.recall, 1.0)
+        self.assertTrue(metrics.passed)
+
+    def test_all_wrong_fails(self) -> None:
+        scored = (
+            _scored(de.LABEL_POSITIVE, None, 4)
+            + _scored(de.LABEL_NEGATIVE, "skill-design", 4)
+        )
+        metrics = de.aggregate(scored, "skill-design", 0.85, 0.85)
+        self.assertEqual((metrics.tp, metrics.fp, metrics.tn, metrics.fn), (0, 4, 0, 4))
+        self.assertEqual(metrics.precision, 0.0)
+        self.assertEqual(metrics.recall, 0.0)
+        self.assertFalse(metrics.passed)
+
+    def test_negative_predicting_other_unit_is_true_negative(self) -> None:
+        scored = (
+            _scored(de.LABEL_POSITIVE, "skill-design", 4)
+            + _scored(de.LABEL_NEGATIVE, "bundling", 4)
+        )
+        metrics = de.aggregate(scored, "skill-design", 0.85, 0.85)
+        self.assertEqual((metrics.fp, metrics.tn), (0, 4))
+        self.assertTrue(metrics.passed)
+
+    def test_empty_denominator_defaults_to_one(self) -> None:
+        # Only negatives, all correctly rejected: TP+FP == 0 and TP+FN == 0.
+        metrics = de.aggregate(_scored(de.LABEL_NEGATIVE, None, 4), "x", 0.85, 0.85)
+        self.assertEqual(metrics.precision, 1.0)
+        self.assertEqual(metrics.recall, 1.0)
+        self.assertTrue(metrics.passed)
+
+    def test_threshold_gates_on_precision(self) -> None:
+        # 4 TP, 1 FP -> precision 0.8 < 0.85 -> fail even with full recall.
+        scored = (
+            _scored(de.LABEL_POSITIVE, "skill-design", 4)
+            + _scored(de.LABEL_NEGATIVE, "skill-design", 1)
+            + _scored(de.LABEL_NEGATIVE, None, 3)
+        )
+        metrics = de.aggregate(scored, "skill-design", 0.85, 0.85)
+        self.assertAlmostEqual(metrics.precision, 0.8)
+        self.assertEqual(metrics.recall, 1.0)
+        self.assertFalse(metrics.passed)
+
+
 if __name__ == "__main__":
     unittest.main()
