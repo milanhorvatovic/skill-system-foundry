@@ -227,7 +227,12 @@ def main() -> None:
     else:
         _print_human(report, args.verbose)
 
-    sys.exit(0 if (report.success or args.soft) else 1)
+    # --soft is advisory for threshold breaches only: it must never mask a
+    # FAIL-level finding (malformed JSON, missing keys, target not found,
+    # ambiguous target), or a structurally broken corpus would pass CI green.
+    has_fail_finding = any(e.startswith(LEVEL_FAIL) for e in report.errors)
+    exit_ok = report.success or (args.soft and not has_fail_finding)
+    sys.exit(0 if exit_ok else 1)
 
 
 if __name__ == "__main__":

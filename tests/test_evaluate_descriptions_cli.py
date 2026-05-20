@@ -33,10 +33,13 @@ PASS_NEGATIVES = [
     "translate french text", "debug react component", "configure postgres database",
     "render html template",
 ]
+# Off-topic positives that route to neither capability -> recall floor -> a pure
+# threshold breach. Deliberately share no prompt with PASS_NEGATIVES so the
+# corpus carries no structural FAIL finding (a both-sides prompt would be one),
+# keeping --soft's threshold-only suppression the property under test.
 FAIL_POSITIVES = [
-    "translate french text", "debug react component", "configure postgres database",
-    "render html template", "plot a sine wave", "brew fresh coffee",
-    "walk the dog", "paint the fence",
+    "plot a sine wave", "brew fresh coffee", "walk the dog", "paint the fence",
+    "book a flight", "water the plants", "knead the dough", "tune the guitar",
 ]
 
 
@@ -175,6 +178,34 @@ class InProcessCliTests(CliBaseMixin):
         soft_code, soft_out, _serr = _run_main(self._argv("--soft", "--json"))
         self.assertEqual(soft_code, 0)
         self.assertFalse(json.loads(soft_out)["success"])
+
+    def _write_raw_corpus(self, content: str, name: str) -> None:
+        os.makedirs(self.corpus_dir, exist_ok=True)
+        with open(
+            os.path.join(self.corpus_dir, name), "w", encoding="utf-8", newline="\n",
+        ) as handle:
+            handle.write(content)
+
+    def test_soft_does_not_swallow_evaluate_fail(self) -> None:
+        # A schema-valid corpus whose target is not among the discovered units
+        # produces a FAIL finding. --soft suppresses threshold breaches only, so
+        # the FAIL must still drive a non-zero exit (a stale self-corpus must
+        # not pass CI green).
+        data = {
+            "target": "ghost", "kind": "capability",
+            "positive": PASS_POSITIVES, "negative": PASS_NEGATIVES,
+        }
+        self._write_raw_corpus(json.dumps(data, indent=2), "ghost.json")
+        code, out, _err = _run_main(self._argv("--soft", "--json"))
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(out)["success"])
+
+    def test_soft_does_not_swallow_load_corpus_fail(self) -> None:
+        # A malformed corpus FAILs at load time; --soft must not mask it.
+        self._write_raw_corpus("{ not json ]", "broken.json")
+        code, out, _err = _run_main(self._argv("--soft", "--json"))
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(out)["success"])
 
     def test_missing_corpus_errors(self) -> None:
         code, out, _err = _run_main(
