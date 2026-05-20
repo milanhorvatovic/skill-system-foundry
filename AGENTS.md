@@ -168,7 +168,7 @@ The version-consistency rule in `audit_skill_system.py` (which compares `SKILL.m
 python skill-system-foundry/scripts/audit_skill_system.py .
 ```
 
-The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocation runs in distribution-repo mode and emits one expected `WARN: No skills/ directory under system root — ran partial audit`. Per-skill rules (including the router-table rule) are skipped under that invocation — it only adds the repo-level version-consistency check on top of what the `cd skill-system-foundry` invocation already covers. To audit the meta-skill's own router table, the `cd skill-system-foundry && python scripts/audit_skill_system.py .` invocation above (skill-root mode) is the canonical self-check.
+The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocation runs in distribution-repo mode and emits one expected `WARN: No skills/ directory under system root — ran partial audit`. Per-skill rules (including the router-table rule) are skipped under that invocation — it adds the repo-level version-consistency check and the corpus-coverage rules (below) on top of what the `cd skill-system-foundry` invocation already covers. To audit the meta-skill's own router table, the `cd skill-system-foundry && python scripts/audit_skill_system.py .` invocation above (skill-root mode) is the canonical self-check.
 
 #### Flag behavior
 
@@ -180,6 +180,23 @@ The repo root has no `skills/` tree and no top-level `SKILL.md`, so this invocat
 | `--verbose` | Prints per-file progress messages for the prose check (`Checking prose YAML: <path> (<N> fences)`) and shows passing checks otherwise. Silent under `--json`. | Local debugging / triage. |
 
 In addition, `python scripts/yaml_conformance_report.py` runs the YAML 1.2.2 conformance corpus and emits the same `yaml_conformance.corpus` JSON slot for tooling consumers; exit 0 on all-pass, non-zero on any failure.
+
+#### Corpus-coverage rules
+
+`audit_skill_system.py` enforces five audit-level corpus-coverage rules (`scripts/lib/audit_coverage.py`) on top of the per-corpus shape rules the description-quality runner applies at load time. They answer the questions a runner alone cannot: does every discoverable unit *have* a corpus, is each corpus *fresh* against the description it tests, are a skill's capability corpora *consistent*, and is a committed corpus *large enough*. The rules are: (1) missing corpus — a unit with no corpus file and no opt-out, `WARN`; (2) stale allow-list entry — an `allowed_missing_corpus` entry matching no discovered unit, `INFO`; (3) freshness — a corpus whose `description_sha256` no longer matches the SHA-256 of the live unit description, `WARN`; (4) sibling parity — a skill that covers some but not all of its (non-exempt) capabilities, `WARN`; (5) size escalation — a committed corpus below `recommended_prompts_per_side` on its smaller side, `FAIL` (escalating the runner's Tier B WARN; below `min_prompts_per_side` the corpus fails to load and that load `FAIL` surfaces here too).
+
+Units are discovered the way the description-quality runner discovers them — a skill at the audit root or as an immediate subdirectory, with capability descriptions read from each `capability.md` body — not via the deployed-system `find_skill_dirs` walk. The corpus root resolves relative to the audit root from `skill.description.evaluation.coverage.corpus_root_relative` (default `tests/skill-corpus`), and every rule self-skips when that directory is absent. The practical consequence: the canonical coverage self-check for the meta-skill is the **repo-root** audit (`python skill-system-foundry/scripts/audit_skill_system.py .`), where `tests/skill-corpus` resolves and `skill-system-foundry` is found as a subdirectory; the `cd skill-system-foundry && audit .` skill-root self-check self-skips coverage because no corpus tree lives under the skill itself.
+
+Each corpus carries a `description_sha256` in its header that the freshness rule compares against. Refresh it with one idempotent command after any description change:
+
+```bash
+cd skill-system-foundry
+python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --backfill-hash
+```
+
+`--backfill-hash` recomputes each corpus's hash from the live unit description (`--skill-set`, defaulting to the current directory, supplies the units) and writes it into the corpus header in place. It is byte-stable: a corpus already carrying the correct hash is left untouched, so re-running produces no diff. The hash is over the unit's *resolved* description — the folded frontmatter `description` for a skill, the first body paragraph after the `# Heading` for a capability — so a capability's freshness tracks edits to that intro paragraph, not its frontmatter.
+
+Suppress an intentional coverage gap by listing the unit's qualified name under `allowed_missing_corpus` in `configuration.yaml` — a skill name, or `<skill>/capabilities/<cap>` for a capability. The mechanism mirrors `orphan_references.allowed_orphans`: an allow-listed unit is exempt from the missing-corpus rule *and* neutral for sibling parity, and an entry that matches no discovered unit is surfaced as `INFO` so the list cannot rot silently. Integrators that ship no corpora can disable the freshness rule with `coverage.freshness_check_enabled: false`; the size rule reuses the existing `min_prompts_per_side` / `recommended_prompts_per_side` thresholds rather than a parallel floor.
 
 ### Evaluating Description Quality
 
