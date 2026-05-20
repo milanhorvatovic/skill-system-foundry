@@ -40,6 +40,7 @@ No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
 ``(value, findings)`` where each finding is a ``"SEVERITY: [tag] body"`` string.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -108,6 +109,10 @@ class Corpus:
     min_precision: float | None
     min_recall: float | None
     source_path: str
+    # Hex SHA-256 of the live unit description recorded at backfill time,
+    # or None when the header omits it or carries a non-string value.
+    # The audit's freshness rule recomputes and compares against this.
+    description_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +166,22 @@ class EvalReport:
         return all(t.metrics.passed for t in self.targets) and not any(
             e.startswith(LEVEL_FAIL) for e in self.errors
         )
+
+
+# --- description hashing -----------------------------------------------------
+
+
+def compute_description_sha256(description: str) -> str:
+    """Return the hex SHA-256 of *description*'s UTF-8 bytes.
+
+    *description* is the unit's resolved discovery description — for a skill
+    the (folded) frontmatter ``description``; for a capability the first body
+    paragraph after its ``# Heading`` (see :class:`Unit`).  Backfill and the
+    audit's freshness rule both hash ``Unit.description`` through this one
+    helper, so the two sides can never disagree on how the value is derived.
+    Deterministic across runs and platforms — same bytes in, same hex out.
+    """
+    return hashlib.sha256(description.encode("utf-8")).hexdigest()
 
 
 # --- corpus loading + schema validation -------------------------------------
@@ -326,6 +347,15 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
     min_precision = optional_threshold("min_precision")
     min_recall = optional_threshold("min_recall")
 
+    # Tolerated header field — populated by ``evaluate_descriptions.py
+    # --backfill-hash``.  A non-string or empty value is treated as absent
+    # so the audit's freshness rule skips it rather than crashing or
+    # reporting a spurious mismatch; the next backfill overwrites it.
+    raw_sha = data.get("description_sha256")
+    description_sha256 = (
+        raw_sha if isinstance(raw_sha, str) and raw_sha.strip() else None
+    )
+
     if positive is not None and negative is not None:
         _check_prompt_rules(positive, negative, fail, warn)
 
@@ -340,6 +370,7 @@ def load_corpus(path: str) -> tuple[Corpus | None, list[str]]:
         min_precision=min_precision,
         min_recall=min_recall,
         source_path=path,
+        description_sha256=description_sha256,
     )
     return corpus, findings
 

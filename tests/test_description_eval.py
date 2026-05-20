@@ -688,5 +688,98 @@ class ShippedMetaSkillCorpusTests(unittest.TestCase):
             self.assertIsNotNone(corpus)
 
 
+# ===================================================================
+# Description hashing
+# ===================================================================
+
+
+class ComputeDescriptionSha256Tests(unittest.TestCase):
+    """Tests for compute_description_sha256."""
+
+    def test_matches_hashlib_reference(self) -> None:
+        """Output equals a direct hashlib.sha256 hexdigest of UTF-8 bytes."""
+        import hashlib
+
+        text = "Validates skills against the specification."
+        expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self.assertEqual(de.compute_description_sha256(text), expected)
+
+    def test_stable_across_calls(self) -> None:
+        """Same input yields the same hex digest every call (deterministic)."""
+        text = "Designs AI-agnostic skill systems"
+        first = de.compute_description_sha256(text)
+        second = de.compute_description_sha256(text)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 64)
+
+    def test_distinct_inputs_differ(self) -> None:
+        """Different descriptions produce different digests."""
+        self.assertNotEqual(
+            de.compute_description_sha256("alpha"),
+            de.compute_description_sha256("beta"),
+        )
+
+    def test_unicode_is_utf8_encoded(self) -> None:
+        """Non-ASCII text hashes via its UTF-8 bytes, not str identity."""
+        import hashlib
+
+        text = "Designs skill systèms — naïve façade"
+        expected = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self.assertEqual(de.compute_description_sha256(text), expected)
+
+    def test_empty_string_hashes(self) -> None:
+        """An empty description still produces the canonical empty digest."""
+        import hashlib
+
+        self.assertEqual(
+            de.compute_description_sha256(""),
+            hashlib.sha256(b"").hexdigest(),
+        )
+
+
+# ===================================================================
+# Corpus description_sha256 extraction
+# ===================================================================
+
+
+class CorpusDescriptionShaExtractionTests(LoadCorpusBaseMixin):
+    """load_corpus surfaces description_sha256 with graceful tolerance."""
+
+    def test_absent_hash_is_none(self) -> None:
+        corpus, findings = self.load_dict(valid_corpus_dict())
+        self.assertIsNotNone(corpus)
+        self.assertIsNone(corpus.description_sha256)
+        self.assertEqual(findings, [])
+
+    def test_string_hash_is_preserved(self) -> None:
+        data = valid_corpus_dict()
+        data["description_sha256"] = "a" * 64
+        corpus, findings = self.load_dict(data)
+        self.assertEqual(corpus.description_sha256, "a" * 64)
+        self.assertEqual(findings, [])
+
+    def test_null_hash_is_none_without_finding(self) -> None:
+        data = valid_corpus_dict()
+        data["description_sha256"] = None
+        corpus, findings = self.load_dict(data)
+        self.assertIsNone(corpus.description_sha256)
+        self.assertEqual(findings, [])
+
+    def test_non_string_hash_is_treated_as_absent(self) -> None:
+        """A numeric / malformed hash is tolerated as None, not a crash."""
+        data = valid_corpus_dict()
+        data["description_sha256"] = 12345
+        corpus, findings = self.load_dict(data)
+        self.assertIsNotNone(corpus)
+        self.assertIsNone(corpus.description_sha256)
+        self.assertFalse(has_fail(findings))
+
+    def test_blank_string_hash_is_treated_as_absent(self) -> None:
+        data = valid_corpus_dict()
+        data["description_sha256"] = "   "
+        corpus, _ = self.load_dict(data)
+        self.assertIsNone(corpus.description_sha256)
+
+
 if __name__ == "__main__":
     unittest.main()
