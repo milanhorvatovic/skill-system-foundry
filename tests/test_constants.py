@@ -141,6 +141,12 @@ class AllowedOrphansConfigTests(unittest.TestCase):
             "      diversity_distinct_bigram_min_ratio: 0.6\n"
             "      min_prompts_per_side: 4\n"
             "      recommended_prompts_per_side: 8\n"
+            "      coverage:\n"
+            "        corpus_root_relative: tests/skill-corpus\n"
+            "        allowed_missing_corpus:\n"
+            "          - demo/capabilities/alpha\n"
+            "          - ./demo/capabilities/beta\n"
+            "        freshness_check_enabled: true\n"
             "      stopwords:\n"
             "        - the\n"
             "    structural_rules:\n"
@@ -303,6 +309,16 @@ class AllowedOrphansConfigTests(unittest.TestCase):
                     "references/dotted.md",
                     "skills/foo/references/audit.md",
                 ),
+            )
+            # Coverage block: corpus root verbatim, freshness coerced to bool,
+            # allow-list entries normalized (leading ./ stripped).
+            self.assertEqual(
+                constants.EVAL_COVERAGE_CORPUS_ROOT, "tests/skill-corpus"
+            )
+            self.assertIs(constants.EVAL_COVERAGE_FRESHNESS_ENABLED, True)
+            self.assertEqual(
+                constants.EVAL_COVERAGE_ALLOWED_MISSING,
+                ("demo/capabilities/alpha", "demo/capabilities/beta"),
             )
         finally:
             importlib.reload(constants)
@@ -1394,6 +1410,34 @@ class MissingSectionFailFastTests(unittest.TestCase):
         self.assertIn("Triggers On", message)
         self.assertIn("triggers on", message)
         self.assertIn("normalized", message)
+
+    def test_missing_coverage_block_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_minus_nested("evaluation", "coverage")
+            )
+        self.assertIn("coverage", str(ctx.exception))
+
+    def test_invalid_coverage_freshness_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "freshness_check_enabled: true",
+                    "freshness_check_enabled: maybe",
+                )
+            )
+        message = str(ctx.exception)
+        self.assertIn("freshness_check_enabled", message)
+
+    def test_invalid_coverage_corpus_root_raises(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reimport_with_config(
+                self._full_config_with_substitution(
+                    "corpus_root_relative: tests/skill-corpus",
+                    "corpus_root_relative: /absolute/path",
+                )
+            )
+        self.assertIn("corpus_root_relative", str(ctx.exception))
 
 
 if __name__ == "__main__":
