@@ -115,7 +115,7 @@ description: Helps with deployments.
 
 ### Structural checks
 
-`validate_skill.py` enforces eight structural description checks on top of the length, character-set, and voice rules above. All are advisory — they emit INFO or WARN, never FAIL (the only description FAIL is the 1024-character spec limit). Phrase lists and thresholds live under `skill.description.structural_rules` in [configuration.yaml](../scripts/lib/configuration.yaml), the canonical source; integrators tune them to their own domain.
+`validate_skill.py` enforces eight structural description checks on top of the length, character-set, and voice rules above. The structural checks themselves are advisory — they emit INFO or WARN, never FAIL. (`validate_description` still FAILs separately when the description is empty or exceeds the 1024-character spec limit.) Phrase lists and thresholds live under `skill.description.structural_rules` in [configuration.yaml](../scripts/lib/configuration.yaml), the canonical source; integrators tune them to their own domain.
 
 - **Trigger-clause strength** — at least two distinct trigger phrases (WARN below two). Reuses `skill.description.trigger_phrases`; the audit keeps the historical one-phrase minimum.
 - **Negative trigger** — notes a "don't use when…" clause when present (INFO).
