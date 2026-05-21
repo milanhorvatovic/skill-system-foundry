@@ -1283,6 +1283,20 @@ class EmitTasksTests(EmitterMixin):
         self.assertTrue(any("refusing to overwrite" in f for f in outcome.findings))
         self.assertEqual(self._read(corpus), before)
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX file permissions")
+    def test_emitted_artifact_uses_umask_default_perms(self) -> None:
+        # The atomic write goes through mkstemp (0600); the artifact's mode must
+        # be reset to the umask-default a plain open() would have produced, not
+        # left owner-only.
+        import stat
+
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "out.tasks.json")
+        de.emit_tasks([corpus], self.candidates, out)
+        current = os.umask(0o022)
+        os.umask(current)
+        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o666 & ~current)
+
     def _colliding_corpora(self, *subdirs: str) -> list[str]:
         data = {
             "target": "validation", "kind": "capability",

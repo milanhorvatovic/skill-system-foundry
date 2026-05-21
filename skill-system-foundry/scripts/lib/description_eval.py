@@ -1070,6 +1070,11 @@ def _write_json_file(path: str, text: str) -> None:
     truncated artifact.  The parent directory is created when *path* carries one,
     so callers can point the artifact at a fresh location without a separate
     mkdir.  Any OSError propagates to the caller (which records it as a FAIL).
+
+    ``mkstemp`` creates the temp file ``0600``; the mode is reset to the
+    umask-default (what a plain ``open`` would have produced) so the atomic
+    write does not silently make artifacts owner-only — they match every other
+    file the tools write.
     """
     parent = os.path.dirname(path)
     if parent:
@@ -1078,6 +1083,9 @@ def _write_json_file(path: str, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text + "\n")
+        umask = os.umask(0o022)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except OSError:
         try:
