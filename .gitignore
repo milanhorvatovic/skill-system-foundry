@@ -33,6 +33,12 @@ ENV/
 .coverage
 htmlcov/
 
+# Description-evaluation run artifacts (ephemeral; never committed, never
+# placed under tests/skill-corpus/). Emitted by evaluate_descriptions.py's
+# --emit-tasks / --emit-heuristic-predictions and filled by the host agent.
+*.tasks.json
+*.predictions.json
+
 # Environment variables
 .env
 .env.local
