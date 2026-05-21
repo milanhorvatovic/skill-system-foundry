@@ -1191,6 +1191,30 @@ class EmitTasksTests(EmitterMixin):
         outcome = de.emit_tasks(paths, self.candidates, out)
         self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
 
+    def test_refuses_to_overwrite_corpus_input(self) -> None:
+        # Aiming the emit at a real corpus filename must FAIL instead of
+        # truncating the committed corpus.
+        corpus = self._valid_corpus()
+        before = self._read(corpus)
+        outcome = de.emit_tasks([corpus], self.candidates, corpus)
+        self.assertTrue(
+            any("refusing to overwrite" in f for f in outcome.findings)
+        )
+        self.assertTrue(has_fail(outcome.findings))
+        # The corpus is left byte-for-content intact — no destructive write.
+        self.assertEqual(self._read(corpus), before)
+
+    def test_refuses_when_output_resolves_to_corpus_via_dotdot(self) -> None:
+        # The guard compares realpaths, so a textually different spelling that
+        # resolves to a corpus input is still caught. Two corpora exercise the
+        # loop iterating past a non-match before the match.
+        paths = self._colliding_corpora("c1", "c2")
+        out = os.path.join(self.root, "c2", "sub", "..", "validation.json")
+        outcome = de.emit_tasks(paths, self.candidates, out)
+        self.assertTrue(
+            any("refusing to overwrite" in f for f in outcome.findings)
+        )
+
 
 class EmitHeuristicPredictionsTests(EmitterMixin):
     def test_writes_id_to_name_or_null_map(self) -> None:
@@ -1261,6 +1285,16 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         out = os.path.join(self.root, "h.predictions.json")
         outcome = de.emit_heuristic_predictions(paths, self.candidates, out)
         self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
+
+    def test_refuses_to_overwrite_corpus_input(self) -> None:
+        corpus = self._valid_corpus()
+        before = self._read(corpus)
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, corpus)
+        self.assertTrue(
+            any("refusing to overwrite" in f for f in outcome.findings)
+        )
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(self._read(corpus), before)
 
 
 # ===================================================================

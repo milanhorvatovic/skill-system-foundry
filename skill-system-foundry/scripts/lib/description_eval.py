@@ -1017,6 +1017,26 @@ def _write_json_file(path: str, text: str) -> None:
         handle.write(text + "\n")
 
 
+def _output_collides_with_corpus(
+    out_path: str, corpus_paths: list[str],
+) -> str | None:
+    """Return the corpus input *out_path* would overwrite, or ``None``.
+
+    Compares fully resolved paths (``realpath`` collapses symlinks and ``..``
+    segments) so an emit output aimed at a committed corpus file is caught
+    before the destructive write — whether the operator named a real corpus
+    file (``skill.json``, a capability corpus) or passed it as an explicit file
+    corpus arg.  This generalizes the artifact-suffix skip in
+    ``_resolve_corpus_paths``: the protection no longer depends on the output
+    carrying a ``*.tasks.json`` / ``*.predictions.json`` suffix.
+    """
+    target = os.path.realpath(out_path)
+    for corpus_path in corpus_paths:
+        if os.path.realpath(corpus_path) == target:
+            return corpus_path
+    return None
+
+
 def _task_to_dict(task: Task) -> dict:
     """Serialize a :class:`Task` to the agent-facing envelope shape.
 
@@ -1062,6 +1082,14 @@ def emit_tasks(
         "instructions": TASK_INSTRUCTIONS,
         "tasks": [_task_to_dict(task) for task in tasks],
     }
+    collision = _output_collides_with_corpus(out_path, corpus_paths)
+    if collision is not None:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
+            f"corpus input '{to_posix(collision)}' with the task file; emit to a "
+            f"path outside the corpus set"
+        )
+        return outcome
     try:
         _write_json_file(out_path, to_json_output(payload))
     except OSError as exc:
@@ -1098,6 +1126,14 @@ def emit_heuristic_predictions(
             for card in task.cards
         ]
         predictions[task.id] = score_heuristic(task.prompt, card_units)
+    collision = _output_collides_with_corpus(out_path, corpus_paths)
+    if collision is not None:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
+            f"corpus input '{to_posix(collision)}' with the predictions file; "
+            f"emit to a path outside the corpus set"
+        )
+        return outcome
     try:
         _write_json_file(
             out_path,
