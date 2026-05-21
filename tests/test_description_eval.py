@@ -666,6 +666,27 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(result.min_precision, 0.85)
         self.assertEqual(result.min_recall, 0.85)
 
+    def test_injected_scorer_is_used_and_findings_flow(self) -> None:
+        # A custom scorer overrides the heuristic and its findings reach the
+        # report's error stream; here every prompt is forced to predict the
+        # target, so all positives are TP and all negatives FP.
+        def forced_scorer(corpus: de.Corpus, _cset: list[de.Unit]):
+            scored = [
+                de.ScoredQuery(p, de.LABEL_POSITIVE, corpus.target)
+                for p in corpus.positive
+            ] + [
+                de.ScoredQuery(n, de.LABEL_NEGATIVE, corpus.target)
+                for n in corpus.negative
+            ]
+            return scored, [f"{de.LEVEL_WARN}: [foundry] injected note"]
+
+        report = de.evaluate(
+            [self._corpus()], self.candidates, self._opts(), scorer=forced_scorer,
+        )
+        result = report.targets[0]
+        self.assertEqual(result.metrics.fp, len(self.negative))
+        self.assertTrue(any("injected note" in e for e in report.errors))
+
 
 # ===================================================================
 # Shipped corpora

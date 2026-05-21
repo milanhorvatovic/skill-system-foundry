@@ -785,15 +785,33 @@ def _score_corpus(corpus: Corpus, candidate_set: list[Unit]) -> list[ScoredQuery
     return scored
 
 
+# A scorer maps one corpus and its resolved candidate set to scored queries
+# plus any scorer-level findings.  The default is the Jaccard heuristic; the
+# predictions path injects one that reads an agent's answers instead.
+Scorer = Callable[[Corpus, list[Unit]], tuple[list[ScoredQuery], list[str]]]
+
+
+def _heuristic_scorer(
+    corpus: Corpus, candidate_set: list[Unit],
+) -> tuple[list[ScoredQuery], list[str]]:
+    """Default scorer: Jaccard heuristic, never emits scorer-level findings."""
+    return _score_corpus(corpus, candidate_set), []
+
+
 def evaluate(
     corpora: list[Corpus], candidates: list[Unit], opts: dict,
+    scorer: Scorer | None = None,
 ) -> EvalReport:
     """Score every corpus against *candidates* and assemble the report.
 
     *opts* carries the resolved options: ``min_precision`` and ``min_recall``.
-    The exit-affecting gate compares the point estimate; pairwise confusion is
-    advisory.
+    *scorer* maps a corpus and its candidate set to ``(scored, findings)``;
+    it defaults to the Jaccard heuristic, and the predictions path injects a
+    scorer that reads an agent's answers.  The exit-affecting gate compares the
+    point estimate; pairwise confusion is advisory.
     """
+    if scorer is None:
+        scorer = _heuristic_scorer
     report = EvalReport(
         min_precision=opts["min_precision"], min_recall=opts["min_recall"],
     )
@@ -826,7 +844,8 @@ def evaluate(
             else opts["min_recall"]
         )
 
-        scored = _score_corpus(corpus, candidate_set)
+        scored, scorer_findings = scorer(corpus, candidate_set)
+        report.errors.extend(scorer_findings)
         metrics = aggregate(scored, corpus.target, min_precision, min_recall)
         advisory = {"pairwise_confusion": pairwise_confusion(scored, corpus.target)}
 
