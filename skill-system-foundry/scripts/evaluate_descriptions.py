@@ -6,6 +6,9 @@ Usage:
     python scripts/evaluate_descriptions.py <corpus-dir> --skill-set .
     python scripts/evaluate_descriptions.py <corpus-dir> --soft --json
     python scripts/evaluate_descriptions.py <corpus-dir> --backfill-hash
+    python scripts/evaluate_descriptions.py <corpus-dir> --emit-tasks tasks.json
+    python scripts/evaluate_descriptions.py <corpus-dir> --emit-heuristic-predictions h.json
+    python scripts/evaluate_descriptions.py <corpus-dir> --predictions agent.json --soft
 
 Heuristic mode is pure stdlib and deterministic: each prompt is scored by
 Jaccard token overlap against the candidate ``name + description`` cards.  Exit
@@ -19,6 +22,15 @@ corpus header in place.  It is idempotent — a corpus already carrying the
 correct hash is left byte-for-byte unchanged — so the audit's freshness rule
 gets a one-command refresh.  The candidate units come from ``--skill-set``
 (default: current directory).
+
+Agent-delegated mode is a key-free, two-phase deep check: ``--emit-tasks``
+writes one classification task per prompt (the prompt plus the candidate cards)
+for the host agent to fill; the agent writes a ``{id: name | null}`` predictions
+file; ``--predictions`` scores it through the same gate, ``--json`` shape, and
+exit codes as the heuristic.  ``--emit-heuristic-predictions`` writes the
+heuristic's answers for the same task ids, so the two files diff id-for-id.  The
+write / score modes (``--backfill-hash``, ``--emit-tasks``,
+``--emit-heuristic-predictions``, ``--predictions``) are mutually exclusive.
 """
 
 import argparse
@@ -60,7 +72,7 @@ from lib.reporting import (
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Evaluate description activation accuracy (heuristic).",
+        description="Evaluate description activation accuracy (heuristic + agent-delegated).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         # Disable prefix abbreviation so the pre-parse `--json` scan and the
         # parsed `args.json_output` agree (no `--js` -> `--json` divergence).
