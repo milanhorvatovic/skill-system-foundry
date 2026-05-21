@@ -1145,6 +1145,183 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         # The positive "validate skills" must route to the validation card.
         self.assertEqual(predictions["validation:capability:positive:0"], "validation")
 
+    def test_unwritable_path_is_a_fail_finding(self) -> None:
+        corpus = self._valid_corpus()
+        blocker = os.path.join(self.root, "blocker")
+        with open(blocker, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("not a dir")
+        out = os.path.join(blocker, "sub", "h.predictions.json")
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, out)
+        self.assertTrue(any("cannot write predictions" in f for f in outcome.findings))
+
+    def test_bare_filename_writes_in_cwd(self) -> None:
+        # Exercises the no-dirname branch of _write_json_file: a relative bare
+        # filename has no parent directory to create.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+        corpus = os.path.basename(self._valid_corpus())
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, "bare.json")
+        self.assertFalse(has_fail(outcome.findings))
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "bare.json")))
+
+
+# ===================================================================
+# Prediction loading + scoring
+# ===================================================================
+
+
+class LoadPredictionsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _write(self, content: str) -> str:
+        path = os.path.join(self._tmp.name, "p.predictions.json")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        return path
+
+    def test_valid_map_loads(self) -> None:
+        path = self._write(json.dumps({"a:skill:positive:0": "foundry", "b": None}))
+        predictions, findings = de.load_predictions(path)
+        self.assertEqual(findings, [])
+        self.assertEqual(predictions, {"a:skill:positive:0": "foundry", "b": None})
+
+    def test_unreadable_path_fails(self) -> None:
+        predictions, findings = de.load_predictions(
+            os.path.join(self._tmp.name, "missing.json")
+        )
+        self.assertIsNone(predictions)
+        self.assertTrue(any("cannot read" in f for f in findings))
+
+    def test_invalid_json_fails(self) -> None:
+        predictions, findings = de.load_predictions(self._write("{ not json ]"))
+        self.assertIsNone(predictions)
+        self.assertTrue(any("invalid JSON" in f for f in findings))
+
+    def test_non_object_root_fails(self) -> None:
+        predictions, findings = de.load_predictions(self._write("[]"))
+        self.assertIsNone(predictions)
+        self.assertTrue(any("must be an object" in f for f in findings))
+
+    def test_non_string_non_null_value_fails(self) -> None:
+        predictions, findings = de.load_predictions(
+            self._write(json.dumps({"a": 3, "b": True}))
+        )
+        self.assertIsNone(predictions)
+        self.assertTrue(has_fail(findings))
+        self.assertTrue(any("string or null" in f for f in findings))
+
+
+class ScoredFromPredictionsTests(unittest.TestCase):
+    def _task(self, task_id: str, label: str, prompt: str = "p") -> de.Task:
+        return de.Task(
+            id=task_id, target="validation", kind=de.KIND_CAPABILITY,
+            label=label, prompt=prompt,
+            cards=(de.Card("validation", "d1"), de.Card("bundling", "d2")),
+        )
+
+    def test_null_is_no_activation(self) -> None:
+        task = self._task("validation:capability:negative:0", de.LABEL_NEGATIVE)
+        scored, findings = de.scored_from_predictions([task], {task.id: None})
+        self.assertEqual(findings, [])
+        self.assertIsNone(scored[0].prediction)
+
+    def test_candidate_name_is_kept(self) -> None:
+        task = self._task("validation:capability:positive:0", de.LABEL_POSITIVE)
+        scored, findings = de.scored_from_predictions([task], {task.id: "validation"})
+        self.assertEqual(findings, [])
+        self.assertEqual(scored[0].prediction, "validation")
+
+    def test_missing_id_fails_and_scores_no_activation(self) -> None:
+        task = self._task("validation:capability:positive:0", de.LABEL_POSITIVE)
+        scored, findings = de.scored_from_predictions([task], {})
+        self.assertTrue(any("missing prediction" in f for f in findings))
+        self.assertIsNone(scored[0].prediction)
+
+    def test_unknown_name_fails_and_coerces_to_no_activation(self) -> None:
+        task = self._task("validation:capability:positive:0", de.LABEL_POSITIVE)
+        scored, findings = de.scored_from_predictions([task], {task.id: "ghost"})
+        self.assertTrue(any("not a candidate unit name" in f for f in findings))
+        self.assertTrue(has_fail(findings))
+        self.assertIsNone(scored[0].prediction)
+
+
+class UnmatchedPredictionIdsTests(unittest.TestCase):
+    def test_stale_id_warns(self) -> None:
+        warnings = de.unmatched_prediction_ids({"a", "b"}, {"a": None, "c": "x"})
+        self.assertEqual(len(warnings), 1)
+        self.assertTrue(warnings[0].startswith(de.LEVEL_WARN))
+        self.assertIn("'c'", warnings[0])
+
+    def test_no_stale_ids_is_empty(self) -> None:
+        self.assertEqual(de.unmatched_prediction_ids({"a", "b"}, {"a": None}), [])
+
+
+class EvaluateWithPredictionsTests(EmitterMixin):
+    def _corpus_obj(self) -> de.Corpus:
+        return de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY,
+            positive=("validate skills", "audit systems", "validate consistency", "skills consistency"),
+            negative=("package zip", "bundle distribution", "translate french", "debug react"),
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+
+    def _opts(self) -> dict:
+        return {"min_precision": 0.85, "min_recall": 0.85}
+
+    def test_perfect_predictions_pass(self) -> None:
+        corpus = self._corpus_obj()
+        tasks, _ = de.build_tasks([corpus], self.candidates)
+        predictions = {
+            t.id: ("validation" if t.label == de.LABEL_POSITIVE else None)
+            for t in tasks
+        }
+        report = de.evaluate_with_predictions(
+            [corpus], self.candidates, predictions, self._opts(),
+        )
+        self.assertTrue(report.success)
+        self.assertEqual(report.targets[0].metrics.tp, 4)
+
+    def test_stale_prediction_id_warns(self) -> None:
+        corpus = self._corpus_obj()
+        tasks, _ = de.build_tasks([corpus], self.candidates)
+        predictions = {t.id: None for t in tasks}
+        predictions["validation:capability:positive:99"] = "validation"
+        report = de.evaluate_with_predictions(
+            [corpus], self.candidates, predictions, self._opts(),
+        )
+        self.assertTrue(any("matches no task" in e for e in report.errors))
+
+    def test_missing_target_still_fails_via_evaluate(self) -> None:
+        corpus = de.Corpus(
+            target="ghost", kind=de.KIND_CAPABILITY,
+            positive=("a", "b", "c", "d"), negative=("e", "f", "g", "h"),
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+        report = de.evaluate_with_predictions(
+            [corpus], self.candidates, {}, self._opts(),
+        )
+        self.assertFalse(report.success)
+        self.assertTrue(any("was not found" in e for e in report.errors))
+
+    def test_heuristic_predictions_round_trip_matches_heuristic_metrics(self) -> None:
+        # Feeding emit_heuristic_predictions output back through
+        # evaluate_with_predictions must reproduce heuristic-mode metrics.
+        corpus_path = self._valid_corpus()
+        corpus, _ = de.load_corpus(corpus_path)
+        out = os.path.join(self.root, "h.predictions.json")
+        de.emit_heuristic_predictions([corpus_path], self.candidates, out)
+        predictions = self._read(out)
+        via_predictions = de.evaluate_with_predictions(
+            [corpus], self.candidates, predictions, self._opts(),
+        )
+        via_heuristic = de.evaluate([corpus], self.candidates, self._opts())
+        self.assertEqual(
+            via_predictions.targets[0].metrics, via_heuristic.targets[0].metrics,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

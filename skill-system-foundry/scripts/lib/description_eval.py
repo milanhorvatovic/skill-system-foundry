@@ -1063,3 +1063,134 @@ def emit_heuristic_predictions(
             f"file ({format_exception(exc)})"
         )
     return outcome
+
+
+# --- prediction loading + scoring -------------------------------------------
+
+
+def load_predictions(path: str) -> tuple[dict[str, str | None] | None, list[str]]:
+    """Load and validate an agent predictions file (``{id: name | null}``).
+
+    Returns ``(predictions, findings)``.  ``predictions`` is ``None`` when a
+    FAIL fired: the file is unreadable, the JSON is invalid, the root is not an
+    object, or a value is neither a string nor ``null``.  Value-level checks
+    against the candidate set (unknown name, missing id) happen later in
+    :func:`scored_from_predictions`, which knows each task's cards.
+    """
+    findings: list[str] = []
+    label = to_posix(path)
+
+    def fail(message: str) -> None:
+        findings.append(f"{LEVEL_FAIL}: [foundry] {label}: {message}")
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = handle.read()
+    except (OSError, UnicodeError) as exc:
+        fail(f"cannot read predictions file ({format_exception(exc)})")
+        return None, findings
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeError) as exc:
+        fail(f"invalid JSON ({exc.__class__.__name__}: {exc})")
+        return None, findings
+    if not isinstance(data, dict):
+        fail("top-level JSON value must be an object mapping id to name or null")
+        return None, findings
+
+    predictions: dict[str, str | None] = {}
+    bad_value = False
+    for key, value in data.items():
+        # bool is a subtype of int, not str — `true` / numbers / arrays are all
+        # rejected so only a unit name string or null reaches the scorer.
+        if value is not None and not isinstance(value, str):
+            fail(f"value for '{key}' must be a string or null; got {value!r}")
+            bad_value = True
+            continue
+        predictions[key] = value
+    if bad_value:
+        return None, findings
+    return predictions, findings
+
+
+def scored_from_predictions(
+    tasks: list[Task], predictions: dict[str, str | None],
+) -> tuple[list[ScoredQuery], list[str]]:
+    """Build :class:`ScoredQuery` rows for *tasks* from an agent's *predictions*.
+
+    Each task's prediction is validated against that task's candidate cards: a
+    missing id is a FAIL (scored as no-activation); ``null`` is no-activation; a
+    name among the cards is that prediction; any other string is an "unknown
+    unit name" FAIL coerced to no-activation.  Reading ``Task.id`` (rather than
+    re-deriving it) keeps the join key in lockstep with :func:`build_tasks`.
+    """
+    scored: list[ScoredQuery] = []
+    findings: list[str] = []
+    for task in tasks:
+        names = {card.name for card in task.cards}
+        if task.id not in predictions:
+            findings.append(
+                f"{LEVEL_FAIL}: [foundry] missing prediction for task '{task.id}'"
+            )
+            prediction: str | None = None
+        else:
+            value = predictions[task.id]
+            if value is None:
+                prediction = None
+            elif value in names:
+                prediction = value
+            else:
+                findings.append(
+                    f"{LEVEL_FAIL}: [foundry] prediction for task '{task.id}' is "
+                    f"not a candidate unit name: {value!r}"
+                )
+                prediction = None
+        scored.append(
+            ScoredQuery(prompt=task.prompt, label=task.label, prediction=prediction)
+        )
+    return scored, findings
+
+
+def unmatched_prediction_ids(
+    all_ids: set[str], predictions: dict[str, str | None],
+) -> list[str]:
+    """WARN for each prediction id that matches no emitted task (a stale key)."""
+    return [
+        f"{LEVEL_WARN}: [foundry] prediction id matches no task: '{key}'"
+        for key in sorted(predictions)
+        if key not in all_ids
+    ]
+
+
+def evaluate_with_predictions(
+    corpora: list[Corpus], candidates: list[Unit],
+    predictions: dict[str, str | None], opts: dict,
+) -> EvalReport:
+    """Score *predictions* against the corpora through the shared evaluate gate.
+
+    Builds the task list once (the canonical id universe), WARNs on stale
+    prediction ids, then runs :func:`evaluate` with a scorer that feeds each
+    target's tasks to :func:`scored_from_predictions`.  Unit matching, the
+    threshold gate, pairwise confusion, and the report shape are reused from
+    the heuristic path unchanged.  Not-found / ambiguous target FAILs come from
+    :func:`evaluate`, so the tasks builder's own copies are intentionally
+    dropped to avoid double-reporting.
+    """
+    tasks, _build_findings = build_tasks(corpora, candidates)
+    tasks_by_key: dict[tuple[str, str], list[Task]] = {}
+    for task in tasks:
+        tasks_by_key.setdefault((task.target, task.kind), []).append(task)
+
+    def scorer(
+        corpus: Corpus, _candidate_set: list[Unit],
+    ) -> tuple[list[ScoredQuery], list[str]]:
+        return scored_from_predictions(
+            tasks_by_key.get((corpus.target, corpus.kind), []), predictions
+        )
+
+    report = evaluate(corpora, candidates, opts, scorer=scorer)
+    report.errors = (
+        unmatched_prediction_ids({task.id for task in tasks}, predictions)
+        + report.errors
+    )
+    return report
