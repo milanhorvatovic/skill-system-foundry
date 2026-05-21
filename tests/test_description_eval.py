@@ -920,5 +920,99 @@ class BackfillCorpusHashesTests(unittest.TestCase):
         self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
 
 
+# ===================================================================
+# Agent-delegated tasks: make_task_id + build_tasks
+# ===================================================================
+
+
+class MakeTaskIdTests(unittest.TestCase):
+    def test_format(self) -> None:
+        self.assertEqual(
+            de.make_task_id("validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 3),
+            "validation:capability:positive:3",
+        )
+
+
+class BuildTasksMixin(unittest.TestCase):
+    def setUp(self) -> None:
+        self.skill = de.Unit("foundry", de.KIND_SKILL, "Designs skill systems", "/S")
+        self.validation = de.Unit(
+            "validation", de.KIND_CAPABILITY,
+            "validate skills audit systems", "/v", parent="foundry",
+        )
+        self.bundling = de.Unit(
+            "bundling", de.KIND_CAPABILITY,
+            "package skill zip bundle", "/b", parent="foundry",
+        )
+        self.candidates = [self.skill, self.validation, self.bundling]
+
+    def _corpus(self, target: str = "validation", kind: str = de.KIND_CAPABILITY) -> de.Corpus:
+        return de.Corpus(
+            target=target, kind=kind,
+            positive=("validate skills", "audit systems"),
+            negative=("package zip", "bundle distribution"),
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+
+
+class BuildTasksTests(BuildTasksMixin):
+    def test_one_task_per_prompt_with_canonical_ids(self) -> None:
+        tasks, findings = de.build_tasks([self._corpus()], self.candidates)
+        self.assertEqual(findings, [])
+        self.assertEqual(len(tasks), 4)  # 2 positive + 2 negative
+        ids = [t.id for t in tasks]
+        self.assertEqual(
+            ids,
+            [
+                "validation:capability:positive:0",
+                "validation:capability:positive:1",
+                "validation:capability:negative:0",
+                "validation:capability:negative:1",
+            ],
+        )
+
+    def test_index_resets_per_label(self) -> None:
+        tasks, _ = de.build_tasks([self._corpus()], self.candidates)
+        positives = [t for t in tasks if t.label == de.LABEL_POSITIVE]
+        negatives = [t for t in tasks if t.label == de.LABEL_NEGATIVE]
+        self.assertEqual([t.id.rsplit(":", 1)[1] for t in positives], ["0", "1"])
+        self.assertEqual([t.id.rsplit(":", 1)[1] for t in negatives], ["0", "1"])
+
+    def test_cards_are_sibling_capabilities_name_sorted(self) -> None:
+        tasks, _ = de.build_tasks([self._corpus()], self.candidates)
+        # A capability competes with its sibling capabilities (not the skill),
+        # and cards are name-sorted to match the heuristic candidate order.
+        names = [card.name for card in tasks[0].cards]
+        self.assertEqual(names, ["bundling", "validation"])
+        self.assertEqual(tasks[0].cards[0].description, "package skill zip bundle")
+
+    def test_skill_target_cards_are_sibling_skills(self) -> None:
+        other = de.Unit("other", de.KIND_SKILL, "unrelated", "/o")
+        tasks, _ = de.build_tasks(
+            [self._corpus(target="foundry", kind=de.KIND_SKILL)],
+            self.candidates + [other],
+        )
+        self.assertEqual([c.name for c in tasks[0].cards], ["foundry", "other"])
+
+    def test_missing_target_records_fail_and_emits_no_tasks(self) -> None:
+        tasks, findings = de.build_tasks(
+            [self._corpus(target="ghost")], self.candidates,
+        )
+        self.assertEqual(tasks, [])
+        self.assertTrue(has_fail(findings))
+        self.assertTrue(any("was not found" in f for f in findings))
+
+    def test_ambiguous_target_records_fail_and_emits_no_tasks(self) -> None:
+        candidates = [
+            de.Unit("alpha", de.KIND_SKILL, "alpha", "/a"),
+            de.Unit("validation", de.KIND_CAPABILITY, "validate alpha", "/a/v", parent="alpha"),
+            de.Unit("beta", de.KIND_SKILL, "beta", "/b"),
+            de.Unit("validation", de.KIND_CAPABILITY, "validate beta", "/b/v", parent="beta"),
+        ]
+        tasks, findings = de.build_tasks([self._corpus()], candidates)
+        self.assertEqual(tasks, [])
+        self.assertTrue(any("ambiguous" in f for f in findings))
+
+
 if __name__ == "__main__":
     unittest.main()

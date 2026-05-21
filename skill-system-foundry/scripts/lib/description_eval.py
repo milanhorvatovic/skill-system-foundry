@@ -125,6 +125,31 @@ class ScoredQuery:
 
 
 @dataclass(frozen=True)
+class Card:
+    """A candidate unit reduced to the fields an agent classifier needs."""
+
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
+class Task:
+    """One classification task: a prompt plus the candidate cards to choose from.
+
+    ``id`` is the canonical join key between the emitted task file and the
+    agent's predictions file (see :func:`make_task_id`).  ``cards`` is the
+    name-sorted candidate set, identical to the heuristic scoring path's.
+    """
+
+    id: str
+    target: str
+    kind: str
+    label: str  # LABEL_POSITIVE | LABEL_NEGATIVE
+    prompt: str
+    cards: tuple[Card, ...]
+
+
+@dataclass(frozen=True)
 class Metrics:
     """Point-estimate confusion matrix and derived precision/recall."""
 
@@ -815,3 +840,81 @@ def evaluate(
         )
 
     return report
+
+
+# --- agent-delegated tasks --------------------------------------------------
+
+# Self-contained classify contract written into the emitted task envelope so
+# any host agent (Claude, Codex, Cursor, GLM, ...) can fill predictions without
+# reading external docs.  Holds no path or doc cross-references by design.
+TASK_INSTRUCTIONS = (
+    "For each task, read its 'prompt' and its 'cards' (each a candidate unit "
+    "with a 'name' and a 'description'). Choose the single card whose "
+    "name and description best match the prompt's intent and record that "
+    "card's 'name'. If no card is a good match, record null. Produce a JSON "
+    "object mapping every task 'id' to the chosen name or null, and nothing "
+    "else."
+)
+
+
+def make_task_id(target: str, kind: str, label: str, index: int) -> str:
+    """Return the canonical task id ``f"{target}:{kind}:{label}:{index}"``.
+
+    Unit names are kebab-case (no colons), so ``:`` is an unambiguous
+    delimiter.  This is the single place the id is produced; the scoring path
+    reads it back from :attr:`Task.id` rather than reconstructing it, so the
+    two phases cannot disagree on the join key.
+    """
+    return f"{target}:{kind}:{label}:{index}"
+
+
+def build_tasks(
+    corpora: list[Corpus], candidates: list[Unit],
+) -> tuple[list[Task], list[str]]:
+    """Build one :class:`Task` per prompt across every corpus, plus findings.
+
+    Each corpus's target is resolved through :func:`_matching_units` and its
+    candidate set through :func:`_candidate_set` (then name-sorted), so task
+    ids and candidate cards are byte-identical to the heuristic scoring path.
+    A corpus whose target is missing or ambiguous is skipped with a FAIL
+    finding mirroring :func:`evaluate`; the per-label prompt index keeps ids
+    stable across runs.
+    """
+    tasks: list[Task] = []
+    findings: list[str] = []
+    for corpus in corpora:
+        base = to_posix(corpus.source_path)
+        matches = _matching_units(corpus, candidates)
+        if not matches:
+            findings.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) was not found among the discovered units"
+            )
+            continue
+        if len(matches) > 1:
+            parents = sorted((unit.parent or "<skill-root>") for unit in matches)
+            findings.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) is ambiguous — it matches units under "
+                f"{parents}; point --skill-set at a single skill root"
+            )
+            continue
+        cards = tuple(
+            Card(name=unit.name, description=unit.description)
+            for unit in sorted(
+                _candidate_set(matches[0], candidates), key=lambda unit: unit.name
+            )
+        )
+        sides = (
+            (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
+        )
+        for label, prompts in sides:
+            for index, prompt in enumerate(prompts):
+                tasks.append(
+                    Task(
+                        id=make_task_id(corpus.target, corpus.kind, label, index),
+                        target=corpus.target, kind=corpus.kind, label=label,
+                        prompt=prompt, cards=cards,
+                    )
+                )
+    return tasks, findings
