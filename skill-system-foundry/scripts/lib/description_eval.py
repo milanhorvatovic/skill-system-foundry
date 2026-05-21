@@ -1073,9 +1073,15 @@ def emit_tasks(
     outcome.findings.extend(load_findings)
     tasks, build_findings = build_tasks(corpora, candidates)
     outcome.findings.extend(build_findings)
-    outcome.findings.extend(duplicate_task_ids(tasks))
     outcome.corpora_count = len(corpora)
     outcome.task_count = len(tasks)
+    dup_findings = duplicate_task_ids(tasks)
+    outcome.findings.extend(dup_findings)
+    if dup_findings:
+        # A duplicate-id envelope cannot be answered by the {id: name|null}
+        # predictions map (one value per key), so refuse to write a lossy
+        # artifact — the FAIL findings above tell the operator to fix it.
+        return outcome
     payload = {
         "tool": "evaluate_descriptions",
         "mode": "emit-tasks",
@@ -1116,9 +1122,14 @@ def emit_heuristic_predictions(
     outcome.findings.extend(load_findings)
     tasks, build_findings = build_tasks(corpora, candidates)
     outcome.findings.extend(build_findings)
-    outcome.findings.extend(duplicate_task_ids(tasks))
     outcome.corpora_count = len(corpora)
     outcome.task_count = len(tasks)
+    dup_findings = duplicate_task_ids(tasks)
+    outcome.findings.extend(dup_findings)
+    if dup_findings:
+        # Duplicate ids would silently overwrite earlier rows in the id-keyed
+        # predictions map; refuse to write an inconsistent artifact.
+        return outcome
     predictions: dict[str, str | None] = {}
     for task in tasks:
         card_units = [

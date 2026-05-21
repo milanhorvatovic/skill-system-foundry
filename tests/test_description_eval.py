@@ -670,7 +670,9 @@ class EvaluateTests(unittest.TestCase):
         # A custom scorer overrides the heuristic and its findings reach the
         # report's error stream; here every prompt is forced to predict the
         # target, so all positives are TP and all negatives FP.
-        def forced_scorer(corpus: de.Corpus, _cset: list[de.Unit]):
+        def forced_scorer(
+            corpus: de.Corpus, _cset: list[de.Unit],
+        ) -> tuple[list[de.ScoredQuery], list[str]]:
             scored = [
                 de.ScoredQuery(p, de.LABEL_POSITIVE, corpus.target)
                 for p in corpus.positive
@@ -1190,6 +1192,8 @@ class EmitTasksTests(EmitterMixin):
         out = os.path.join(self.root, "out.tasks.json")
         outcome = de.emit_tasks(paths, self.candidates, out)
         self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
+        # A duplicate-id envelope is unusable, so nothing is written.
+        self.assertFalse(os.path.exists(out))
 
     def test_refuses_to_overwrite_corpus_input(self) -> None:
         # Aiming the emit at a real corpus filename must FAIL instead of
@@ -1206,11 +1210,32 @@ class EmitTasksTests(EmitterMixin):
 
     def test_refuses_when_output_resolves_to_corpus_via_dotdot(self) -> None:
         # The guard compares realpaths, so a textually different spelling that
-        # resolves to a corpus input is still caught. Two corpora exercise the
-        # loop iterating past a non-match before the match.
-        paths = self._colliding_corpora("c1", "c2")
-        out = os.path.join(self.root, "c2", "sub", "..", "validation.json")
-        outcome = de.emit_tasks(paths, self.candidates, out)
+        # resolves to a corpus input is still caught. Two distinct corpora make
+        # the guard's loop iterate past a non-match before the match.
+        prompts = {
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        }
+
+        def write(sub: str, target: str) -> str:
+            path = os.path.join(self.root, sub, f"{target}.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(
+                    {"target": target, "kind": "capability", **prompts}, indent=2,
+                ) + "\n")
+            return path
+
+        bundling = write("b", "bundling")
+        validation = write("a", "validation")
+        out = os.path.join(self.root, "a", "sub", "..", "validation.json")
+        outcome = de.emit_tasks([bundling, validation], self.candidates, out)
         self.assertTrue(
             any("refusing to overwrite" in f for f in outcome.findings)
         )
@@ -1285,6 +1310,8 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         out = os.path.join(self.root, "h.predictions.json")
         outcome = de.emit_heuristic_predictions(paths, self.candidates, out)
         self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
+        # Duplicate ids would overwrite rows, so nothing is written.
+        self.assertFalse(os.path.exists(out))
 
     def test_refuses_to_overwrite_corpus_input(self) -> None:
         corpus = self._valid_corpus()
