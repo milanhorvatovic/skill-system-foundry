@@ -43,12 +43,13 @@ content-bound digest (see :func:`make_task_id`) so the answer cannot be read off
 the id, and tasks are emitted ``id``-sorted so their ordering does not leak the
 positive/negative boundary.  The agent writes ``{id: name | None}``;
 :func:`scored_from_predictions` joins on ``id`` and feeds the same
-:func:`aggregate` / threshold gate as the heuristic.  Three write guards refuse
-rather than produce a lossy or destructive artifact: duplicate task ids
-(:func:`duplicate_task_ids`), an output path resolving to a corpus input
-(:func:`_output_collides_with_corpus`), and an empty output path.  Agent
-reasoning is non-deterministic, so this is an authoring-time check, never a CI
-gate.
+:func:`aggregate` / threshold gate as the heuristic.  Before writing, a single
+gate refuses (no file) when any FAIL finding is present — a malformed corpus, a
+missing/ambiguous target, duplicate task ids (:func:`duplicate_task_ids`), or an
+output path that resolves to a corpus input
+(:func:`_output_collides_with_corpus`); the write itself surfaces an unwritable
+or empty path as an OSError FAIL.  Agent reasoning is non-deterministic, so this
+is an authoring-time check, never a CI gate.
 
 Library contract
 ----------------
@@ -1099,7 +1100,10 @@ def emit_tasks(
     builds one task per prompt via :func:`build_tasks`, and serializes the
     envelope deterministically (sorted keys, trailing newline, LF terminators)
     through :func:`to_json_output`.  Re-emitting the same corpora and units
-    produces a byte-identical file.  An unwritable path is a FAIL finding, not
+    produces a byte-identical file.  No file is written when any FAIL finding is
+    present (malformed corpus, missing/ambiguous target, duplicate ids, or an
+    output path that resolves to a corpus input), so a nonzero result never
+    leaves a partial artifact; an unwritable path is itself a FAIL finding, not
     an exception.
 
     Tasks are serialized in task-id order, *not* in build order.  Build order
@@ -1118,12 +1122,19 @@ def emit_tasks(
     outcome.findings.extend(build_findings)
     outcome.corpora_count = len(corpora)
     outcome.task_count = len(tasks)
-    dup_findings = duplicate_task_ids(tasks)
-    outcome.findings.extend(dup_findings)
-    if dup_findings:
-        # A duplicate-id envelope cannot be answered by the {id: name|null}
-        # predictions map (one value per key), so refuse to write a lossy
-        # artifact — the FAIL findings above tell the operator to fix it.
+    outcome.findings.extend(duplicate_task_ids(tasks))
+    collision = _output_collides_with_corpus(out_path, corpus_paths)
+    if collision is not None:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
+            f"corpus input '{to_posix(collision)}' with the task file; emit to a "
+            f"path outside the corpus set"
+        )
+    # Single write gate: never pair the nonzero result with a partial or lossy
+    # file.  Any FAIL — malformed corpus, missing/ambiguous target, duplicate
+    # ids, or a corpus-overwrite collision — means no file is written, so an
+    # agent cannot later score an incomplete or inconsistent prompt set.
+    if any(f.startswith(LEVEL_FAIL) for f in outcome.findings):
         return outcome
     payload = {
         "tool": "evaluate_descriptions",
@@ -1133,14 +1144,6 @@ def emit_tasks(
             _task_to_dict(task) for task in sorted(tasks, key=lambda t: t.id)
         ],
     }
-    collision = _output_collides_with_corpus(out_path, corpus_paths)
-    if collision is not None:
-        outcome.findings.append(
-            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
-            f"corpus input '{to_posix(collision)}' with the task file; emit to a "
-            f"path outside the corpus set"
-        )
-        return outcome
     try:
         _write_json_file(out_path, to_json_output(payload))
     except OSError as exc:
@@ -1169,11 +1172,16 @@ def emit_heuristic_predictions(
     outcome.findings.extend(build_findings)
     outcome.corpora_count = len(corpora)
     outcome.task_count = len(tasks)
-    dup_findings = duplicate_task_ids(tasks)
-    outcome.findings.extend(dup_findings)
-    if dup_findings:
-        # Duplicate ids would silently overwrite earlier rows in the id-keyed
-        # predictions map; refuse to write an inconsistent artifact.
+    outcome.findings.extend(duplicate_task_ids(tasks))
+    collision = _output_collides_with_corpus(out_path, corpus_paths)
+    if collision is not None:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
+            f"corpus input '{to_posix(collision)}' with the predictions file; "
+            f"emit to a path outside the corpus set"
+        )
+    # Single write gate (see emit_tasks): any FAIL means no file is written.
+    if any(f.startswith(LEVEL_FAIL) for f in outcome.findings):
         return outcome
     predictions: dict[str, str | None] = {}
     for task in tasks:
@@ -1182,14 +1190,6 @@ def emit_heuristic_predictions(
             for card in task.cards
         ]
         predictions[task.id] = score_heuristic(task.prompt, card_units)
-    collision = _output_collides_with_corpus(out_path, corpus_paths)
-    if collision is not None:
-        outcome.findings.append(
-            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
-            f"corpus input '{to_posix(collision)}' with the predictions file; "
-            f"emit to a path outside the corpus set"
-        )
-        return outcome
     try:
         _write_json_file(
             out_path,

@@ -1225,6 +1225,20 @@ class EmitTasksTests(EmitterMixin):
         outcome = de.emit_tasks([bad], self.candidates, out)
         self.assertTrue(has_fail(outcome.findings))
         self.assertEqual(outcome.task_count, 0)
+        self.assertFalse(os.path.exists(out))
+
+    def test_partial_load_failure_writes_no_file(self) -> None:
+        # One corpus loads, another is malformed: the FAIL must suppress the
+        # write so no partial task file (omitting the failed corpus's prompts)
+        # is left for an agent to score against.
+        good = self._valid_corpus()
+        bad = self._corpus_file(
+            {"target": "bundling", "kind": "capability"}, name="bundling.json",
+        )
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks([good, bad], self.candidates, out)
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertFalse(os.path.exists(out))
 
     def test_unwritable_path_is_a_fail_finding(self) -> None:
         corpus = self._valid_corpus()
@@ -1382,6 +1396,18 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         outcome = de.emit_heuristic_predictions(paths, self.candidates, out)
         self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
         # Duplicate ids would overwrite rows, so nothing is written.
+        self.assertFalse(os.path.exists(out))
+
+    def test_partial_load_failure_writes_no_file(self) -> None:
+        # A FAIL on any corpus suppresses the predictions write — no partial
+        # baseline that omits the failed corpus's prompts.
+        good = self._valid_corpus()
+        bad = self._corpus_file(
+            {"target": "bundling", "kind": "capability"}, name="bundling.json",
+        )
+        out = os.path.join(self.root, "h.predictions.json")
+        outcome = de.emit_heuristic_predictions([good, bad], self.candidates, out)
+        self.assertTrue(has_fail(outcome.findings))
         self.assertFalse(os.path.exists(out))
 
     def test_refuses_to_overwrite_corpus_input(self) -> None:
