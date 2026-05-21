@@ -951,13 +951,15 @@ class BackfillCorpusHashesTests(unittest.TestCase):
 class MakeTaskIdTests(unittest.TestCase):
     def test_id_is_opaque_deterministic_and_hides_gold(self) -> None:
         task_id = de.make_task_id(
-            "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validation", "validation", de.KIND_CAPABILITY,
+            de.LABEL_POSITIVE, 0, "validate skills",
         )
         # Deterministic: identical inputs hash to the same id.
         self.assertEqual(
             task_id,
             de.make_task_id(
-                "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+                "validation", "validation", de.KIND_CAPABILITY,
+                de.LABEL_POSITIVE, 0, "validate skills",
             ),
         )
         # Opaque: a fixed-width hex digest leaking neither target nor label.
@@ -966,15 +968,35 @@ class MakeTaskIdTests(unittest.TestCase):
         self.assertNotIn("positive", task_id)
 
     def test_distinct_inputs_yield_distinct_ids(self) -> None:
-        base = de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0)
-        self.assertNotEqual(
-            base,
-            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0),
+        base = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p",
         )
         self.assertNotEqual(
             base,
-            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1),
+            de.make_task_id(
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0, "p",
+            ),
         )
+        self.assertNotEqual(
+            base,
+            de.make_task_id(
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1, "p",
+            ),
+        )
+
+    def test_editing_prompt_changes_id(self) -> None:
+        # should-fix [codex]: the id is bound to the prompt's text, so an edit
+        # to the prompt (with every other field held fixed) yields a different
+        # id — a stale predictions file then fails to join onto the new prompt.
+        before = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validate skills",
+        )
+        after = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validate skills carefully",
+        )
+        self.assertNotEqual(before, after)
 
     def test_corpus_slug_is_basename_stem(self) -> None:
         self.assertEqual(
@@ -1015,10 +1037,22 @@ class BuildTasksTests(BuildTasksMixin):
         self.assertEqual(
             ids,
             [
-                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0),
-                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1),
-                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0),
-                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 1),
+                de.make_task_id(
+                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+                    "validate skills",
+                ),
+                de.make_task_id(
+                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1,
+                    "audit systems",
+                ),
+                de.make_task_id(
+                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0,
+                    "package zip",
+                ),
+                de.make_task_id(
+                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 1,
+                    "bundle distribution",
+                ),
             ],
         )
         self.assertEqual(len(set(ids)), 4)
@@ -1030,11 +1064,17 @@ class BuildTasksTests(BuildTasksMixin):
         # Each side starts its per-label index at 0 (the ids differ by label).
         self.assertEqual(
             positives[0].id,
-            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0),
+            de.make_task_id(
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+                "validate skills",
+            ),
         )
         self.assertEqual(
             negatives[0].id,
-            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0),
+            de.make_task_id(
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0,
+                "package zip",
+            ),
         )
 
     def test_cards_are_sibling_capabilities_name_sorted(self) -> None:
@@ -1150,6 +1190,35 @@ class EmitTasksTests(EmitterMixin):
         with open(a, "r", encoding="utf-8") as fa, open(b, "r", encoding="utf-8") as fb:
             self.assertEqual(fa.read(), fb.read())
 
+    def test_emit_order_does_not_group_positives_then_negatives(self) -> None:
+        # should-fix [claude]: tasks are serialized in id order, not build order.
+        # Build order emits all positives then all negatives with identical
+        # cards, leaking the label boundary; id-sorted order interleaves them.
+        corpus_path = self._valid_corpus()
+        out = os.path.join(self.root, "out.tasks.json")
+        de.emit_tasks([corpus_path], self.candidates, out)
+        emitted_ids = [task["id"] for task in self._read(out)["tasks"]]
+        # The serialized order is exactly the task-id sort (the fix itself).
+        self.assertEqual(emitted_ids, sorted(emitted_ids))
+        # Recover each emitted id's withheld gold label via build_tasks, which
+        # retains it, to prove the labels are interleaved rather than grouped.
+        loaded, _ = de.load_corpus(corpus_path)
+        tasks, _ = de.build_tasks([loaded], self.candidates)
+        label_by_id = {task.id: task.label for task in tasks}
+        labels = [label_by_id[task_id] for task_id in emitted_ids]
+        self.assertIn(de.LABEL_POSITIVE, labels)
+        self.assertIn(de.LABEL_NEGATIVE, labels)
+        # Not the build-order grouping (all positives then all negatives).
+        grouped = [de.LABEL_POSITIVE] * 4 + [de.LABEL_NEGATIVE] * 4
+        self.assertNotEqual(labels, grouped)
+        # A negative precedes a later positive: the boundary is genuinely
+        # interleaved, so answering null for a trailing block cannot game it.
+        first_negative = labels.index(de.LABEL_NEGATIVE)
+        last_positive = max(
+            i for i, label in enumerate(labels) if label == de.LABEL_POSITIVE
+        )
+        self.assertLess(first_negative, last_positive)
+
     def test_malformed_corpus_is_a_fail_finding(self) -> None:
         bad = self._corpus_file({"target": "validation", "kind": "capability"})
         out = os.path.join(self.root, "out.tasks.json")
@@ -1251,6 +1320,7 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         self.assertEqual(len(predictions), 8)
         expected_id = de.make_task_id(
             "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validate skills",
         )
         self.assertIn(expected_id, predictions)
         valid = {"validation", "bundling", None}
@@ -1264,6 +1334,7 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         predictions = self._read(out)
         expected_id = de.make_task_id(
             "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validate skills",
         )
         # The positive "validate skills" must route to the validation card.
         self.assertEqual(predictions[expected_id], "validation")
@@ -1451,6 +1522,41 @@ class EvaluateWithPredictionsTests(EmitterMixin):
             [corpus], self.candidates, predictions, self._opts(),
         )
         self.assertTrue(any("matches no task" in e for e in report.errors))
+
+    def test_editing_a_prompt_makes_stale_predictions_detectable(self) -> None:
+        # should-fix [codex]: a predictions file produced against one corpus must
+        # not silently score against an edited corpus. Because the task id is
+        # bound to the prompt text, editing a prompt changes its id, so the old
+        # answer matches no task (unmatched WARN) and the new prompt has no
+        # prediction (missing FAIL) — the drift surfaces instead of joining old
+        # answers onto the new prompt.
+        before = self._corpus_obj()
+        before_tasks, _ = de.build_tasks([before], self.candidates)
+        # An agent's predictions captured against the original prompts.
+        predictions = {
+            t.id: ("validation" if t.label == de.LABEL_POSITIVE else None)
+            for t in before_tasks
+        }
+        # Edit one positive prompt; every other field is identical.
+        edited_positive = ("validate skills carefully",) + before.positive[1:]
+        after = de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY,
+            positive=edited_positive, negative=before.negative,
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+        after_tasks, _ = de.build_tasks([after], self.candidates)
+        # The edited prompt's id moved, so the captured ids are no longer a
+        # superset of the live task ids.
+        self.assertNotEqual(
+            {t.id for t in before_tasks}, {t.id for t in after_tasks},
+        )
+        report = de.evaluate_with_predictions(
+            [after], self.candidates, predictions, self._opts(),
+        )
+        # The now-orphaned old id matches no task (WARN), and the edited prompt's
+        # new id has no prediction (FAIL) — the staleness is loud, not silent.
+        self.assertTrue(any("matches no task" in e for e in report.errors))
+        self.assertTrue(any("missing prediction" in e for e in report.errors))
 
     def test_missing_target_still_fails_via_evaluate(self) -> None:
         corpus = de.Corpus(

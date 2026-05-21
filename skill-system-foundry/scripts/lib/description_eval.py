@@ -890,22 +890,29 @@ def corpus_slug(source_path: str) -> str:
 
 
 def make_task_id(
-    corpus: str, target: str, kind: str, label: str, index: int,
+    corpus: str, target: str, kind: str, label: str, index: int, prompt: str,
 ) -> str:
-    """Return an opaque, deterministic task id.
+    """Return an opaque, deterministic task id bound to the prompt's text.
 
     The id is a truncated SHA-256 of the corpus discriminator
-    (:func:`corpus_slug`), target, kind, label, and per-label index.  It is
-    *deterministic* — the emit and scoring phases hash identical inputs and so
-    agree on the join key — but *opaque*: it deliberately does not spell out the
-    target or the positive/negative label, so a host agent classifying a task
-    cannot read the gold answer off the id, which would make the evaluation
-    measure nothing.  Including *corpus* keeps ids distinct across corpus files
-    that cover the same ``(target, kind)`` (split corpora); a genuine input
-    collision (two files with the same basename covering the same unit) hashes
-    to the same id and is caught by :func:`duplicate_task_ids`.
+    (:func:`corpus_slug`), target, kind, label, per-label index, and the prompt
+    text itself.  It is *deterministic* — the emit and scoring phases hash
+    identical inputs and so agree on the join key — but *opaque*: it deliberately
+    does not spell out the target or the positive/negative label, so a host agent
+    classifying a task cannot read the gold answer off the id, which would make
+    the evaluation measure nothing.  Including *corpus* keeps ids distinct across
+    corpus files that cover the same ``(target, kind)`` (split corpora); a genuine
+    input collision (two files with the same basename covering the same unit)
+    hashes to the same id and is caught by :func:`duplicate_task_ids`.
+
+    Folding *prompt* into the digest binds the id to the prompt's content: if a
+    corpus's prompt text is edited (or moved to a different per-label index)
+    between ``--emit-tasks`` and ``--predictions``, its id changes, so a stale
+    predictions file no longer joins onto the new prompt — the drift surfaces
+    through the existing missing-/unmatched-id findings rather than scoring old
+    answers against new prompts silently.
     """
-    raw = "\x1f".join((corpus, target, kind, label, str(index)))
+    raw = "\x1f".join((corpus, target, kind, label, str(index), prompt))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -918,8 +925,10 @@ def build_tasks(
     candidate set through :func:`_candidate_set` (then name-sorted), so task
     ids and candidate cards are byte-identical to the heuristic scoring path.
     A corpus whose target is missing or ambiguous is skipped with a FAIL
-    finding mirroring :func:`evaluate`; the per-label prompt index keeps ids
-    stable across runs.
+    finding mirroring :func:`evaluate`; each task's id is the content-bound
+    digest of its corpus, target, kind, label, per-label index, and prompt text
+    (see :func:`make_task_id`), so ids stay stable across runs yet move when a
+    prompt is edited.
     """
     tasks: list[Task] = []
     findings: list[str] = []
@@ -954,7 +963,9 @@ def build_tasks(
             for index, prompt in enumerate(prompts):
                 tasks.append(
                     Task(
-                        id=make_task_id(slug, corpus.target, corpus.kind, label, index),
+                        id=make_task_id(
+                            slug, corpus.target, corpus.kind, label, index, prompt,
+                        ),
                         target=corpus.target, kind=corpus.kind, label=label,
                         prompt=prompt, cards=cards,
                     )
@@ -1067,6 +1078,15 @@ def emit_tasks(
     through :func:`to_json_output`.  Re-emitting the same corpora and units
     produces a byte-identical file.  An unwritable path is a FAIL finding, not
     an exception.
+
+    Tasks are serialized in task-id order, *not* in build order.  Build order
+    emits all of a corpus's positive prompts before all its negatives with
+    identical cards on every task, so the contiguous label-grouped run would let
+    a host agent reconstruct the positive/negative boundary and answer ``null``
+    for the trailing block to score precision 1.0 without classifying — defeating
+    the gold-label withholding the opaque id exists to enforce.  Sorting by the
+    content-dependent id (see :func:`make_task_id`) interleaves the labels while
+    staying byte-deterministic.
     """
     outcome = EmitOutcome(path=to_posix(out_path))
     corpora, load_findings = _load_corpora(corpus_paths)
@@ -1086,7 +1106,9 @@ def emit_tasks(
         "tool": "evaluate_descriptions",
         "mode": "emit-tasks",
         "instructions": TASK_INSTRUCTIONS,
-        "tasks": [_task_to_dict(task) for task in tasks],
+        "tasks": [
+            _task_to_dict(task) for task in sorted(tasks, key=lambda t: t.id)
+        ],
     }
     collision = _output_collides_with_corpus(out_path, corpus_paths)
     if collision is not None:
