@@ -38,10 +38,11 @@ Agent-delegated mode
 The same corpus and scoring also drive a key-free deep check where the host
 agent classifies instead of the Jaccard heuristic.  ``emit_tasks`` writes one
 task per prompt as ``{id, prompt, cards}`` — the gold ``target`` / ``kind`` /
-``label`` are withheld so the agent must classify, ``id`` is an opaque,
-content-bound digest (see :func:`make_task_id`) so the answer cannot be read off
-the id, and tasks are emitted ``id``-sorted so their ordering does not leak the
-positive/negative boundary.  The agent writes ``{id: name | None}``;
+``label`` are withheld so the agent must classify, ``id`` is an opaque digest
+bound to the prompt *and* the candidate cards (see :func:`make_task_id`) so the
+answer cannot be read off the id and a predictions file made against an edited
+description/prompt no longer joins, and tasks are emitted ``id``-sorted so their
+ordering does not leak the positive/negative boundary.  The agent writes ``{id: name | None}``;
 :func:`scored_from_predictions` joins on ``id`` and feeds the same
 :func:`aggregate` / threshold gate as the heuristic.  Before writing, a single
 gate refuses (no file) when any FAIL finding is present — a malformed corpus, a
@@ -907,36 +908,55 @@ def corpus_slug(source_path: str) -> str:
     return os.path.splitext(os.path.basename(source_path))[0]
 
 
+def _cards_fingerprint(cards: tuple[Card, ...]) -> str:
+    """Return a digest of the candidate cards' names and descriptions.
+
+    Folded into the task id so the id is bound to the exact card set the agent
+    classified against: editing a unit's description, or adding/removing a
+    sibling, changes this fingerprint — hence the id — so a predictions file
+    made against the old cards surfaces as missing-/unmatched-id findings
+    instead of being scored against the current (changed) cards.  ``cards`` is
+    already name-sorted by :func:`build_tasks`, so the digest is deterministic.
+    """
+    raw = "\x1e".join(f"{card.name}\x1f{card.description}" for card in cards)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def make_task_id(
-    corpus: str, target: str, kind: str, label: str, index: int, prompt: str,
+    corpus: str, target: str, kind: str, label: str, index: int,
+    prompt: str, cards_fingerprint: str,
 ) -> str:
-    """Return an opaque, deterministic task id bound to the prompt's text.
+    """Return an opaque, deterministic task id bound to the prompt and cards.
 
     The id is a truncated SHA-256 of the corpus discriminator
-    (:func:`corpus_slug`), target, kind, label, per-label index, and the prompt
-    text itself.  It is *deterministic* — the emit and scoring phases hash
-    identical inputs and so agree on the join key — but *opaque*: it deliberately
-    does not spell out the target or the positive/negative label, so a host agent
-    classifying a task cannot read the gold answer off the id, which would make
-    the evaluation measure nothing.  Including *corpus* keeps ids distinct across
-    corpus files that cover the same ``(target, kind)`` (split corpora); a genuine
-    input collision (two files with the same basename covering the same unit)
-    hashes to the same id and is caught by :func:`duplicate_task_ids`.
+    (:func:`corpus_slug`), target, kind, label, per-label index, the prompt
+    text, and a fingerprint of the candidate cards (:func:`_cards_fingerprint`).
+    It is *deterministic* — the emit and scoring phases hash identical inputs and
+    so agree on the join key — but *opaque*: it deliberately does not spell out
+    the target or the positive/negative label, so a host agent classifying a
+    task cannot read the gold answer off the id, which would make the evaluation
+    measure nothing.  Including *corpus* keeps ids distinct across corpus files
+    that cover the same ``(target, kind)`` (split corpora); a genuine input
+    collision (two files with the same basename covering the same unit) hashes
+    to the same id and is caught by :func:`duplicate_task_ids`.
 
-    Folding *prompt* into the digest binds the id to the prompt's content: if a
-    corpus's prompt text is edited (or moved to a different per-label index)
-    between ``--emit-tasks`` and ``--predictions``, its id changes, so a stale
-    predictions file no longer joins onto the new prompt — the drift surfaces
-    through the existing missing-/unmatched-id findings rather than scoring old
-    answers against new prompts silently.
+    Folding *prompt* and *cards_fingerprint* into the digest binds the id to
+    everything the agent classified against — the prompt text and the candidate
+    ``name + description`` cards.  Editing or reordering a prompt, editing a
+    unit's description, or changing the sibling candidate set between
+    ``--emit-tasks`` and ``--predictions`` therefore changes the id, so a stale
+    predictions file no longer joins onto the new task — the drift surfaces
+    through the missing-/unmatched-id findings rather than scoring answers made
+    against an older prompt or description set silently.
     """
     # ``index`` is kept alongside ``prompt`` deliberately: it binds the id to a
     # prompt's position, so reordering a corpus's prompts (not only editing their
-    # text) changes the ids and forces a fresh classify — a corpus whose prompt
-    # set moved is treated as changed.  ``prompt`` alone would already be unique
-    # within a corpus (the loader forbids duplicate prompts per side and across
-    # sides); ``index`` adds the position binding on top.
-    raw = "\x1f".join((corpus, target, kind, label, str(index), prompt))
+    # text) changes the ids and forces a fresh classify.  ``prompt`` alone would
+    # already be unique within a corpus (the loader forbids duplicate prompts per
+    # side and across sides); ``index`` adds the position binding on top.
+    raw = "\x1f".join(
+        (corpus, target, kind, label, str(index), prompt, cards_fingerprint)
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -980,6 +1000,7 @@ def build_tasks(
             )
         )
         slug = corpus_slug(corpus.source_path)
+        card_fingerprint = _cards_fingerprint(cards)
         sides = (
             (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
         )
@@ -988,7 +1009,8 @@ def build_tasks(
                 tasks.append(
                     Task(
                         id=make_task_id(
-                            slug, corpus.target, corpus.kind, label, index, prompt,
+                            slug, corpus.target, corpus.kind, label, index,
+                            prompt, card_fingerprint,
                         ),
                         target=corpus.target, kind=corpus.kind, label=label,
                         prompt=prompt, cards=cards,

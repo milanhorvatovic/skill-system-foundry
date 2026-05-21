@@ -952,14 +952,14 @@ class MakeTaskIdTests(unittest.TestCase):
     def test_id_is_opaque_deterministic_and_hides_gold(self) -> None:
         task_id = de.make_task_id(
             "validation", "validation", de.KIND_CAPABILITY,
-            de.LABEL_POSITIVE, 0, "validate skills",
+            de.LABEL_POSITIVE, 0, "validate skills", "fp",
         )
         # Deterministic: identical inputs hash to the same id.
         self.assertEqual(
             task_id,
             de.make_task_id(
                 "validation", "validation", de.KIND_CAPABILITY,
-                de.LABEL_POSITIVE, 0, "validate skills",
+                de.LABEL_POSITIVE, 0, "validate skills", "fp",
             ),
         )
         # Opaque: a fixed-width hex digest leaking neither target nor label.
@@ -969,34 +969,51 @@ class MakeTaskIdTests(unittest.TestCase):
 
     def test_distinct_inputs_yield_distinct_ids(self) -> None:
         base = de.make_task_id(
-            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p",
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p", "fp",
         )
         self.assertNotEqual(
             base,
             de.make_task_id(
-                "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0, "p",
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0, "p", "fp",
             ),
         )
         self.assertNotEqual(
             base,
             de.make_task_id(
-                "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1, "p",
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1, "p", "fp",
             ),
         )
 
     def test_editing_prompt_changes_id(self) -> None:
-        # should-fix [codex]: the id is bound to the prompt's text, so an edit
-        # to the prompt (with every other field held fixed) yields a different
-        # id — a stale predictions file then fails to join onto the new prompt.
+        # The id is bound to the prompt's text, so an edit to the prompt (with
+        # every other field held fixed) yields a different id.
         before = de.make_task_id(
             "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
-            "validate skills",
+            "validate skills", "fp",
         )
         after = de.make_task_id(
             "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
-            "validate skills carefully",
+            "validate skills carefully", "fp",
         )
         self.assertNotEqual(before, after)
+
+    def test_changing_cards_fingerprint_changes_id(self) -> None:
+        # The id is bound to the candidate cards, so a different card
+        # fingerprint (an edited description or a changed sibling set) yields a
+        # different id even when prompt and all other fields are identical.
+        before = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p", "fp1",
+        )
+        after = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p", "fp2",
+        )
+        self.assertNotEqual(before, after)
+
+    def test_cards_fingerprint_tracks_name_and_description(self) -> None:
+        base = de._cards_fingerprint((de.Card("v", "desc one"),))
+        self.assertEqual(base, de._cards_fingerprint((de.Card("v", "desc one"),)))
+        self.assertNotEqual(base, de._cards_fingerprint((de.Card("v", "desc two"),)))
+        self.assertNotEqual(base, de._cards_fingerprint((de.Card("w", "desc one"),)))
 
     def test_corpus_slug_is_basename_stem(self) -> None:
         self.assertEqual(
@@ -1028,54 +1045,48 @@ class BuildTasksMixin(unittest.TestCase):
 
 
 class BuildTasksTests(BuildTasksMixin):
-    def test_one_task_per_prompt_with_canonical_ids(self) -> None:
+    def test_one_task_per_prompt_with_unique_deterministic_ids(self) -> None:
+        # build_tasks integrates make_task_id; assert the observable contract
+        # (count, opacity, uniqueness, determinism) rather than re-deriving the
+        # exact digest — the id recipe itself is covered by MakeTaskIdTests.
         tasks, findings = de.build_tasks([self._corpus()], self.candidates)
         self.assertEqual(findings, [])
         self.assertEqual(len(tasks), 4)  # 2 positive + 2 negative
         ids = [t.id for t in tasks]
-        # ids are the opaque make_task_id digests for slug "c" (from "/c.json").
-        self.assertEqual(
-            ids,
-            [
-                de.make_task_id(
-                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
-                    "validate skills",
-                ),
-                de.make_task_id(
-                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1,
-                    "audit systems",
-                ),
-                de.make_task_id(
-                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0,
-                    "package zip",
-                ),
-                de.make_task_id(
-                    "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 1,
-                    "bundle distribution",
-                ),
-            ],
-        )
         self.assertEqual(len(set(ids)), 4)
+        for task_id in ids:
+            self.assertRegex(task_id, r"^[0-9a-f]{16}$")
+        # Deterministic: rebuilding the same corpus yields identical ids.
+        again, _ = de.build_tasks([self._corpus()], self.candidates)
+        self.assertEqual([t.id for t in again], ids)
 
     def test_index_resets_per_label(self) -> None:
         tasks, _ = de.build_tasks([self._corpus()], self.candidates)
         positives = [t for t in tasks if t.label == de.LABEL_POSITIVE]
         negatives = [t for t in tasks if t.label == de.LABEL_NEGATIVE]
-        # Each side starts its per-label index at 0 (the ids differ by label).
+        # Two prompts per side, all four ids distinct (label + per-label index
+        # both feed the digest).
+        self.assertEqual(len(positives), 2)
+        self.assertEqual(len(negatives), 2)
         self.assertEqual(
-            positives[0].id,
-            de.make_task_id(
-                "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
-                "validate skills",
-            ),
+            len({t.id for t in positives} | {t.id for t in negatives}), 4,
         )
-        self.assertEqual(
-            negatives[0].id,
-            de.make_task_id(
-                "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0,
-                "package zip",
-            ),
-        )
+
+    def test_editing_a_card_description_changes_ids(self) -> None:
+        # The id is bound to the candidate cards: editing a unit's description
+        # changes every id in the corpus, so a predictions file made against the
+        # old description no longer joins (regression for the stale-cards gap).
+        before = {t.id for t in de.build_tasks([self._corpus()], self.candidates)[0]}
+        edited = [
+            de.Unit(
+                u.name, u.kind,
+                (u.description + " EXTRA") if u.name == "validation" else u.description,
+                u.path, u.parent,
+            )
+            for u in self.candidates
+        ]
+        after = {t.id for t in de.build_tasks([self._corpus()], edited)[0]}
+        self.assertEqual(len(before & after), 0)
 
     def test_cards_are_sibling_capabilities_name_sorted(self) -> None:
         tasks, _ = de.build_tasks([self._corpus()], self.candidates)
@@ -1325,6 +1336,11 @@ class EmitTasksTests(EmitterMixin):
 
 
 class EmitHeuristicPredictionsTests(EmitterMixin):
+    def _build_ids(self, corpus_path: str) -> list[de.Task]:
+        loaded, _findings = de.load_corpus(corpus_path)
+        tasks, _build_findings = de.build_tasks([loaded], self.candidates)
+        return tasks
+
     def test_writes_id_to_name_or_null_map(self) -> None:
         corpus = self._valid_corpus()
         out = os.path.join(self.root, "h.predictions.json")
@@ -1332,11 +1348,9 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         self.assertFalse(has_fail(outcome.findings))
         predictions = self._read(out)
         self.assertEqual(len(predictions), 8)
-        expected_id = de.make_task_id(
-            "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
-            "validate skills",
-        )
-        self.assertIn(expected_id, predictions)
+        # Keys are exactly the emitted task ids (derived from build_tasks, not
+        # reconstructed from the id recipe).
+        self.assertEqual({t.id for t in self._build_ids(corpus)}, set(predictions))
         valid = {"validation", "bundling", None}
         for value in predictions.values():
             self.assertIn(value, valid)
@@ -1346,12 +1360,12 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         out = os.path.join(self.root, "h.predictions.json")
         de.emit_heuristic_predictions([corpus], self.candidates, out)
         predictions = self._read(out)
-        expected_id = de.make_task_id(
-            "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
-            "validate skills",
+        vid = next(
+            t.id for t in self._build_ids(corpus)
+            if t.label == de.LABEL_POSITIVE and t.prompt == "validate skills"
         )
         # The positive "validate skills" must route to the validation card.
-        self.assertEqual(predictions[expected_id], "validation")
+        self.assertEqual(predictions[vid], "validation")
 
     def test_unwritable_path_is_a_fail_finding(self) -> None:
         corpus = self._valid_corpus()
