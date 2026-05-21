@@ -1328,6 +1328,14 @@ def evaluate_with_predictions(
     def scorer(
         corpus: Corpus, _candidate_set: list[Unit],
     ) -> tuple[list[ScoredQuery], list[str]]:
+        # ``_candidate_set`` (resolved by ``evaluate`` for its candidate_count)
+        # is intentionally ignored: predictions join by ``Task.id`` from the
+        # per-corpus tasks built above, keyed on the unique ``source_path``.
+        # That means the target is resolved twice per corpus (here via
+        # ``build_tasks`` and again in ``evaluate``'s loop), but both go through
+        # the same ``_matching_units`` / ``_candidate_set`` helpers, so the two
+        # resolutions cannot diverge — the redundancy is the cost of reusing
+        # ``evaluate``'s gate/report assembly unchanged.
         return scored_from_predictions(
             tasks_by_source.get(corpus.source_path, []), predictions
         )
