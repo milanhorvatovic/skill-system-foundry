@@ -1202,9 +1202,9 @@ class EmitTasksTests(EmitterMixin):
             self.assertEqual(fa.read(), fb.read())
 
     def test_emit_order_does_not_group_positives_then_negatives(self) -> None:
-        # should-fix [claude]: tasks are serialized in id order, not build order.
-        # Build order emits all positives then all negatives with identical
-        # cards, leaking the label boundary; id-sorted order interleaves them.
+        # Regression: tasks are serialized in id order, not build order. Build
+        # order emits all positives then all negatives with identical cards,
+        # leaking the label boundary; id-sorted order interleaves them.
         corpus_path = self._valid_corpus()
         out = os.path.join(self.root, "out.tasks.json")
         de.emit_tasks([corpus_path], self.candidates, out)
@@ -1284,18 +1284,15 @@ class EmitTasksTests(EmitterMixin):
         self.assertEqual(self._read(corpus), before)
 
     @unittest.skipIf(sys.platform == "win32", "POSIX file permissions")
-    def test_emitted_artifact_uses_umask_default_perms(self) -> None:
-        # The atomic write goes through mkstemp (0600); the artifact's mode must
-        # be reset to the umask-default a plain open() would have produced, not
-        # left owner-only.
+    def test_emitted_artifact_is_owner_only(self) -> None:
+        # The atomic write goes through mkstemp, so artifacts are 0600
+        # (owner-only) — ephemeral run artifacts kept at the secure default.
         import stat
 
         corpus = self._valid_corpus()
         out = os.path.join(self.root, "out.tasks.json")
         de.emit_tasks([corpus], self.candidates, out)
-        current = os.umask(0o022)
-        os.umask(current)
-        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o666 & ~current)
+        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
 
     def _colliding_corpora(self, *subdirs: str) -> list[str]:
         data = {
@@ -1519,6 +1516,15 @@ class LoadPredictionsTests(unittest.TestCase):
         self.assertTrue(has_fail(findings))
         self.assertTrue(any("string or null" in f for f in findings))
 
+    def test_duplicate_ids_fail(self) -> None:
+        # json silently keeps the last value for a repeated key; the loader must
+        # detect and FAIL instead of dropping an answer.
+        predictions, findings = de.load_predictions(
+            self._write('{"a": "x", "a": "y", "b": null}')
+        )
+        self.assertIsNone(predictions)
+        self.assertTrue(any("duplicate prediction id 'a'" in f for f in findings))
+
 
 class ScoredFromPredictionsTests(unittest.TestCase):
     def _task(self, task_id: str, label: str, prompt: str = "p") -> de.Task:
@@ -1601,8 +1607,8 @@ class EvaluateWithPredictionsTests(EmitterMixin):
         self.assertTrue(any("matches no task" in e for e in report.errors))
 
     def test_editing_a_prompt_makes_stale_predictions_detectable(self) -> None:
-        # should-fix [codex]: a predictions file produced against one corpus must
-        # not silently score against an edited corpus. Because the task id is
+        # Regression: a predictions file produced against one corpus must not
+        # silently score against an edited corpus. Because the task id is
         # bound to the prompt text, editing a prompt changes its id, so the old
         # answer matches no task (unmatched WARN) and the new prompt has no
         # prediction (missing FAIL) — the drift surfaces instead of joining old

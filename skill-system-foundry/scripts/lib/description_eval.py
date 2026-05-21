@@ -42,7 +42,8 @@ task per prompt as ``{id, prompt, cards}`` — the gold ``target`` / ``kind`` /
 bound to the prompt *and* the candidate cards (see :func:`make_task_id`) so the
 answer cannot be read off the id and a predictions file made against an edited
 description/prompt no longer joins, and tasks are emitted ``id``-sorted so their
-ordering does not leak the positive/negative boundary.  The agent writes ``{id: name | None}``;
+ordering does not leak the positive/negative boundary.  The agent writes the
+JSON file ``{id: name | null}``;
 :func:`scored_from_predictions` joins on ``id`` and feeds the same
 :func:`aggregate` / threshold gate as the heuristic.  Before writing, a single
 gate refuses (no file) when any FAIL finding is present — a malformed corpus, a
@@ -1071,10 +1072,10 @@ def _write_json_file(path: str, text: str) -> None:
     so callers can point the artifact at a fresh location without a separate
     mkdir.  Any OSError propagates to the caller (which records it as a FAIL).
 
-    ``mkstemp`` creates the temp file ``0600``; the mode is reset to the
-    umask-default (what a plain ``open`` would have produced) so the atomic
-    write does not silently make artifacts owner-only — they match every other
-    file the tools write.
+    ``mkstemp`` creates the file ``0600`` (owner-only) and that mode is kept:
+    these are ephemeral, single-user run artifacts, so owner-only is an
+    appropriate default and avoids momentarily perturbing the process umask to
+    derive a wider mode.
     """
     parent = os.path.dirname(path)
     if parent:
@@ -1083,9 +1084,6 @@ def _write_json_file(path: str, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text + "\n")
-        umask = os.umask(0o022)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except OSError:
         try:
@@ -1269,9 +1267,11 @@ def load_predictions(path: str) -> tuple[dict[str, str | None] | None, list[str]
 
     Returns ``(predictions, findings)``.  ``predictions`` is ``None`` when a
     FAIL fired: the file is unreadable, the JSON is invalid, the root is not an
-    object, or a value is neither a string nor ``null``.  Value-level checks
-    against the candidate set (unknown name, missing id) happen later in
-    :func:`scored_from_predictions`, which knows each task's cards.
+    object, a value is neither a string nor ``null``, or the file repeats a task
+    id (``json`` would silently keep only the last, dropping an answer).
+    Value-level checks against the candidate set (unknown name, missing id)
+    happen later in :func:`scored_from_predictions`, which knows each task's
+    cards.
     """
     findings: list[str] = []
     label = to_posix(path)
@@ -1285,14 +1285,29 @@ def load_predictions(path: str) -> tuple[dict[str, str | None] | None, list[str]
     except (OSError, UnicodeError) as exc:
         fail(f"cannot read predictions file ({format_exception(exc)})")
         return None, findings
+    # A predictions file is machine-authored JSON; duplicate object keys (which
+    # json silently collapses to the last value) would let a repeated task id
+    # drop an answer and still score, so detect them via object_pairs_hook.
+    duplicate_ids: list[str] = []
+
+    def _detect_duplicate_ids(pairs: list[tuple[str, object]]) -> dict:
+        seen: set[str] = set()
+        for key, _value in pairs:
+            if key in seen:
+                duplicate_ids.append(key)
+            seen.add(key)
+        return dict(pairs)
+
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, object_pairs_hook=_detect_duplicate_ids)
     except (ValueError, UnicodeError) as exc:
         fail(f"invalid JSON ({exc.__class__.__name__}: {exc})")
         return None, findings
     if not isinstance(data, dict):
         fail("top-level JSON value must be an object mapping id to name or null")
         return None, findings
+    for dup in sorted(set(duplicate_ids)):
+        fail(f"duplicate prediction id '{dup}' — the file repeats a task id")
 
     predictions: dict[str, str | None] = {}
     bad_value = False
@@ -1304,7 +1319,7 @@ def load_predictions(path: str) -> tuple[dict[str, str | None] | None, list[str]
             bad_value = True
             continue
         predictions[key] = value
-    if bad_value:
+    if bad_value or duplicate_ids:
         return None, findings
     return predictions, findings
 
