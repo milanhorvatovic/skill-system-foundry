@@ -876,15 +876,33 @@ TASK_INSTRUCTIONS = (
 )
 
 
-def make_task_id(target: str, kind: str, label: str, index: int) -> str:
-    """Return the canonical task id ``f"{target}:{kind}:{label}:{index}"``.
+def corpus_slug(source_path: str) -> str:
+    """Return a corpus file's basename without extension.
 
-    Unit names are kebab-case (no colons), so ``:`` is an unambiguous
-    delimiter.  This is the single place the id is produced; the scoring path
-    reads it back from :attr:`Task.id` rather than reconstructing it, so the
-    two phases cannot disagree on the join key.
+    A stable, portable, hand-friendly per-corpus discriminator for task ids: it
+    depends on the committed filename, not the absolute path, so it is identical
+    across checkouts and deterministic across runs.  Two corpus files covering
+    the same ``(target, kind)`` therefore yield distinct ids as long as their
+    filenames differ; an actual basename collision is caught by
+    :func:`duplicate_task_ids`.
     """
-    return f"{target}:{kind}:{label}:{index}"
+    return os.path.splitext(os.path.basename(source_path))[0]
+
+
+def make_task_id(
+    corpus: str, target: str, kind: str, label: str, index: int,
+) -> str:
+    """Return the canonical id ``f"{corpus}:{target}:{kind}:{label}:{index}"``.
+
+    *corpus* is the per-corpus discriminator from :func:`corpus_slug`; it keeps
+    ids unique across corpus files that cover the same ``(target, kind)`` (split
+    or duplicate corpora), which a target-only id could not.  Unit names and
+    corpus slugs carry no colons, so ``:`` is an unambiguous delimiter.  This is
+    the single place the id is produced; the scoring path reads it back from
+    :attr:`Task.id` rather than reconstructing it, so the two phases cannot
+    disagree on the join key.
+    """
+    return f"{corpus}:{target}:{kind}:{label}:{index}"
 
 
 def build_tasks(
@@ -924,6 +942,7 @@ def build_tasks(
                 _candidate_set(matches[0], candidates), key=lambda unit: unit.name
             )
         )
+        slug = corpus_slug(corpus.source_path)
         sides = (
             (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
         )
@@ -931,12 +950,29 @@ def build_tasks(
             for index, prompt in enumerate(prompts):
                 tasks.append(
                     Task(
-                        id=make_task_id(corpus.target, corpus.kind, label, index),
+                        id=make_task_id(slug, corpus.target, corpus.kind, label, index),
                         target=corpus.target, kind=corpus.kind, label=label,
                         prompt=prompt, cards=cards,
                     )
                 )
     return tasks, findings
+
+
+def duplicate_task_ids(tasks: list[Task]) -> list[str]:
+    """FAIL for any task id emitted more than once.
+
+    A duplicate id means two corpus files produced colliding ids — e.g. two
+    files whose basenames match while covering the same ``(target, kind)``.  The
+    predictions file and the heuristic-prediction file are JSON objects keyed by
+    id, so they cannot hold a distinct value per colliding task; surfacing the
+    collision as a FAIL prevents scoring from silently overwriting.
+    """
+    counts = Counter(task.id for task in tasks)
+    return [
+        f"{LEVEL_FAIL}: [foundry] duplicate task id '{task_id}' — two corpora "
+        f"produced colliding ids; give the corpus files distinct names"
+        for task_id, count in sorted(counts.items()) if count > 1
+    ]
 
 
 # --- task / heuristic-prediction emitters -----------------------------------
@@ -1009,6 +1045,7 @@ def emit_tasks(
     outcome.findings.extend(load_findings)
     tasks, build_findings = build_tasks(corpora, candidates)
     outcome.findings.extend(build_findings)
+    outcome.findings.extend(duplicate_task_ids(tasks))
     outcome.corpora_count = len(corpora)
     outcome.task_count = len(tasks)
     payload = {
@@ -1043,6 +1080,7 @@ def emit_heuristic_predictions(
     outcome.findings.extend(load_findings)
     tasks, build_findings = build_tasks(corpora, candidates)
     outcome.findings.extend(build_findings)
+    outcome.findings.extend(duplicate_task_ids(tasks))
     outcome.corpora_count = len(corpora)
     outcome.task_count = len(tasks)
     predictions: dict[str, str | None] = {}
@@ -1168,29 +1206,36 @@ def evaluate_with_predictions(
 ) -> EvalReport:
     """Score *predictions* against the corpora through the shared evaluate gate.
 
-    Builds the task list once (the canonical id universe), WARNs on stale
-    prediction ids, then runs :func:`evaluate` with a scorer that feeds each
-    target's tasks to :func:`scored_from_predictions`.  Unit matching, the
-    threshold gate, pairwise confusion, and the report shape are reused from
-    the heuristic path unchanged.  Not-found / ambiguous target FAILs come from
-    :func:`evaluate`, so the tasks builder's own copies are intentionally
-    dropped to avoid double-reporting.
+    Builds each corpus's tasks once, keyed by the corpus's unique
+    ``source_path`` (not by ``(target, kind)``, which two corpus files can
+    share), then runs :func:`evaluate` with a scorer that feeds exactly that
+    corpus's tasks to :func:`scored_from_predictions`.  Each corpus is therefore
+    scored on its own prompts — parity with the heuristic path — and split or
+    duplicate corpora for the same unit cannot cross-contaminate.  Unit
+    matching, the threshold gate, pairwise confusion, and the report shape are
+    reused unchanged; not-found / ambiguous target FAILs come from
+    :func:`evaluate`, so the tasks builder's own copies are dropped to avoid
+    double-reporting.  Colliding ids across corpora surface as a FAIL via
+    :func:`duplicate_task_ids`, and prediction ids matching no task as a WARN.
     """
-    tasks, _build_findings = build_tasks(corpora, candidates)
-    tasks_by_key: dict[tuple[str, str], list[Task]] = {}
-    for task in tasks:
-        tasks_by_key.setdefault((task.target, task.kind), []).append(task)
+    tasks_by_source: dict[str, list[Task]] = {}
+    all_tasks: list[Task] = []
+    for corpus in corpora:
+        corpus_tasks, _build_findings = build_tasks([corpus], candidates)
+        tasks_by_source[corpus.source_path] = corpus_tasks
+        all_tasks.extend(corpus_tasks)
 
     def scorer(
         corpus: Corpus, _candidate_set: list[Unit],
     ) -> tuple[list[ScoredQuery], list[str]]:
         return scored_from_predictions(
-            tasks_by_key.get((corpus.target, corpus.kind), []), predictions
+            tasks_by_source.get(corpus.source_path, []), predictions
         )
 
     report = evaluate(corpora, candidates, opts, scorer=scorer)
     report.errors = (
-        unmatched_prediction_ids({task.id for task in tasks}, predictions)
+        duplicate_task_ids(all_tasks)
+        + unmatched_prediction_ids({task.id for task in all_tasks}, predictions)
         + report.errors
     )
     return report

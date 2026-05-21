@@ -947,11 +947,19 @@ class BackfillCorpusHashesTests(unittest.TestCase):
 
 
 class MakeTaskIdTests(unittest.TestCase):
-    def test_format(self) -> None:
+    def test_format_includes_corpus_discriminator(self) -> None:
         self.assertEqual(
-            de.make_task_id("validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 3),
-            "validation:capability:positive:3",
+            de.make_task_id(
+                "skill", "skill-system-foundry", de.KIND_SKILL, de.LABEL_POSITIVE, 3,
+            ),
+            "skill:skill-system-foundry:skill:positive:3",
         )
+
+    def test_corpus_slug_is_basename_stem(self) -> None:
+        self.assertEqual(
+            de.corpus_slug("/x/skill-corpus/validation.json"), "validation",
+        )
+        self.assertEqual(de.corpus_slug("skill.json"), "skill")
 
 
 class BuildTasksMixin(unittest.TestCase):
@@ -982,13 +990,14 @@ class BuildTasksTests(BuildTasksMixin):
         self.assertEqual(findings, [])
         self.assertEqual(len(tasks), 4)  # 2 positive + 2 negative
         ids = [t.id for t in tasks]
+        # The corpus source_path "/c.json" contributes the slug "c".
         self.assertEqual(
             ids,
             [
-                "validation:capability:positive:0",
-                "validation:capability:positive:1",
-                "validation:capability:negative:0",
-                "validation:capability:negative:1",
+                "c:validation:capability:positive:0",
+                "c:validation:capability:positive:1",
+                "c:validation:capability:negative:0",
+                "c:validation:capability:negative:1",
             ],
         )
 
@@ -1095,7 +1104,8 @@ class EmitTasksTests(EmitterMixin):
         self.assertIn("instructions", payload)
         self.assertEqual(len(payload["tasks"]), 8)
         first = payload["tasks"][0]
-        self.assertEqual(first["id"], "validation:capability:positive:0")
+        # The corpus file validation.json contributes the slug "validation".
+        self.assertEqual(first["id"], "validation:validation:capability:positive:0")
         self.assertEqual([c["name"] for c in first["cards"]], ["bundling", "validation"])
 
     def test_emit_is_byte_stable(self) -> None:
@@ -1123,6 +1133,33 @@ class EmitTasksTests(EmitterMixin):
         outcome = de.emit_tasks([corpus], self.candidates, out)
         self.assertTrue(any("cannot write task file" in f for f in outcome.findings))
 
+    def _colliding_corpora(self, *subdirs: str) -> list[str]:
+        data = {
+            "target": "validation", "kind": "capability",
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        }
+        paths = []
+        for sub in subdirs:
+            path = os.path.join(self.root, sub, "validation.json")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(data, indent=2) + "\n")
+            paths.append(path)
+        return paths
+
+    def test_colliding_basenames_emit_duplicate_id_fail(self) -> None:
+        paths = self._colliding_corpora("d1", "d2")
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks(paths, self.candidates, out)
+        self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
+
 
 class EmitHeuristicPredictionsTests(EmitterMixin):
     def test_writes_id_to_name_or_null_map(self) -> None:
@@ -1132,7 +1169,7 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         self.assertFalse(has_fail(outcome.findings))
         predictions = self._read(out)
         self.assertEqual(len(predictions), 8)
-        self.assertIn("validation:capability:positive:0", predictions)
+        self.assertIn("validation:validation:capability:positive:0", predictions)
         valid = {"validation", "bundling", None}
         for value in predictions.values():
             self.assertIn(value, valid)
@@ -1143,7 +1180,9 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         de.emit_heuristic_predictions([corpus], self.candidates, out)
         predictions = self._read(out)
         # The positive "validate skills" must route to the validation card.
-        self.assertEqual(predictions["validation:capability:positive:0"], "validation")
+        self.assertEqual(
+            predictions["validation:validation:capability:positive:0"], "validation",
+        )
 
     def test_unwritable_path_is_a_fail_finding(self) -> None:
         corpus = self._valid_corpus()
@@ -1164,6 +1203,29 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         outcome = de.emit_heuristic_predictions([corpus], self.candidates, "bare.json")
         self.assertFalse(has_fail(outcome.findings))
         self.assertTrue(os.path.isfile(os.path.join(self.root, "bare.json")))
+
+    def test_colliding_basenames_emit_duplicate_id_fail(self) -> None:
+        data = {
+            "target": "validation", "kind": "capability",
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        }
+        paths = []
+        for sub in ("e1", "e2"):
+            path = os.path.join(self.root, sub, "validation.json")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(data, indent=2) + "\n")
+            paths.append(path)
+        out = os.path.join(self.root, "h.predictions.json")
+        outcome = de.emit_heuristic_predictions(paths, self.candidates, out)
+        self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
 
 
 # ===================================================================
@@ -1321,6 +1383,80 @@ class EvaluateWithPredictionsTests(EmitterMixin):
         self.assertEqual(
             via_predictions.targets[0].metrics, via_heuristic.targets[0].metrics,
         )
+
+
+# ===================================================================
+# Multiple corpora for the same target (split / duplicate)
+# ===================================================================
+
+
+class MultiCorpusSameTargetTests(EmitterMixin):
+    """Two corpus files covering the same (target, kind): collision vs split."""
+
+    _POS_A = (
+        "validate skills", "audit systems", "validate consistency",
+        "skills consistency",
+    )
+    _POS_B = (
+        "validate references", "audit drift", "check consistency",
+        "verify skills",
+    )
+
+    def _corpus(self, path: str, positive: tuple[str, ...]) -> de.Corpus:
+        return de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY, positive=positive,
+            negative=(
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ),
+            min_precision=None, min_recall=None, source_path=path,
+        )
+
+    def test_colliding_basenames_flag_duplicate_ids(self) -> None:
+        # Same basename in different directories -> identical slug -> id collision.
+        tasks, _ = de.build_tasks(
+            [
+                self._corpus("/a/validation.json", self._POS_A),
+                self._corpus("/b/validation.json", self._POS_A),
+            ],
+            self.candidates,
+        )
+        fails = de.duplicate_task_ids(tasks)
+        self.assertTrue(fails)
+        self.assertTrue(all(f.startswith(de.LEVEL_FAIL) for f in fails))
+
+    def test_distinct_basenames_have_no_duplicate_ids(self) -> None:
+        tasks, _ = de.build_tasks(
+            [
+                self._corpus("/x/validation-1.json", self._POS_A),
+                self._corpus("/x/validation-2.json", self._POS_B),
+            ],
+            self.candidates,
+        )
+        self.assertEqual(de.duplicate_task_ids(tasks), [])
+
+    def test_split_corpora_scored_independently(self) -> None:
+        # Distinct filenames -> distinct ids -> each corpus scored on its own
+        # four positives, not cross-contaminated. Regression for the
+        # id-collision / (target, kind)-grouping bug.
+        corpora = [
+            self._corpus("/x/validation-1.json", self._POS_A),
+            self._corpus("/x/validation-2.json", self._POS_B),
+        ]
+        tasks, _ = de.build_tasks(corpora, self.candidates)
+        predictions = {
+            t.id: ("validation" if t.label == de.LABEL_POSITIVE else None)
+            for t in tasks
+        }
+        report = de.evaluate_with_predictions(
+            corpora, self.candidates, predictions,
+            {"min_precision": 0.85, "min_recall": 0.85},
+        )
+        self.assertEqual(len(report.targets), 2)
+        for result in report.targets:
+            self.assertEqual(result.metrics.tp, 4)
+            self.assertEqual(result.metrics.fn, 0)
+        self.assertEqual(de.duplicate_task_ids(tasks), [])
 
 
 if __name__ == "__main__":
