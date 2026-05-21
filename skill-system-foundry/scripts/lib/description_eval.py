@@ -892,17 +892,21 @@ def corpus_slug(source_path: str) -> str:
 def make_task_id(
     corpus: str, target: str, kind: str, label: str, index: int,
 ) -> str:
-    """Return the canonical id ``f"{corpus}:{target}:{kind}:{label}:{index}"``.
+    """Return an opaque, deterministic task id.
 
-    *corpus* is the per-corpus discriminator from :func:`corpus_slug`; it keeps
-    ids unique across corpus files that cover the same ``(target, kind)`` (split
-    or duplicate corpora), which a target-only id could not.  Unit names and
-    corpus slugs carry no colons, so ``:`` is an unambiguous delimiter.  This is
-    the single place the id is produced; the scoring path reads it back from
-    :attr:`Task.id` rather than reconstructing it, so the two phases cannot
-    disagree on the join key.
+    The id is a truncated SHA-256 of the corpus discriminator
+    (:func:`corpus_slug`), target, kind, label, and per-label index.  It is
+    *deterministic* — the emit and scoring phases hash identical inputs and so
+    agree on the join key — but *opaque*: it deliberately does not spell out the
+    target or the positive/negative label, so a host agent classifying a task
+    cannot read the gold answer off the id, which would make the evaluation
+    measure nothing.  Including *corpus* keeps ids distinct across corpus files
+    that cover the same ``(target, kind)`` (split corpora); a genuine input
+    collision (two files with the same basename covering the same unit) hashes
+    to the same id and is caught by :func:`duplicate_task_ids`.
     """
-    return f"{corpus}:{target}:{kind}:{label}:{index}"
+    raw = "\x1f".join((corpus, target, kind, label, str(index)))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def build_tasks(
@@ -1014,12 +1018,16 @@ def _write_json_file(path: str, text: str) -> None:
 
 
 def _task_to_dict(task: Task) -> dict:
-    """Serialize a :class:`Task` to the envelope's task shape."""
+    """Serialize a :class:`Task` to the agent-facing envelope shape.
+
+    Only the opaque ``id``, the ``prompt``, and the candidate ``cards`` are
+    emitted.  The gold ``target`` / ``kind`` / ``label`` stay on the in-memory
+    :class:`Task` for scoring but are withheld from the agent, so the prompt
+    must actually be classified against the cards rather than read off the
+    payload.
+    """
     return {
         "id": task.id,
-        "target": task.target,
-        "kind": task.kind,
-        "label": task.label,
         "prompt": task.prompt,
         "cards": [
             {"name": card.name, "description": card.description}

@@ -419,6 +419,9 @@ class AgentDelegatedCliTests(CliBaseMixin):
         env = self._read(out)
         self.assertEqual(env["mode"], "emit-tasks")
         self.assertIn("instructions", env)
+        # Tasks withhold the gold target / label from the agent.
+        for task in env["tasks"]:
+            self.assertEqual(set(task), {"id", "prompt", "cards"})
 
     def test_emit_tasks_human_output(self) -> None:
         self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
@@ -507,6 +510,15 @@ class AgentDelegatedCliTests(CliBaseMixin):
                 "--json",
             )
         )
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(stdout)["success"])
+
+    def test_empty_predictions_path_fails_not_silent_heuristic(self) -> None:
+        # An explicit but empty --predictions value (e.g. an unset shell var)
+        # must select predictions mode and fail to read, not fall through to a
+        # passing heuristic run.
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, stdout, _err = _run_main(self._argv("--predictions", "", "--json"))
         self.assertEqual(code, 1)
         self.assertFalse(json.loads(stdout)["success"])
 

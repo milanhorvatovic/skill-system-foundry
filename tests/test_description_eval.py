@@ -947,12 +947,31 @@ class BackfillCorpusHashesTests(unittest.TestCase):
 
 
 class MakeTaskIdTests(unittest.TestCase):
-    def test_format_includes_corpus_discriminator(self) -> None:
+    def test_id_is_opaque_deterministic_and_hides_gold(self) -> None:
+        task_id = de.make_task_id(
+            "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+        )
+        # Deterministic: identical inputs hash to the same id.
         self.assertEqual(
+            task_id,
             de.make_task_id(
-                "skill", "skill-system-foundry", de.KIND_SKILL, de.LABEL_POSITIVE, 3,
+                "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
             ),
-            "skill:skill-system-foundry:skill:positive:3",
+        )
+        # Opaque: a fixed-width hex digest leaking neither target nor label.
+        self.assertRegex(task_id, r"^[0-9a-f]{16}$")
+        self.assertNotIn("validation", task_id)
+        self.assertNotIn("positive", task_id)
+
+    def test_distinct_inputs_yield_distinct_ids(self) -> None:
+        base = de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0)
+        self.assertNotEqual(
+            base,
+            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0),
+        )
+        self.assertNotEqual(
+            base,
+            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1),
         )
 
     def test_corpus_slug_is_basename_stem(self) -> None:
@@ -990,23 +1009,31 @@ class BuildTasksTests(BuildTasksMixin):
         self.assertEqual(findings, [])
         self.assertEqual(len(tasks), 4)  # 2 positive + 2 negative
         ids = [t.id for t in tasks]
-        # The corpus source_path "/c.json" contributes the slug "c".
+        # ids are the opaque make_task_id digests for slug "c" (from "/c.json").
         self.assertEqual(
             ids,
             [
-                "c:validation:capability:positive:0",
-                "c:validation:capability:positive:1",
-                "c:validation:capability:negative:0",
-                "c:validation:capability:negative:1",
+                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0),
+                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1),
+                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0),
+                de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 1),
             ],
         )
+        self.assertEqual(len(set(ids)), 4)
 
     def test_index_resets_per_label(self) -> None:
         tasks, _ = de.build_tasks([self._corpus()], self.candidates)
         positives = [t for t in tasks if t.label == de.LABEL_POSITIVE]
         negatives = [t for t in tasks if t.label == de.LABEL_NEGATIVE]
-        self.assertEqual([t.id.rsplit(":", 1)[1] for t in positives], ["0", "1"])
-        self.assertEqual([t.id.rsplit(":", 1)[1] for t in negatives], ["0", "1"])
+        # Each side starts its per-label index at 0 (the ids differ by label).
+        self.assertEqual(
+            positives[0].id,
+            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0),
+        )
+        self.assertEqual(
+            negatives[0].id,
+            de.make_task_id("c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0),
+        )
 
     def test_cards_are_sibling_capabilities_name_sorted(self) -> None:
         tasks, _ = de.build_tasks([self._corpus()], self.candidates)
@@ -1104,9 +1131,13 @@ class EmitTasksTests(EmitterMixin):
         self.assertIn("instructions", payload)
         self.assertEqual(len(payload["tasks"]), 8)
         first = payload["tasks"][0]
-        # The corpus file validation.json contributes the slug "validation".
-        self.assertEqual(first["id"], "validation:validation:capability:positive:0")
+        self.assertRegex(first["id"], r"^[0-9a-f]{16}$")
         self.assertEqual([c["name"] for c in first["cards"]], ["bundling", "validation"])
+        # Gold fields are withheld so the agent must classify, not read the answer.
+        self.assertEqual(set(first), {"id", "prompt", "cards"})
+        for task in payload["tasks"]:
+            self.assertNotIn("target", task)
+            self.assertNotIn("label", task)
 
     def test_emit_is_byte_stable(self) -> None:
         corpus = self._valid_corpus()
@@ -1169,7 +1200,10 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         self.assertFalse(has_fail(outcome.findings))
         predictions = self._read(out)
         self.assertEqual(len(predictions), 8)
-        self.assertIn("validation:validation:capability:positive:0", predictions)
+        expected_id = de.make_task_id(
+            "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+        )
+        self.assertIn(expected_id, predictions)
         valid = {"validation", "bundling", None}
         for value in predictions.values():
             self.assertIn(value, valid)
@@ -1179,10 +1213,11 @@ class EmitHeuristicPredictionsTests(EmitterMixin):
         out = os.path.join(self.root, "h.predictions.json")
         de.emit_heuristic_predictions([corpus], self.candidates, out)
         predictions = self._read(out)
-        # The positive "validate skills" must route to the validation card.
-        self.assertEqual(
-            predictions["validation:validation:capability:positive:0"], "validation",
+        expected_id = de.make_task_id(
+            "validation", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
         )
+        # The positive "validate skills" must route to the validation card.
+        self.assertEqual(predictions[expected_id], "validation")
 
     def test_unwritable_path_is_a_fail_finding(self) -> None:
         corpus = self._valid_corpus()

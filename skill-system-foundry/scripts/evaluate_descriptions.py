@@ -323,14 +323,17 @@ def main() -> None:
 
     skill_set = args.skill_set or os.getcwd()
 
-    # The write / agent modes are mutually exclusive: each owns the run.
+    # The write / agent modes are mutually exclusive: each owns the run. Path
+    # modes are detected with `is not None`, not truthiness, so an explicit but
+    # empty value (e.g. `--predictions "$UNSET"`) still selects the mode and
+    # fails as an invalid path rather than silently falling through to scoring.
     active_modes = [
-        name for name, value in (
+        name for name, active in (
             ("--backfill-hash", args.backfill_hash),
-            ("--emit-tasks", args.emit_tasks),
-            ("--emit-heuristic-predictions", args.emit_heuristic_predictions),
-            ("--predictions", args.predictions),
-        ) if value
+            ("--emit-tasks", args.emit_tasks is not None),
+            ("--emit-heuristic-predictions", args.emit_heuristic_predictions is not None),
+            ("--predictions", args.predictions is not None),
+        ) if active
     ]
     if len(active_modes) > 1:
         _exit(f"{' and '.join(active_modes)} are mutually exclusive", json_mode)
@@ -344,14 +347,14 @@ def main() -> None:
 
     # Agent-delegated phase one: emit one classification task per prompt for the
     # host agent to fill. A write mode — no scoring.
-    if args.emit_tasks:
+    if args.emit_tasks is not None:
         outcome = emit_tasks(corpus_paths, discover_units(skill_set), args.emit_tasks)
         _emit_write_outcome(outcome, json_mode, "emit-tasks", "tasks")
         return
 
     # The heuristic's answers for the same task ids — a baseline to diff against
     # an agent predictions file. Also a write mode.
-    if args.emit_heuristic_predictions:
+    if args.emit_heuristic_predictions is not None:
         outcome = emit_heuristic_predictions(
             corpus_paths, discover_units(skill_set), args.emit_heuristic_predictions,
         )
@@ -385,7 +388,7 @@ def main() -> None:
     # Agent-delegated phase two: score an agent's predictions through the same
     # gate as the heuristic. A load FAIL leaves predictions None — surfaced via
     # findings on an empty report so --soft cannot mask it.
-    if args.predictions:
+    if args.predictions is not None:
         predictions, pred_findings = load_predictions(args.predictions)
         findings.extend(pred_findings)
         if predictions is None:
