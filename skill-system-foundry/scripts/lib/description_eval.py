@@ -62,7 +62,7 @@ from .constants import (
     LEVEL_WARN,
 )
 from .frontmatter import load_frontmatter
-from .reporting import format_exception, to_posix
+from .reporting import format_exception, to_json_output, to_posix
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -937,3 +937,129 @@ def build_tasks(
                     )
                 )
     return tasks, findings
+
+
+# --- task / heuristic-prediction emitters -----------------------------------
+
+
+@dataclass
+class EmitOutcome:
+    """Result of an ``--emit-tasks`` / ``--emit-heuristic-predictions`` write."""
+
+    path: str
+    task_count: int = 0
+    corpora_count: int = 0
+    findings: list[str] = field(default_factory=list)
+
+
+def _load_corpora(corpus_paths: list[str]) -> tuple[list[Corpus], list[str]]:
+    """Load every corpus path, collecting parsed corpora and load findings."""
+    corpora: list[Corpus] = []
+    findings: list[str] = []
+    for path in corpus_paths:
+        corpus, corpus_findings = load_corpus(path)
+        findings.extend(corpus_findings)
+        if corpus is not None:
+            corpora.append(corpus)
+    return corpora, findings
+
+
+def _write_json_file(path: str, text: str) -> None:
+    """Write *text* plus a trailing newline to *path* (LF), creating the dir.
+
+    The parent directory is created when *path* carries one, so callers can
+    point the artifact at a fresh location without a separate mkdir.
+    """
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text + "\n")
+
+
+def _task_to_dict(task: Task) -> dict:
+    """Serialize a :class:`Task` to the envelope's task shape."""
+    return {
+        "id": task.id,
+        "target": task.target,
+        "kind": task.kind,
+        "label": task.label,
+        "prompt": task.prompt,
+        "cards": [
+            {"name": card.name, "description": card.description}
+            for card in task.cards
+        ],
+    }
+
+
+def emit_tasks(
+    corpus_paths: list[str], candidates: list[Unit], out_path: str,
+) -> EmitOutcome:
+    """Walk the corpora and write the classification task envelope to *out_path*.
+
+    Loads each corpus (a malformed corpus is a FAIL finding and is skipped),
+    builds one task per prompt via :func:`build_tasks`, and serializes the
+    envelope deterministically (sorted keys, trailing newline, LF terminators)
+    through :func:`to_json_output`.  Re-emitting the same corpora and units
+    produces a byte-identical file.  An unwritable path is a FAIL finding, not
+    an exception.
+    """
+    outcome = EmitOutcome(path=to_posix(out_path))
+    corpora, load_findings = _load_corpora(corpus_paths)
+    outcome.findings.extend(load_findings)
+    tasks, build_findings = build_tasks(corpora, candidates)
+    outcome.findings.extend(build_findings)
+    outcome.corpora_count = len(corpora)
+    outcome.task_count = len(tasks)
+    payload = {
+        "tool": "evaluate_descriptions",
+        "mode": "emit-tasks",
+        "instructions": TASK_INSTRUCTIONS,
+        "tasks": [_task_to_dict(task) for task in tasks],
+    }
+    try:
+        _write_json_file(out_path, to_json_output(payload))
+    except OSError as exc:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: cannot write task file "
+            f"({format_exception(exc)})"
+        )
+    return outcome
+
+
+def emit_heuristic_predictions(
+    corpus_paths: list[str], candidates: list[Unit], out_path: str,
+) -> EmitOutcome:
+    """Write the heuristic's ``{id: name | null}`` answers for the emitted tasks.
+
+    Uses :func:`build_tasks` for ids (identical to :func:`emit_tasks`) and the
+    Jaccard heuristic for values, so the file diffs id-for-id against an agent
+    predictions file.  Each task's cards are scored through the same
+    :func:`score_heuristic` the heuristic mode uses, so feeding this file back
+    through ``--predictions`` reproduces heuristic-mode metrics exactly.
+    """
+    outcome = EmitOutcome(path=to_posix(out_path))
+    corpora, load_findings = _load_corpora(corpus_paths)
+    outcome.findings.extend(load_findings)
+    tasks, build_findings = build_tasks(corpora, candidates)
+    outcome.findings.extend(build_findings)
+    outcome.corpora_count = len(corpora)
+    outcome.task_count = len(tasks)
+    predictions: dict[str, str | None] = {}
+    for task in tasks:
+        card_units = [
+            Unit(name=card.name, kind=task.kind, description=card.description, path="")
+            for card in task.cards
+        ]
+        predictions[task.id] = score_heuristic(task.prompt, card_units)
+    try:
+        _write_json_file(
+            out_path,
+            json.dumps(predictions, indent=2, ensure_ascii=False, sort_keys=True),
+        )
+    except OSError as exc:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: cannot write predictions "
+            f"file ({format_exception(exc)})"
+        )
+    return outcome

@@ -1035,5 +1035,116 @@ class BuildTasksTests(BuildTasksMixin):
         self.assertTrue(any("ambiguous" in f for f in findings))
 
 
+# ===================================================================
+# Emitters: emit_tasks + emit_heuristic_predictions
+# ===================================================================
+
+
+class EmitterMixin(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+        self.candidates = [
+            de.Unit("foundry", de.KIND_SKILL, "Designs skill systems", "/S"),
+            de.Unit(
+                "validation", de.KIND_CAPABILITY,
+                "validate skills audit systems consistency", "/v", parent="foundry",
+            ),
+            de.Unit(
+                "bundling", de.KIND_CAPABILITY,
+                "package skill zip bundle distribution", "/b", parent="foundry",
+            ),
+        ]
+
+    def _corpus_file(self, data: dict, name: str = "validation.json") -> str:
+        path = os.path.join(self.root, name)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+        return path
+
+    def _valid_corpus(self) -> str:
+        return self._corpus_file({
+            "target": "validation", "kind": "capability",
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        })
+
+    def _read(self, path: str) -> dict:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+
+class EmitTasksTests(EmitterMixin):
+    def test_writes_envelope_with_tasks_and_instructions(self) -> None:
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks([corpus], self.candidates, out)
+        self.assertFalse(has_fail(outcome.findings))
+        self.assertEqual(outcome.task_count, 8)
+        self.assertEqual(outcome.corpora_count, 1)
+        payload = self._read(out)
+        self.assertEqual(payload["tool"], "evaluate_descriptions")
+        self.assertEqual(payload["mode"], "emit-tasks")
+        self.assertIn("instructions", payload)
+        self.assertEqual(len(payload["tasks"]), 8)
+        first = payload["tasks"][0]
+        self.assertEqual(first["id"], "validation:capability:positive:0")
+        self.assertEqual([c["name"] for c in first["cards"]], ["bundling", "validation"])
+
+    def test_emit_is_byte_stable(self) -> None:
+        corpus = self._valid_corpus()
+        a = os.path.join(self.root, "a.tasks.json")
+        b = os.path.join(self.root, "b.tasks.json")
+        de.emit_tasks([corpus], self.candidates, a)
+        de.emit_tasks([corpus], self.candidates, b)
+        with open(a, "r", encoding="utf-8") as fa, open(b, "r", encoding="utf-8") as fb:
+            self.assertEqual(fa.read(), fb.read())
+
+    def test_malformed_corpus_is_a_fail_finding(self) -> None:
+        bad = self._corpus_file({"target": "validation", "kind": "capability"})
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks([bad], self.candidates, out)
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.task_count, 0)
+
+    def test_unwritable_path_is_a_fail_finding(self) -> None:
+        corpus = self._valid_corpus()
+        blocker = os.path.join(self.root, "blocker")
+        with open(blocker, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("not a dir")
+        out = os.path.join(blocker, "sub", "out.tasks.json")
+        outcome = de.emit_tasks([corpus], self.candidates, out)
+        self.assertTrue(any("cannot write task file" in f for f in outcome.findings))
+
+
+class EmitHeuristicPredictionsTests(EmitterMixin):
+    def test_writes_id_to_name_or_null_map(self) -> None:
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "h.predictions.json")
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, out)
+        self.assertFalse(has_fail(outcome.findings))
+        predictions = self._read(out)
+        self.assertEqual(len(predictions), 8)
+        self.assertIn("validation:capability:positive:0", predictions)
+        valid = {"validation", "bundling", None}
+        for value in predictions.values():
+            self.assertIn(value, valid)
+
+    def test_values_match_score_heuristic(self) -> None:
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "h.predictions.json")
+        de.emit_heuristic_predictions([corpus], self.candidates, out)
+        predictions = self._read(out)
+        # The positive "validate skills" must route to the validation card.
+        self.assertEqual(predictions["validation:capability:positive:0"], "validation")
+
+
 if __name__ == "__main__":
     unittest.main()
