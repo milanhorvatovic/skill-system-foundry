@@ -1260,6 +1260,29 @@ class EmitTasksTests(EmitterMixin):
         outcome = de.emit_tasks([corpus], self.candidates, out)
         self.assertTrue(any("cannot write task file" in f for f in outcome.findings))
 
+    def test_write_to_directory_path_is_a_fail(self) -> None:
+        # Output path is an existing directory: mkstemp succeeds but os.replace
+        # fails, exercising the atomic-write cleanup-and-reraise path.
+        corpus = self._valid_corpus()
+        outdir = os.path.join(self.root, "outdir")
+        os.makedirs(outdir)
+        outcome = de.emit_tasks([corpus], self.candidates, outdir)
+        self.assertTrue(any("cannot write task file" in f for f in outcome.findings))
+
+    def test_collision_detected_via_samefile_not_just_string(self) -> None:
+        # A different path string that is the SAME file (a hardlink here; a
+        # different-case spelling on a case-insensitive filesystem in the wild)
+        # must be caught — a realpath string compare alone would miss it.
+        corpus = self._valid_corpus()
+        alias = os.path.join(self.root, "ALIAS.json")
+        os.link(corpus, alias)
+        self.assertEqual(de._output_collides_with_corpus(alias, [corpus]), corpus)
+        # And emit refuses, leaving the corpus content intact.
+        before = self._read(corpus)
+        outcome = de.emit_tasks([corpus], self.candidates, alias)
+        self.assertTrue(any("refusing to overwrite" in f for f in outcome.findings))
+        self.assertEqual(self._read(corpus), before)
+
     def _colliding_corpora(self, *subdirs: str) -> list[str]:
         data = {
             "target": "validation", "kind": "capability",

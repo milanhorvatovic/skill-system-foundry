@@ -63,6 +63,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1062,16 +1063,28 @@ def _load_corpora(corpus_paths: list[str]) -> tuple[list[Corpus], list[str]]:
 
 
 def _write_json_file(path: str, text: str) -> None:
-    """Write *text* plus a trailing newline to *path* (LF), creating the dir.
+    """Atomically write *text* plus a trailing newline to *path* (LF).
 
-    The parent directory is created when *path* carries one, so callers can
-    point the artifact at a fresh location without a separate mkdir.
+    Content is written to a sibling temp file and ``os.replace``d into place, so
+    a crash or error mid-write leaves either the prior file or nothing — never a
+    truncated artifact.  The parent directory is created when *path* carries one,
+    so callers can point the artifact at a fresh location without a separate
+    mkdir.  Any OSError propagates to the caller (which records it as a FAIL).
     """
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text + "\n")
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=parent or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _output_collides_with_corpus(
@@ -1087,9 +1100,24 @@ def _output_collides_with_corpus(
     ``_resolve_corpus_paths``: the protection no longer depends on the output
     carrying a ``*.tasks.json`` / ``*.predictions.json`` suffix.
     """
-    target = os.path.realpath(out_path)
+    out_real = os.path.realpath(out_path)
+    out_exists = os.path.exists(out_path)
     for corpus_path in corpus_paths:
-        if os.path.realpath(corpus_path) == target:
+        # ``samefile`` (inode + device) is the primary check: a realpath *string*
+        # compare misses a different-case spelling of the same file on a
+        # case-insensitive filesystem (macOS APFS, Windows NTFS — both project
+        # targets), which would let ``--emit-tasks .../SKILL.json`` silently
+        # truncate a committed ``.../skill.json``.  ``samefile`` needs both paths
+        # to exist, so the string compare remains the fallback for a not-yet-
+        # created output (where nothing can be overwritten anyway, but an
+        # exact-path match is still worth catching).
+        if out_exists:
+            try:
+                if os.path.samefile(out_path, corpus_path):
+                    return corpus_path
+            except OSError:
+                pass
+        if out_real == os.path.realpath(corpus_path):
             return corpus_path
     return None
 
