@@ -36,14 +36,19 @@ from lib.constants import (
 )
 from lib.description_eval import (
     BackfillOutcome,
+    EmitOutcome,
     EvalReport,
     Metrics,
     TargetResult,
     backfill_corpus_hashes,
     check_cross_target_overlap,
     discover_units,
+    emit_heuristic_predictions,
+    emit_tasks,
     evaluate,
+    evaluate_with_predictions,
     load_corpus,
+    load_predictions,
 )
 from lib.reporting import (
     categorize_errors_for_json,
@@ -82,6 +87,28 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--emit-tasks", dest="emit_tasks", default=None, metavar="PATH",
+        help=(
+            "Write one classification task per prompt to PATH for a host agent "
+            "to fill; skips scoring."
+        ),
+    )
+    parser.add_argument(
+        "--emit-heuristic-predictions", dest="emit_heuristic_predictions",
+        default=None, metavar="PATH",
+        help=(
+            "Write the heuristic's {id: name|null} answers to PATH for id-keyed "
+            "diffing against an agent predictions file; skips scoring."
+        ),
+    )
+    parser.add_argument(
+        "--predictions", dest="predictions", default=None, metavar="PATH",
+        help=(
+            "Score an agent's predictions JSON ({id: name|null}) through the "
+            "shared gate; same report shape and exit codes as heuristic mode."
+        ),
+    )
+    parser.add_argument(
         "--json", dest="json_output", action="store_true",
         help="Emit machine-readable JSON.",
     )
@@ -100,6 +127,11 @@ def _resolve_corpus_paths(corpus_path: str) -> list[str]:
     found: list[str] = []
     for dirpath, _dirnames, filenames in os.walk(corpus_path):
         for name in sorted(filenames):
+            # Skip run artifacts so an emitted task / predictions file left in
+            # the corpus tree is never mistaken for a corpus.  An explicit file
+            # path (the branch above) is always honored regardless of suffix.
+            if name.endswith((".tasks.json", ".predictions.json")):
+                continue
             if name.endswith(".json"):
                 found.append(os.path.join(dirpath, name))
     return sorted(found)
@@ -206,6 +238,36 @@ def _emit_backfill(outcome: BackfillOutcome, json_mode: bool) -> None:
     sys.exit(1 if has_fail else 0)
 
 
+def _emit_write_outcome(
+    outcome: EmitOutcome, json_mode: bool, mode: str, noun: str,
+) -> None:
+    """Print an emit-mode write summary (JSON or human) and exit.
+
+    Exit 1 when a FAIL-level finding fired (malformed corpus, unwritable path,
+    missing or ambiguous target); a clean write exits 0.
+    """
+    has_fail = any(f.startswith(LEVEL_FAIL) for f in outcome.findings)
+    if json_mode:
+        print(to_json_output({
+            "tool": "evaluate_descriptions",
+            "mode": mode,
+            "success": not has_fail,
+            "path": outcome.path,
+            "task_count": outcome.task_count,
+            "corpora_count": outcome.corpora_count,
+            "errors": categorize_errors_for_json(outcome.findings),
+        }))
+    else:
+        for finding in outcome.findings:
+            print_error_line(finding)
+        if not has_fail:
+            print(
+                f"wrote {outcome.task_count} {noun} from "
+                f"{outcome.corpora_count} corpora to {outcome.path}"
+            )
+    sys.exit(1 if has_fail else 0)
+
+
 def main() -> None:
     # Pre-parse scan: _json_aware_error fires during parse_args(), before `args`
     # exists, so it can only consult argv. Recomputed from args.json_output below.
@@ -249,12 +311,42 @@ def main() -> None:
 
     skill_set = args.skill_set or os.getcwd()
 
+    # The write / agent modes are mutually exclusive: each owns the run.
+    active_modes = [
+        name for name, value in (
+            ("--backfill-hash", args.backfill_hash),
+            ("--emit-tasks", args.emit_tasks),
+            ("--emit-heuristic-predictions", args.emit_heuristic_predictions),
+            ("--predictions", args.predictions),
+        ) if value
+    ]
+    if len(active_modes) > 1:
+        _exit(f"{' and '.join(active_modes)} are mutually exclusive", json_mode)
+
     # Backfill is a write mode that short-circuits scoring entirely: it only
     # needs the unit descriptions to recompute and persist each corpus's hash.
     if args.backfill_hash:
         outcome = backfill_corpus_hashes(corpus_paths, discover_units(skill_set))
         _emit_backfill(outcome, json_mode)
         return  # _emit_backfill calls sys.exit; return keeps flow obvious.
+
+    # Agent-delegated phase one: emit one classification task per prompt for the
+    # host agent to fill. A write mode — no scoring.
+    if args.emit_tasks:
+        outcome = emit_tasks(corpus_paths, discover_units(skill_set), args.emit_tasks)
+        _emit_write_outcome(outcome, json_mode, "emit-tasks", "tasks")
+        return
+
+    # The heuristic's answers for the same task ids — a baseline to diff against
+    # an agent predictions file. Also a write mode.
+    if args.emit_heuristic_predictions:
+        outcome = emit_heuristic_predictions(
+            corpus_paths, discover_units(skill_set), args.emit_heuristic_predictions,
+        )
+        _emit_write_outcome(
+            outcome, json_mode, "emit-heuristic-predictions", "predictions",
+        )
+        return
 
     corpora = []
     findings: list[str] = []
@@ -278,7 +370,21 @@ def main() -> None:
         ),
     }
 
-    report = evaluate(corpora, units, opts)
+    # Agent-delegated phase two: score an agent's predictions through the same
+    # gate as the heuristic. A load FAIL leaves predictions None — surfaced via
+    # findings on an empty report so --soft cannot mask it.
+    if args.predictions:
+        predictions, pred_findings = load_predictions(args.predictions)
+        findings.extend(pred_findings)
+        if predictions is None:
+            report = EvalReport(
+                min_precision=opts["min_precision"],
+                min_recall=opts["min_recall"],
+            )
+        else:
+            report = evaluate_with_predictions(corpora, units, predictions, opts)
+    else:
+        report = evaluate(corpora, units, opts)
     # Prepend corpus-load + cross-target findings so they share the report's
     # error stream (and feed report.success / the exit code).
     report.errors = findings + report.errors

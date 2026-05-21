@@ -380,5 +380,160 @@ class BackfillHashCliTests(CliBaseMixin):
         self.assertNotIn("description_sha256", self._read(self._corpus_path()))
 
 
+# ===================================================================
+# Agent-delegated modes: --emit-tasks / --emit-heuristic-predictions / --predictions
+# ===================================================================
+
+
+class AgentDelegatedCliTests(CliBaseMixin):
+    """Two-phase agent mode end to end, plus the resolve-skip hardening."""
+
+    def _argv(self, *extra: str) -> list[str]:
+        return [
+            "evaluate_descriptions.py", self.corpus_dir,
+            "--skill-set", self.skillset, *extra,
+        ]
+
+    def _read(self, path: str) -> dict:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _write_raw_corpus(self, content: str, name: str) -> None:
+        os.makedirs(self.corpus_dir, exist_ok=True)
+        with open(
+            os.path.join(self.corpus_dir, name), "w", encoding="utf-8", newline="\n",
+        ) as handle:
+            handle.write(content)
+
+    def test_emit_tasks_writes_envelope(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        out = os.path.join(self.root, "out.tasks.json")
+        code, stdout, _err = _run_main(self._argv("--emit-tasks", out, "--json"))
+        self.assertEqual(code, 0, stdout)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["mode"], "emit-tasks")
+        self.assertTrue(payload["success"])
+        self.assertEqual(
+            payload["task_count"], len(PASS_POSITIVES) + len(PASS_NEGATIVES)
+        )
+        env = self._read(out)
+        self.assertEqual(env["mode"], "emit-tasks")
+        self.assertIn("instructions", env)
+
+    def test_emit_tasks_human_output(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        out = os.path.join(self.root, "out.tasks.json")
+        code, stdout, _err = _run_main(self._argv("--emit-tasks", out))
+        self.assertEqual(code, 0)
+        self.assertIn("wrote", stdout)
+
+    def test_emit_tasks_malformed_corpus_exits_one(self) -> None:
+        self._write_raw_corpus("{ not json ]", "broken.json")
+        out = os.path.join(self.root, "out.tasks.json")
+        code, stdout, _err = _run_main(self._argv("--emit-tasks", out, "--json"))
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(stdout)["success"])
+
+    def test_emit_tasks_malformed_corpus_human_output(self) -> None:
+        self._write_raw_corpus("{ not json ]", "broken.json")
+        out = os.path.join(self.root, "out.tasks.json")
+        code, stdout, _err = _run_main(self._argv("--emit-tasks", out))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", stdout)
+        self.assertNotIn("wrote", stdout)
+
+    def test_emit_heuristic_predictions_writes_map(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        out = os.path.join(self.root, "h.predictions.json")
+        code, stdout, _err = _run_main(
+            self._argv("--emit-heuristic-predictions", out, "--json")
+        )
+        self.assertEqual(code, 0, stdout)
+        self.assertEqual(json.loads(stdout)["mode"], "emit-heuristic-predictions")
+        self.assertEqual(
+            len(self._read(out)), len(PASS_POSITIVES) + len(PASS_NEGATIVES)
+        )
+
+    def _baseline(self) -> str:
+        path = os.path.join(self.root, "h.predictions.json")
+        _run_main(self._argv("--emit-heuristic-predictions", path))
+        return path
+
+    def test_predictions_scores_and_omits_mode_key(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, stdout, _err = _run_main(
+            self._argv("--predictions", self._baseline(), "--json")
+        )
+        self.assertEqual(code, 0, stdout)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["targets"][0]["target"], "validation")
+        # Predictions reuse the report shape verbatim — no emit-style mode key.
+        self.assertNotIn("mode", payload)
+
+    def test_predictions_json_keys_match_heuristic(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        baseline = self._baseline()
+        _code, heuristic_out, _e = _run_main(self._argv("--json"))
+        _code, pred_out, _e2 = _run_main(self._argv("--predictions", baseline, "--json"))
+        self.assertEqual(set(json.loads(heuristic_out)), set(json.loads(pred_out)))
+
+    def test_predictions_human_output(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, stdout, _err = _run_main(self._argv("--predictions", self._baseline()))
+        self.assertEqual(code, 0)
+        self.assertIn("Overall: PASS", stdout)
+
+    def test_predictions_unknown_name_fails_under_soft(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        tasks_out = os.path.join(self.root, "out.tasks.json")
+        _run_main(self._argv("--emit-tasks", tasks_out))
+        env = self._read(tasks_out)
+        bad = {task["id"]: "ghost-unit" for task in env["tasks"]}
+        bad_path = os.path.join(self.root, "bad.predictions.json")
+        with open(bad_path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(bad))
+        code, stdout, _err = _run_main(
+            self._argv("--predictions", bad_path, "--soft", "--json")
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(stdout)["success"])
+
+    def test_predictions_missing_file_fails(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, stdout, _err = _run_main(
+            self._argv(
+                "--predictions", os.path.join(self.root, "nope.predictions.json"),
+                "--json",
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(stdout)["success"])
+
+    def test_modes_are_mutually_exclusive(self) -> None:
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        code, stdout, _err = _run_main(
+            self._argv(
+                "--emit-tasks", os.path.join(self.root, "x.tasks.json"),
+                "--backfill-hash", "--json",
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("mutually exclusive", json.loads(stdout)["error"])
+
+    def test_run_artifacts_in_corpus_dir_are_skipped(self) -> None:
+        # A leftover tasks / predictions file in the corpus dir must not be
+        # loaded as a corpus (which would FAIL on its unknown keys).
+        self._write_corpus(PASS_POSITIVES, PASS_NEGATIVES)
+        self._write_raw_corpus(json.dumps({"x": None}), "leftover.predictions.json")
+        self._write_raw_corpus(
+            json.dumps({"tool": "evaluate_descriptions", "tasks": []}),
+            "leftover.tasks.json",
+        )
+        code, stdout, _err = _run_main(self._argv("--json"))
+        self.assertEqual(code, 0, stdout)
+        self.assertTrue(json.loads(stdout)["success"])
+
+
 if __name__ == "__main__":
     unittest.main()
