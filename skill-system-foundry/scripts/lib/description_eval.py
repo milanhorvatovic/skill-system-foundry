@@ -33,6 +33,23 @@ For a target unit ``T`` each prompt's prediction is the single selected unit or
 estimates.  Pairwise confusion is reported in the JSON payload but never gates
 exit status.
 
+Agent-delegated mode
+--------------------
+The same corpus and scoring also drive a key-free deep check where the host
+agent classifies instead of the Jaccard heuristic.  ``emit_tasks`` writes one
+task per prompt as ``{id, prompt, cards}`` — the gold ``target`` / ``kind`` /
+``label`` are withheld so the agent must classify, ``id`` is an opaque,
+content-bound digest (see :func:`make_task_id`) so the answer cannot be read off
+the id, and tasks are emitted ``id``-sorted so their ordering does not leak the
+positive/negative boundary.  The agent writes ``{id: name | None}``;
+:func:`scored_from_predictions` joins on ``id`` and feeds the same
+:func:`aggregate` / threshold gate as the heuristic.  Three write guards refuse
+rather than produce a lossy or destructive artifact: duplicate task ids
+(:func:`duplicate_task_ids`), an output path resolving to a corpus input
+(:func:`_output_collides_with_corpus`), and an empty output path.  Agent
+reasoning is non-deterministic, so this is an authoring-time check, never a CI
+gate.
+
 Library contract
 ----------------
 No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
@@ -912,6 +929,12 @@ def make_task_id(
     through the existing missing-/unmatched-id findings rather than scoring old
     answers against new prompts silently.
     """
+    # ``index`` is kept alongside ``prompt`` deliberately: it binds the id to a
+    # prompt's position, so reordering a corpus's prompts (not only editing their
+    # text) changes the ids and forces a fresh classify — a corpus whose prompt
+    # set moved is treated as changed.  ``prompt`` alone would already be unique
+    # within a corpus (the loader forbids duplicate prompts per side and across
+    # sides); ``index`` adds the position binding on top.
     raw = "\x1f".join((corpus, target, kind, label, str(index), prompt))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
