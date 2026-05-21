@@ -207,7 +207,28 @@ cd skill-system-foundry
 python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --skill-set . --soft --json
 ```
 
-The meta-skill ships its own corpus under `tests/skill-corpus/skill-system-foundry/` (`skill.json` plus one file per capability), exercised on every PR by the `validate-examples` job in `python-tests.yaml` (heuristic, `--soft`). Scoring is heuristic, stdlib-only, and key-free; higher-fidelity model-based testing is a separate, opt-in workstream, deliberately not bundled so the meta-skill stays stdlib-only and AI-agnostic. The corpus format, the unit card model, and the exact `--soft` exit-code semantics are documented in the validation capability's "Description-Quality Evaluation" section; evaluation settings (thresholds, stopwords) live under `skill.description.evaluation` in `scripts/lib/configuration.yaml`.
+The meta-skill ships its own corpus under `tests/skill-corpus/skill-system-foundry/` (`skill.json` plus one file per capability), exercised on every PR by the `validate-examples` job in `python-tests.yaml` (heuristic, `--soft`). Scoring is heuristic, stdlib-only, and key-free. A higher-fidelity, semantic check ships alongside it as the agent-delegated mode below — still stdlib-only and key-free, because the host agent (not an API client) does the classifying. The corpus format, the unit card model, and the exact `--soft` exit-code semantics are documented in the validation capability's "Description-Quality Evaluation" section; evaluation settings (thresholds, stopwords) live under `skill.description.evaluation` in `scripts/lib/configuration.yaml`.
+
+The agent-delegated mode is an authoring-time deep check that catches semantic-but-non-lexical routing the Jaccard heuristic misses. It runs in three steps:
+
+```bash
+cd skill-system-foundry
+# 1. Emit one classification task per prompt.
+python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --skill-set . --emit-tasks /tmp/skf.tasks.json --json
+# 2. The host agent reads /tmp/skf.tasks.json and writes /tmp/skf.predictions.json as {id: name|null}.
+# 3. Score the agent's predictions through the same gate as the heuristic.
+python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --skill-set . --predictions /tmp/skf.predictions.json --soft --json
+```
+
+To see exactly where the agent and the heuristic route differently, write the heuristic's answers for the same task ids and diff the two files:
+
+```bash
+cd skill-system-foundry
+python scripts/evaluate_descriptions.py ../tests/skill-corpus/skill-system-foundry --skill-set . --emit-heuristic-predictions /tmp/skf.heuristic.predictions.json --json
+diff /tmp/skf.heuristic.predictions.json /tmp/skf.predictions.json || true
+```
+
+Agent reasoning is non-deterministic, so this mode is never a CI gate — the heuristic `validate-examples` step stays the gate, and the agent mode adds no audit, freshness, or corpus surface. An integrator who wants a stability signal runs step 2 several times and diffs the predictions files; the runner scores one file per invocation by design (a single point estimate). Task and prediction files are ephemeral run artifacts — `.gitignore` covers `*.tasks.json` and `*.predictions.json`, and they must never be placed under `tests/skill-corpus/`.
 
 ### Measuring the Meta-Skill's Token Budget
 

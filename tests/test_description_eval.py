@@ -666,6 +666,29 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(result.min_precision, 0.85)
         self.assertEqual(result.min_recall, 0.85)
 
+    def test_injected_scorer_is_used_and_findings_flow(self) -> None:
+        # A custom scorer overrides the heuristic and its findings reach the
+        # report's error stream; here every prompt is forced to predict the
+        # target, so all positives are TP and all negatives FP.
+        def forced_scorer(
+            corpus: de.Corpus, _cset: list[de.Unit],
+        ) -> tuple[list[de.ScoredQuery], list[str]]:
+            scored = [
+                de.ScoredQuery(p, de.LABEL_POSITIVE, corpus.target)
+                for p in corpus.positive
+            ] + [
+                de.ScoredQuery(n, de.LABEL_NEGATIVE, corpus.target)
+                for n in corpus.negative
+            ]
+            return scored, [f"{de.LEVEL_WARN}: [foundry] injected note"]
+
+        report = de.evaluate(
+            [self._corpus()], self.candidates, self._opts(), scorer=forced_scorer,
+        )
+        result = report.targets[0]
+        self.assertEqual(result.metrics.fp, len(self.negative))
+        self.assertTrue(any("injected note" in e for e in report.errors))
+
 
 # ===================================================================
 # Shipped corpora
@@ -918,6 +941,807 @@ class BackfillCorpusHashesTests(unittest.TestCase):
         self.assertEqual(outcome.updated, [])
         self.assertEqual(outcome.unchanged, [])
         self.assertTrue(any("cannot write hash" in f for f in outcome.findings))
+
+
+# ===================================================================
+# Agent-delegated tasks: make_task_id + build_tasks
+# ===================================================================
+
+
+class MakeTaskIdTests(unittest.TestCase):
+    def test_id_is_opaque_deterministic_and_hides_gold(self) -> None:
+        task_id = de.make_task_id(
+            "validation", "validation", de.KIND_CAPABILITY,
+            de.LABEL_POSITIVE, 0, "validate skills", "fp",
+        )
+        # Deterministic: identical inputs hash to the same id.
+        self.assertEqual(
+            task_id,
+            de.make_task_id(
+                "validation", "validation", de.KIND_CAPABILITY,
+                de.LABEL_POSITIVE, 0, "validate skills", "fp",
+            ),
+        )
+        # Opaque: a fixed-width hex digest leaking neither target nor label.
+        self.assertRegex(task_id, r"^[0-9a-f]{16}$")
+        self.assertNotIn("validation", task_id)
+        self.assertNotIn("positive", task_id)
+
+    def test_distinct_inputs_yield_distinct_ids(self) -> None:
+        base = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p", "fp",
+        )
+        self.assertNotEqual(
+            base,
+            de.make_task_id(
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_NEGATIVE, 0, "p", "fp",
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            de.make_task_id(
+                "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 1, "p", "fp",
+            ),
+        )
+
+    def test_editing_prompt_changes_id(self) -> None:
+        # The id is bound to the prompt's text, so an edit to the prompt (with
+        # every other field held fixed) yields a different id.
+        before = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validate skills", "fp",
+        )
+        after = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0,
+            "validate skills carefully", "fp",
+        )
+        self.assertNotEqual(before, after)
+
+    def test_changing_cards_fingerprint_changes_id(self) -> None:
+        # The id is bound to the candidate cards, so a different card
+        # fingerprint (an edited description or a changed sibling set) yields a
+        # different id even when prompt and all other fields are identical.
+        before = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p", "fp1",
+        )
+        after = de.make_task_id(
+            "c", "validation", de.KIND_CAPABILITY, de.LABEL_POSITIVE, 0, "p", "fp2",
+        )
+        self.assertNotEqual(before, after)
+
+    def test_cards_fingerprint_tracks_name_and_description(self) -> None:
+        base = de._cards_fingerprint((de.Card("v", "desc one"),))
+        self.assertEqual(base, de._cards_fingerprint((de.Card("v", "desc one"),)))
+        self.assertNotEqual(base, de._cards_fingerprint((de.Card("v", "desc two"),)))
+        self.assertNotEqual(base, de._cards_fingerprint((de.Card("w", "desc one"),)))
+
+    def test_corpus_slug_is_basename_stem(self) -> None:
+        self.assertEqual(
+            de.corpus_slug("/x/skill-corpus/validation.json"), "validation",
+        )
+        self.assertEqual(de.corpus_slug("skill.json"), "skill")
+
+
+class BuildTasksMixin(unittest.TestCase):
+    def setUp(self) -> None:
+        self.skill = de.Unit("foundry", de.KIND_SKILL, "Designs skill systems", "/S")
+        self.validation = de.Unit(
+            "validation", de.KIND_CAPABILITY,
+            "validate skills audit systems", "/v", parent="foundry",
+        )
+        self.bundling = de.Unit(
+            "bundling", de.KIND_CAPABILITY,
+            "package skill zip bundle", "/b", parent="foundry",
+        )
+        self.candidates = [self.skill, self.validation, self.bundling]
+
+    def _corpus(self, target: str = "validation", kind: str = de.KIND_CAPABILITY) -> de.Corpus:
+        return de.Corpus(
+            target=target, kind=kind,
+            positive=("validate skills", "audit systems"),
+            negative=("package zip", "bundle distribution"),
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+
+
+class BuildTasksTests(BuildTasksMixin):
+    def test_one_task_per_prompt_with_unique_deterministic_ids(self) -> None:
+        # build_tasks integrates make_task_id; assert the observable contract
+        # (count, opacity, uniqueness, determinism) rather than re-deriving the
+        # exact digest — the id recipe itself is covered by MakeTaskIdTests.
+        tasks, findings = de.build_tasks([self._corpus()], self.candidates)
+        self.assertEqual(findings, [])
+        self.assertEqual(len(tasks), 4)  # 2 positive + 2 negative
+        ids = [t.id for t in tasks]
+        self.assertEqual(len(set(ids)), 4)
+        for task_id in ids:
+            self.assertRegex(task_id, r"^[0-9a-f]{16}$")
+        # Deterministic: rebuilding the same corpus yields identical ids.
+        again, _ = de.build_tasks([self._corpus()], self.candidates)
+        self.assertEqual([t.id for t in again], ids)
+
+    def test_index_resets_per_label(self) -> None:
+        tasks, _ = de.build_tasks([self._corpus()], self.candidates)
+        positives = [t for t in tasks if t.label == de.LABEL_POSITIVE]
+        negatives = [t for t in tasks if t.label == de.LABEL_NEGATIVE]
+        # Two prompts per side, all four ids distinct (label + per-label index
+        # both feed the digest).
+        self.assertEqual(len(positives), 2)
+        self.assertEqual(len(negatives), 2)
+        self.assertEqual(
+            len({t.id for t in positives} | {t.id for t in negatives}), 4,
+        )
+
+    def test_editing_a_card_description_changes_ids(self) -> None:
+        # The id is bound to the candidate cards: editing a unit's description
+        # changes every id in the corpus, so a predictions file made against the
+        # old description no longer joins (regression for the stale-cards gap).
+        before = {t.id for t in de.build_tasks([self._corpus()], self.candidates)[0]}
+        edited = [
+            de.Unit(
+                u.name, u.kind,
+                (u.description + " EXTRA") if u.name == "validation" else u.description,
+                u.path, u.parent,
+            )
+            for u in self.candidates
+        ]
+        after = {t.id for t in de.build_tasks([self._corpus()], edited)[0]}
+        self.assertEqual(len(before & after), 0)
+
+    def test_cards_are_sibling_capabilities_name_sorted(self) -> None:
+        tasks, _ = de.build_tasks([self._corpus()], self.candidates)
+        # A capability competes with its sibling capabilities (not the skill),
+        # and cards are name-sorted to match the heuristic candidate order.
+        names = [card.name for card in tasks[0].cards]
+        self.assertEqual(names, ["bundling", "validation"])
+        self.assertEqual(tasks[0].cards[0].description, "package skill zip bundle")
+
+    def test_skill_target_cards_are_sibling_skills(self) -> None:
+        other = de.Unit("other", de.KIND_SKILL, "unrelated", "/o")
+        tasks, _ = de.build_tasks(
+            [self._corpus(target="foundry", kind=de.KIND_SKILL)],
+            self.candidates + [other],
+        )
+        self.assertEqual([c.name for c in tasks[0].cards], ["foundry", "other"])
+
+    def test_missing_target_records_fail_and_emits_no_tasks(self) -> None:
+        tasks, findings = de.build_tasks(
+            [self._corpus(target="ghost")], self.candidates,
+        )
+        self.assertEqual(tasks, [])
+        self.assertTrue(has_fail(findings))
+        self.assertTrue(any("was not found" in f for f in findings))
+
+    def test_ambiguous_target_records_fail_and_emits_no_tasks(self) -> None:
+        candidates = [
+            de.Unit("alpha", de.KIND_SKILL, "alpha", "/a"),
+            de.Unit("validation", de.KIND_CAPABILITY, "validate alpha", "/a/v", parent="alpha"),
+            de.Unit("beta", de.KIND_SKILL, "beta", "/b"),
+            de.Unit("validation", de.KIND_CAPABILITY, "validate beta", "/b/v", parent="beta"),
+        ]
+        tasks, findings = de.build_tasks([self._corpus()], candidates)
+        self.assertEqual(tasks, [])
+        self.assertTrue(any("ambiguous" in f for f in findings))
+
+
+# ===================================================================
+# Emitters: emit_tasks + emit_heuristic_predictions
+# ===================================================================
+
+
+class EmitterMixin(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = self._tmp.name
+        self.candidates = [
+            de.Unit("foundry", de.KIND_SKILL, "Designs skill systems", "/S"),
+            de.Unit(
+                "validation", de.KIND_CAPABILITY,
+                "validate skills audit systems consistency", "/v", parent="foundry",
+            ),
+            de.Unit(
+                "bundling", de.KIND_CAPABILITY,
+                "package skill zip bundle distribution", "/b", parent="foundry",
+            ),
+        ]
+
+    def _corpus_file(self, data: dict, name: str = "validation.json") -> str:
+        path = os.path.join(self.root, name)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+        return path
+
+    def _valid_corpus(self) -> str:
+        return self._corpus_file({
+            "target": "validation", "kind": "capability",
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        })
+
+    def _read(self, path: str) -> dict:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+
+class EmitTasksTests(EmitterMixin):
+    def test_writes_envelope_with_tasks_and_instructions(self) -> None:
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks([corpus], self.candidates, out)
+        self.assertFalse(has_fail(outcome.findings))
+        self.assertEqual(outcome.task_count, 8)
+        self.assertEqual(outcome.corpora_count, 1)
+        payload = self._read(out)
+        self.assertEqual(payload["tool"], "evaluate_descriptions")
+        self.assertEqual(payload["mode"], "emit-tasks")
+        self.assertIn("instructions", payload)
+        self.assertEqual(len(payload["tasks"]), 8)
+        first = payload["tasks"][0]
+        self.assertRegex(first["id"], r"^[0-9a-f]{16}$")
+        self.assertEqual([c["name"] for c in first["cards"]], ["bundling", "validation"])
+        # Gold fields are withheld so the agent must classify, not read the answer.
+        self.assertEqual(set(first), {"id", "prompt", "cards"})
+        for task in payload["tasks"]:
+            self.assertNotIn("target", task)
+            self.assertNotIn("label", task)
+
+    def test_emit_is_byte_stable(self) -> None:
+        corpus = self._valid_corpus()
+        a = os.path.join(self.root, "a.tasks.json")
+        b = os.path.join(self.root, "b.tasks.json")
+        de.emit_tasks([corpus], self.candidates, a)
+        de.emit_tasks([corpus], self.candidates, b)
+        with open(a, "r", encoding="utf-8") as fa, open(b, "r", encoding="utf-8") as fb:
+            self.assertEqual(fa.read(), fb.read())
+
+    def test_emit_order_does_not_group_positives_then_negatives(self) -> None:
+        # Regression: tasks are serialized in id order, not build order. Build
+        # order emits all positives then all negatives with identical cards,
+        # leaking the label boundary; id-sorted order interleaves them.
+        corpus_path = self._valid_corpus()
+        out = os.path.join(self.root, "out.tasks.json")
+        de.emit_tasks([corpus_path], self.candidates, out)
+        emitted_ids = [task["id"] for task in self._read(out)["tasks"]]
+        # The serialized order is exactly the task-id sort (the fix itself).
+        self.assertEqual(emitted_ids, sorted(emitted_ids))
+        # Recover each emitted id's withheld gold label via build_tasks, which
+        # retains it, to prove the labels are interleaved rather than grouped.
+        loaded, _ = de.load_corpus(corpus_path)
+        tasks, _ = de.build_tasks([loaded], self.candidates)
+        label_by_id = {task.id: task.label for task in tasks}
+        labels = [label_by_id[task_id] for task_id in emitted_ids]
+        self.assertIn(de.LABEL_POSITIVE, labels)
+        self.assertIn(de.LABEL_NEGATIVE, labels)
+        # Not the build-order grouping (all positives then all negatives).
+        grouped = [de.LABEL_POSITIVE] * 4 + [de.LABEL_NEGATIVE] * 4
+        self.assertNotEqual(labels, grouped)
+        # A negative precedes a later positive: the boundary is genuinely
+        # interleaved, so answering null for a trailing block cannot game it.
+        first_negative = labels.index(de.LABEL_NEGATIVE)
+        last_positive = max(
+            i for i, label in enumerate(labels) if label == de.LABEL_POSITIVE
+        )
+        self.assertLess(first_negative, last_positive)
+
+    def test_malformed_corpus_is_a_fail_finding(self) -> None:
+        bad = self._corpus_file({"target": "validation", "kind": "capability"})
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks([bad], self.candidates, out)
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(outcome.task_count, 0)
+        self.assertFalse(os.path.exists(out))
+
+    def test_partial_load_failure_writes_no_file(self) -> None:
+        # One corpus loads, another is malformed: the FAIL must suppress the
+        # write so no partial task file (omitting the failed corpus's prompts)
+        # is left for an agent to score against.
+        good = self._valid_corpus()
+        bad = self._corpus_file(
+            {"target": "bundling", "kind": "capability"}, name="bundling.json",
+        )
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks([good, bad], self.candidates, out)
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertFalse(os.path.exists(out))
+
+    def test_unwritable_path_is_a_fail_finding(self) -> None:
+        corpus = self._valid_corpus()
+        blocker = os.path.join(self.root, "blocker")
+        with open(blocker, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("not a dir")
+        out = os.path.join(blocker, "sub", "out.tasks.json")
+        outcome = de.emit_tasks([corpus], self.candidates, out)
+        self.assertTrue(any("cannot write task file" in f for f in outcome.findings))
+
+    def test_write_to_directory_path_is_a_fail(self) -> None:
+        # Output path is an existing directory: mkstemp succeeds but os.replace
+        # fails, exercising the atomic-write cleanup-and-reraise path.
+        corpus = self._valid_corpus()
+        outdir = os.path.join(self.root, "outdir")
+        os.makedirs(outdir)
+        outcome = de.emit_tasks([corpus], self.candidates, outdir)
+        self.assertTrue(any("cannot write task file" in f for f in outcome.findings))
+
+    def test_collision_detected_via_samefile_not_just_string(self) -> None:
+        # A different path string that is the SAME file (a hardlink here; a
+        # different-case spelling on a case-insensitive filesystem in the wild)
+        # must be caught — a realpath string compare alone would miss it.
+        corpus = self._valid_corpus()
+        alias = os.path.join(self.root, "ALIAS.json")
+        os.link(corpus, alias)
+        self.assertEqual(de._output_collides_with_corpus(alias, [corpus]), corpus)
+        # And emit refuses, leaving the corpus content intact.
+        before = self._read(corpus)
+        outcome = de.emit_tasks([corpus], self.candidates, alias)
+        self.assertTrue(any("refusing to overwrite" in f for f in outcome.findings))
+        self.assertEqual(self._read(corpus), before)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX file permissions")
+    def test_emitted_artifact_is_owner_only(self) -> None:
+        # The atomic write goes through mkstemp, so artifacts are 0600
+        # (owner-only) — ephemeral run artifacts kept at the secure default.
+        import stat
+
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "out.tasks.json")
+        de.emit_tasks([corpus], self.candidates, out)
+        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
+
+    def _colliding_corpora(self, *subdirs: str) -> list[str]:
+        data = {
+            "target": "validation", "kind": "capability",
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        }
+        paths = []
+        for sub in subdirs:
+            path = os.path.join(self.root, sub, "validation.json")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(data, indent=2) + "\n")
+            paths.append(path)
+        return paths
+
+    def test_colliding_basenames_emit_duplicate_id_fail(self) -> None:
+        paths = self._colliding_corpora("d1", "d2")
+        out = os.path.join(self.root, "out.tasks.json")
+        outcome = de.emit_tasks(paths, self.candidates, out)
+        self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
+        # A duplicate-id envelope is unusable, so nothing is written.
+        self.assertFalse(os.path.exists(out))
+
+    def test_refuses_to_overwrite_corpus_input(self) -> None:
+        # Aiming the emit at a real corpus filename must FAIL instead of
+        # truncating the committed corpus.
+        corpus = self._valid_corpus()
+        before = self._read(corpus)
+        outcome = de.emit_tasks([corpus], self.candidates, corpus)
+        self.assertTrue(
+            any("refusing to overwrite" in f for f in outcome.findings)
+        )
+        self.assertTrue(has_fail(outcome.findings))
+        # The corpus is left byte-for-content intact — no destructive write.
+        self.assertEqual(self._read(corpus), before)
+
+    def test_refuses_when_output_resolves_to_corpus_via_dotdot(self) -> None:
+        # The guard compares realpaths, so a textually different spelling that
+        # resolves to a corpus input is still caught. Two distinct corpora make
+        # the guard's loop iterate past a non-match before the match.
+        prompts = {
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        }
+
+        def write(sub: str, target: str) -> str:
+            path = os.path.join(self.root, sub, f"{target}.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(
+                    {"target": target, "kind": "capability", **prompts}, indent=2,
+                ) + "\n")
+            return path
+
+        bundling = write("b", "bundling")
+        validation = write("a", "validation")
+        out = os.path.join(self.root, "a", "sub", "..", "validation.json")
+        outcome = de.emit_tasks([bundling, validation], self.candidates, out)
+        self.assertTrue(
+            any("refusing to overwrite" in f for f in outcome.findings)
+        )
+
+
+class EmitHeuristicPredictionsTests(EmitterMixin):
+    def _build_ids(self, corpus_path: str) -> list[de.Task]:
+        loaded, _findings = de.load_corpus(corpus_path)
+        tasks, _build_findings = de.build_tasks([loaded], self.candidates)
+        return tasks
+
+    def test_writes_id_to_name_or_null_map(self) -> None:
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "h.predictions.json")
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, out)
+        self.assertFalse(has_fail(outcome.findings))
+        predictions = self._read(out)
+        self.assertEqual(len(predictions), 8)
+        # Keys are exactly the emitted task ids (derived from build_tasks, not
+        # reconstructed from the id recipe).
+        self.assertEqual({t.id for t in self._build_ids(corpus)}, set(predictions))
+        valid = {"validation", "bundling", None}
+        for value in predictions.values():
+            self.assertIn(value, valid)
+
+    def test_values_match_score_heuristic(self) -> None:
+        corpus = self._valid_corpus()
+        out = os.path.join(self.root, "h.predictions.json")
+        de.emit_heuristic_predictions([corpus], self.candidates, out)
+        predictions = self._read(out)
+        vid = next(
+            t.id for t in self._build_ids(corpus)
+            if t.label == de.LABEL_POSITIVE and t.prompt == "validate skills"
+        )
+        # The positive "validate skills" must route to the validation card.
+        self.assertEqual(predictions[vid], "validation")
+
+    def test_unwritable_path_is_a_fail_finding(self) -> None:
+        corpus = self._valid_corpus()
+        blocker = os.path.join(self.root, "blocker")
+        with open(blocker, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("not a dir")
+        out = os.path.join(blocker, "sub", "h.predictions.json")
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, out)
+        self.assertTrue(any("cannot write predictions" in f for f in outcome.findings))
+
+    def test_bare_filename_writes_in_cwd(self) -> None:
+        # Exercises the no-dirname branch of _write_json_file: a relative bare
+        # filename has no parent directory to create.
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+        corpus = os.path.basename(self._valid_corpus())
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, "bare.json")
+        self.assertFalse(has_fail(outcome.findings))
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "bare.json")))
+
+    def test_colliding_basenames_emit_duplicate_id_fail(self) -> None:
+        data = {
+            "target": "validation", "kind": "capability",
+            "positive": [
+                "validate skills", "audit systems", "validate consistency",
+                "skills consistency",
+            ],
+            "negative": [
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ],
+        }
+        paths = []
+        for sub in ("e1", "e2"):
+            path = os.path.join(self.root, sub, "validation.json")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(data, indent=2) + "\n")
+            paths.append(path)
+        out = os.path.join(self.root, "h.predictions.json")
+        outcome = de.emit_heuristic_predictions(paths, self.candidates, out)
+        self.assertTrue(any("duplicate task id" in f for f in outcome.findings))
+        # Duplicate ids would overwrite rows, so nothing is written.
+        self.assertFalse(os.path.exists(out))
+
+    def test_partial_load_failure_writes_no_file(self) -> None:
+        # A FAIL on any corpus suppresses the predictions write — no partial
+        # baseline that omits the failed corpus's prompts.
+        good = self._valid_corpus()
+        bad = self._corpus_file(
+            {"target": "bundling", "kind": "capability"}, name="bundling.json",
+        )
+        out = os.path.join(self.root, "h.predictions.json")
+        outcome = de.emit_heuristic_predictions([good, bad], self.candidates, out)
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertFalse(os.path.exists(out))
+
+    def test_refuses_to_overwrite_corpus_input(self) -> None:
+        corpus = self._valid_corpus()
+        before = self._read(corpus)
+        outcome = de.emit_heuristic_predictions([corpus], self.candidates, corpus)
+        self.assertTrue(
+            any("refusing to overwrite" in f for f in outcome.findings)
+        )
+        self.assertTrue(has_fail(outcome.findings))
+        self.assertEqual(self._read(corpus), before)
+
+
+# ===================================================================
+# Prediction loading + scoring
+# ===================================================================
+
+
+class LoadPredictionsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _write(self, content: str) -> str:
+        path = os.path.join(self._tmp.name, "p.predictions.json")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        return path
+
+    def test_valid_map_loads(self) -> None:
+        path = self._write(json.dumps({"a:skill:positive:0": "foundry", "b": None}))
+        predictions, findings = de.load_predictions(path)
+        self.assertEqual(findings, [])
+        self.assertEqual(predictions, {"a:skill:positive:0": "foundry", "b": None})
+
+    def test_unreadable_path_fails(self) -> None:
+        predictions, findings = de.load_predictions(
+            os.path.join(self._tmp.name, "missing.json")
+        )
+        self.assertIsNone(predictions)
+        self.assertTrue(any("cannot read" in f for f in findings))
+
+    def test_invalid_json_fails(self) -> None:
+        predictions, findings = de.load_predictions(self._write("{ not json ]"))
+        self.assertIsNone(predictions)
+        self.assertTrue(any("invalid JSON" in f for f in findings))
+
+    def test_non_object_root_fails(self) -> None:
+        predictions, findings = de.load_predictions(self._write("[]"))
+        self.assertIsNone(predictions)
+        self.assertTrue(any("must be an object" in f for f in findings))
+
+    def test_non_string_non_null_value_fails(self) -> None:
+        predictions, findings = de.load_predictions(
+            self._write(json.dumps({"a": 3, "b": True}))
+        )
+        self.assertIsNone(predictions)
+        self.assertTrue(has_fail(findings))
+        self.assertTrue(any("string or null" in f for f in findings))
+
+    def test_duplicate_ids_fail(self) -> None:
+        # json silently keeps the last value for a repeated key; the loader must
+        # detect and FAIL instead of dropping an answer.
+        predictions, findings = de.load_predictions(
+            self._write('{"a": "x", "a": "y", "b": null}')
+        )
+        self.assertIsNone(predictions)
+        self.assertTrue(any("duplicate prediction id 'a'" in f for f in findings))
+
+
+class ScoredFromPredictionsTests(unittest.TestCase):
+    def _task(self, task_id: str, label: str, prompt: str = "p") -> de.Task:
+        return de.Task(
+            id=task_id, target="validation", kind=de.KIND_CAPABILITY,
+            label=label, prompt=prompt,
+            cards=(de.Card("validation", "d1"), de.Card("bundling", "d2")),
+        )
+
+    def test_null_is_no_activation(self) -> None:
+        task = self._task("validation:capability:negative:0", de.LABEL_NEGATIVE)
+        scored, findings = de.scored_from_predictions([task], {task.id: None})
+        self.assertEqual(findings, [])
+        self.assertIsNone(scored[0].prediction)
+
+    def test_candidate_name_is_kept(self) -> None:
+        task = self._task("validation:capability:positive:0", de.LABEL_POSITIVE)
+        scored, findings = de.scored_from_predictions([task], {task.id: "validation"})
+        self.assertEqual(findings, [])
+        self.assertEqual(scored[0].prediction, "validation")
+
+    def test_missing_id_fails_and_scores_no_activation(self) -> None:
+        task = self._task("validation:capability:positive:0", de.LABEL_POSITIVE)
+        scored, findings = de.scored_from_predictions([task], {})
+        self.assertTrue(any("missing prediction" in f for f in findings))
+        self.assertIsNone(scored[0].prediction)
+
+    def test_unknown_name_fails_and_coerces_to_no_activation(self) -> None:
+        task = self._task("validation:capability:positive:0", de.LABEL_POSITIVE)
+        scored, findings = de.scored_from_predictions([task], {task.id: "ghost"})
+        self.assertTrue(any("not a candidate unit name" in f for f in findings))
+        self.assertTrue(has_fail(findings))
+        self.assertIsNone(scored[0].prediction)
+
+
+class UnmatchedPredictionIdsTests(unittest.TestCase):
+    def test_stale_id_warns(self) -> None:
+        warnings = de.unmatched_prediction_ids({"a", "b"}, {"a": None, "c": "x"})
+        self.assertEqual(len(warnings), 1)
+        self.assertTrue(warnings[0].startswith(de.LEVEL_WARN))
+        self.assertIn("'c'", warnings[0])
+
+    def test_no_stale_ids_is_empty(self) -> None:
+        self.assertEqual(de.unmatched_prediction_ids({"a", "b"}, {"a": None}), [])
+
+
+class EvaluateWithPredictionsTests(EmitterMixin):
+    def _corpus_obj(self) -> de.Corpus:
+        return de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY,
+            positive=("validate skills", "audit systems", "validate consistency", "skills consistency"),
+            negative=("package zip", "bundle distribution", "translate french", "debug react"),
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+
+    def _opts(self) -> dict:
+        return {"min_precision": 0.85, "min_recall": 0.85}
+
+    def test_perfect_predictions_pass(self) -> None:
+        corpus = self._corpus_obj()
+        tasks, _ = de.build_tasks([corpus], self.candidates)
+        predictions = {
+            t.id: ("validation" if t.label == de.LABEL_POSITIVE else None)
+            for t in tasks
+        }
+        report = de.evaluate_with_predictions(
+            [corpus], self.candidates, predictions, self._opts(),
+        )
+        self.assertTrue(report.success)
+        self.assertEqual(report.targets[0].metrics.tp, 4)
+
+    def test_stale_prediction_id_warns(self) -> None:
+        corpus = self._corpus_obj()
+        tasks, _ = de.build_tasks([corpus], self.candidates)
+        predictions = {t.id: None for t in tasks}
+        predictions["validation:capability:positive:99"] = "validation"
+        report = de.evaluate_with_predictions(
+            [corpus], self.candidates, predictions, self._opts(),
+        )
+        self.assertTrue(any("matches no task" in e for e in report.errors))
+
+    def test_editing_a_prompt_makes_stale_predictions_detectable(self) -> None:
+        # Regression: a predictions file produced against one corpus must not
+        # silently score against an edited corpus. Because the task id is
+        # bound to the prompt text, editing a prompt changes its id, so the old
+        # answer matches no task (unmatched WARN) and the new prompt has no
+        # prediction (missing FAIL) — the drift surfaces instead of joining old
+        # answers onto the new prompt.
+        before = self._corpus_obj()
+        before_tasks, _ = de.build_tasks([before], self.candidates)
+        # An agent's predictions captured against the original prompts.
+        predictions = {
+            t.id: ("validation" if t.label == de.LABEL_POSITIVE else None)
+            for t in before_tasks
+        }
+        # Edit one positive prompt; every other field is identical.
+        edited_positive = ("validate skills carefully",) + before.positive[1:]
+        after = de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY,
+            positive=edited_positive, negative=before.negative,
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+        after_tasks, _ = de.build_tasks([after], self.candidates)
+        # The edited prompt's id moved, so the captured ids are no longer a
+        # superset of the live task ids.
+        self.assertNotEqual(
+            {t.id for t in before_tasks}, {t.id for t in after_tasks},
+        )
+        report = de.evaluate_with_predictions(
+            [after], self.candidates, predictions, self._opts(),
+        )
+        # The now-orphaned old id matches no task (WARN), and the edited prompt's
+        # new id has no prediction (FAIL) — the staleness is loud, not silent.
+        self.assertTrue(any("matches no task" in e for e in report.errors))
+        self.assertTrue(any("missing prediction" in e for e in report.errors))
+
+    def test_missing_target_still_fails_via_evaluate(self) -> None:
+        corpus = de.Corpus(
+            target="ghost", kind=de.KIND_CAPABILITY,
+            positive=("a", "b", "c", "d"), negative=("e", "f", "g", "h"),
+            min_precision=None, min_recall=None, source_path="/c.json",
+        )
+        report = de.evaluate_with_predictions(
+            [corpus], self.candidates, {}, self._opts(),
+        )
+        self.assertFalse(report.success)
+        self.assertTrue(any("was not found" in e for e in report.errors))
+
+    def test_heuristic_predictions_round_trip_matches_heuristic_metrics(self) -> None:
+        # Feeding emit_heuristic_predictions output back through
+        # evaluate_with_predictions must reproduce heuristic-mode metrics.
+        corpus_path = self._valid_corpus()
+        corpus, _ = de.load_corpus(corpus_path)
+        out = os.path.join(self.root, "h.predictions.json")
+        de.emit_heuristic_predictions([corpus_path], self.candidates, out)
+        predictions = self._read(out)
+        via_predictions = de.evaluate_with_predictions(
+            [corpus], self.candidates, predictions, self._opts(),
+        )
+        via_heuristic = de.evaluate([corpus], self.candidates, self._opts())
+        self.assertEqual(
+            via_predictions.targets[0].metrics, via_heuristic.targets[0].metrics,
+        )
+
+
+# ===================================================================
+# Multiple corpora for the same target (split / duplicate)
+# ===================================================================
+
+
+class MultiCorpusSameTargetTests(EmitterMixin):
+    """Two corpus files covering the same (target, kind): collision vs split."""
+
+    _POS_A = (
+        "validate skills", "audit systems", "validate consistency",
+        "skills consistency",
+    )
+    _POS_B = (
+        "validate references", "audit drift", "check consistency",
+        "verify skills",
+    )
+
+    def _corpus(self, path: str, positive: tuple[str, ...]) -> de.Corpus:
+        return de.Corpus(
+            target="validation", kind=de.KIND_CAPABILITY, positive=positive,
+            negative=(
+                "package zip", "bundle distribution", "translate french",
+                "debug react",
+            ),
+            min_precision=None, min_recall=None, source_path=path,
+        )
+
+    def test_colliding_basenames_flag_duplicate_ids(self) -> None:
+        # Same basename in different directories -> identical slug -> id collision.
+        tasks, _ = de.build_tasks(
+            [
+                self._corpus("/a/validation.json", self._POS_A),
+                self._corpus("/b/validation.json", self._POS_A),
+            ],
+            self.candidates,
+        )
+        fails = de.duplicate_task_ids(tasks)
+        self.assertTrue(fails)
+        self.assertTrue(all(f.startswith(de.LEVEL_FAIL) for f in fails))
+
+    def test_distinct_basenames_have_no_duplicate_ids(self) -> None:
+        tasks, _ = de.build_tasks(
+            [
+                self._corpus("/x/validation-1.json", self._POS_A),
+                self._corpus("/x/validation-2.json", self._POS_B),
+            ],
+            self.candidates,
+        )
+        self.assertEqual(de.duplicate_task_ids(tasks), [])
+
+    def test_split_corpora_scored_independently(self) -> None:
+        # Distinct filenames -> distinct ids -> each corpus scored on its own
+        # four positives, not cross-contaminated. Regression for the
+        # id-collision / (target, kind)-grouping bug.
+        corpora = [
+            self._corpus("/x/validation-1.json", self._POS_A),
+            self._corpus("/x/validation-2.json", self._POS_B),
+        ]
+        tasks, _ = de.build_tasks(corpora, self.candidates)
+        predictions = {
+            t.id: ("validation" if t.label == de.LABEL_POSITIVE else None)
+            for t in tasks
+        }
+        report = de.evaluate_with_predictions(
+            corpora, self.candidates, predictions,
+            {"min_precision": 0.85, "min_recall": 0.85},
+        )
+        self.assertEqual(len(report.targets), 2)
+        for result in report.targets:
+            self.assertEqual(result.metrics.tp, 4)
+            self.assertEqual(result.metrics.fn, 0)
+        self.assertEqual(de.duplicate_task_ids(tasks), [])
 
 
 if __name__ == "__main__":

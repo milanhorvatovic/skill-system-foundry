@@ -74,7 +74,7 @@ skill-system-foundry/
     ├── audit_skill_system.py              ← full skill system audit
     ├── scaffold.py                        ← component scaffolding from templates
     ├── bundle.py                          ← bundle a skill into a self-contained zip bundle
-    └── evaluate_descriptions.py           ← heuristic description activation evaluation
+    └── evaluate_descriptions.py           ← description activation evaluation (heuristic + agent-delegated)
 ```
 
 ### References
@@ -115,7 +115,7 @@ Scripts handle deterministic, repeatable tasks that should not be left to the mo
 | `audit_skill_system.py`   | Audits the full skill system: dependency direction, nesting depth, shared resource usage, and manifest presence |
 | `scaffold.py`             | Creates new components from templates with proper directory structure and placeholder content |
 | `bundle.py`               | Bundles a skill into a self-contained zip bundle: validates, resolves external references, rewrites paths, creates bundle |
-| `evaluate_descriptions.py` | Measures description activation precision/recall against a prompt corpus with a deterministic, stdlib-only heuristic |
+| `evaluate_descriptions.py` | Measures description activation precision/recall against a prompt corpus — a deterministic stdlib-only heuristic, plus a key-free agent-delegated mode (emit tasks, the host agent classifies, score the predictions) |
 
 #### YAML Parser
 

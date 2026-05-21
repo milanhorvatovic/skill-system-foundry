@@ -33,6 +33,26 @@ For a target unit ``T`` each prompt's prediction is the single selected unit or
 estimates.  Pairwise confusion is reported in the JSON payload but never gates
 exit status.
 
+Agent-delegated mode
+--------------------
+The same corpus and scoring also drive a key-free deep check where the host
+agent classifies instead of the Jaccard heuristic.  ``emit_tasks`` writes one
+task per prompt as ``{id, prompt, cards}`` — the gold ``target`` / ``kind`` /
+``label`` are withheld so the agent must classify, ``id`` is an opaque digest
+bound to the prompt *and* the candidate cards (see :func:`make_task_id`) so the
+answer cannot be read off the id and a predictions file made against an edited
+description/prompt no longer joins, and tasks are emitted ``id``-sorted so their
+ordering does not leak the positive/negative boundary.  The agent writes the
+JSON file ``{id: name | null}``;
+:func:`scored_from_predictions` joins on ``id`` and feeds the same
+:func:`aggregate` / threshold gate as the heuristic.  Before writing, a single
+gate refuses (no file) when any FAIL finding is present — a malformed corpus, a
+missing/ambiguous target, duplicate task ids (:func:`duplicate_task_ids`), or an
+output path that resolves to a corpus input
+(:func:`_output_collides_with_corpus`); the write itself surfaces an unwritable
+or empty path as an OSError FAIL.  Agent reasoning is non-deterministic, so this
+is an authoring-time check, never a CI gate.
+
 Library contract
 ----------------
 No ``print()`` or ``sys.exit()`` here — the entry point owns all output via
@@ -44,6 +64,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -62,7 +83,7 @@ from .constants import (
     LEVEL_WARN,
 )
 from .frontmatter import load_frontmatter
-from .reporting import format_exception, to_posix
+from .reporting import format_exception, to_json_output, to_posix
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -122,6 +143,31 @@ class ScoredQuery:
     prompt: str
     label: str  # LABEL_POSITIVE | LABEL_NEGATIVE
     prediction: str | None  # selected unit name, or None for no activation
+
+
+@dataclass(frozen=True)
+class Card:
+    """A candidate unit reduced to the fields an agent classifier needs."""
+
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
+class Task:
+    """One classification task: a prompt plus the candidate cards to choose from.
+
+    ``id`` is the canonical join key between the emitted task file and the
+    agent's predictions file (see :func:`make_task_id`).  ``cards`` is the
+    name-sorted candidate set, identical to the heuristic scoring path's.
+    """
+
+    id: str
+    target: str
+    kind: str
+    label: str  # LABEL_POSITIVE | LABEL_NEGATIVE
+    prompt: str
+    cards: tuple[Card, ...]
 
 
 @dataclass(frozen=True)
@@ -760,15 +806,33 @@ def _score_corpus(corpus: Corpus, candidate_set: list[Unit]) -> list[ScoredQuery
     return scored
 
 
+# A scorer maps one corpus and its resolved candidate set to scored queries
+# plus any scorer-level findings.  The default is the Jaccard heuristic; the
+# predictions path injects one that reads an agent's answers instead.
+Scorer = Callable[[Corpus, list[Unit]], tuple[list[ScoredQuery], list[str]]]
+
+
+def _heuristic_scorer(
+    corpus: Corpus, candidate_set: list[Unit],
+) -> tuple[list[ScoredQuery], list[str]]:
+    """Default scorer: Jaccard heuristic, never emits scorer-level findings."""
+    return _score_corpus(corpus, candidate_set), []
+
+
 def evaluate(
     corpora: list[Corpus], candidates: list[Unit], opts: dict,
+    scorer: Scorer | None = None,
 ) -> EvalReport:
     """Score every corpus against *candidates* and assemble the report.
 
     *opts* carries the resolved options: ``min_precision`` and ``min_recall``.
-    The exit-affecting gate compares the point estimate; pairwise confusion is
-    advisory.
+    *scorer* maps a corpus and its candidate set to ``(scored, findings)``;
+    it defaults to the Jaccard heuristic, and the predictions path injects a
+    scorer that reads an agent's answers.  The exit-affecting gate compares the
+    point estimate; pairwise confusion is advisory.
     """
+    if scorer is None:
+        scorer = _heuristic_scorer
     report = EvalReport(
         min_precision=opts["min_precision"], min_recall=opts["min_recall"],
     )
@@ -801,7 +865,8 @@ def evaluate(
             else opts["min_recall"]
         )
 
-        scored = _score_corpus(corpus, candidate_set)
+        scored, scorer_findings = scorer(corpus, candidate_set)
+        report.errors.extend(scorer_findings)
         metrics = aggregate(scored, corpus.target, min_precision, min_recall)
         advisory = {"pairwise_confusion": pairwise_confusion(scored, corpus.target)}
 
@@ -814,4 +879,544 @@ def evaluate(
             )
         )
 
+    return report
+
+
+# --- agent-delegated tasks --------------------------------------------------
+
+# Self-contained classify contract written into the emitted task envelope so
+# any host agent (Claude, Codex, Cursor, GLM, ...) can fill predictions without
+# reading external docs.  Holds no path or doc cross-references by design.
+TASK_INSTRUCTIONS = (
+    "For each task, read its 'prompt' and its 'cards' (each a candidate unit "
+    "with a 'name' and a 'description'). Choose the single card whose "
+    "name and description best match the prompt's intent and record that "
+    "card's 'name'. If no card is a good match, record null. Produce a JSON "
+    "object mapping every task 'id' to the chosen name or null, and nothing "
+    "else."
+)
+
+
+def corpus_slug(source_path: str) -> str:
+    """Return a corpus file's basename without extension.
+
+    A stable, portable, hand-friendly per-corpus discriminator for task ids: it
+    depends on the committed filename, not the absolute path, so it is identical
+    across checkouts and deterministic across runs.  Two corpus files covering
+    the same ``(target, kind)`` therefore yield distinct ids as long as their
+    filenames differ; an actual basename collision is caught by
+    :func:`duplicate_task_ids`.
+    """
+    return os.path.splitext(os.path.basename(source_path))[0]
+
+
+def _cards_fingerprint(cards: tuple[Card, ...]) -> str:
+    """Return a digest of the candidate cards' names and descriptions.
+
+    Folded into the task id so the id is bound to the exact card set the agent
+    classified against: editing a unit's description, or adding/removing a
+    sibling, changes this fingerprint — hence the id — so a predictions file
+    made against the old cards surfaces as missing-/unmatched-id findings
+    instead of being scored against the current (changed) cards.  ``cards`` is
+    already name-sorted by :func:`build_tasks`, so the digest is deterministic.
+    """
+    raw = "\x1e".join(f"{card.name}\x1f{card.description}" for card in cards)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def make_task_id(
+    corpus: str, target: str, kind: str, label: str, index: int,
+    prompt: str, cards_fingerprint: str,
+) -> str:
+    """Return an opaque, deterministic task id bound to the prompt and cards.
+
+    The id is a truncated SHA-256 of the corpus discriminator
+    (:func:`corpus_slug`), target, kind, label, per-label index, the prompt
+    text, and a fingerprint of the candidate cards (:func:`_cards_fingerprint`).
+    It is *deterministic* — the emit and scoring phases hash identical inputs and
+    so agree on the join key — but *opaque*: it deliberately does not spell out
+    the target or the positive/negative label, so a host agent classifying a
+    task cannot read the gold answer off the id, which would make the evaluation
+    measure nothing.  Including *corpus* keeps ids distinct across corpus files
+    that cover the same ``(target, kind)`` (split corpora); a genuine input
+    collision (two files with the same basename covering the same unit) hashes
+    to the same id and is caught by :func:`duplicate_task_ids`.
+
+    Folding *prompt* and *cards_fingerprint* into the digest binds the id to
+    everything the agent classified against — the prompt text and the candidate
+    ``name + description`` cards.  Editing or reordering a prompt, editing a
+    unit's description, or changing the sibling candidate set between
+    ``--emit-tasks`` and ``--predictions`` therefore changes the id, so a stale
+    predictions file no longer joins onto the new task — the drift surfaces
+    through the missing-/unmatched-id findings rather than scoring answers made
+    against an older prompt or description set silently.
+    """
+    # ``index`` is kept alongside ``prompt`` deliberately: it binds the id to a
+    # prompt's position, so reordering a corpus's prompts (not only editing their
+    # text) changes the ids and forces a fresh classify.  ``prompt`` alone would
+    # already be unique within a corpus (the loader forbids duplicate prompts per
+    # side and across sides); ``index`` adds the position binding on top.
+    raw = "\x1f".join(
+        (corpus, target, kind, label, str(index), prompt, cards_fingerprint)
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def build_tasks(
+    corpora: list[Corpus], candidates: list[Unit],
+) -> tuple[list[Task], list[str]]:
+    """Build one :class:`Task` per prompt across every corpus, plus findings.
+
+    Each corpus's target is resolved through :func:`_matching_units` and its
+    candidate set through :func:`_candidate_set` (then name-sorted), so task
+    ids and candidate cards are byte-identical to the heuristic scoring path.
+    A corpus whose target is missing or ambiguous is skipped with a FAIL
+    finding mirroring :func:`evaluate`; each task's id is the content-bound
+    digest of its corpus, target, kind, label, per-label index, and prompt text
+    (see :func:`make_task_id`), so ids stay stable across runs yet move when a
+    prompt is edited.
+    """
+    tasks: list[Task] = []
+    findings: list[str] = []
+    for corpus in corpora:
+        base = to_posix(corpus.source_path)
+        matches = _matching_units(corpus, candidates)
+        if not matches:
+            findings.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) was not found among the discovered units"
+            )
+            continue
+        if len(matches) > 1:
+            parents = sorted((unit.parent or "<skill-root>") for unit in matches)
+            findings.append(
+                f"{LEVEL_FAIL}: [foundry] {base}: target '{corpus.target}' "
+                f"({corpus.kind}) is ambiguous — it matches units under "
+                f"{parents}; point --skill-set at a single skill root"
+            )
+            continue
+        cards = tuple(
+            Card(name=unit.name, description=unit.description)
+            for unit in sorted(
+                _candidate_set(matches[0], candidates), key=lambda unit: unit.name
+            )
+        )
+        slug = corpus_slug(corpus.source_path)
+        card_fingerprint = _cards_fingerprint(cards)
+        sides = (
+            (LABEL_POSITIVE, corpus.positive), (LABEL_NEGATIVE, corpus.negative),
+        )
+        for label, prompts in sides:
+            for index, prompt in enumerate(prompts):
+                tasks.append(
+                    Task(
+                        id=make_task_id(
+                            slug, corpus.target, corpus.kind, label, index,
+                            prompt, card_fingerprint,
+                        ),
+                        target=corpus.target, kind=corpus.kind, label=label,
+                        prompt=prompt, cards=cards,
+                    )
+                )
+    return tasks, findings
+
+
+def duplicate_task_ids(tasks: list[Task]) -> list[str]:
+    """FAIL for any task id emitted more than once.
+
+    A duplicate id means two corpus files produced colliding ids — e.g. two
+    files whose basenames match while covering the same ``(target, kind)``.  The
+    predictions file and the heuristic-prediction file are JSON objects keyed by
+    id, so they cannot hold a distinct value per colliding task; surfacing the
+    collision as a FAIL prevents scoring from silently overwriting.
+    """
+    counts = Counter(task.id for task in tasks)
+    return [
+        f"{LEVEL_FAIL}: [foundry] duplicate task id '{task_id}' — two corpora "
+        f"produced colliding ids; give the corpus files distinct names"
+        for task_id, count in sorted(counts.items()) if count > 1
+    ]
+
+
+# --- task / heuristic-prediction emitters -----------------------------------
+
+
+@dataclass
+class EmitOutcome:
+    """Result of an ``--emit-tasks`` / ``--emit-heuristic-predictions`` write."""
+
+    path: str
+    task_count: int = 0
+    corpora_count: int = 0
+    findings: list[str] = field(default_factory=list)
+
+
+def _load_corpora(corpus_paths: list[str]) -> tuple[list[Corpus], list[str]]:
+    """Load every corpus path, collecting parsed corpora and load findings."""
+    corpora: list[Corpus] = []
+    findings: list[str] = []
+    for path in corpus_paths:
+        corpus, corpus_findings = load_corpus(path)
+        findings.extend(corpus_findings)
+        if corpus is not None:
+            corpora.append(corpus)
+    return corpora, findings
+
+
+def _write_json_file(path: str, text: str) -> None:
+    """Atomically write *text* plus a trailing newline to *path* (LF).
+
+    Content is written to a sibling temp file and ``os.replace``d into place, so
+    a crash or error mid-write leaves either the prior file or nothing — never a
+    truncated artifact.  The parent directory is created when *path* carries one,
+    so callers can point the artifact at a fresh location without a separate
+    mkdir.  Any OSError propagates to the caller (which records it as a FAIL).
+
+    ``mkstemp`` creates the file ``0600`` (owner-only) and that mode is kept:
+    these are ephemeral, single-user run artifacts, so owner-only is an
+    appropriate default and avoids momentarily perturbing the process umask to
+    derive a wider mode.
+    """
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=parent or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _output_collides_with_corpus(
+    out_path: str, corpus_paths: list[str],
+) -> str | None:
+    """Return the corpus input *out_path* would overwrite, or ``None``.
+
+    Compares fully resolved paths (``realpath`` collapses symlinks and ``..``
+    segments) so an emit output aimed at a committed corpus file is caught
+    before the destructive write — whether the operator named a real corpus
+    file (``skill.json``, a capability corpus) or passed it as an explicit file
+    corpus arg.  This generalizes the artifact-suffix skip in
+    ``_resolve_corpus_paths``: the protection no longer depends on the output
+    carrying a ``*.tasks.json`` / ``*.predictions.json`` suffix.
+    """
+    out_real = os.path.realpath(out_path)
+    out_exists = os.path.exists(out_path)
+    for corpus_path in corpus_paths:
+        # ``samefile`` (inode + device) is the primary check: a realpath *string*
+        # compare misses a different-case spelling of the same file on a
+        # case-insensitive filesystem (macOS APFS, Windows NTFS — both project
+        # targets), which would let ``--emit-tasks .../SKILL.json`` silently
+        # truncate a committed ``.../skill.json``.  ``samefile`` needs both paths
+        # to exist, so the string compare remains the fallback for a not-yet-
+        # created output (where nothing can be overwritten anyway, but an
+        # exact-path match is still worth catching).
+        if out_exists:
+            try:
+                if os.path.samefile(out_path, corpus_path):
+                    return corpus_path
+            except OSError:
+                pass
+        if out_real == os.path.realpath(corpus_path):
+            return corpus_path
+    return None
+
+
+def _task_to_dict(task: Task) -> dict:
+    """Serialize a :class:`Task` to the agent-facing envelope shape.
+
+    Only the opaque ``id``, the ``prompt``, and the candidate ``cards`` are
+    emitted.  The gold ``target`` / ``kind`` / ``label`` stay on the in-memory
+    :class:`Task` for scoring but are withheld from the agent, so the prompt
+    must actually be classified against the cards rather than read off the
+    payload.
+    """
+    return {
+        "id": task.id,
+        "prompt": task.prompt,
+        "cards": [
+            {"name": card.name, "description": card.description}
+            for card in task.cards
+        ],
+    }
+
+
+def emit_tasks(
+    corpus_paths: list[str], candidates: list[Unit], out_path: str,
+) -> EmitOutcome:
+    """Walk the corpora and write the classification task envelope to *out_path*.
+
+    Loads each corpus (a malformed corpus is a FAIL finding and is skipped),
+    builds one task per prompt via :func:`build_tasks`, and serializes the
+    envelope deterministically (sorted keys, trailing newline, LF terminators)
+    through :func:`to_json_output`.  Re-emitting the same corpora and units
+    produces a byte-identical file.  No file is written when any FAIL finding is
+    present (malformed corpus, missing/ambiguous target, duplicate ids, or an
+    output path that resolves to a corpus input), so a nonzero result never
+    leaves a partial artifact; an unwritable path is itself a FAIL finding, not
+    an exception.
+
+    Tasks are serialized in task-id order, *not* in build order.  Build order
+    emits all of a corpus's positive prompts before all its negatives with
+    identical cards on every task, so the contiguous label-grouped run would let
+    a host agent reconstruct the positive/negative boundary and answer ``null``
+    for the trailing block to score precision 1.0 without classifying — defeating
+    the gold-label withholding the opaque id exists to enforce.  Sorting by the
+    content-dependent id (see :func:`make_task_id`) interleaves the labels while
+    staying byte-deterministic.
+    """
+    outcome = EmitOutcome(path=to_posix(out_path))
+    corpora, load_findings = _load_corpora(corpus_paths)
+    outcome.findings.extend(load_findings)
+    tasks, build_findings = build_tasks(corpora, candidates)
+    outcome.findings.extend(build_findings)
+    outcome.corpora_count = len(corpora)
+    outcome.task_count = len(tasks)
+    outcome.findings.extend(duplicate_task_ids(tasks))
+    collision = _output_collides_with_corpus(out_path, corpus_paths)
+    if collision is not None:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
+            f"corpus input '{to_posix(collision)}' with the task file; emit to a "
+            f"path outside the corpus set"
+        )
+    # Single write gate: never pair the nonzero result with a partial or lossy
+    # file.  Any FAIL — malformed corpus, missing/ambiguous target, duplicate
+    # ids, or a corpus-overwrite collision — means no file is written, so an
+    # agent cannot later score an incomplete or inconsistent prompt set.
+    if any(f.startswith(LEVEL_FAIL) for f in outcome.findings):
+        return outcome
+    payload = {
+        "tool": "evaluate_descriptions",
+        "mode": "emit-tasks",
+        "instructions": TASK_INSTRUCTIONS,
+        "tasks": [
+            _task_to_dict(task) for task in sorted(tasks, key=lambda t: t.id)
+        ],
+    }
+    try:
+        _write_json_file(out_path, to_json_output(payload))
+    except OSError as exc:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: cannot write task file "
+            f"({format_exception(exc)})"
+        )
+    return outcome
+
+
+def emit_heuristic_predictions(
+    corpus_paths: list[str], candidates: list[Unit], out_path: str,
+) -> EmitOutcome:
+    """Write the heuristic's ``{id: name | null}`` answers for the emitted tasks.
+
+    Uses :func:`build_tasks` for ids (identical to :func:`emit_tasks`) and the
+    Jaccard heuristic for values, so the file diffs id-for-id against an agent
+    predictions file.  Each task's cards are scored through the same
+    :func:`score_heuristic` the heuristic mode uses, so feeding this file back
+    through ``--predictions`` reproduces heuristic-mode metrics exactly.
+    """
+    outcome = EmitOutcome(path=to_posix(out_path))
+    corpora, load_findings = _load_corpora(corpus_paths)
+    outcome.findings.extend(load_findings)
+    tasks, build_findings = build_tasks(corpora, candidates)
+    outcome.findings.extend(build_findings)
+    outcome.corpora_count = len(corpora)
+    outcome.task_count = len(tasks)
+    outcome.findings.extend(duplicate_task_ids(tasks))
+    collision = _output_collides_with_corpus(out_path, corpus_paths)
+    if collision is not None:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: refusing to overwrite "
+            f"corpus input '{to_posix(collision)}' with the predictions file; "
+            f"emit to a path outside the corpus set"
+        )
+    # Single write gate (see emit_tasks): any FAIL means no file is written.
+    if any(f.startswith(LEVEL_FAIL) for f in outcome.findings):
+        return outcome
+    predictions: dict[str, str | None] = {}
+    for task in tasks:
+        card_units = [
+            Unit(name=card.name, kind=task.kind, description=card.description, path="")
+            for card in task.cards
+        ]
+        predictions[task.id] = score_heuristic(task.prompt, card_units)
+    try:
+        _write_json_file(
+            out_path,
+            json.dumps(predictions, indent=2, ensure_ascii=False, sort_keys=True),
+        )
+    except OSError as exc:
+        outcome.findings.append(
+            f"{LEVEL_FAIL}: [foundry] {outcome.path}: cannot write predictions "
+            f"file ({format_exception(exc)})"
+        )
+    return outcome
+
+
+# --- prediction loading + scoring -------------------------------------------
+
+
+def load_predictions(path: str) -> tuple[dict[str, str | None] | None, list[str]]:
+    """Load and validate an agent predictions file (``{id: name | null}``).
+
+    Returns ``(predictions, findings)``.  ``predictions`` is ``None`` when a
+    FAIL fired: the file is unreadable, the JSON is invalid, the root is not an
+    object, a value is neither a string nor ``null``, or the file repeats a task
+    id (``json`` would silently keep only the last, dropping an answer).
+    Value-level checks against the candidate set (unknown name, missing id)
+    happen later in :func:`scored_from_predictions`, which knows each task's
+    cards.
+    """
+    findings: list[str] = []
+    label = to_posix(path)
+
+    def fail(message: str) -> None:
+        findings.append(f"{LEVEL_FAIL}: [foundry] {label}: {message}")
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = handle.read()
+    except (OSError, UnicodeError) as exc:
+        fail(f"cannot read predictions file ({format_exception(exc)})")
+        return None, findings
+    # A predictions file is machine-authored JSON; duplicate object keys (which
+    # json silently collapses to the last value) would let a repeated task id
+    # drop an answer and still score, so detect them via object_pairs_hook.
+    duplicate_ids: list[str] = []
+
+    def _detect_duplicate_ids(pairs: list[tuple[str, object]]) -> dict:
+        seen: set[str] = set()
+        for key, _value in pairs:
+            if key in seen:
+                duplicate_ids.append(key)
+            seen.add(key)
+        return dict(pairs)
+
+    try:
+        data = json.loads(raw, object_pairs_hook=_detect_duplicate_ids)
+    except (ValueError, UnicodeError) as exc:
+        fail(f"invalid JSON ({exc.__class__.__name__}: {exc})")
+        return None, findings
+    if not isinstance(data, dict):
+        fail("top-level JSON value must be an object mapping id to name or null")
+        return None, findings
+    for dup in sorted(set(duplicate_ids)):
+        fail(f"duplicate prediction id '{dup}' — the file repeats a task id")
+
+    predictions: dict[str, str | None] = {}
+    bad_value = False
+    for key, value in data.items():
+        # bool is a subtype of int, not str — `true` / numbers / arrays are all
+        # rejected so only a unit name string or null reaches the scorer.
+        if value is not None and not isinstance(value, str):
+            fail(f"value for '{key}' must be a string or null; got {value!r}")
+            bad_value = True
+            continue
+        predictions[key] = value
+    if bad_value or duplicate_ids:
+        return None, findings
+    return predictions, findings
+
+
+def scored_from_predictions(
+    tasks: list[Task], predictions: dict[str, str | None],
+) -> tuple[list[ScoredQuery], list[str]]:
+    """Build :class:`ScoredQuery` rows for *tasks* from an agent's *predictions*.
+
+    Each task's prediction is validated against that task's candidate cards: a
+    missing id is a FAIL (scored as no-activation); ``null`` is no-activation; a
+    name among the cards is that prediction; any other string is an "unknown
+    unit name" FAIL coerced to no-activation.  Reading ``Task.id`` (rather than
+    re-deriving it) keeps the join key in lockstep with :func:`build_tasks`.
+    """
+    scored: list[ScoredQuery] = []
+    findings: list[str] = []
+    for task in tasks:
+        names = {card.name for card in task.cards}
+        if task.id not in predictions:
+            findings.append(
+                f"{LEVEL_FAIL}: [foundry] missing prediction for task '{task.id}'"
+            )
+            prediction: str | None = None
+        else:
+            value = predictions[task.id]
+            if value is None:
+                prediction = None
+            elif value in names:
+                prediction = value
+            else:
+                findings.append(
+                    f"{LEVEL_FAIL}: [foundry] prediction for task '{task.id}' is "
+                    f"not a candidate unit name: {value!r}"
+                )
+                prediction = None
+        scored.append(
+            ScoredQuery(prompt=task.prompt, label=task.label, prediction=prediction)
+        )
+    return scored, findings
+
+
+def unmatched_prediction_ids(
+    all_ids: set[str], predictions: dict[str, str | None],
+) -> list[str]:
+    """WARN for each prediction id that matches no emitted task (a stale key)."""
+    return [
+        f"{LEVEL_WARN}: [foundry] prediction id matches no task: '{key}'"
+        for key in sorted(predictions)
+        if key not in all_ids
+    ]
+
+
+def evaluate_with_predictions(
+    corpora: list[Corpus], candidates: list[Unit],
+    predictions: dict[str, str | None], opts: dict,
+) -> EvalReport:
+    """Score *predictions* against the corpora through the shared evaluate gate.
+
+    Builds each corpus's tasks once, keyed by the corpus's unique
+    ``source_path`` (not by ``(target, kind)``, which two corpus files can
+    share), then runs :func:`evaluate` with a scorer that feeds exactly that
+    corpus's tasks to :func:`scored_from_predictions`.  Each corpus is therefore
+    scored on its own prompts — parity with the heuristic path — and split or
+    duplicate corpora for the same unit cannot cross-contaminate.  Unit
+    matching, the threshold gate, pairwise confusion, and the report shape are
+    reused unchanged; not-found / ambiguous target FAILs come from
+    :func:`evaluate`, so the tasks builder's own copies are dropped to avoid
+    double-reporting.  Colliding ids across corpora surface as a FAIL via
+    :func:`duplicate_task_ids`, and prediction ids matching no task as a WARN.
+    """
+    tasks_by_source: dict[str, list[Task]] = {}
+    all_tasks: list[Task] = []
+    for corpus in corpora:
+        corpus_tasks, _build_findings = build_tasks([corpus], candidates)
+        tasks_by_source[corpus.source_path] = corpus_tasks
+        all_tasks.extend(corpus_tasks)
+
+    def scorer(
+        corpus: Corpus, _candidate_set: list[Unit],
+    ) -> tuple[list[ScoredQuery], list[str]]:
+        # ``_candidate_set`` (resolved by ``evaluate`` for its candidate_count)
+        # is intentionally ignored: predictions join by ``Task.id`` from the
+        # per-corpus tasks built above, keyed on the unique ``source_path``.
+        # That means the target is resolved twice per corpus (here via
+        # ``build_tasks`` and again in ``evaluate``'s loop), but both go through
+        # the same ``_matching_units`` / ``_candidate_set`` helpers, so the two
+        # resolutions cannot diverge — the redundancy is the cost of reusing
+        # ``evaluate``'s gate/report assembly unchanged.
+        return scored_from_predictions(
+            tasks_by_source.get(corpus.source_path, []), predictions
+        )
+
+    report = evaluate(corpora, candidates, opts, scorer=scorer)
+    report.errors = (
+        duplicate_task_ids(all_tasks)
+        + unmatched_prediction_ids({task.id for task in all_tasks}, predictions)
+        + report.errors
+    )
     return report
