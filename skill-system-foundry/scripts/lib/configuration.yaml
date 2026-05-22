@@ -345,8 +345,26 @@ skill:
     # path file-relative under the redefined rule
     # (see references/path-resolution.md).
     reference_patterns:
-      # Six alternatives, ordered from most-specific to most-general:
+      # Seven alternatives, ordered from most-specific to most-general:
       #
+      # - angle-bracket-wrapped destinations (CommonMark ``<...>``
+      #   form, used when a path contains spaces):
+      #   ``[d](<references/my file.md>)``.  Captured WITH the brackets
+      #   so the existing ``strip_fragment`` / ``should_skip_reference``
+      #   helpers unwrap them downstream; an embedded placeholder
+      #   (``references/<f>.md``) is NOT this form and stays filtered
+      #   by ``should_skip_reference``.  Deliberately UNGATED on file
+      #   extension (like the directory-anchored alternative below):
+      #   the explicit angle wrapping is itself the "this is a link
+      #   destination" signal, so ``__EXT_ALT__`` is not applied here.
+      #   URL autolinks inside brackets (``<https://…>``) are dropped
+      #   by ``should_skip_reference``; an unresolvable wrapped target
+      #   is then reported exactly like any other unresolvable in-skill
+      #   reference (a validator WARN, a bundle-integrity FAIL during
+      #   bundling) rather than being silently ignored.  ``[^<>\n]`` excludes
+      #   newlines so a ``<`` cannot pair with a ``>`` on a later line
+      #   when the pattern is run over whole-file content
+      #   (``reachability.extract_body_references``).
       # - directory-anchored paths (``capabilities/foo.md``,
       #   ``../../references/foo.md``) — recognized top-level dir
       #   prefix with optional ``./`` or ``../`` traversal.
@@ -408,7 +426,7 @@ skill:
       # ``reference_extensions`` therefore controls the extension-
       # matching alternatives only; the directory-anchored capture
       # is governed by the directory whitelist.
-      markdown_link: \[.*?\]\(((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|/[A-Za-z0-9_][^):\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|[A-Za-z]:[^):\s]+\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
+      markdown_link: \[.*?\]\((<[^<>\n]+>(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^)]+|(?:\.{1,2}/)*[A-Za-z0-9_][^):/]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.\./)+[A-Za-z0-9_][^)\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|(?:\.{1,2}/)*[A-Za-z0-9_][^):\s]*/[^):\s)]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|/[A-Za-z0-9_][^):\s]*\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?|[A-Za-z]:[^):\s]+\.(?:__EXT_ALT__)(?:[?#][^)\s]*)?(?:\s+["'][^"']*["'])?)\)
       backtick: "`((?:\.{1,2}/)*(?:capabilities|references|scripts|assets|shared)/[^`]+)`"
   compatibility:
     max_length: 500

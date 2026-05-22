@@ -97,6 +97,34 @@ class PostValidateTests(unittest.TestCase):
             self.assertIn("'references/guide.md' line 1", unresolved[0])
             self.assertNotIn("\\", unresolved[0])
 
+    def test_wrapped_ref_to_existing_file_passes(self) -> None:
+        """A ``<...>``-wrapped reference to a bundled file is resolved."""
+        with tempfile.TemporaryDirectory() as bundle_dir:
+            write_text(
+                os.path.join(bundle_dir, "references", "foo.md"), "# Foo\n",
+            )
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: t\n---\n# T\n\nSee [d](<references/foo.md>).\n",
+            )
+            errors = postvalidate(bundle_dir)
+        self.assertEqual([e for e in errors if "foo.md" in e], [])
+
+    def test_wrapped_ref_to_missing_file_fails(self) -> None:
+        """A ``<...>``-wrapped reference to a missing bundled file FAILs
+        rather than being silently accepted."""
+        with tempfile.TemporaryDirectory() as bundle_dir:
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: t\n---\n# T\n\nSee [d](<references/missing.md>).\n",
+            )
+            errors = postvalidate(bundle_dir)
+        fails = [
+            e for e in errors
+            if e.startswith(LEVEL_FAIL) and "references/missing.md" in e
+        ]
+        self.assertEqual(len(fails), 1)
+
 
 class CopyExternalFilesCollisionTests(unittest.TestCase):
     def test_excluded_external_file_is_rejected(self) -> None:
