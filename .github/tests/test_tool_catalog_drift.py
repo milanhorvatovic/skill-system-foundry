@@ -91,14 +91,14 @@ class FetchTests(unittest.TestCase):
     def test_returns_decoded_body_on_2xx(self) -> None:
         response = self._make_response(200, b"hello upstream")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
             self.assertEqual(mod.fetch(self._ALLOWED_URL), "hello upstream")
 
     def test_raises_on_non_2xx_status(self) -> None:
         response = self._make_response(500, b"bad")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch(self._ALLOWED_URL)
@@ -113,7 +113,7 @@ class FetchTests(unittest.TestCase):
             fp=None,
         )
         with mock.patch.object(
-            mod.urllib.request, "urlopen", side_effect=http_error
+            mod._FETCH_OPENER, "open", side_effect=http_error
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch(self._ALLOWED_URL)
@@ -122,7 +122,7 @@ class FetchTests(unittest.TestCase):
     def test_raises_on_url_error(self) -> None:
         url_error = urllib.error.URLError("DNS lookup failed")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", side_effect=url_error
+            mod._FETCH_OPENER, "open", side_effect=url_error
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch(self._ALLOWED_URL)
@@ -130,8 +130,8 @@ class FetchTests(unittest.TestCase):
 
     def test_raises_on_timeout(self) -> None:
         with mock.patch.object(
-            mod.urllib.request,
-            "urlopen",
+            mod._FETCH_OPENER,
+            "open",
             side_effect=TimeoutError("read timed out"),
         ):
             with self.assertRaises(mod.FetchError) as ctx:
@@ -142,7 +142,7 @@ class FetchTests(unittest.TestCase):
         # 0xff is invalid as a UTF-8 leading byte.
         response = self._make_response(200, b"\xff\xfe\xfd")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch(self._ALLOWED_URL)
@@ -151,12 +151,13 @@ class FetchTests(unittest.TestCase):
     # ---- SSRF guard ----
 
     def test_rejects_non_https_scheme(self) -> None:
-        # The guard fires before any request — urlopen is patched to blow
-        # up so a regression that lets the URL through is unmistakable.
+        # The guard fires before any request — the opener is patched to
+        # blow up so a regression that lets the URL through is
+        # unmistakable.
         with mock.patch.object(
-            mod.urllib.request,
-            "urlopen",
-            side_effect=AssertionError("urlopen must not be called"),
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch("http://code.claude.com/docs/en/tools-reference.md")
@@ -164,26 +165,89 @@ class FetchTests(unittest.TestCase):
 
     def test_rejects_non_allowlisted_host(self) -> None:
         with mock.patch.object(
-            mod.urllib.request,
-            "urlopen",
-            side_effect=AssertionError("urlopen must not be called"),
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch("https://evil.example/docs/en/tools-reference.md")
             self.assertIn("SSRF guard", str(ctx.exception))
 
     def test_rejects_redirect_to_non_allowlisted_host(self) -> None:
-        # Initial URL is allowlisted, but the response landed (after a
-        # redirect) on a host that is not — the body must be refused.
+        # Defense in depth: even if a redirect somehow lands the response
+        # on an off-allowlist host (bypassing the redirect handler), the
+        # post-response ``geturl`` check must still refuse the body.
         response = self._make_response(
             200, b"redirected body", landed_url="https://evil.example/x",
         )
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
                 mod.fetch(self._ALLOWED_URL)
             self.assertIn("redirected response", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# Redirect handler (SSRF guard at redirect time)
+# ---------------------------------------------------------------------------
+
+
+class AllowlistRedirectHandlerTests(unittest.TestCase):
+    """``_AllowlistRedirectHandler`` rejects off-allowlist 30x targets
+    before the follow-up request is issued — the core of the SSRF
+    redirect fix.  A post-response check alone runs only after the
+    off-allowlist request has already been made, so this handler is what
+    actually prevents the outbound request."""
+
+    _ALLOWED_URL = "https://code.claude.com/docs/en/tools-reference.md"
+
+    def _handler(self) -> Any:
+        return mod._AllowlistRedirectHandler()
+
+    def _req(self) -> Any:
+        return mod.urllib.request.Request(self._ALLOWED_URL)
+
+    def test_off_allowlist_host_redirect_raises(self) -> None:
+        with self.assertRaises(mod.FetchError) as ctx:
+            self._handler().redirect_request(
+                self._req(), None, 302, "Found", None,
+                "https://evil.example/x",
+            )
+        message = str(ctx.exception)
+        self.assertIn("refusing redirect", message)
+        self.assertIn("SSRF guard", message)
+
+    def test_non_https_scheme_redirect_raises(self) -> None:
+        with self.assertRaises(mod.FetchError) as ctx:
+            self._handler().redirect_request(
+                self._req(), None, 302, "Found", None,
+                "http://code.claude.com/x",
+            )
+        self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_allowlisted_redirect_delegates(self) -> None:
+        # An on-allowlist 30x target is allowed: the handler delegates to
+        # the stdlib base, which returns a follow-up Request for the new
+        # URL rather than raising.
+        newurl = "https://code.claude.com/docs/en/other.md"
+        result = self._handler().redirect_request(
+            self._req(), None, 302, "Found", None, newurl,
+        )
+        self.assertIsInstance(result, mod.urllib.request.Request)
+        self.assertEqual(result.full_url, newurl)
+
+    def test_opener_uses_the_allowlist_redirect_handler(self) -> None:
+        # The module-level opener must actually be wired with the guard;
+        # build_opener swaps the default HTTPRedirectHandler for the
+        # subclass, so confirm an instance is present in the chain.
+        handlers = mod._FETCH_OPENER.handlers
+        self.assertTrue(
+            any(
+                isinstance(h, mod._AllowlistRedirectHandler)
+                for h in handlers
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
