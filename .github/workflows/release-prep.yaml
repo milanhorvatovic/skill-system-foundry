@@ -208,13 +208,25 @@ jobs:
     needs: [prepare, test]
     if: ${{ ! inputs.dry_run }}
     runs-on: ubuntu-latest
-    # Needs ``pull-requests: write`` for ``gh pr create`` and
-    # ``contents: read`` for the checkout.  Granted at the job level so
-    # the workflow-wide default stays read-only.
+    # Two-identity auto-merge, mirroring the fleet pattern in
+    # milanhorvatovic/codex-ai-code-review-action.  ``GITHUB_TOKEN`` stays
+    # read-only: oss-release-bot opens the PR (so its push/pull_request events
+    # trigger the required CI — GitHub does not fire downstream workflows for
+    # ``GITHUB_TOKEN``-authored events) and oss-automation-bot submits the
+    # approving review (a bot cannot approve its own PR, so a second identity is
+    # required to satisfy ``required_approving_review_count: 1``).  GitHub then
+    # enforces the ruleset normally — no admin bypass — and squash-merges on
+    # green via ``gh pr merge --auto``.
     permissions:
       contents: read
-      pull-requests: write
     steps:
+      - name: Mint release App token
+        id: release-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
+        with:
+          client-id: ${{ vars.RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
         with:
@@ -232,36 +244,64 @@ jobs:
           PREP_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           {
-            echo "Prepared by [release-prep run]($PREP_RUN_URL)."
+            echo "Prepared by [release-prep run]($PREP_RUN_URL) and opened by oss-release-bot so CI fires automatically."
             echo
             echo "## Changelog section"
             echo
             cat "$RUNNER_TEMP/pr-body-section.md"
             echo
-            echo "## Manual follow-up before merge"
+            echo "## Automated flow"
             echo
-            echo "- Review and edit version prose in \`.agents/skills/git-release/SKILL.md\` if any examples reference an outdated release."
-            echo "- Re-run CI: GitHub does not trigger PR workflows for PRs opened by \`GITHUB_TOKEN\`. Close and reopen the PR (a human action) to fire \`python-tests.yaml\` against the head."
+            echo "oss-automation-bot approves this PR, then GitHub auto-merges (squash) once the required checks pass.  On merge, \`release-on-merge.yaml\` tags \`v$VERSION\`, and the tag push triggers \`release.yaml\`, which builds the zip bundle + SHA256 checksum and creates the GitHub Release with both attached at creation (immutable-safe)."
             echo
-            echo "## Post-merge"
+            echo "If Copilot leaves an unresolved review thread, auto-merge waits until it is resolved.  To halt the release entirely, close this PR before the checks turn green."
             echo
-            echo "After this PR merges to \`main\`:"
+            echo "## Optional follow-up"
             echo
-            echo '```sh'
-            echo "gh release create v$VERSION --generate-notes"
-            echo '```'
-            echo
-            echo "The existing \`release.yml\` workflow then bundles the zip, computes the SHA256 checksum, and uploads both as release assets."
+            echo "- Review version prose in \`.agents/skills/git-release/SKILL.md\` if any examples reference an outdated release."
           } > "$RUNNER_TEMP/pr-body.md"
 
-      - name: Open release PR
+      - name: Open release PR (oss-release-bot)
+        id: open
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
           VERSION: ${{ inputs.version }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
         run: |
-          gh pr create \
+          set -euo pipefail
+          url=$(gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "Release v$VERSION" \
-            --body-file "$RUNNER_TEMP/pr-body.md"
+            --body-file "$RUNNER_TEMP/pr-body.md")
+          echo "Opened $url"
+          number=$(gh pr view "$url" --json number --jq '.number')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Mint automation App token
+        id: automation-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
+        with:
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+
+      - name: Approve release PR (oss-automation-bot)
+        env:
+          GH_TOKEN: ${{ steps.automation-token.outputs.token }}
+          PR_NUMBER: ${{ steps.open.outputs.number }}
+        # A second identity satisfies the ruleset's one-approval requirement; the
+        # release PR touches only manifests + CHANGELOG (no CODEOWNER-owned path),
+        # so an App approval is sufficient — no code-owner PAT needed.
+        run: |
+          set -euo pipefail
+          gh pr review --approve \
+            --body "Auto-approved by the release-prep workflow (oss-automation-bot) so the release PR can auto-merge on green." \
+            "$PR_NUMBER"
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.automation-token.outputs.token }}
+          PR_NUMBER: ${{ steps.open.outputs.number }}
+        run: |
+          set -euo pipefail
+          gh pr merge --auto --squash --delete-branch "$PR_NUMBER"

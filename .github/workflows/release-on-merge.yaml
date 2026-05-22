@@ -1,0 +1,82 @@
+name: Release on merge
+
+# Tag the release commit when a release-prep PR (head ``release/vX.Y.Z``) merges
+# to main. The tag is pushed under the oss-release-bot identity so the tag-push
+# event triggers release.yaml — a ``GITHUB_TOKEN``-authored tag push would not.
+#
+# Keying off the head ref + ``merged == true`` ties tagging to an actual merged
+# release PR, so it never mis-fires on the manifest/tag drift the repo currently
+# carries (manifests at 1.2.0, published tag v1.2.1) the way a bare
+# "manifest version has no tag" trigger would.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # the tag push is authenticated with the release App token, not GITHUB_TOKEN
+    timeout-minutes: 10
+    steps:
+      - name: Mint release App token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
+        with:
+          client-id: ${{ vars.RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Checkout merge commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Validate manifest version matches the release branch
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          VERSION="${HEAD_REF#release/v}"
+          MANIFEST=$(grep -E '^[[:space:]]*version:' skill-system-foundry/SKILL.md | head -1 | sed -E 's/.*version:[[:space:]]*//;s/[[:space:]]*$//')
+          if [ "$VERSION" != "$MANIFEST" ]; then
+            echo "::error::Release branch version ($VERSION) does not match the SKILL.md manifest ($MANIFEST); refusing to tag."
+            exit 1
+          fi
+          echo "Version $VERSION matches the manifest."
+
+      - name: Tag and push
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          BOT_USER_ID: ${{ vars.RELEASE_APP_BOT_USER_ID }}
+        run: |
+          set -euo pipefail
+          VERSION="${HEAD_REF#release/v}"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists at origin; nothing to do."
+            exit 0
+          fi
+          if [ -z "${BOT_USER_ID}" ]; then
+            echo "::error::vars.RELEASE_APP_BOT_USER_ID is empty; refusing to tag with a malformed bot email."
+            exit 1
+          fi
+          BOT_LOGIN="oss-release-bot[bot]"
+          git config user.name "${BOT_LOGIN}"
+          git config user.email "${BOT_USER_ID}+${BOT_LOGIN}@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}" "${MERGE_SHA}"
+          git push origin "v${VERSION}"

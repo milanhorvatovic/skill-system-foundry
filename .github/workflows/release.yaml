@@ -1,22 +1,49 @@
 name: Release
 
+# Build the skill bundle and create the GitHub Release when a vX.Y.Z tag is
+# pushed by release-on-merge.yaml (under the oss-release-bot identity, so the
+# tag-push event triggers this workflow — a GITHUB_TOKEN tag push would not).
+#
+# The bundle + checksum are attached in the SAME `gh release create` call. This
+# is mandatory under GitHub immutable releases: assets cannot be added after a
+# release is created, so the previous "create release, then upload" model broke.
+# The tag exists only on already-green main, so a failed create never strands a
+# reusable tag name.
+
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  bundle:
+  release:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read  # the release is created with the release App token, not GITHUB_TOKEN
     steps:
+      - name: Mint release App token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
+        with:
+          client-id: ${{ vars.RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
 
       - name: Build zip bundle
         run: |
+          set -euo pipefail
           mkdir -p dist
           BUNDLE_PATH="dist/skill-system-foundry-${GITHUB_REF_NAME}.zip"
           zip -r "$BUNDLE_PATH" skill-system-foundry/
@@ -55,10 +82,10 @@ jobs:
           write_line = f"{hash_bundle(bundle_path)}  {actual_name}\n"
           with open(checksum_path, "w", encoding="utf-8", newline="\n") as fh:
               fh.write(write_line)
-          # Re-read the checksum file and re-hash the bundle so this step
-          # confirms the checksum file matches the bundle as it exists at the
-          # end of checksum generation. (A mismatch introduced after this step
-          # but before `gh release upload` would not be caught here.)
+          # Re-read the checksum file and re-hash the bundle so this step confirms
+          # the checksum file matches the bundle as it exists at the end of
+          # checksum generation. (A mismatch introduced after this step but before
+          # the release upload would not be caught here.)
           with open(checksum_path, "r", encoding="utf-8") as fh:
               checksum_line = fh.readline().rstrip("\r\n")
           if "  " not in checksum_line:
@@ -76,11 +103,29 @@ jobs:
           PY
           echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
 
-      - name: Upload release asset
+      - name: Create GitHub Release with assets (immutable-safe)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" \
-            "$BUNDLE_PATH" \
-            "$CHECKSUM_PATH" \
-            --clobber
+          set -euo pipefail
+          : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
+          : "${CHECKSUM_PATH:?CHECKSUM_PATH must be set}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; skipping creation."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE="$(mktemp)"
+          awk -v ver="## [$VERSION]" '
+            substr($0, 1, length(ver)) == ver { grab = 1; print; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::error::No changelog section found for $VERSION in CHANGELOG.md."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            "$BUNDLE_PATH" "$CHECKSUM_PATH" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$NOTES_FILE"
