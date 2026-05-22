@@ -8,8 +8,6 @@ Unreleased changes are tracked in `git log` on `main`; this file is a ledger of 
 
 ## [1.2.1] - 2026-05-22
 
-## [1.2.0] - 2026-05-22
-
 ### Added
 
 - Add agent-delegated description activation evaluation (#150)
