@@ -26,6 +26,7 @@ from .constants import (
     RE_MARKDOWN_LINK_REF,
     RE_BACKTICK_REF,
 )
+from .frontmatter import strip_frontmatter_for_scan
 from .reporting import format_exception, to_posix
 
 # ===================================================================
@@ -105,6 +106,27 @@ def blank_fenced_blocks(content: str) -> str:
     return RE_FENCED_BLOCK.sub(
         lambda m: re.sub(r"[^\n]", " ", m.group(0)), content
     )
+
+
+def blank_frontmatter(content: str) -> str:
+    """Blank a leading YAML frontmatter block, preserving line count.
+
+    The validator scans references in the frontmatter-stripped body
+    (``load_frontmatter`` -> ``extract_body_references``), so the bundle
+    must not treat a backtick or link inside frontmatter (e.g. a
+    ``description`` string) as a reference — otherwise it would be a
+    bundle-only false positive.  Uses the shared
+    ``strip_frontmatter_for_scan`` so the bundler and validator agree on
+    what frontmatter is.  The stripped body is an exact suffix of
+    *content*, so blanking the prefix (non-newline -> space) drops the
+    frontmatter from the scan while keeping line numbers accurate for
+    diagnostics.
+    """
+    body = strip_frontmatter_for_scan(content)
+    if body == content:
+        return content
+    prefix = content[: len(content) - len(body)]
+    return re.sub(r"[^\n]", " ", prefix) + body
 
 # Binary file extensions — not scanned for references.
 BINARY_EXTENSIONS = frozenset({
@@ -745,10 +767,14 @@ def extract_references(filepath: str) -> list[FilteredRef]:
     refs = []
 
     if is_markdown_file(filepath):
-        # Blank fenced code blocks so example links inside ``` are not
-        # treated as references (same rule validation applies), while
+        # Blank frontmatter then fenced code blocks so neither a path
+        # inside a frontmatter string nor an example link inside ``` is
+        # treated as a reference (the validator scans the
+        # frontmatter-stripped body and skips fences too), while
         # preserving line numbers for diagnostics.
-        scan_lines = blank_fenced_blocks(content).split("\n")
+        scan_lines = blank_fenced_blocks(
+            blank_frontmatter(content)
+        ).split("\n")
         for line_num, line in enumerate(scan_lines, 1):
             seen_in_line = set()
             for match in RE_MARKDOWN_LINK_REF.finditer(line):

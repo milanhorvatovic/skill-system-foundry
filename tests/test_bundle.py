@@ -1655,6 +1655,22 @@ class PostValidateCoverageTests(unittest.TestCase):
             [],
         )
 
+    def test_frontmatter_reference_is_not_postvalidated(self) -> None:
+        """A path-like token in frontmatter is not a postvalidate finding.
+
+        Mirrors the prevalidate scanner and the validator, which only
+        look at the frontmatter-stripped body.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: a\n"
+                "description: see `references/missing.md`\n---\n\nBody\n",
+            )
+            errors = postvalidate(bundle_dir)
+        self.assertEqual([e for e in errors if "missing.md" in e], [])
+
     def test_backtick_reference_unresolved_reports_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle_dir = os.path.join(tmpdir, "bundle")

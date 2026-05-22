@@ -465,6 +465,54 @@ class ScanReferencesTests(unittest.TestCase):
             self.assertEqual(result["errors"], [])
             self.assertEqual(result["warnings"], [])
 
+    def test_frontmatter_path_token_is_not_a_reference(self) -> None:
+        """A path-like token inside frontmatter is not scanned.
+
+        The validator checks references in the frontmatter-stripped body,
+        so a backticked path in a ``description`` must not become a
+        bundle-only false positive.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: demo\n"
+                "description: see `references/missing.md` for details\n"
+                "---\n# Demo\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(
+                [w for w in result["warnings"] if "missing.md" in w], []
+            )
+
+    def test_query_suffixed_reference_is_kept_not_globbed(self) -> None:
+        """A cache-busted file ref (?v=2) is a reference, not a dropped glob.
+
+        Regression for the glob-vs-query distinction: ``is_glob_path``
+        runs before ``strip_fragment`` but treats ``?`` after a file
+        extension as a query separator, so the external asset must still
+        be collected and bundled.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            asset = os.path.join(system_root, "assets", "logo.svg")
+            write_text(asset, "<svg/>\n")
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "Logo: [logo](../../assets/logo.svg?v=2)\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+            self.assertEqual(result["errors"], [])
+            self.assertIn(os.path.abspath(asset), result["external_files"])
+
     def test_valid_external_reference_collected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")

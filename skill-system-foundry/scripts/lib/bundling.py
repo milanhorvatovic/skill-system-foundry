@@ -35,6 +35,7 @@ from .references import (
     scan_references,
     ScanResult,
     blank_fenced_blocks,
+    blank_frontmatter,
     compute_bundle_path,
     infer_system_root,
     is_glob_path,
@@ -1230,7 +1231,7 @@ def postvalidate(bundle_dir: str) -> list[str]:
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            scan_content = blank_fenced_blocks(content)
+            scan_content = blank_fenced_blocks(blank_frontmatter(content))
             for line_num, line in enumerate(scan_content.split("\n"), 1):
                 # Markdown links
                 for match in RE_MARKDOWN_LINK_REF.finditer(line):
