@@ -1,0 +1,83 @@
+# Snyk Code policy.
+#
+# Excludes confirmed Class A path-traversal false positives: paths an operator
+# (or CI) passes on the command line of a local dev tool, flowing into open()
+# or os.walk. These tools have no privilege boundary — the caller already has
+# filesystem access and opening the supplied path is the tool's job — so there
+# is no traversal risk to fix.
+#
+# These are excluded rather than guarded in code because the containment base
+# is itself the caller-supplied path, so there is no trusted base for Snyk to
+# recognise a sanitiser against; a whole-file exclude is the only committed
+# mechanism Snyk Code honours for its findings.
+#
+# Genuine trust boundaries are fixed in code, not excluded (SSRF host allowlist,
+# zip-slip member check). tool-catalog-drift.py is the one exception below: its
+# SSRF is fixed and tested, but Snyk does not credit the sanitiser, so the file
+# is excluded too.
+#
+# Full threat model: SECURITY.md.
+version: v1.25.1
+ignore: {}
+patch: {}
+exclude:
+  global:
+    # Meta-skill entry points — operator-supplied skill/system/corpus path.
+    - skill-system-foundry/scripts/audit_skill_system.py:
+        reason: >-
+          Class A: operator-supplied CLI path (system/skill root) walked and
+          opened; no privilege boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/validate_skill.py:
+        reason: >-
+          Class A: operator-supplied CLI skill path walked and opened; no
+          privilege boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/evaluate_descriptions.py:
+        reason: >-
+          Class A: operator-supplied corpus/skill-set paths opened; no
+          privilege boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/bundle.py:
+        reason: >-
+          Class A: operator-supplied skill/system-root/output paths; no
+          privilege boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/scaffold.py:
+        reason: >-
+          Class A: operator-supplied --root scaffold target opened/written;
+          no privilege boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/reference_conformance_report.py:
+        reason: >-
+          Class A: operator-supplied skill path opened; no privilege
+          boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/stats.py:
+        reason: >-
+          Class A: operator-supplied skill path walked and opened; no
+          privilege boundary. See SECURITY.md.
+    - skill-system-foundry/scripts/yaml_conformance_report.py:
+        reason: >-
+          Class A: operator-supplied corpus-root path opened; no privilege
+          boundary. See SECURITY.md.
+    # CI helper scripts — operator/CI-supplied path arguments.
+    - .github/scripts/refresh-yaml-corpus-digests.py:
+        reason: >-
+          Class A: CI-supplied corpus-root path walked and hashed; no
+          privilege boundary. See SECURITY.md.
+    - .github/scripts/smoke-rewrite-frontmatter.py:
+        reason: >-
+          Class A: CI-supplied SKILL.md path read/written; no privilege
+          boundary. See SECURITY.md.
+    - .github/scripts/check-per-file-coverage.py:
+        reason: >-
+          Class A: CI-supplied coverage.json/.coveragerc paths read; no
+          privilege boundary. See SECURITY.md.
+    - .github/scripts/verify-action-pins.py:
+        reason: >-
+          Class A: CI-supplied workflows-dir path walked and read; no
+          privilege boundary. See SECURITY.md.
+    # Mixed file: SSRF is fixed in code + test-guarded, but Snyk does not
+    # credit the host-allowlist sanitizer; the 3 PT are Class A. See SECURITY.md.
+    - .github/scripts/tool-catalog-drift.py:
+        reason: >-
+          SSRF hardened in code (hardcoded host allowlist + redirect
+          re-validation) and covered by tests, but Snyk Code does not credit
+          the sanitizer; remaining python/PT are Class A operator-supplied
+          --catalog-path reads/writes with no privilege boundary. Regression
+          guarded by .github/tests/test_tool_catalog_drift.py. See SECURITY.md.
