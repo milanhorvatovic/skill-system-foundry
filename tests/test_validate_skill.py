@@ -1169,6 +1169,65 @@ class ValidateBodyTests(unittest.TestCase):
         self.assertEqual(len(non_file_warns), 1)
 
 
+class AngleBracketValidateBodyTests(unittest.TestCase):
+    """validate_body recognizes CommonMark ``<...>`` link destinations."""
+
+    def test_wrapped_ref_resolves_no_warning(self) -> None:
+        """A wrapped destination to an existing file produces no broken-link WARN."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            write_text(
+                os.path.join(tmpdir, "references", "my file.md"), "# r\n",
+            )
+            body = "# Skill\n\nSee [d](<references/my file.md>).\n"
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+
+    def test_wrapped_unresolvable_ref_warns(self) -> None:
+        """A wrapped destination to a missing in-skill file is no longer silent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nSee [d](<references/missing.md>).\n"
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("references/missing.md", broken_warns[0])
+
+    def test_embedded_placeholder_ignored(self) -> None:
+        """``references/<f>.md`` is a template placeholder, not a reference."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nPattern [p](references/<f>.md).\n"
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(broken_warns, [])
+
+    def test_fully_wrapped_non_path_is_surfaced_not_silent(self) -> None:
+        """The ungated wrapped form treats ``[x](<bare prose>)`` as a
+        (broken) reference rather than silently ignoring it — the
+        explicit angle wrapping is taken as a destination signal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skill_md = os.path.join(tmpdir, "SKILL.md")
+            body = "# Skill\n\nOdd [x](<bare prose>).\n"
+            write_text(skill_md, body)
+            errors, _passes = validate_body(
+                body, skill_md, os.path.dirname(skill_md),
+            )
+        broken_warns = [e for e in errors if "does not exist" in e]
+        self.assertEqual(len(broken_warns), 1)
+        self.assertIn("bare prose", broken_warns[0])
+
+
 # ===================================================================
 # find_skill_root
 # ===================================================================
