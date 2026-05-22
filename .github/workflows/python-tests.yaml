@@ -22,9 +22,9 @@ permissions:
   contents: read
 
 # Cancel superseded in-progress runs for the same PR. Gated to pull_request so
-# push-to-main runs (badge update) and workflow_call invocations (release-prep,
-# which fires as workflow_dispatch) always run to completion and are never
-# cancelled mid-flight.
+# push-to-main runs (which upload the coverage-total artifact the coverage-badge
+# workflow consumes) and workflow_call invocations (release-prep, which fires as
+# workflow_dispatch) always run to completion and are never cancelled mid-flight.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -299,39 +299,3 @@ jobs:
           python .github/scripts/smoke-validate-extracted.py smoke-extracted skill-system-foundry/scripts/validate_skill.py
         env:
           PYTHONUTF8: "1"
-
-  update-badge:
-    needs:
-      - test
-      - validate-examples
-      - reference-conformance
-      - bundle-extract-smoke
-    # Restrict to genuine pushes to main; this skips reusable
-    # workflow_call invocations (e.g. release-prep.yml) where
-    # github.event_name is the caller's event (workflow_dispatch) and
-    # the badge must not be updated from a release branch's coverage.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    concurrency:
-      group: update-badge-main
-      cancel-in-progress: true
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Download coverage total
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
-        with:
-          name: coverage-total
-
-      - name: Update coverage badge
-        run: |
-          TOTAL=$(cat coverage-total.txt)
-          export TOTAL
-          bash .github/scripts/update-coverage-badge.sh

@@ -1,0 +1,51 @@
+name: Coverage badge
+
+# Publish the coverage badge after a successful main run of "Python tests".
+# Kept separate from python-tests.yaml so the test workflow stays contents:read
+# and composable (it is reused by release-prep via workflow_call); this is the
+# only place that needs contents:write to force-push the orphan badges branch.
+#
+# Using workflow_run also removes the old in-workflow guard: a workflow_call
+# invocation (release-prep) runs nested and emits no workflow_run event, so the
+# reusable path can never reach this badge step.
+
+on:
+  workflow_run:
+    workflows: ["Python tests"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-badge
+  cancel-in-progress: true
+
+jobs:
+  badge:
+    # Only after a genuine push-to-main test run that succeeded.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # force-push the coverage badge to the orphan badges branch
+      actions: read    # download the coverage-total artifact from the triggering run
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+
+      - name: Download coverage total from the test run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
+        with:
+          name: coverage-total
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Update coverage badge
+        run: |
+          TOTAL=$(cat coverage-total.txt)
+          export TOTAL
+          bash .github/scripts/update-coverage-badge.sh
