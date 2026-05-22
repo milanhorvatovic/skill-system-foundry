@@ -34,8 +34,14 @@ jobs:
       contents: write  # force-push the coverage badge to the orphan badges branch
       actions: read    # download the coverage-total artifact from the triggering run
     steps:
-      - name: Checkout
+      - name: Checkout the commit that produced the coverage
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          # Pin to the triggering run's commit so the badge script and the
+          # coverage total come from the same revision, not a newer main tip.
+          # Safe because this workflow only triggers on push runs on main, so
+          # head_sha is always a trusted main commit.
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Download coverage total from the test run
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0

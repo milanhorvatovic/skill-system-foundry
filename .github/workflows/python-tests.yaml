@@ -21,12 +21,13 @@ on:
 permissions:
   contents: read
 
-# Cancel superseded in-progress runs for the same PR. Gated to pull_request so
-# push-to-main runs (which upload the coverage-total artifact the coverage-badge
-# workflow consumes) and workflow_call invocations (release-prep, which fires as
-# workflow_dispatch) always run to completion and are never cancelled mid-flight.
+# Concurrency: PR runs share a ref-based group so a new push to the PR cancels
+# the superseded run. Push-to-main and workflow_call (release-prep) runs instead
+# get a unique per-run group, so they neither cancel nor queue behind each other
+# — a shared group on refs/heads/main would serialize mainline CI and delay the
+# coverage-badge workflow_run that fires on a successful push run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
