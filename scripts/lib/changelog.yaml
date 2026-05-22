@@ -22,6 +22,9 @@ changelog:
   verb_mapping:
     Added:
       - Add
+      - Suggest
+      - Fail
+      - Emit
     Changed:
       - Update
       - Refactor
@@ -33,6 +36,13 @@ changelog:
       - Enforce
       - Restructure
       - Bump
+      - Sync
+      - Apply
+      - Switch
+      - Overhaul
+      - Move
+      - Make
+      - Recognize
     Deprecated:
       - Deprecate
     Removed:
@@ -43,6 +53,7 @@ changelog:
       - Fix
       - Catch
       - Resolve
+      - Address
     Security:
       - Patch
       - Secure
