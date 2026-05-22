@@ -70,6 +70,30 @@ class LoadVerbMappingTests(unittest.TestCase):
         mapping = gc.load_verb_mapping()
         self.assertEqual(mapping["Bump"], "Changed")
 
+    def test_observed_release_verbs_present(self) -> None:
+        # Verbs drawn from real merged commit subjects across the
+        # repository's history.  They route releases away from the
+        # unmapped path (exit 3) that aborts the release-prep workflow;
+        # this guard turns an accidental removal or rename into a unit
+        # failure here rather than a startup/exit-3 failure at release
+        # time.
+        mapping = gc.load_verb_mapping()
+        expected = {
+            "Suggest": "Added",
+            "Fail": "Added",
+            "Emit": "Added",
+            "Sync": "Changed",
+            "Apply": "Changed",
+            "Switch": "Changed",
+            "Overhaul": "Changed",
+            "Move": "Changed",
+            "Make": "Changed",
+            "Recognize": "Changed",
+            "Address": "Fixed",
+        }
+        for verb, section in expected.items():
+            self.assertEqual(mapping[verb], section)
+
     def test_unknown_section_rejected(self) -> None:
         bad = (
             "changelog:\n"
