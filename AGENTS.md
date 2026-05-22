@@ -328,7 +328,9 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 
 ## Release Process
 
-Version lives in three files that must agree: `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`, canonical), `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`. The version-consistency rule in `audit_skill_system.py` fails the repo-root audit if they drift. Tags mirror as `vX.Y.Z`. The `release.yaml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
+Version lives in three files that must agree: `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`, canonical), `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`. The version-consistency rule in `audit_skill_system.py` fails the repo-root audit if they drift. Tags mirror as `vX.Y.Z`.
+
+Releases are automated: dispatch the `release-prep.yaml` workflow with the target version and it bumps the three manifests, prepends the changelog, dry-builds the bundle, opens the release PR as oss-release-bot, has oss-automation-bot approve it, and auto-merges on green; `release-on-merge.yaml` then tags the merge commit and `release.yaml` builds the bundle and creates the GitHub Release with the zip + SHA256 attached at creation. The manual tooling below is what that workflow runs internally, and the path to use when dispatching is unavailable (offline, or regenerating a past release). Run full validation and tests before tagging by hand.
 
 Bump all three manifest files in lockstep with `scripts/bump_version.py`:
 
@@ -339,7 +341,7 @@ python scripts/bump_version.py NEXT_VERSION             # write the three files 
 
 The script rejects invalid semver, equal versions, and downgrades (unless `--allow-downgrade` is passed), refuses to run when the three files already disagree, and probes the changelog generator in `--dry-run` mode before touching disk. The changelog step below is only needed when calling the generator directly (for example, to regenerate a past release).
 
-When publishing the GitHub Release, paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section using the checklist below.
+When publishing a release **by hand** — the dispatch path generates release notes from the matching `CHANGELOG.md` section automatically — paste the body from [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) and replace every `{VERSION}` placeholder with the release number. Generate the changelog section using the checklist below.
 
 1. **Preview** the section for the exact commit you intend to tag. Substitute the previous tag and the new release number (e.g., `--since v1.1.0 --version 1.2.0`) — not SemVer build metadata like `+1`. Pin `--until` so the range cannot drift between the preview and the write.
 

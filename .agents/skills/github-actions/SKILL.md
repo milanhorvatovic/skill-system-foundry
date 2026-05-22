@@ -28,7 +28,9 @@ Guides the creation, modification, and review of GitHub Actions workflows in the
 | Supply-chain scorecard | `scorecard.yaml` | Schedule, push to `main`, branch-protection change | `analysis` |
 | CodeQL | `codeql.yaml` | Push to `main`, PRs, schedule | `analyze` |
 | Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
-| Release bundle | `release.yaml` | Release published | `bundle` |
+| Release prep | `release-prep.yaml` | `workflow_dispatch` | `prepare`, `test`, `open-pr` |
+| Release tag | `release-on-merge.yaml` | Release PR merged to `main` | `tag` |
+| Release bundle | `release.yaml` | `v*.*.*` tag push | `release` |
 
 ## Hard Requirements
 
