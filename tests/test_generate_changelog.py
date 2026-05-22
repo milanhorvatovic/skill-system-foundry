@@ -92,6 +92,10 @@ class LoadVerbMappingTests(unittest.TestCase):
             "Address": "Fixed",
         }
         for verb, section in expected.items():
+            # assertIn first so a removed/renamed verb fails with an
+            # actionable message naming the verb, rather than a bare
+            # KeyError reported as a test error.
+            self.assertIn(verb, mapping, f"{verb!r} missing from verb mapping")
             self.assertEqual(mapping[verb], section)
 
     def test_unknown_section_rejected(self) -> None:
