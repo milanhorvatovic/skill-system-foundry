@@ -193,11 +193,11 @@ jobs:
     # is skipped under ``workflow_call`` (its ``if`` requires a push to
     # main), the declared scope is still checked, so the caller must
     # grant ``contents: write`` or the whole dispatch fails to compile
-    # with a logless ``startup_failure``.  The reusable jobs that do run
-    # on this call (test, validate-examples, reference-conformance,
-    # bundle-extract-smoke) each declare ``contents: read`` and narrow
-    # themselves back down; this grant only satisfies the compile-time
-    # cap for the skipped badge job.
+    # with a logless ``startup_failure``.  python-tests.yaml defaults to
+    # ``contents: read`` at the workflow level, and only ``update-badge``
+    # raises it to ``contents: write``; the reusable jobs that do run on
+    # this call need no more than that read default, so this grant only
+    # satisfies the compile-time cap for the skipped badge job.
     permissions:
       contents: write
     uses: ./.github/workflows/python-tests.yaml
