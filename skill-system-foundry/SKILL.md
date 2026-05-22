@@ -9,7 +9,7 @@ compatibility: Requires Python 3.12+ (stdlib only) for validation, scaffolding, 
 license: MIT
 metadata:
   author: Milan Horvatovič
-  version: 1.2.0
+  version: 1.2.1
   spec: agentskills.io
 ---
 
