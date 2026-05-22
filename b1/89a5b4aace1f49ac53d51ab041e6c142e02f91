@@ -1,0 +1,9 @@
+skill-system-foundry/capabilities/bundling/capability.md
+  ai_agent 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "b189a5b4aace1f49ac53d51ab041e6c142e02f91",
+  "prompts": {}
+}
