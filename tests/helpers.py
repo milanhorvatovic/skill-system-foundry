@@ -32,28 +32,34 @@ def safe_extractall(zf: zipfile.ZipFile, dest: str) -> None:
 
     ``zipfile.ZipFile.extractall`` has no ``filter=`` parameter — that is a
     ``tarfile`` feature (PEP 706, Python 3.12) and does not exist on
-    ``ZipFile`` — so containment is enforced explicitly here: each member's
-    resolved destination must stay within *dest* before it is extracted.
-    A member name carrying ``..`` segments, an absolute path, or (on a
-    case-insensitive host) a drive prefix that would land outside *dest*
-    raises :class:`UnsafeArchiveMember` before any of that member's bytes
-    are written.  ``dest`` is a test-controlled local directory, so it is a
-    trusted containment base; the member names are the untrusted input.
+    ``ZipFile`` — so containment is enforced explicitly here: every member's
+    resolved destination must stay within *dest* before *any* member is
+    extracted.  A member name carrying ``..`` segments, an absolute path, or
+    (on a case-insensitive host) a drive prefix that would land outside
+    *dest* raises :class:`UnsafeArchiveMember` before any bytes from any
+    member are written, so an archive whose first members are benign and
+    whose later member escapes leaves nothing on disk.  ``dest`` is a
+    test-controlled local directory, so it is a trusted containment base;
+    the member names are the untrusted input.
 
     Containment is decided by :func:`_is_within_destination` (a
     ``commonpath`` comparison) so a filesystem-root *dest* is handled
     correctly rather than rejecting every member.
 
-    Extraction is per-member (``ZipFile.extract``) rather than a single
-    ``extractall`` so the dangerous bulk API is not invoked at all.
+    Validation is two-phase: the whole member list is checked first, then
+    extraction begins only once the entire archive is known safe.  Extraction
+    is per-member (``ZipFile.extract``) rather than a single ``extractall``
+    so the dangerous bulk API is not invoked at all.
     """
     dest_real = os.path.realpath(dest)
-    for member in zf.namelist():
+    members = zf.namelist()
+    for member in members:
         target = os.path.realpath(os.path.join(dest_real, member))
         if not _is_within_destination(target, dest_real):
             raise UnsafeArchiveMember(
                 f"refusing to extract {member!r}: escapes destination {dest!r}"
             )
+    for member in members:
         zf.extract(member, dest_real)
 
 

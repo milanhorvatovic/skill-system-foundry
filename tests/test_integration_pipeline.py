@@ -319,6 +319,29 @@ class SafeExtractAllTests(unittest.TestCase):
             # The escaping member must not have been written anywhere outside dest.
             self.assertFalse(os.path.exists(sentinel))
 
+    def test_rejects_archive_when_later_member_escapes(self) -> None:
+        # Two-phase guarantee: a benign member ordered BEFORE an escaping
+        # member must not be written to disk.  The whole member list is
+        # validated before any extraction begins, so the escape is detected
+        # while the destination is still empty.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "mixed.zip")
+            evil = zipfile.ZipInfo("../escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("benign.txt", "safe")  # first member: benign
+                zf.writestr(evil, "pwned")          # second member: escapes
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            sentinel = os.path.join(tmpdir, "escape.txt")  # sibling of dest
+            from helpers import UnsafeArchiveMember
+            with zipfile.ZipFile(archive) as zf:
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            # The benign member must NOT have been extracted, and the
+            # escaping member must NOT have been written outside dest.
+            self.assertFalse(os.path.exists(os.path.join(dest, "benign.txt")))
+            self.assertFalse(os.path.exists(sentinel))
+
     def test_containment_allows_member_under_filesystem_root(self) -> None:
         # Regression: a filesystem-root destination ("/" on POSIX, a drive
         # root on Windows) made the old ``startswith(dest_real + os.sep)``
