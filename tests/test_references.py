@@ -13,6 +13,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+from lib.constants import RE_MARKDOWN_LINK_REF
 from lib.references import (
     BoundaryViolation,
     RE_TEXT_FILE_REF,
@@ -1878,6 +1879,88 @@ class ExtractReferencesTests(unittest.TestCase):
             write_text(md_file, "See [q](?query)\n")
             refs = extract_references(md_file)
         self.assertEqual(refs, [])
+
+
+class AngleBracketReferenceRegexTests(unittest.TestCase):
+    """The markdown_link pattern captures CommonMark ``<...>`` destinations."""
+
+    def test_plain_wrapped_destination_captured(self) -> None:
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall("[d](<references/foo.md>)"),
+            ["<references/foo.md>"],
+        )
+
+    def test_wrapped_path_with_spaces_captured(self) -> None:
+        """The angle-bracket form exists for paths containing spaces."""
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall("[d](<references/my file.md>)"),
+            ["<references/my file.md>"],
+        )
+
+    def test_wrapped_with_title_captured(self) -> None:
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall('[d](<refs/foo.md> "Title")'),
+            ['<refs/foo.md> "Title"'],
+        )
+
+    def test_closing_paren_inside_angle_is_legal(self) -> None:
+        """A ``)`` inside ``<...>`` is part of the destination, not the close."""
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall("[d](<a)b.md>)"),
+            ["<a)b.md>"],
+        )
+
+    def test_ungated_on_extension(self) -> None:
+        """The wrapped alternative does not require a recognized extension."""
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall("[d](<diagram.svg>)"),
+            ["<diagram.svg>"],
+        )
+
+    def test_non_wrapped_link_unchanged(self) -> None:
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall("[d](references/foo.md)"),
+            ["references/foo.md"],
+        )
+
+    def test_cross_line_match_blocked(self) -> None:
+        """``[^<>\\n]`` stops a ``<`` pairing with a ``>`` on a later line."""
+        self.assertEqual(
+            RE_MARKDOWN_LINK_REF.findall("[d](<refs/\nfoo.md>)"),
+            [],
+        )
+
+
+class AngleBracketExtractReferencesTests(unittest.TestCase):
+    """extract_references() recognizes and unwraps angle-bracket targets."""
+
+    def _refs(self, body: str) -> list[tuple[str, str, int, str]]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_file = os.path.join(tmpdir, "doc.md")
+            write_text(md_file, body)
+            return extract_references(md_file)
+
+    def test_wrapped_local_unwrapped_to_clean_path(self) -> None:
+        refs = self._refs("See [d](<references/my file.md>).\n")
+        self.assertEqual(len(refs), 1)
+        raw, clean, _line, ref_type = refs[0]
+        self.assertEqual(raw, "<references/my file.md>")
+        self.assertEqual(clean, "references/my file.md")
+        self.assertEqual(ref_type, "markdown_link")
+
+    def test_embedded_placeholder_dropped(self) -> None:
+        """``references/<f>.md`` is a template placeholder, not a reference."""
+        refs = self._refs("Pattern [p](references/<f>.md).\n")
+        self.assertEqual([r[1] for r in refs], [])
+
+    def test_wrapped_url_autolink_dropped(self) -> None:
+        refs = self._refs("Link [u](<https://example.com>).\n")
+        self.assertEqual(refs, [])
+
+    def test_wrapped_external_escape_kept(self) -> None:
+        """A wrapped escaping ref is recognized (resolution decides severity)."""
+        refs = self._refs("See [e](<../../shared/x.md>).\n")
+        self.assertEqual([r[1] for r in refs], ["../../shared/x.md"])
 
 
 # ===================================================================

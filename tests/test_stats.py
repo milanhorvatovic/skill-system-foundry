@@ -333,6 +333,19 @@ class ExtractBodyReferencesTests(unittest.TestCase):
             extract_body_references(body), ["references/guide.md"]
         )
 
+    def test_angle_wrapped_destination_unwrapped(self) -> None:
+        """A CommonMark ``<...>`` destination enters the load graph
+        unwrapped, so a wrapped dependency is reachable for stats and
+        validation rather than silently absent."""
+        body = "[d](<references/my file.md>)"
+        self.assertEqual(
+            extract_body_references(body), ["references/my file.md"]
+        )
+
+    def test_angle_wrapped_url_autolink_dropped(self) -> None:
+        body = "[u](<https://example.com>)"
+        self.assertEqual(extract_body_references(body), [])
+
     def test_duplicates_removed_in_first_seen_order(self) -> None:
         body = (
             "[a](references/a.md)\n"

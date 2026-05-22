@@ -284,6 +284,76 @@ class ComputeRecommendedReplacementTests(unittest.TestCase):
         self.assertEqual(replacement_t, '../../references/guide.md "Title"')
 
 
+class AngleBracketRewriteTests(unittest.TestCase):
+    """The rewriter unwraps and re-wraps CommonMark ``<...>`` destinations."""
+
+    def _legacy_capability_skill(self, tmp: str) -> str:
+        write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+        write_text(os.path.join(tmp, "references", "my file.md"), "# Foo\n")
+        cap_md = os.path.join(tmp, "capabilities", "demo", "capability.md")
+        write_text(cap_md, "# Demo\n")
+        return cap_md
+
+    def test_wrapped_legacy_ref_rewritten_and_rewrapped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cap_md = self._legacy_capability_skill(tmp)
+            replacement = compute_recommended_replacement(
+                "<references/my file.md>", cap_md, tmp,
+            )
+        self.assertEqual(replacement, "<../../references/my file.md>")
+
+    def test_wrapped_anchor_stays_inside_brackets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cap_md = self._legacy_capability_skill(tmp)
+            replacement = compute_recommended_replacement(
+                "<references/my file.md#sec>", cap_md, tmp,
+            )
+        self.assertEqual(replacement, "<../../references/my file.md#sec>")
+
+    def test_wrapped_title_stays_outside_brackets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cap_md = self._legacy_capability_skill(tmp)
+            replacement = compute_recommended_replacement(
+                '<references/my file.md> "T"', cap_md, tmp,
+            )
+        self.assertEqual(replacement, '<../../references/my file.md> "T"')
+
+    def test_apply_fixes_rewrites_wrapped_on_disk(self) -> None:
+        """End-to-end: --fix --apply rewrites the wrapped link in the file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cap_md = self._legacy_capability_skill(tmp)
+            write_text(
+                cap_md,
+                "# Demo\nSee [d](<references/my file.md>) and "
+                "[e](<references/my file.md#sec>).\n",
+            )
+            rows = find_fixable_references(tmp)
+            modified = apply_fixes(rows)
+            result = open(cap_md, encoding="utf-8").read()
+        self.assertEqual(modified, 1)
+        self.assertIn("[d](<../../references/my file.md>)", result)
+        self.assertIn("[e](<../../references/my file.md#sec>)", result)
+
+    def test_ambiguous_wrapped_ref_detected(self) -> None:
+        """A wrapped ref resolving two ways is detected like the bare form."""
+        with tempfile.TemporaryDirectory() as tmp:
+            write_text(os.path.join(tmp, "SKILL.md"), "---\nname: t\n---\n")
+            # Shared-root references/foo.md AND capability-local
+            # references/foo.md — the legacy and file-relative
+            # resolutions differ, so the ref is ambiguous.
+            write_text(os.path.join(tmp, "references", "foo.md"), "# root\n")
+            cap_dir = os.path.join(tmp, "capabilities", "demo")
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(cap_md, "# Demo\n")
+            write_text(
+                os.path.join(cap_dir, "references", "foo.md"), "# local\n",
+            )
+            ambiguous = detect_ambiguous_legacy_target(
+                "<references/foo.md>", cap_md, tmp,
+            )
+        self.assertIsNotNone(ambiguous)
+
+
 class FindFixableReferencesTests(unittest.TestCase):
     """``find_fixable_references`` walks the skill and aggregates
     rewriter rows for every legacy ref it finds."""

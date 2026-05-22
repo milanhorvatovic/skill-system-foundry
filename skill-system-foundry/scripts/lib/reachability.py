@@ -38,6 +38,7 @@ from .references import (
     is_drive_qualified,
     is_glob_path,
     is_within_directory,
+    should_skip_reference,
     strip_fragment,
 )
 from .router_table import extract_capability_paths
@@ -86,8 +87,11 @@ def extract_body_references(
     ``include_router_table=True`` only for that file.
 
     Anchor fragments, queries, and title suffixes are stripped via
-    :func:`strip_fragment`.  Template placeholders (containing ``<``
-    or ``>``) are dropped.  Order is preserved as the body presents
+    :func:`strip_fragment`.  Non-file references are dropped via
+    :func:`should_skip_reference` — URLs, anchors, and embedded
+    template placeholders (``references/<f>.md``); a fully
+    ``<...>``-wrapped local destination (``<references/foo.md>``) is
+    kept and unwrapped.  Order is preserved as the body presents
     them.  Router-table capability paths follow whatever links were
     found in prose.
 
@@ -141,8 +145,16 @@ def extract_body_references(
     seen: set[str] = set()
     cleaned: list[str] = []
     for ref in raw_refs:
-        # Drop template placeholders (``<name>``, ``<...>``).
-        if "<" in ref or ">" in ref:
+        # Drop non-file references via the shared classifier:
+        # URL/anchor/empty refs, embedded template placeholders
+        # (``references/<f>.md``), and angle-wrapped autolinks
+        # (``<https://…>``).  A fully ``<...>``-wrapped local path
+        # (``<references/foo.md>``) is *kept* — ``should_skip_reference``
+        # recognizes it via ``RE_WRAPPED_LOCAL_REF`` and ``strip_fragment``
+        # unwraps it below.  Reusing the classifier keeps this scan,
+        # the bundle scanner, and the validator on one definition of
+        # "a reference" (see references/path-resolution.md).
+        if should_skip_reference(ref):
             continue
         # Drop glob-style mentions (``capabilities/**/*.md``,
         # ``references/[abc].md``, ``references/?ref.md``).

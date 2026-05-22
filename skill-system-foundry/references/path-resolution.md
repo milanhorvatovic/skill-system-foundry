@@ -128,6 +128,16 @@ Bare sibling filenames. No `references/` prefix, because the file is *already* i
 
 `..` to leave `capabilities/<n>/references/` back to the capability, sibling resolution within the capability-local references, and `../../../` (three levels) to reach the shared skill root.
 
+### Angle-bracket destinations
+
+The CommonMark angle-bracket destination form, used when a path contains spaces:
+
+```markdown
+[doc](<references/my file.md>)
+```
+
+is recognized everywhere a plain link is: the brackets are unwrapped and the inner path resolves under the same file-relative rule (an inner `#anchor`/`?query` stays inside the brackets, an optional `"title"` sits outside). An *unresolvable* wrapped target is reported like any other unresolvable reference (a validator WARN, a bundle-integrity FAIL during bundling) rather than being silently ignored. An embedded placeholder such as `references/<f>.md` is *not* this form and stays filtered, and an autolink like `<https://example.com>` is skipped.
+
 ## What the Validator Enforces
 
 `validate_skill.py` and `audit_skill_system.py` apply the rule per-scope. Every finding includes:

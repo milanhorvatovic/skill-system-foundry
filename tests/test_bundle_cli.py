@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -2317,6 +2318,82 @@ class ReferenceFalsePositiveRegressionTests(unittest.TestCase):
             )
             payload = json.loads(proc.stdout)
             self.assertTrue(payload["success"])
+
+
+class AngleBracketBundleE2ETests(unittest.TestCase):
+    """End-to-end gate for issue #154: a CommonMark ``<...>``-wrapped
+    external dependency must be bundled and rewritten — not silently
+    omitted with no diagnostic.
+    """
+
+    SKILL_BODY = "# Demo Skill\n\nSee [d](<../../shared/foo.md>).\n"
+
+    def _build(self, tmpdir: str, *, make_dep: bool) -> tuple[str, str]:
+        system_root = os.path.join(tmpdir, "system")
+        skill_dir = os.path.join(system_root, "skills", "demo-skill")
+        write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+        write_skill_md(skill_dir, body=self.SKILL_BODY)
+        if make_dep:
+            write_text(
+                os.path.join(system_root, "shared", "foo.md"), "# Foo\n",
+            )
+        return system_root, skill_dir
+
+    def test_wrapped_external_dep_bundled_and_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir = self._build(tmpdir, make_dep=True)
+            output_path = os.path.join(tmpdir, "demo-skill.zip")
+            proc = subprocess.run(
+                [
+                    sys.executable, BUNDLE_SCRIPT, skill_dir,
+                    "--system-root", system_root,
+                    "--output", output_path,
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                proc.returncode, 0, msg=proc.stdout + proc.stderr
+            )
+            with zipfile.ZipFile(output_path, "r") as zf:
+                names = zf.namelist()
+                skill_md = zf.read("demo-skill/SKILL.md").decode("utf-8")
+        # The wrapped dependency is bundled (was silently omitted before).
+        self.assertTrue(any(n.endswith("/foo.md") for n in names), names)
+        # The link is rewritten in place: brackets preserved, no longer
+        # escaping the bundle, and the new target is a real bundled file.
+        match = re.search(r"\[d\]\(<([^>]+)>\)", skill_md)
+        self.assertIsNotNone(match, skill_md)
+        target = match.group(1)
+        self.assertNotIn("..", target)
+        resolved = os.path.normpath(
+            os.path.join("demo-skill", target)
+        ).replace(os.sep, "/")
+        self.assertIn(resolved, names)
+
+    def test_missing_wrapped_external_dep_is_no_longer_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir = self._build(tmpdir, make_dep=False)
+            output_path = os.path.join(tmpdir, "demo-skill.zip")
+            proc = subprocess.run(
+                [
+                    sys.executable, BUNDLE_SCRIPT, skill_dir,
+                    "--system-root", system_root,
+                    "--output", output_path, "--json",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(proc.stdout)
+        warnings = payload.get("warnings") or []
+        # The wrapped escaping ref is now detected and reported rather
+        # than dropped without a trace.
+        self.assertTrue(
+            any("<../../shared/foo.md>" in w for w in warnings),
+            warnings,
+        )
 
 
 if __name__ == "__main__":

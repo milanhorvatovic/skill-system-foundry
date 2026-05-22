@@ -106,6 +106,36 @@ class ComputeReportConformingSkillTests(unittest.TestCase):
         self.assertEqual(report["broken_under_standard_semantics"], 0)
 
 
+class ComputeReportAngleBracketTests(unittest.TestCase):
+    """The conformance report counts CommonMark ``<...>`` link
+    destinations like any other link rather than skipping them."""
+
+    def test_resolved_wrapped_link_counts_as_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [d](<references/my file.md>).\n")
+            write_text(
+                os.path.join(tmp, "references", "my file.md"), "# Guide\n",
+            )
+            report = rcr.compute_report(tmp)
+        self.assertTrue(report["conforms"])
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["resolves_under_standard_semantics"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 0)
+
+    def test_broken_wrapped_link_is_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "See [d](<references/missing.md>).\n")
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 1)
+        self.assertEqual(report["broken_under_standard_semantics"], 1)
+
+    def test_embedded_placeholder_is_not_a_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, "Pattern [p](references/<f>.md).\n")
+            report = rcr.compute_report(tmp)
+        self.assertEqual(report["total_links"], 0)
+
+
 class ComputeReportBrokenLinkTests(unittest.TestCase):
     """Broken intra-skill links are counted under
     ``broken_under_standard_semantics`` and surfaced in
