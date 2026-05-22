@@ -319,6 +319,29 @@ class SafeExtractAllTests(unittest.TestCase):
             # The escaping member must not have been written anywhere outside dest.
             self.assertFalse(os.path.exists(sentinel))
 
+    def test_containment_allows_member_under_filesystem_root(self) -> None:
+        # Regression: a filesystem-root destination ("/" on POSIX, a drive
+        # root on Windows) made the old ``startswith(dest_real + os.sep)``
+        # prefix check compute "//" / "C:\\\\" and wrongly reject every
+        # well-behaved member.  The commonpath-based containment check
+        # treats a normal member under root as contained.  Exercised on the
+        # predicate directly so the test does not have to write to root.
+        from helpers import _is_within_destination
+        root = os.path.realpath(os.sep)
+        member = os.path.realpath(os.path.join(root, "extracted", "file.txt"))
+        self.assertTrue(_is_within_destination(member, root))
+
+    def test_containment_rejects_sibling_prefix(self) -> None:
+        # A sibling whose path merely shares a string prefix with dest
+        # (``/tmp/out`` vs ``/tmp/out-evil``) must still be rejected — the
+        # commonpath check compares whole path components, not substrings.
+        from helpers import _is_within_destination
+        base = os.path.realpath(os.path.join(os.sep, "tmp", "out"))
+        sibling = os.path.realpath(
+            os.path.join(os.sep, "tmp", "out-evil", "file.txt")
+        )
+        self.assertFalse(_is_within_destination(sibling, base))
+
 
 if __name__ == "__main__":
     unittest.main()
