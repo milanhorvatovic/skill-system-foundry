@@ -76,7 +76,8 @@ exclude:
     # credit the host-allowlist sanitizer; the 3 PT are Class A. See SECURITY.md.
     - .github/scripts/tool-catalog-drift.py:
         reason: >-
-          SSRF hardened in code (hardcoded host allowlist + redirect
+          SSRF hardened in code (hardcoded host allowlist enforced pre-request
+          and on every redirect target before it is followed, plus landing-URL
           re-validation) and covered by tests, but Snyk Code does not credit
           the sanitizer; remaining python/PT are Class A operator-supplied
           --catalog-path reads/writes with no privilege boundary. Regression
