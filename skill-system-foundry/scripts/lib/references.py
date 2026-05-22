@@ -23,7 +23,10 @@ from .constants import (
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
     RE_DEGRADED_SYMLINK,
+    RE_MARKDOWN_LINK_REF,
+    RE_BACKTICK_REF,
 )
+from .frontmatter import strip_frontmatter_for_scan
 from .reporting import format_exception, to_posix
 
 # ===================================================================
@@ -49,6 +52,21 @@ RE_WRAPPED_LOCAL_REF = re.compile(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''')
 # Uses re.escape so prefix values are never interpreted as metacharacters,
 # and a lookbehind so that "myreferences/foo.md" does not falsely match
 # as "references/foo.md".
+#
+# Three distinct extension/prefix policies coexist deliberately — do
+# NOT "harmonise" them:
+#   * markdown link  (RE_MARKDOWN_LINK_REF): recognized dir prefix OR a
+#     known extension — markdown links are syntactically anchored.
+#   * markdown backtick (RE_BACKTICK_REF): recognized dir prefix only.
+#   * text-detected (this pattern): recognized dir prefix AND a generic
+#     file-extension shape.  Non-markdown files have NO syntactic anchor
+#     (no [](…), no backticks) to separate a real path from prose, so a
+#     trailing extension is the only signal that a token is a file
+#     reference rather than a sentence fragment (``the assets/.`` ->
+#     dropped, ``skills/my-skill`` -> dropped) — while keeping real
+#     dependencies of any extension (``assets/logo.png``).  Unresolved
+#     text-detected hits are surfaced at WARN (never FAIL) because this
+#     heuristic has no validate_skill counterpart and cannot be certain.
 _TEXT_REF_PREFIXES = "|".join([
     re.escape(DIR_REFERENCES), re.escape(DIR_SCRIPTS),
     re.escape(DIR_ASSETS), re.escape(DIR_ROLES),
@@ -57,9 +75,58 @@ _TEXT_REF_PREFIXES = "|".join([
 RE_TEXT_FILE_REF = re.compile(
     r"(?:(?<=^)|(?<=[^\w/]))"    # start-of-line or preceded by non-word, non-path char
     r"(?:" + _TEXT_REF_PREFIXES + r")"
-    r"/[^\s'\"`,;:)}\]>]+",
+    r"/[^\s'\"`,;:)}\]>?#]*?"             # lazy path body (stops at query/anchor)
+    r"\.\w+"                              # required file-extension shape
+    r"(?:[?#][^\s'\"`,;:)}\]>]*)?"        # optional query/anchor suffix
+    r"(?=$|[\s'\"`,;:)}\]>]|\.(?:\s|$))",  # boundary, or sentence-final period
     re.MULTILINE,
 )
+
+# Fenced code block (```lang\n...```).  Shared single source of truth:
+# ``reachability.extract_body_references`` (validation graph) and the
+# bundle scanner / post-validator (this module's consumers) both treat
+# example links inside a fence as prose, not references.  Only the
+# regex is shared — callers apply it differently (validation removes
+# the span; the bundle scanner blanks it to preserve line numbers via
+# ``blank_fenced_blocks``).
+RE_FENCED_BLOCK = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
+
+
+def blank_fenced_blocks(content: str) -> str:
+    """Blank fenced code-block regions, preserving line count.
+
+    Replaces every non-newline character inside a ```` ``` ```` fence
+    with a space and keeps newlines intact, so a per-line scanner sees
+    no references inside the fence while line numbers stay accurate for
+    diagnostics.  ``reachability`` strips fences with ``sub("", …)``
+    instead because it scans the whole blob and never reports line
+    numbers; both behaviours derive from the shared
+    :data:`RE_FENCED_BLOCK`.
+    """
+    return RE_FENCED_BLOCK.sub(
+        lambda m: re.sub(r"[^\n]", " ", m.group(0)), content
+    )
+
+
+def blank_frontmatter(content: str) -> str:
+    """Blank a leading YAML frontmatter block, preserving line count.
+
+    The validator scans references in the frontmatter-stripped body
+    (``load_frontmatter`` -> ``extract_body_references``), so the bundle
+    must not treat a backtick or link inside frontmatter (e.g. a
+    ``description`` string) as a reference — otherwise it would be a
+    bundle-only false positive.  Uses the shared
+    ``strip_frontmatter_for_scan`` so the bundler and validator agree on
+    what frontmatter is.  The stripped body is an exact suffix of
+    *content*, so blanking the prefix (non-newline -> space) drops the
+    frontmatter from the scan while keeping line numbers accurate for
+    diagnostics.
+    """
+    body = strip_frontmatter_for_scan(content)
+    if body == content:
+        return content
+    prefix = content[: len(content) - len(body)]
+    return re.sub(r"[^\n]", " ", prefix) + body
 
 # Binary file extensions — not scanned for references.
 BINARY_EXTENSIONS = frozenset({
@@ -678,6 +745,18 @@ def extract_references(filepath: str) -> list[FilteredRef]:
 
     *ref_type* is one of ``'markdown_link'``, ``'backtick'``, or
     ``'text_detected'``.
+
+    Markdown extraction uses the narrow, configuration-driven patterns
+    (:data:`RE_MARKDOWN_LINK_REF` / :data:`RE_BACKTICK_REF` from
+    ``constants``) so the bundle's definition of a reference matches
+    ``validate_skill`` exactly — slash-commands (``/review``), model IDs
+    (``provider/model``), and prose path examples are NOT references.
+    This is deliberately distinct from the broad
+    :data:`RE_BUNDLE_MD_LINK` / :data:`RE_BUNDLE_BACKTICK` that the
+    bundle *rewriter* still uses: the rewriter is safe broad because it
+    only ever rewrites paths already present in the resolve-map, while
+    the scanner must not treat prose as a (broken) reference.  Do not
+    converge the two — see the rewriter in ``lib.bundling``.
     """
     if is_binary_file(filepath):
         return []
@@ -686,23 +765,30 @@ def extract_references(filepath: str) -> list[FilteredRef]:
         content = f.read()
 
     refs = []
-    lines = content.split("\n")
 
     if is_markdown_file(filepath):
-        for line_num, line in enumerate(lines, 1):
+        # Blank frontmatter then fenced code blocks so neither a path
+        # inside a frontmatter string nor an example link inside ``` is
+        # treated as a reference (the validator scans the
+        # frontmatter-stripped body and skips fences too), while
+        # preserving line numbers for diagnostics.
+        scan_lines = blank_fenced_blocks(
+            blank_frontmatter(content)
+        ).split("\n")
+        for line_num, line in enumerate(scan_lines, 1):
             seen_in_line = set()
-            for match in RE_BUNDLE_MD_LINK.finditer(line):
-                ref_path = match.group(2)
+            for match in RE_MARKDOWN_LINK_REF.finditer(line):
+                ref_path = match.group(1)
                 refs.append((ref_path, line_num, "markdown_link"))
                 seen_in_line.add(ref_path)
             # Backtick refs — avoid duplicating paths already captured
-            for match in RE_BUNDLE_BACKTICK.finditer(line):
+            for match in RE_BACKTICK_REF.finditer(line):
                 ref_path = match.group(1)
                 if ref_path not in seen_in_line:
                     refs.append((ref_path, line_num, "backtick"))
                     seen_in_line.add(ref_path)
     else:
-        for line_num, line in enumerate(lines, 1):
+        for line_num, line in enumerate(content.split("\n"), 1):
             for match in RE_TEXT_FILE_REF.finditer(line):
                 ref_path = match.group(0)
                 refs.append((ref_path, line_num, "text_detected"))
@@ -719,6 +805,13 @@ def _filter_refs(refs: list[RawRef]) -> list[FilteredRef]:
     filtered = []
     for ref_path, line_num, ref_type in refs:
         if should_skip_reference(ref_path):
+            continue
+        # Glob-style mentions (``capabilities/**/*.md``,
+        # ``references/?ref.md``) are documentation patterns, not files.
+        # Drop before ``strip_fragment``, which would truncate a
+        # path-glob at the first ``?`` and lose the glob signal —
+        # mirrors ``lib.reachability.extract_body_references``.
+        if is_glob_path(ref_path):
             continue
         clean_path = strip_fragment(ref_path)
         if not clean_path:
@@ -1105,10 +1198,47 @@ def scan_references(
             resolved, fail_reason = resolve_reference_with_reason(
                 clean_path, filepath, system_root
             )
+            # Skill-root fallback for the non-markdown heuristic only.
+            # Docstrings and config values name skill files
+            # skill-root-relative ("python scripts/bundle.py",
+            # "documentation_path: references/path-resolution.md"), which
+            # the source-relative / system-root resolution above misses.
+            # If the token names a real file inside the skill, it is a
+            # satisfied internal reference (already bundled by the tree
+            # copy) — not a finding.  Markdown stays file-relative to
+            # match validate_skill; the is_within_directory guard means
+            # only genuine in-skill files resolve here.
+            if resolved is None and ref_type == "text_detected":
+                skill_root_candidate = os.path.normpath(
+                    os.path.join(current_skill, clean_path)
+                )
+                if os.path.isfile(skill_root_candidate) and is_within_directory(
+                    skill_root_candidate, current_skill
+                ):
+                    resolved = skill_root_candidate
             resolved_refs.append((raw_ref, line_num, ref_type, resolved))
 
             # ---- Broken reference ----
             if resolved is None:
+                # text_detected is a best-effort prose heuristic with no
+                # validate_skill counterpart (validation never scans
+                # non-markdown files).  An unresolved hit is far more
+                # likely a CLI-usage docstring or error-message example
+                # than a real missing dependency, and the non-markdown
+                # file ships into the bundle verbatim regardless — so it
+                # cannot break bundle integrity.  Surface it at WARN
+                # (never FAIL) for every fail_reason: severity matches
+                # the low detection confidence, and nothing is hidden.
+                if ref_type == "text_detected":
+                    warnings.append(
+                        f"{LEVEL_WARN}: Unresolved non-markdown reference "
+                        f"in '{_rel(filepath)}' line {line_num}: "
+                        f"'{raw_ref}'. A path-like token in a non-markdown "
+                        f"file did not resolve to a bundled file; it will "
+                        f"not be bundled or rewritten. Verify whether it "
+                        f"is a real dependency."
+                    )
+                    continue
                 if fail_reason == "absolute_path":
                     errors.append(
                         f"{LEVEL_FAIL}: Invalid absolute reference in "
@@ -1116,26 +1246,58 @@ def scan_references(
                         f"Bundle references must use relative paths within "
                         f"the skill system root."
                     )
-                elif fail_reason == "escapes_system_root":
-                    errors.append(
-                        f"{LEVEL_FAIL}: Reference escapes system root in "
-                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
-                        f"Bundling files outside the skill system root is "
-                        f"not allowed."
-                    )
-                elif fail_reason == "is_directory":
+                    continue
+                if fail_reason == "is_directory":
                     errors.append(
                         f"{LEVEL_FAIL}: Reference points to a directory in "
                         f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
                         f"Only file references can be bundled — point to a "
                         f"specific file instead."
                     )
+                    continue
+                # ``escapes_system_root`` and ``not_found`` are the two
+                # remaining reasons.  Severity keys off whether the
+                # reference escapes the SKILL root, not which of the two
+                # the resolver reported (the same example ref yields
+                # ``not_found`` when no system root is inferred and
+                # ``escapes_system_root`` when one is passed — geometry,
+                # not intent).  A reference that escapes the skill to a
+                # non-existent shared/cross-skill resource is a
+                # documentation example, not a bundle defect:
+                # validate_skill surfaces the same path as INFO and
+                # declines to existence-check out-of-skill paths ("not an
+                # existence oracle").  Match that posture with a WARN so
+                # spec/example prose like ``../../shared/references/file.md``
+                # does not block bundling — it is never added to
+                # external_files, so nothing outside the skill is bundled.
+                # An in-skill broken reference stays a FAIL.
+                candidate = os.path.normpath(
+                    os.path.join(os.path.dirname(filepath), clean_path)
+                )
+                cand_norm = os.path.normcase(os.path.abspath(candidate))
+                skill_norm = os.path.normcase(os.path.abspath(current_skill))
+                try:
+                    escapes_skill = (
+                        os.path.commonpath([cand_norm, skill_norm])
+                        != skill_norm
+                    )
+                except ValueError:
+                    escapes_skill = True
+                if escapes_skill:
+                    warnings.append(
+                        f"{LEVEL_WARN}: Unresolved external reference in "
+                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}' "
+                        f"escapes the skill and does not resolve to an "
+                        f"existing file; it will not be bundled. If it is "
+                        f"a real dependency, ensure it exists within the "
+                        f"system root."
+                    )
                 else:
                     errors.append(
                         f"{LEVEL_FAIL}: Broken reference in "
                         f"'{_rel(filepath)}' line {line_num}: "
-                        f"'{raw_ref}' does not resolve to any existing file. "
-                        f"Fix the reference path before bundling."
+                        f"'{raw_ref}' does not resolve to any existing "
+                        f"file. Fix the reference path before bundling."
                     )
                 continue
 

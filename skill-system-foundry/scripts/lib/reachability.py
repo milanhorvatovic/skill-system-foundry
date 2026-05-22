@@ -21,7 +21,6 @@ how deep the reference chain runs).
 """
 
 import os
-import re
 
 from .constants import (
     DIR_CAPABILITIES,
@@ -35,17 +34,13 @@ from .constants import (
 )
 from .frontmatter import strip_frontmatter_for_scan
 from .references import (
+    RE_FENCED_BLOCK,
     is_drive_qualified,
     is_glob_path,
     is_within_directory,
     strip_fragment,
 )
 from .router_table import extract_capability_paths
-
-
-# Pattern that strips fenced code blocks before reference scanning, so
-# example links inside ``` are not treated as real references.
-_RE_FENCED_BLOCK = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
 
 
 # ===================================================================
@@ -114,7 +109,7 @@ def extract_body_references(
     same path (``guide.md#a`` vs ``guide.md#b``); those callers pass
     ``dedupe=False``.
     """
-    stripped = _RE_FENCED_BLOCK.sub("", content)
+    stripped = RE_FENCED_BLOCK.sub("", content)
     raw_refs: list[str] = []
     raw_refs.extend(RE_MARKDOWN_LINK_REF.findall(stripped))
     raw_refs.extend(RE_BACKTICK_REF.findall(stripped))

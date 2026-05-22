@@ -25,6 +25,8 @@ from .constants import (
     LONG_PATH_THRESHOLD,
     LONG_PATH_USER_PREFIX_BUDGET,
     PATH_RESOLUTION_RULE_NAME,
+    RE_BACKTICK_REF,
+    RE_MARKDOWN_LINK_REF,
     WINDOWS_RESERVED_NAMES,
 )
 from .frontmatter import load_frontmatter
@@ -32,8 +34,11 @@ from .reporting import to_posix
 from .references import (
     scan_references,
     ScanResult,
+    blank_fenced_blocks,
+    blank_frontmatter,
     compute_bundle_path,
     infer_system_root,
+    is_glob_path,
     is_markdown_file,
     is_within_directory,
     strip_fragment,
@@ -755,7 +760,15 @@ def _rewrite_reference_target(
 
 
 def _rewrite_markdown_content(content: str, rewrite_map: Mapping[str, str]) -> str:
-    """Rewrite markdown links and backticks using a path rewrite map."""
+    """Rewrite markdown links and backticks using a path rewrite map.
+
+    Deliberately uses the BROAD ``RE_BUNDLE_*`` patterns (not the narrow
+    scanner patterns): rewriting is safe broad because it only ever
+    substitutes paths already present in *rewrite_map* (real, resolved
+    references), so prose tokens are left untouched.  Keeping the scanner
+    narrow and the rewriter broad is intentional — see
+    ``references.extract_references``.
+    """
 
     def _replace_markdown_link(match: re.Match[str]) -> str:
         label = match.group(1)
@@ -1196,7 +1209,20 @@ def postvalidate(bundle_dir: str) -> list[str]:
                     f"must have an entry-point file."
                 )
 
-    # 3. Reference integrity — every markdown link should resolve
+    # 3. Reference integrity — every markdown link should resolve.
+    #
+    # Uses the SAME narrow definition as prevalidate (config-driven
+    # patterns over fence-blanked content, glob/placeholder filtered) so
+    # the two phases agree on what a reference is — otherwise prevalidate
+    # would pass on prose tokens that postvalidate then re-FAILs.  The
+    # trade-off: postvalidate is no longer an independent *broad* check;
+    # it verifies exactly the anchored references the rewriter could have
+    # touched.  Assembly correctness is covered by the bundle pipeline
+    # tests.  Note: the rewriter (RE_BUNDLE_* in _rewrite_markdown_content)
+    # is broad and does NOT blank fences, so a path inside a fenced block
+    # that matches a bundled file may be rewritten but is not re-checked
+    # here — benign, since the rewriter only emits resolve-map paths that
+    # prevalidate already verified resolve.
     for root, _dirs, files in os.walk(bundle_dir):
         for filename in files:
             if not is_markdown_file(filename):
@@ -1205,11 +1231,12 @@ def postvalidate(bundle_dir: str) -> list[str]:
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            for line_num, line in enumerate(content.split("\n"), 1):
+            scan_content = blank_fenced_blocks(blank_frontmatter(content))
+            for line_num, line in enumerate(scan_content.split("\n"), 1):
                 # Markdown links
-                for match in RE_BUNDLE_MD_LINK.finditer(line):
-                    ref_path = match.group(2)
-                    if should_skip_reference(ref_path):
+                for match in RE_MARKDOWN_LINK_REF.finditer(line):
+                    ref_path = match.group(1)
+                    if should_skip_reference(ref_path) or is_glob_path(ref_path):
                         continue
 
                     ref_clean = strip_fragment(ref_path)
@@ -1220,13 +1247,16 @@ def postvalidate(bundle_dir: str) -> list[str]:
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
                     rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
+                    # A ref that escapes the bundle root is a non-bundled
+                    # skill-escaping example (e.g. a documented
+                    # `../../shared/...` syntax) — real external deps are
+                    # rewritten to in-bundle paths during assembly, so they
+                    # never escape here.  Prevalidate already WARNed it; do
+                    # not re-FAIL.  Postvalidate's job is the in-bundle case:
+                    # a bundled ref that points at a missing in-bundle file.
                     if not is_within_directory(target, bundle_dir):
-                        errors.append(
-                            f"{LEVEL_FAIL}: Markdown reference escapes bundle: "
-                            f"'{rel_source}' line {line_num}: "
-                            f"'{ref_path}' resolves outside the bundle directory."
-                        )
-                    elif not os.path.exists(target):
+                        continue
+                    if not os.path.exists(target):
                         errors.append(
                             f"{LEVEL_FAIL}: Unresolved markdown reference in bundle: "
                             f"'{rel_source}' line {line_num}: "
@@ -1234,9 +1264,9 @@ def postvalidate(bundle_dir: str) -> list[str]:
                         )
 
                 # Backtick path references
-                for match in RE_BUNDLE_BACKTICK.finditer(line):
+                for match in RE_BACKTICK_REF.finditer(line):
                     ref_path = match.group(1)
-                    if should_skip_reference(ref_path):
+                    if should_skip_reference(ref_path) or is_glob_path(ref_path):
                         continue
 
                     ref_clean = strip_fragment(ref_path)
@@ -1247,13 +1277,12 @@ def postvalidate(bundle_dir: str) -> list[str]:
                         os.path.join(os.path.dirname(filepath), ref_clean)
                     )
                     rel_source = os.path.relpath(filepath, bundle_dir).replace(os.sep, "/")
+                    # See the markdown-link block above: a bundle-escaping
+                    # ref is a non-bundled skill-escaping example already
+                    # handled by prevalidate, not a postvalidate FAIL.
                     if not is_within_directory(target, bundle_dir):
-                        errors.append(
-                            f"{LEVEL_FAIL}: Backtick reference escapes bundle: "
-                            f"'{rel_source}' line {line_num}: "
-                            f"'{ref_path}' resolves outside the bundle directory."
-                        )
-                    elif not os.path.exists(target):
+                        continue
+                    if not os.path.exists(target):
                         errors.append(
                             f"{LEVEL_FAIL}: Unresolved backtick reference in bundle: "
                             f"'{rel_source}' line {line_num}: "

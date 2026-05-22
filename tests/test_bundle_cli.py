@@ -2227,5 +2227,97 @@ class ExternalArcnamePreflightPathShapeTests(unittest.TestCase):
             )
 
 
+class ReferenceFalsePositiveRegressionTests(unittest.TestCase):
+    """End-to-end gate: prose that *looks* path-like must not block a bundle.
+
+    Distills every false-positive category from issue #140 (CLI
+    slash-commands, provider model IDs, templated placeholders,
+    absolute/home/deployment path examples, globs, fenced examples, and
+    a self-referencing Python docstring) into one skill and asserts the
+    full pipeline (prevalidate -> assemble -> postvalidate -> zip)
+    succeeds, while a genuine in-skill reference is still bundled.
+    """
+
+    PROSE_BODY = (
+        "# Demo Skill\n\n"
+        "Run `/review`, `/skill:foo`, or `/skill:plugin:review`.\n"
+        "Models: `kimi-for-coding/k2p6`, `zai-coding-plan/glm-5.1`.\n"
+        "Templates: `/{name}`, `/skill:{name}`.\n"
+        "Paths: `/tmp`, `/opt`, `/var/folders/abc/T/`, `~/.config/foo`.\n"
+        "Deploy under `.agents/skills/` or `.claude/skills/<name>`.\n"
+        "Globs: `capabilities/**/*.md`, `references/**/*.md`.\n"
+        "A slash-command link: [review](/review).\n"
+        "A real reference: [guide](references/guide.md).\n\n"
+        "```text\n"
+        "fenced example: ../../shared/whatever.md is not a reference\n"
+        "```\n"
+    )
+
+    def _build_skill(self, tmpdir: str) -> tuple[str, str]:
+        system_root = os.path.join(tmpdir, "system")
+        skill_dir = os.path.join(system_root, "skills", "demo-skill")
+        write_text(os.path.join(system_root, "manifest.yaml"), "name: demo\n")
+        write_skill_md(skill_dir, body=self.PROSE_BODY)
+        # The one genuine reference must resolve and be bundled.
+        write_text(
+            os.path.join(skill_dir, "references", "guide.md"), "# Guide\n"
+        )
+        # A script whose docstring self-references its own path — the
+        # text-detected heuristic must WARN, never FAIL.
+        write_text(
+            os.path.join(skill_dir, "scripts", "run.py"),
+            '"""Usage: python scripts/run.py --flag\n\n'
+            'See scripts/run.py for details.\n"""\n',
+        )
+        return system_root, skill_dir
+
+    def test_prose_path_tokens_do_not_block_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir = self._build_skill(tmpdir)
+            output_path = os.path.join(tmpdir, "demo-skill.zip")
+
+            proc = subprocess.run(
+                [
+                    sys.executable, BUNDLE_SCRIPT, skill_dir,
+                    "--system-root", system_root,
+                    "--output", output_path,
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(
+                proc.returncode, 0, msg=proc.stdout + proc.stderr
+            )
+            self.assertTrue(os.path.exists(output_path))
+            with zipfile.ZipFile(output_path, "r") as zf:
+                names = zf.namelist()
+            # The genuine reference is bundled; prose tokens are not.
+            self.assertIn("demo-skill/references/guide.md", names)
+
+    def test_prose_path_tokens_do_not_block_bundle_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root, skill_dir = self._build_skill(tmpdir)
+            output_path = os.path.join(tmpdir, "demo-skill.zip")
+
+            proc = subprocess.run(
+                [
+                    sys.executable, BUNDLE_SCRIPT, skill_dir,
+                    "--system-root", system_root,
+                    "--output", output_path, "--json",
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(
+                proc.returncode, 0, msg=proc.stdout + proc.stderr
+            )
+            payload = json.loads(proc.stdout)
+            self.assertTrue(payload["success"])
+
+
 if __name__ == "__main__":
     unittest.main()
