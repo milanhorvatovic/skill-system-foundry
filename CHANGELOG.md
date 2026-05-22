@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 Unreleased changes are tracked in `git log` on `main`; this file is a ledger of shipped versions only.
 
+## [1.2.1] - 2026-05-22
+
 ## [1.2.0] - 2026-05-22
 
 ### Added
