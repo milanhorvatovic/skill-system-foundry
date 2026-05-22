@@ -51,6 +51,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # ---------------------------------------------------------------------------
@@ -112,6 +113,26 @@ RE_TABLE_SEPARATOR = re.compile(r"^\|\s*[: -]+\s*\|")
 # hung connection does not stall the workflow indefinitely.
 FETCH_TIMEOUT_SECONDS = 30
 
+# SSRF allowlist.  ``fetch`` only ever talks to the upstream tools-reference
+# host over HTTPS.  These values are HARDCODED constants — deliberately NOT
+# read from ``catalog_provenance.source_url`` in the catalog YAML, even though
+# that is where the URL itself comes from.  The whole point of the guard is to
+# bound a value that ultimately derives from an operator-supplied
+# ``--catalog-path``; validating it against an allowlist sourced from the same
+# (operator-pointable) file would be circular.  A trusted, in-code constant
+# gives the check an independent base.  If upstream ever moves hosts, this
+# constant must be updated in the same commit that updates the catalog's
+# ``source_url`` — a deliberate, reviewable code change rather than a silent
+# config edit.
+ALLOWED_FETCH_SCHEMES = ("https",)
+ALLOWED_FETCH_HOSTS = ("code.claude.com",)
+
+# Human-readable renderings of the allowlists for error messages.  Built once
+# so a rejected-URL FetchError shows ``https`` / ``code.claude.com`` rather than
+# the Python tuple repr (``('https',)`` / ``('code.claude.com',)``) in CI stderr.
+_ALLOWED_SCHEMES_DISPLAY = ", ".join(ALLOWED_FETCH_SCHEMES)
+_ALLOWED_HOSTS_DISPLAY = ", ".join(ALLOWED_FETCH_HOSTS)
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -135,12 +156,100 @@ class ParseError(DriftHelperError):
 # ---------------------------------------------------------------------------
 
 
+def _url_on_allowlist(url: str) -> bool:
+    """Return ``True`` iff *url* uses an allowlisted scheme and host.
+
+    Shared by the pre-request guard, the redirect handler, and the
+    post-response defense-in-depth check so all three agree on what
+    "allowed" means.  ``urlsplit`` parses without resolving; ``hostname``
+    is lowercased for case-insensitive comparison.
+
+    A malformed *url* (e.g. ``https://[::1`` with an unterminated IPv6
+    literal) makes ``urlsplit`` raise ``ValueError``.  Treat any such
+    parse failure as "not on the allowlist" and return ``False`` rather
+    than letting the ``ValueError`` escape: the redirect handler turns a
+    ``False`` here into a loud :class:`FetchError`, and the pre-request
+    guard does the same, so a malformed redirect target or source URL
+    routes through the documented hard-fail exit codes instead of
+    surfacing as an uncaught traceback (which would exit 1 and collide
+    with ``--dry-run``'s "drift detected" code).
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return False
+    return (
+        parts.scheme in ALLOWED_FETCH_SCHEMES
+        and host in ALLOWED_FETCH_HOSTS
+    )
+
+
+class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse 30x redirects whose target is off the SSRF allowlist.
+
+    ``urllib`` follows redirects by issuing the follow-up request from
+    inside ``redirect_request`` (before control returns to :func:`fetch`),
+    so a post-response ``geturl`` check alone runs only *after* the
+    off-allowlist request has already been made — it can refuse to read
+    the body but cannot stop the outbound request, which is the SSRF
+    network sink.  Validating the (already absolute) redirect target here,
+    before ``super().redirect_request`` builds the follow-up request and
+    the opener opens it, blocks the disallowed request from ever being
+    issued.  The post-response check in :func:`fetch` then remains as
+    defense in depth.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if not _url_on_allowlist(newurl):
+            raise FetchError(
+                f"refusing redirect to {newurl!r}: only scheme(s) "
+                f"{_ALLOWED_SCHEMES_DISPLAY} and host(s) "
+                f"{_ALLOWED_HOSTS_DISPLAY} are allowed (SSRF guard)"
+            )
+        return super().redirect_request(
+            req, fp, code, msg, headers, newurl
+        )
+
+
+# Module-level opener wired with the allowlist redirect handler.  Built
+# once: ``build_opener`` swaps the default ``HTTPRedirectHandler`` for our
+# subclass because the latter is a subclass of the former, so every
+# ``_FETCH_OPENER.open`` call routes 30x responses through the guard above.
+_FETCH_OPENER = urllib.request.build_opener(_AllowlistRedirectHandler())
+
+
 def fetch(url: str) -> str:
     """Fetch *url* and return the response body as UTF-8 text.
 
-    Raises :class:`FetchError` on any non-2xx status, network failure,
-    or non-UTF-8 body.  No silent green — every error path is loud.
+    Before any request is made, *url* is validated against the hardcoded
+    SSRF allowlist (HTTPS scheme + known upstream host); anything else is
+    a loud :class:`FetchError`.  Redirects are followed through
+    :class:`_AllowlistRedirectHandler`, which rejects any 30x target off
+    the allowlist *before* the follow-up request is issued, so a redirect
+    cannot reach an off-allowlist host at all.  The landing URL is then
+    re-validated as defense in depth before its body is read.
+
+    Raises :class:`FetchError` on a disallowed scheme/host, a redirect to
+    a disallowed host, any non-2xx status, network failure, or non-UTF-8
+    body.  No silent green — every error path is loud.
     """
+    # SSRF guard (pre-request): scheme + host must be on the hardcoded
+    # allowlist before the opener is ever touched.
+    if not _url_on_allowlist(url):
+        raise FetchError(
+            f"refusing to fetch {url!r}: only scheme(s) "
+            f"{_ALLOWED_SCHEMES_DISPLAY} and host(s) "
+            f"{_ALLOWED_HOSTS_DISPLAY} are allowed (SSRF guard)"
+        )
     request = urllib.request.Request(
         url,
         headers={
@@ -149,9 +258,21 @@ def fetch(url: str) -> str:
         },
     )
     try:
-        with urllib.request.urlopen(
+        with _FETCH_OPENER.open(
             request, timeout=FETCH_TIMEOUT_SECONDS
         ) as response:
+            # SSRF guard (post-redirect, defense in depth): the redirect
+            # handler already blocked off-allowlist 30x targets before any
+            # follow-up request, so reaching here means every hop stayed
+            # on the allowlist.  Re-validate the final landing URL anyway
+            # — a belt-and-braces check costs nothing and catches any
+            # future redirect path that bypasses the handler.
+            if not _url_on_allowlist(response.geturl()):
+                raise FetchError(
+                    f"refusing redirected response from "
+                    f"{response.geturl()!r}: host not in allowlist "
+                    f"{_ALLOWED_HOSTS_DISPLAY} (SSRF guard)"
+                )
             status = response.status
             if status < 200 or status >= 300:
                 raise FetchError(

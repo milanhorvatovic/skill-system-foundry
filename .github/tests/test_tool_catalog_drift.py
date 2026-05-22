@@ -69,10 +69,21 @@ def _read_fixture(name: str) -> str:
 class FetchTests(unittest.TestCase):
     """``fetch`` returns UTF-8 text on success and hard-fails loudly otherwise."""
 
-    def _make_response(self, status: int, body: bytes) -> mock.MagicMock:
+    # An allowlisted URL the SSRF guard accepts.  Every happy-path and
+    # transport-error test fetches this so the guard is exercised but does
+    # not itself become the reason the call fails.
+    _ALLOWED_URL = "https://code.claude.com/docs/en/tools-reference.md"
+
+    def _make_response(
+        self, status: int, body: bytes, landed_url: str | None = None,
+    ) -> mock.MagicMock:
         response = mock.MagicMock()
         response.status = status
         response.read.return_value = body
+        # ``fetch`` re-validates ``response.geturl()`` (the post-redirect
+        # landing URL); default it to the allowlisted URL so the redirect
+        # guard passes unless a test overrides it.
+        response.geturl.return_value = landed_url or self._ALLOWED_URL
         response.__enter__.return_value = response
         response.__exit__.return_value = False
         return response
@@ -80,62 +91,247 @@ class FetchTests(unittest.TestCase):
     def test_returns_decoded_body_on_2xx(self) -> None:
         response = self._make_response(200, b"hello upstream")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
-            self.assertEqual(mod.fetch("https://example.test"), "hello upstream")
+            self.assertEqual(mod.fetch(self._ALLOWED_URL), "hello upstream")
 
     def test_raises_on_non_2xx_status(self) -> None:
         response = self._make_response(500, b"bad")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("500", str(ctx.exception))
 
     def test_raises_on_http_error(self) -> None:
         http_error = urllib.error.HTTPError(
-            url="https://example.test",
+            url=self._ALLOWED_URL,
             code=404,
             msg="Not Found",
             hdrs=None,
             fp=None,
         )
         with mock.patch.object(
-            mod.urllib.request, "urlopen", side_effect=http_error
+            mod._FETCH_OPENER, "open", side_effect=http_error
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("404", str(ctx.exception))
 
     def test_raises_on_url_error(self) -> None:
         url_error = urllib.error.URLError("DNS lookup failed")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", side_effect=url_error
+            mod._FETCH_OPENER, "open", side_effect=url_error
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("network error", str(ctx.exception))
 
     def test_raises_on_timeout(self) -> None:
         with mock.patch.object(
-            mod.urllib.request,
-            "urlopen",
+            mod._FETCH_OPENER,
+            "open",
             side_effect=TimeoutError("read timed out"),
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("I/O error", str(ctx.exception))
 
     def test_raises_on_non_utf8_body(self) -> None:
         # 0xff is invalid as a UTF-8 leading byte.
         response = self._make_response(200, b"\xff\xfe\xfd")
         with mock.patch.object(
-            mod.urllib.request, "urlopen", return_value=response
+            mod._FETCH_OPENER, "open", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("non-UTF-8", str(ctx.exception))
+
+    # ---- SSRF guard ----
+
+    def test_rejects_non_https_scheme(self) -> None:
+        # The guard fires before any request — the opener is patched to
+        # blow up so a regression that lets the URL through is
+        # unmistakable.
+        with mock.patch.object(
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("http://code.claude.com/docs/en/tools-reference.md")
+            self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_rejects_non_allowlisted_host(self) -> None:
+        with mock.patch.object(
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("https://evil.example/docs/en/tools-reference.md")
+            self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_rejects_malformed_url(self) -> None:
+        # A malformed source URL (unterminated IPv6 literal) makes
+        # ``urlsplit`` raise ``ValueError`` inside the pre-request
+        # guard.  The guard must reject it as a loud ``FetchError``
+        # before any request, not let the ``ValueError`` escape as an
+        # uncaught traceback (which would exit 1, colliding with the
+        # ``--dry-run`` drift code).
+        with mock.patch.object(
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("https://[::1")
+            self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_rejection_message_is_human_readable_not_tuple_repr(self) -> None:
+        # The SSRF guard message must render the allowlists as readable
+        # comma-separated values (``https`` / ``code.claude.com``), not as
+        # Python tuple reprs (``('https',)``), since this is user-facing
+        # CI/stderr output guiding remediation.
+        with mock.patch.object(
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("https://evil.example/x")
+            message = str(ctx.exception)
+        self.assertNotIn("('", message)
+        self.assertNotIn(",)", message)
+        self.assertIn("https", message)
+        self.assertIn("code.claude.com", message)
+
+    def test_rejects_redirect_to_non_allowlisted_host(self) -> None:
+        # Defense in depth: even if a redirect somehow lands the response
+        # on an off-allowlist host (bypassing the redirect handler), the
+        # post-response ``geturl`` check must still refuse the body.
+        response = self._make_response(
+            200, b"redirected body", landed_url="https://evil.example/x",
+        )
+        with mock.patch.object(
+            mod._FETCH_OPENER, "open", return_value=response
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch(self._ALLOWED_URL)
+            self.assertIn("redirected response", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# Redirect handler (SSRF guard at redirect time)
+# ---------------------------------------------------------------------------
+
+
+class AllowlistRedirectHandlerTests(unittest.TestCase):
+    """``_AllowlistRedirectHandler`` rejects off-allowlist 30x targets
+    before the follow-up request is issued — the core of the SSRF
+    redirect fix.  A post-response check alone runs only after the
+    off-allowlist request has already been made, so this handler is what
+    actually prevents the outbound request."""
+
+    _ALLOWED_URL = "https://code.claude.com/docs/en/tools-reference.md"
+
+    def _handler(self) -> Any:
+        return mod._AllowlistRedirectHandler()
+
+    def _req(self) -> Any:
+        return mod.urllib.request.Request(self._ALLOWED_URL)
+
+    def test_off_allowlist_host_redirect_raises(self) -> None:
+        with self.assertRaises(mod.FetchError) as ctx:
+            self._handler().redirect_request(
+                self._req(), None, 302, "Found", None,
+                "https://evil.example/x",
+            )
+        message = str(ctx.exception)
+        self.assertIn("refusing redirect", message)
+        self.assertIn("SSRF guard", message)
+
+    def test_non_https_scheme_redirect_raises(self) -> None:
+        with self.assertRaises(mod.FetchError) as ctx:
+            self._handler().redirect_request(
+                self._req(), None, 302, "Found", None,
+                "http://code.claude.com/x",
+            )
+        self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_malformed_redirect_target_raises_fetcherror(self) -> None:
+        # A malformed redirect ``Location`` (e.g. an unterminated IPv6
+        # literal ``https://[::1``) makes ``urlsplit`` raise
+        # ``ValueError`` inside ``_url_on_allowlist``.  That ValueError
+        # must be swallowed into a ``False`` and surfaced as a loud
+        # ``FetchError`` here, not escape as an uncaught traceback —
+        # which would exit 1 and collide with ``--dry-run``'s "drift
+        # detected" code, breaking the documented 2/3/4 exit taxonomy.
+        with self.assertRaises(mod.FetchError) as ctx:
+            self._handler().redirect_request(
+                self._req(), None, 302, "Found", None,
+                "https://[::1",
+            )
+        self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_allowlisted_redirect_delegates(self) -> None:
+        # An on-allowlist 30x target is allowed: the handler delegates to
+        # the stdlib base, which returns a follow-up Request for the new
+        # URL rather than raising.
+        newurl = "https://code.claude.com/docs/en/other.md"
+        result = self._handler().redirect_request(
+            self._req(), None, 302, "Found", None, newurl,
+        )
+        self.assertIsInstance(result, mod.urllib.request.Request)
+        self.assertEqual(result.full_url, newurl)
+
+    def test_opener_uses_the_allowlist_redirect_handler(self) -> None:
+        # The module-level opener must actually be wired with the guard;
+        # build_opener swaps the default HTTPRedirectHandler for the
+        # subclass, so confirm an instance is present in the chain.
+        handlers = mod._FETCH_OPENER.handlers
+        self.assertTrue(
+            any(
+                isinstance(h, mod._AllowlistRedirectHandler)
+                for h in handlers
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# URL allowlist predicate
+# ---------------------------------------------------------------------------
+
+
+class UrlOnAllowlistTests(unittest.TestCase):
+    """``_url_on_allowlist`` accepts on-allowlist URLs and rejects
+    everything else — including a malformed URL whose ``urlsplit`` raises
+    ``ValueError`` rather than letting that exception escape."""
+
+    def test_allowlisted_url_returns_true(self) -> None:
+        self.assertTrue(
+            mod._url_on_allowlist(
+                "https://code.claude.com/docs/en/tools-reference.md"
+            )
+        )
+
+    def test_off_allowlist_host_returns_false(self) -> None:
+        self.assertFalse(
+            mod._url_on_allowlist("https://evil.example/x")
+        )
+
+    def test_non_https_scheme_returns_false(self) -> None:
+        self.assertFalse(
+            mod._url_on_allowlist("http://code.claude.com/x")
+        )
+
+    def test_malformed_url_returns_false_not_valueerror(self) -> None:
+        # ``urllib.parse.urlsplit('https://[::1')`` raises ValueError
+        # ("Invalid IPv6 URL").  The predicate must absorb it and return
+        # False so callers route the rejection through their FetchError
+        # guards instead of an uncaught traceback.
+        self.assertFalse(mod._url_on_allowlist("https://[::1"))
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1226,30 @@ class MainTests(unittest.TestCase):
                     ])
                 self.assertEqual(code, 2)
                 self.assertIn("HTTP 500", stderr.getvalue())
+
+    def test_malformed_source_url_exits_two_not_one(self) -> None:
+        # A malformed ``source_url`` in the catalog (unterminated IPv6
+        # literal) reaches ``fetch`` and trips the pre-request SSRF
+        # guard, whose ``urlsplit`` would raise ``ValueError``.  The
+        # guard absorbs it into a ``FetchError`` so ``main`` surfaces
+        # exit 2 — NOT an uncaught traceback (exit 1, which would
+        # collide with ``--dry-run``'s "drift detected" code).  No
+        # fetch mock here: the malformed URL must be rejected before any
+        # network call.
+        broken = _HAPPY_CATALOG.replace(
+            "        source_url: https://example.test/tools.md\n",
+            "        source_url: https://[::1\n",
+        )
+        with _CatalogTempFile(broken) as path:
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+                code = mod.main([
+                    "--dry-run",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 2)
+            self.assertIn("SSRF guard", stderr.getvalue())
 
     def test_parse_error_exits_three(self) -> None:
         broken = _HAPPY_CATALOG.replace("catalog_provenance:", "wrong_key:")

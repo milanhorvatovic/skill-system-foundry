@@ -13,6 +13,8 @@ import tempfile
 import unittest
 import zipfile
 
+from helpers import safe_extractall
+
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "skill-system-foundry", "scripts")
@@ -75,7 +77,7 @@ def _bundle_and_extract(
 
     with tempfile.TemporaryDirectory() as extract_root:
         with zipfile.ZipFile(bundle_zip) as zf:
-            zf.extractall(extract_root)
+            safe_extractall(zf, extract_root)
 
         entries = os.listdir(extract_root)
         test.assertIn(
@@ -267,7 +269,7 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
             extract_root = os.path.join(tmpdir, "extracted")
             os.makedirs(extract_root)
             with zipfile.ZipFile(artifact) as zf:
-                zf.extractall(extract_root)
+                safe_extractall(zf, extract_root)
 
             extracted_skill = os.path.join(extract_root, "skill-system-foundry")
             self.assertTrue(
@@ -281,6 +283,130 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
                 "--foundry-self",
             ])
             _assert_ok(self, validate)
+
+
+class SafeExtractAllTests(unittest.TestCase):
+    """``safe_extractall`` refuses members that escape the destination."""
+
+    def test_extracts_well_behaved_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "ok.zip")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("a.txt", "alpha")
+                zf.writestr("sub/b.txt", "beta")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            with zipfile.ZipFile(archive) as zf:
+                safe_extractall(zf, dest)
+            self.assertTrue(os.path.isfile(os.path.join(dest, "a.txt")))
+            self.assertTrue(os.path.isfile(os.path.join(dest, "sub", "b.txt")))
+
+    def test_rejects_parent_traversal_member(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "evil.zip")
+            # Write the traversal name into the central directory directly so
+            # ZipFile does not normalise it away on creation.
+            info = zipfile.ZipInfo("../escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(info, "pwned")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            sentinel = os.path.join(tmpdir, "escape.txt")  # sibling of dest
+            with zipfile.ZipFile(archive) as zf:
+                from helpers import UnsafeArchiveMember
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            # The escaping member must not have been written anywhere outside dest.
+            self.assertFalse(os.path.exists(sentinel))
+
+    def test_rejects_archive_when_later_member_escapes(self) -> None:
+        # Two-phase guarantee: a benign member ordered BEFORE an escaping
+        # member must not be written to disk.  The whole member list is
+        # validated before any extraction begins, so the escape is detected
+        # while the destination is still empty.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "mixed.zip")
+            evil = zipfile.ZipInfo("../escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("benign.txt", "safe")  # first member: benign
+                zf.writestr(evil, "pwned")          # second member: escapes
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            sentinel = os.path.join(tmpdir, "escape.txt")  # sibling of dest
+            from helpers import UnsafeArchiveMember
+            with zipfile.ZipFile(archive) as zf:
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            # The benign member must NOT have been extracted, and the
+            # escaping member must NOT have been written outside dest.
+            self.assertFalse(os.path.exists(os.path.join(dest, "benign.txt")))
+            self.assertFalse(os.path.exists(sentinel))
+
+    def test_containment_allows_member_under_filesystem_root(self) -> None:
+        # Regression: a filesystem-root destination ("/" on POSIX, a drive
+        # root on Windows) made the old ``startswith(dest_real + os.sep)``
+        # prefix check compute "//" / "C:\\\\" and wrongly reject every
+        # well-behaved member.  The commonpath-based containment check
+        # treats a normal member under root as contained.  Exercised on the
+        # predicate directly so the test does not have to write to root.
+        from helpers import _is_within_destination
+        root = os.path.realpath(os.sep)
+        member = os.path.realpath(os.path.join(root, "extracted", "file.txt"))
+        self.assertTrue(_is_within_destination(member, root))
+
+    def test_containment_rejects_sibling_prefix(self) -> None:
+        # A sibling whose path merely shares a string prefix with dest
+        # (``/tmp/out`` vs ``/tmp/out-evil``) must still be rejected — the
+        # commonpath check compares whole path components, not substrings.
+        from helpers import _is_within_destination
+        base = os.path.realpath(os.path.join(os.sep, "tmp", "out"))
+        sibling = os.path.realpath(
+            os.path.join(os.sep, "tmp", "out-evil", "file.txt")
+        )
+        self.assertFalse(_is_within_destination(sibling, base))
+
+    def test_rejects_absolute_path_member(self) -> None:
+        # ``safe_extractall``'s docstring claims to reject absolute member
+        # paths.  An absolute member resets ``os.path.join``, so it lands
+        # outside dest and must raise — guard against a future containment
+        # change silently reintroducing this zip-slip vector.
+        from helpers import UnsafeArchiveMember
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "abs.zip")
+            # Absolute member name written via ZipInfo so ZipFile does not
+            # normalise the leading separator away on creation.
+            evil = zipfile.ZipInfo(f"{os.sep}abs-escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(evil, "pwned")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            with zipfile.ZipFile(archive) as zf:
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            # Two-phase: nothing extracted into dest.
+            self.assertEqual(os.listdir(dest), [])
+
+    @unittest.skipUnless(
+        os.name == "nt", "drive-prefix escape only applies on Windows"
+    )
+    def test_rejects_drive_prefixed_member(self) -> None:
+        # On Windows a drive-prefixed member (``C:\\evil.txt``) is an
+        # absolute path that escapes dest; the docstring claims to reject
+        # it.  Skipped off-Windows, where a drive prefix is an ordinary
+        # relative path component and not an escape vector.
+        from helpers import UnsafeArchiveMember
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "drive.zip")
+            drive = os.path.splitdrive(os.path.realpath(tmpdir))[0] or "C:"
+            evil = zipfile.ZipInfo(f"{drive}\\drive-escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(evil, "pwned")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            with zipfile.ZipFile(archive) as zf:
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            self.assertEqual(os.listdir(dest), [])
 
 
 if __name__ == "__main__":
