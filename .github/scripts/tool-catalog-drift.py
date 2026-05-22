@@ -157,9 +157,22 @@ def _url_on_allowlist(url: str) -> bool:
     post-response defense-in-depth check so all three agree on what
     "allowed" means.  ``urlsplit`` parses without resolving; ``hostname``
     is lowercased for case-insensitive comparison.
+
+    A malformed *url* (e.g. ``https://[::1`` with an unterminated IPv6
+    literal) makes ``urlsplit`` raise ``ValueError``.  Treat any such
+    parse failure as "not on the allowlist" and return ``False`` rather
+    than letting the ``ValueError`` escape: the redirect handler turns a
+    ``False`` here into a loud :class:`FetchError`, and the pre-request
+    guard does the same, so a malformed redirect target or source URL
+    routes through the documented hard-fail exit codes instead of
+    surfacing as an uncaught traceback (which would exit 1 and collide
+    with ``--dry-run``'s "drift detected" code).
     """
-    parts = urllib.parse.urlsplit(url)
-    host = (parts.hostname or "").lower()
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return False
     return (
         parts.scheme in ALLOWED_FETCH_SCHEMES
         and host in ALLOWED_FETCH_HOSTS
