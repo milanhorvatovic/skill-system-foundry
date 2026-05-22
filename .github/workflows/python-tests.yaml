@@ -21,9 +21,18 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded in-progress runs for the same PR. Gated to pull_request so
+# push-to-main runs (badge update) and workflow_call invocations (release-prep,
+# which fires as workflow_dispatch) always run to completion and are never
+# cancelled mid-flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +116,7 @@ jobs:
 
   validate-examples:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -158,6 +168,7 @@ jobs:
     # under standard markdown semantics or any markdown file under the
     # skill is unreachable from SKILL.md / capability.md roots.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -194,6 +205,7 @@ jobs:
     # archive arcnames) so those surfaces are exercised in this
     # workflow without making the happy-path bundle step fail.
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -300,6 +312,7 @@ jobs:
     # the badge must not be updated from a release branch's coverage.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     concurrency:
