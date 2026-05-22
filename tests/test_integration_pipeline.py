@@ -365,6 +365,49 @@ class SafeExtractAllTests(unittest.TestCase):
         )
         self.assertFalse(_is_within_destination(sibling, base))
 
+    def test_rejects_absolute_path_member(self) -> None:
+        # ``safe_extractall``'s docstring claims to reject absolute member
+        # paths.  An absolute member resets ``os.path.join``, so it lands
+        # outside dest and must raise — guard against a future containment
+        # change silently reintroducing this zip-slip vector.
+        from helpers import UnsafeArchiveMember
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "abs.zip")
+            # Absolute member name written via ZipInfo so ZipFile does not
+            # normalise the leading separator away on creation.
+            evil = zipfile.ZipInfo(f"{os.sep}abs-escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(evil, "pwned")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            with zipfile.ZipFile(archive) as zf:
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            # Two-phase: nothing extracted into dest.
+            self.assertEqual(os.listdir(dest), [])
+
+    @unittest.skipUnless(
+        os.name == "nt", "drive-prefix escape only applies on Windows"
+    )
+    def test_rejects_drive_prefixed_member(self) -> None:
+        # On Windows a drive-prefixed member (``C:\\evil.txt``) is an
+        # absolute path that escapes dest; the docstring claims to reject
+        # it.  Skipped off-Windows, where a drive prefix is an ordinary
+        # relative path component and not an escape vector.
+        from helpers import UnsafeArchiveMember
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "drive.zip")
+            drive = os.path.splitdrive(os.path.realpath(tmpdir))[0] or "C:"
+            evil = zipfile.ZipInfo(f"{drive}\\drive-escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(evil, "pwned")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            with zipfile.ZipFile(archive) as zf:
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            self.assertEqual(os.listdir(dest), [])
+
 
 if __name__ == "__main__":
     unittest.main()
