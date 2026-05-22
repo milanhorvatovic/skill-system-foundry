@@ -51,6 +51,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # ---------------------------------------------------------------------------
@@ -112,6 +113,20 @@ RE_TABLE_SEPARATOR = re.compile(r"^\|\s*[: -]+\s*\|")
 # hung connection does not stall the workflow indefinitely.
 FETCH_TIMEOUT_SECONDS = 30
 
+# SSRF allowlist.  ``fetch`` only ever talks to the upstream tools-reference
+# host over HTTPS.  These values are HARDCODED constants — deliberately NOT
+# read from ``catalog_provenance.source_url`` in the catalog YAML, even though
+# that is where the URL itself comes from.  The whole point of the guard is to
+# bound a value that ultimately derives from an operator-supplied
+# ``--catalog-path``; validating it against an allowlist sourced from the same
+# (operator-pointable) file would be circular.  A trusted, in-code constant
+# gives the check an independent base.  If upstream ever moves hosts, this
+# constant must be updated in the same commit that updates the catalog's
+# ``source_url`` — a deliberate, reviewable code change rather than a silent
+# config edit.
+ALLOWED_FETCH_SCHEMES = ("https",)
+ALLOWED_FETCH_HOSTS = ("code.claude.com",)
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -138,9 +153,28 @@ class ParseError(DriftHelperError):
 def fetch(url: str) -> str:
     """Fetch *url* and return the response body as UTF-8 text.
 
-    Raises :class:`FetchError` on any non-2xx status, network failure,
-    or non-UTF-8 body.  No silent green — every error path is loud.
+    Before any request is made, *url* is validated against the hardcoded
+    SSRF allowlist (HTTPS scheme + known upstream host); anything else is
+    a loud :class:`FetchError`.  The opener follows redirects, so the
+    landing URL is re-validated against the same allowlist before its
+    body is read — a 30x to an off-allowlist host cannot smuggle content
+    past the guard.
+
+    Raises :class:`FetchError` on a disallowed scheme/host, a redirect to
+    a disallowed host, any non-2xx status, network failure, or non-UTF-8
+    body.  No silent green — every error path is loud.
     """
+    # SSRF guard (pre-request): scheme + host must be on the hardcoded
+    # allowlist.  ``urlsplit`` parses without resolving; ``hostname`` is
+    # lowercased for case-insensitive comparison.
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ALLOWED_FETCH_SCHEMES or host not in ALLOWED_FETCH_HOSTS:
+        raise FetchError(
+            f"refusing to fetch {url!r}: only scheme(s) "
+            f"{ALLOWED_FETCH_SCHEMES} and host(s) {ALLOWED_FETCH_HOSTS} "
+            f"are allowed (SSRF guard)"
+        )
     request = urllib.request.Request(
         url,
         headers={
@@ -152,6 +186,20 @@ def fetch(url: str) -> str:
         with urllib.request.urlopen(
             request, timeout=FETCH_TIMEOUT_SECONDS
         ) as response:
+            # SSRF guard (post-redirect): urlopen follows 30x by default,
+            # so re-validate where we actually landed before trusting the
+            # body.  Blocks a redirect-to-arbitrary-host bypass.
+            landed = urllib.parse.urlsplit(response.geturl())
+            landed_host = (landed.hostname or "").lower()
+            if (
+                landed.scheme not in ALLOWED_FETCH_SCHEMES
+                or landed_host not in ALLOWED_FETCH_HOSTS
+            ):
+                raise FetchError(
+                    f"refusing redirected response from "
+                    f"{response.geturl()!r}: host not in allowlist "
+                    f"{ALLOWED_FETCH_HOSTS} (SSRF guard)"
+                )
             status = response.status
             if status < 200 or status >= 300:
                 raise FetchError(

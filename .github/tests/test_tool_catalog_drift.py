@@ -69,10 +69,21 @@ def _read_fixture(name: str) -> str:
 class FetchTests(unittest.TestCase):
     """``fetch`` returns UTF-8 text on success and hard-fails loudly otherwise."""
 
-    def _make_response(self, status: int, body: bytes) -> mock.MagicMock:
+    # An allowlisted URL the SSRF guard accepts.  Every happy-path and
+    # transport-error test fetches this so the guard is exercised but does
+    # not itself become the reason the call fails.
+    _ALLOWED_URL = "https://code.claude.com/docs/en/tools-reference.md"
+
+    def _make_response(
+        self, status: int, body: bytes, landed_url: str | None = None,
+    ) -> mock.MagicMock:
         response = mock.MagicMock()
         response.status = status
         response.read.return_value = body
+        # ``fetch`` re-validates ``response.geturl()`` (the post-redirect
+        # landing URL); default it to the allowlisted URL so the redirect
+        # guard passes unless a test overrides it.
+        response.geturl.return_value = landed_url or self._ALLOWED_URL
         response.__enter__.return_value = response
         response.__exit__.return_value = False
         return response
@@ -82,7 +93,7 @@ class FetchTests(unittest.TestCase):
         with mock.patch.object(
             mod.urllib.request, "urlopen", return_value=response
         ):
-            self.assertEqual(mod.fetch("https://example.test"), "hello upstream")
+            self.assertEqual(mod.fetch(self._ALLOWED_URL), "hello upstream")
 
     def test_raises_on_non_2xx_status(self) -> None:
         response = self._make_response(500, b"bad")
@@ -90,12 +101,12 @@ class FetchTests(unittest.TestCase):
             mod.urllib.request, "urlopen", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("500", str(ctx.exception))
 
     def test_raises_on_http_error(self) -> None:
         http_error = urllib.error.HTTPError(
-            url="https://example.test",
+            url=self._ALLOWED_URL,
             code=404,
             msg="Not Found",
             hdrs=None,
@@ -105,7 +116,7 @@ class FetchTests(unittest.TestCase):
             mod.urllib.request, "urlopen", side_effect=http_error
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("404", str(ctx.exception))
 
     def test_raises_on_url_error(self) -> None:
@@ -114,7 +125,7 @@ class FetchTests(unittest.TestCase):
             mod.urllib.request, "urlopen", side_effect=url_error
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("network error", str(ctx.exception))
 
     def test_raises_on_timeout(self) -> None:
@@ -124,7 +135,7 @@ class FetchTests(unittest.TestCase):
             side_effect=TimeoutError("read timed out"),
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("I/O error", str(ctx.exception))
 
     def test_raises_on_non_utf8_body(self) -> None:
@@ -134,8 +145,45 @@ class FetchTests(unittest.TestCase):
             mod.urllib.request, "urlopen", return_value=response
         ):
             with self.assertRaises(mod.FetchError) as ctx:
-                mod.fetch("https://example.test")
+                mod.fetch(self._ALLOWED_URL)
             self.assertIn("non-UTF-8", str(ctx.exception))
+
+    # ---- SSRF guard ----
+
+    def test_rejects_non_https_scheme(self) -> None:
+        # The guard fires before any request — urlopen is patched to blow
+        # up so a regression that lets the URL through is unmistakable.
+        with mock.patch.object(
+            mod.urllib.request,
+            "urlopen",
+            side_effect=AssertionError("urlopen must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("http://code.claude.com/docs/en/tools-reference.md")
+            self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_rejects_non_allowlisted_host(self) -> None:
+        with mock.patch.object(
+            mod.urllib.request,
+            "urlopen",
+            side_effect=AssertionError("urlopen must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("https://evil.example/docs/en/tools-reference.md")
+            self.assertIn("SSRF guard", str(ctx.exception))
+
+    def test_rejects_redirect_to_non_allowlisted_host(self) -> None:
+        # Initial URL is allowlisted, but the response landed (after a
+        # redirect) on a host that is not — the body must be refused.
+        response = self._make_response(
+            200, b"redirected body", landed_url="https://evil.example/x",
+        )
+        with mock.patch.object(
+            mod.urllib.request, "urlopen", return_value=response
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch(self._ALLOWED_URL)
+            self.assertIn("redirected response", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------
