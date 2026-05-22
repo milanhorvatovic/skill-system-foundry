@@ -35,6 +35,17 @@ python scripts/bundle.py <skill-path> [--system-root <path>] [--output <path>] [
 
 The archive root contains a `<skill-name>/` wrapper directory matching the skill's `name` field. Files must not be placed directly at the archive root. Any system-level `roles/` referenced by the skill are inlined under the skill directory to make the bundle self-contained.
 
+## What Counts as a Reference
+
+The bundler uses the **same definition of a file reference as `validate_skill`** (the configured `reference_patterns` in `configuration.yaml`): a markdown link or backtick whose target is anchored on a recognized top-level directory (capabilities, references, scripts, assets, shared) or — for markdown links — ends in a known file extension. Prose that merely *looks* path-like is not a reference and never blocks a bundle: CLI slash-commands (`/review`), provider model IDs (`provider/model`), templated placeholders (`/{name}`), and illustrative absolute or home paths (`/tmp`, `~/.config`) are all ignored. Links inside fenced code blocks are skipped entirely, so worked examples are never treated as references.
+
+Two deliberate softer severities keep documentation-heavy skills bundleable:
+
+- **References that escape the skill** to a non-existent shared or cross-skill resource (a documented out-of-skill example path that points above the skill root) are surfaced as a **warning**, not a failure — mirroring `validate_skill`, which declines to existence-check out-of-skill paths. They are never bundled; an *in-skill* broken reference is still a hard failure.
+- **Path-like tokens in non-markdown files** (Python or YAML docstrings, error-message examples) are a best-effort heuristic with no `validate_skill` counterpart. A token must carry a file-extension shape to be considered, and an unresolved one is a **warning** — the file ships into the bundle verbatim regardless, so it cannot break bundle integrity.
+
+**Migration note:** because the bundler now bundles exactly what `validate_skill` recognizes, a file referenced only via an unrecognized form (for example a backtick path under a non-recognized prefix such as roles) is no longer auto-bundled. If a needed file stops appearing in a bundle after upgrading, reference it with a recognized markdown link form.
+
 ## Example
 
 ```bash
