@@ -189,6 +189,24 @@ class FetchTests(unittest.TestCase):
                 mod.fetch("https://[::1")
             self.assertIn("SSRF guard", str(ctx.exception))
 
+    def test_rejection_message_is_human_readable_not_tuple_repr(self) -> None:
+        # The SSRF guard message must render the allowlists as readable
+        # comma-separated values (``https`` / ``code.claude.com``), not as
+        # Python tuple reprs (``('https',)``), since this is user-facing
+        # CI/stderr output guiding remediation.
+        with mock.patch.object(
+            mod._FETCH_OPENER,
+            "open",
+            side_effect=AssertionError("opener must not be called"),
+        ):
+            with self.assertRaises(mod.FetchError) as ctx:
+                mod.fetch("https://evil.example/x")
+            message = str(ctx.exception)
+        self.assertNotIn("('", message)
+        self.assertNotIn(",)", message)
+        self.assertIn("https", message)
+        self.assertIn("code.claude.com", message)
+
     def test_rejects_redirect_to_non_allowlisted_host(self) -> None:
         # Defense in depth: even if a redirect somehow lands the response
         # on an off-allowlist host (bypassing the redirect handler), the

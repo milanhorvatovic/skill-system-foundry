@@ -127,6 +127,12 @@ FETCH_TIMEOUT_SECONDS = 30
 ALLOWED_FETCH_SCHEMES = ("https",)
 ALLOWED_FETCH_HOSTS = ("code.claude.com",)
 
+# Human-readable renderings of the allowlists for error messages.  Built once
+# so a rejected-URL FetchError shows ``https`` / ``code.claude.com`` rather than
+# the Python tuple repr (``('https',)`` / ``('code.claude.com',)``) in CI stderr.
+_ALLOWED_SCHEMES_DISPLAY = ", ".join(ALLOWED_FETCH_SCHEMES)
+_ALLOWED_HOSTS_DISPLAY = ", ".join(ALLOWED_FETCH_HOSTS)
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -206,8 +212,8 @@ class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
         if not _url_on_allowlist(newurl):
             raise FetchError(
                 f"refusing redirect to {newurl!r}: only scheme(s) "
-                f"{ALLOWED_FETCH_SCHEMES} and host(s) {ALLOWED_FETCH_HOSTS} "
-                f"are allowed (SSRF guard)"
+                f"{_ALLOWED_SCHEMES_DISPLAY} and host(s) "
+                f"{_ALLOWED_HOSTS_DISPLAY} are allowed (SSRF guard)"
             )
         return super().redirect_request(
             req, fp, code, msg, headers, newurl
@@ -241,8 +247,8 @@ def fetch(url: str) -> str:
     if not _url_on_allowlist(url):
         raise FetchError(
             f"refusing to fetch {url!r}: only scheme(s) "
-            f"{ALLOWED_FETCH_SCHEMES} and host(s) {ALLOWED_FETCH_HOSTS} "
-            f"are allowed (SSRF guard)"
+            f"{_ALLOWED_SCHEMES_DISPLAY} and host(s) "
+            f"{_ALLOWED_HOSTS_DISPLAY} are allowed (SSRF guard)"
         )
     request = urllib.request.Request(
         url,
@@ -265,7 +271,7 @@ def fetch(url: str) -> str:
                 raise FetchError(
                     f"refusing redirected response from "
                     f"{response.geturl()!r}: host not in allowlist "
-                    f"{ALLOWED_FETCH_HOSTS} (SSRF guard)"
+                    f"{_ALLOWED_HOSTS_DISPLAY} (SSRF guard)"
                 )
             status = response.status
             if status < 200 or status >= 300:
