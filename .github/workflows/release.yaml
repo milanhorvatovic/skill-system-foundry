@@ -4,11 +4,12 @@ name: Release
 # pushed by release-on-merge.yaml (under the oss-release-bot identity, so the
 # tag-push event triggers this workflow — a GITHUB_TOKEN tag push would not).
 #
-# The bundle + checksum are attached in the SAME `gh release create` call. This
-# is mandatory under GitHub immutable releases: assets cannot be added after a
-# release is created, so the previous "create release, then upload" model broke.
-# The tag exists only on already-green main, so a failed create never strands a
-# reusable tag name.
+# The bundle + checksum are built by .github/scripts/build-skill-bundle.sh — the
+# same script release-prep.yaml dry-runs pre-merge, so the published bundle is
+# exactly what was proven buildable — and attached in the SAME `gh release
+# create` call. Attaching assets at creation is mandatory under GitHub immutable
+# releases: assets cannot be added after a release is created. The tag exists
+# only on already-green main, so a failed create never strands a reusable tag.
 
 on:
   push:
@@ -25,6 +26,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read  # the release is created with the release App token, not GITHUB_TOKEN
     steps:
@@ -41,66 +43,13 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
-      - name: Build zip bundle
+      - name: Build and verify bundle
         run: |
           set -euo pipefail
-          mkdir -p dist
           BUNDLE_PATH="dist/skill-system-foundry-${GITHUB_REF_NAME}.zip"
-          zip -r "$BUNDLE_PATH" skill-system-foundry/
-          echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
-
-      - name: Verify bundle excludes yaml-conformance corpus
-        run: |
-          : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
-          python - "$BUNDLE_PATH" <<'PY'
-          import sys, zipfile
-          z = zipfile.ZipFile(sys.argv[1])
-          hits = [n for n in z.namelist() if 'yaml-conformance' in n]
-          if hits:
-              print('Found forbidden yaml-conformance entries in bundle:', file=sys.stderr)
-              for n in hits:
-                  print(f'  {n}', file=sys.stderr)
-              sys.exit(1)
-          PY
-
-      - name: Compute SHA256 checksum
-        run: |
-          : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
           CHECKSUM_PATH="${BUNDLE_PATH}.sha256"
-          python - "$BUNDLE_PATH" "$CHECKSUM_PATH" <<'PY'
-          import hashlib, os, sys
-
-          def hash_bundle(path):
-              digest = hashlib.sha256()
-              with open(path, "rb") as fh:
-                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                      digest.update(chunk)
-              return digest.hexdigest()
-
-          bundle_path, checksum_path = sys.argv[1], sys.argv[2]
-          actual_name = os.path.basename(bundle_path)
-          write_line = f"{hash_bundle(bundle_path)}  {actual_name}\n"
-          with open(checksum_path, "w", encoding="utf-8", newline="\n") as fh:
-              fh.write(write_line)
-          # Re-read the checksum file and re-hash the bundle so this step confirms
-          # the checksum file matches the bundle as it exists at the end of
-          # checksum generation. (A mismatch introduced after this step but before
-          # the release upload would not be caught here.)
-          with open(checksum_path, "r", encoding="utf-8") as fh:
-              checksum_line = fh.readline().rstrip("\r\n")
-          if "  " not in checksum_line:
-              print('Malformed checksum file: expected "<sha256>  <filename>"', file=sys.stderr)
-              sys.exit(1)
-          expected_digest, expected_name = checksum_line.split("  ", 1)
-          if expected_name != actual_name:
-              print(f"Checksum filename mismatch: {expected_name!r} vs {actual_name!r}", file=sys.stderr)
-              sys.exit(1)
-          actual_digest = hash_bundle(bundle_path)
-          if actual_digest != expected_digest:
-              print(f"Checksum mismatch: file has {expected_digest}, bundle hashes to {actual_digest}", file=sys.stderr)
-              sys.exit(1)
-          print(f"{actual_name}: OK")
-          PY
+          BUNDLE_PATH="$BUNDLE_PATH" CHECKSUM_PATH="$CHECKSUM_PATH" bash .github/scripts/build-skill-bundle.sh
+          echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
           echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release with assets (immutable-safe)

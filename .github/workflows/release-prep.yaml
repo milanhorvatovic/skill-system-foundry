@@ -46,6 +46,7 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Needs write to push the release branch; the rest of the steps
     # (checkout, dependency install, bump, changelog, validate, audit,
     # commit) only read.  Granted at the job level so the workflow-wide
@@ -162,6 +163,15 @@ jobs:
         # not fail the step.
         run: python skill-system-foundry/scripts/audit_skill_system.py .
 
+      - name: Dry-build the release bundle
+        # Prove the distribution bundle builds and passes the yaml-conformance
+        # exclusion check BEFORE any release tag is cut.  release.yaml runs the
+        # same .github/scripts/build-skill-bundle.sh at publish time, so a green
+        # dry-build here means the post-merge build cannot fail and burn the
+        # (immutable) tag.  Output goes to RUNNER_TEMP so the git add -A below
+        # never stages it.
+        run: BUNDLE_PATH="$RUNNER_TEMP/dry-build.zip" bash .github/scripts/build-skill-bundle.sh
+
       - name: Commit release bump
         env:
           VERSION: ${{ inputs.version }}
@@ -208,6 +218,7 @@ jobs:
     needs: [prepare, test]
     if: ${{ ! inputs.dry_run }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Two-identity auto-merge, mirroring the fleet pattern in
     # milanhorvatovic/codex-ai-code-review-action.  ``GITHUB_TOKEN`` stays
     # read-only: oss-release-bot opens the PR (so its push/pull_request events
