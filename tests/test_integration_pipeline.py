@@ -13,6 +13,8 @@ import tempfile
 import unittest
 import zipfile
 
+from helpers import safe_extractall
+
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS_DIR = os.path.join(REPO_ROOT, "skill-system-foundry", "scripts")
@@ -75,7 +77,7 @@ def _bundle_and_extract(
 
     with tempfile.TemporaryDirectory() as extract_root:
         with zipfile.ZipFile(bundle_zip) as zf:
-            zf.extractall(extract_root)
+            safe_extractall(zf, extract_root)
 
         entries = os.listdir(extract_root)
         test.assertIn(
@@ -267,7 +269,7 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
             extract_root = os.path.join(tmpdir, "extracted")
             os.makedirs(extract_root)
             with zipfile.ZipFile(artifact) as zf:
-                zf.extractall(extract_root)
+                safe_extractall(zf, extract_root)
 
             extracted_skill = os.path.join(extract_root, "skill-system-foundry")
             self.assertTrue(
@@ -281,6 +283,41 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
                 "--foundry-self",
             ])
             _assert_ok(self, validate)
+
+
+class SafeExtractAllTests(unittest.TestCase):
+    """``safe_extractall`` refuses members that escape the destination."""
+
+    def test_extracts_well_behaved_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "ok.zip")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr("a.txt", "alpha")
+                zf.writestr("sub/b.txt", "beta")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            with zipfile.ZipFile(archive) as zf:
+                safe_extractall(zf, dest)
+            self.assertTrue(os.path.isfile(os.path.join(dest, "a.txt")))
+            self.assertTrue(os.path.isfile(os.path.join(dest, "sub", "b.txt")))
+
+    def test_rejects_parent_traversal_member(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = os.path.join(tmpdir, "evil.zip")
+            # Write the traversal name into the central directory directly so
+            # ZipFile does not normalise it away on creation.
+            info = zipfile.ZipInfo("../escape.txt")
+            with zipfile.ZipFile(archive, "w") as zf:
+                zf.writestr(info, "pwned")
+            dest = os.path.join(tmpdir, "out")
+            os.makedirs(dest)
+            sentinel = os.path.join(tmpdir, "escape.txt")  # sibling of dest
+            with zipfile.ZipFile(archive) as zf:
+                from helpers import UnsafeArchiveMember
+                with self.assertRaises(UnsafeArchiveMember):
+                    safe_extractall(zf, dest)
+            # The escaping member must not have been written anywhere outside dest.
+            self.assertFalse(os.path.exists(sentinel))
 
 
 if __name__ == "__main__":

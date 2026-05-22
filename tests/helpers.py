@@ -1,4 +1,35 @@
 import os
+import zipfile
+
+
+class UnsafeArchiveMember(Exception):
+    """A zip member would extract outside the destination directory."""
+
+
+def safe_extractall(zf: zipfile.ZipFile, dest: str) -> None:
+    """Extract every member of *zf* into *dest*, refusing path escapes.
+
+    ``zipfile.ZipFile.extractall`` has no ``filter=`` parameter — that is a
+    ``tarfile`` feature (PEP 706, Python 3.12) and does not exist on
+    ``ZipFile`` — so containment is enforced explicitly here: each member's
+    resolved destination must stay within *dest* before it is extracted.
+    A member name carrying ``..`` segments, an absolute path, or (on a
+    case-insensitive host) a drive prefix that would land outside *dest*
+    raises :class:`UnsafeArchiveMember` before any of that member's bytes
+    are written.  ``dest`` is a test-controlled local directory, so it is a
+    trusted containment base; the member names are the untrusted input.
+
+    Extraction is per-member (``ZipFile.extract``) rather than a single
+    ``extractall`` so the dangerous bulk API is not invoked at all.
+    """
+    dest_real = os.path.realpath(dest)
+    for member in zf.namelist():
+        target = os.path.realpath(os.path.join(dest_real, member))
+        if target != dest_real and not target.startswith(dest_real + os.sep):
+            raise UnsafeArchiveMember(
+                f"refusing to extract {member!r}: escapes destination {dest!r}"
+            )
+        zf.extract(member, dest_real)
 
 
 DEFAULT_DESCRIPTION = (
