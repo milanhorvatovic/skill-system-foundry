@@ -186,8 +186,20 @@ jobs:
   test:
     needs: prepare
     if: ${{ ! inputs.dry_run }}
+    # A called workflow's jobs cannot request more permission than the
+    # caller grants, and GitHub validates that cap at startup — before
+    # job-level ``if`` skips are evaluated.  python-tests.yaml's
+    # ``update-badge`` job declares ``contents: write``; even though it
+    # is skipped under ``workflow_call`` (its ``if`` requires a push to
+    # main), the declared scope is still checked, so the caller must
+    # grant ``contents: write`` or the whole dispatch fails to compile
+    # with a logless ``startup_failure``.  python-tests.yaml defaults to
+    # ``contents: read`` at the workflow level, and only ``update-badge``
+    # raises it to ``contents: write``; the reusable jobs that do run on
+    # this call need no more than that read default, so this grant only
+    # satisfies the compile-time cap for the skipped badge job.
     permissions:
-      contents: read
+      contents: write
     uses: ./.github/workflows/python-tests.yaml
     with:
       ref: ${{ needs.prepare.outputs.branch }}
