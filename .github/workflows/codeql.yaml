@@ -1,0 +1,44 @@
+name: CodeQL
+# GitHub-native SAST for the Python scripts, additive to the existing Snyk scan.
+# Non-blocking by design: these contexts are not listed in the branch ruleset's
+# required status checks, so findings surface in the Security tab without gating
+# merges (and without interfering with the tool-catalog-drift auto-merge path,
+# which waits only on required checks).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "21 7 * * 1"  # Mondays 07:21 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze Python
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # upload the analysis results
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # @v3 as 3.36.0
+        with:
+          languages: python
+          # Interpreted language: no build step required.
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # @v3 as 3.36.0
+        with:
+          category: "/language:python"
