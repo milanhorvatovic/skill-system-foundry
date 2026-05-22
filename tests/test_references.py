@@ -230,6 +230,37 @@ class TextFileRefRegexTests(unittest.TestCase):
                 matches = RE_TEXT_FILE_REF.findall(text)
                 self.assertEqual(matches, expected)
 
+    def test_requires_file_extension_shape(self) -> None:
+        """Only tokens ending in a file-extension shape are references.
+
+        Non-markdown files have no syntactic anchor, so a trailing
+        extension is the signal that distinguishes a real path from a
+        sentence fragment — while keeping real deps of any extension.
+        """
+        cases = {
+            # Kept — real file paths of any extension
+            "assets/logo.png": ["assets/logo.png"],
+            "assets/fonts/x.woff2": ["assets/fonts/x.woff2"],
+            "scripts/helper.py": ["scripts/helper.py"],
+            # Kept — query/anchor suffixes survive (strip_fragment cleans)
+            "assets/logo.svg?v=2": ["assets/logo.svg?v=2"],
+            "capabilities/foo/capability.md#section": [
+                "capabilities/foo/capability.md#section"
+            ],
+            # Kept — sentence-final period is a boundary, not part of path
+            "see references/guide.md.": ["references/guide.md"],
+            # Dropped — bare directory fragments torn from prose
+            "assets/.": [],
+            "skills/my-skill": [],
+            "skills/-prefixed": [],
+            "roles/skills": [],
+            "scripts/lib/": [],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                matches = RE_TEXT_FILE_REF.findall(text)
+                self.assertEqual(matches, expected)
+
 
 class FindContainingSkillTests(unittest.TestCase):
     def test_sibling_prefix_path_is_not_treated_as_in_root(self) -> None:
@@ -371,6 +402,46 @@ class ScanReferencesTests(unittest.TestCase):
             # The referenced file should still be in external_files
             guide = os.path.join(system_root, "references", "guide.md")
             self.assertIn(os.path.abspath(guide), result["external_files"])
+
+    def test_unresolved_text_detected_reference_warns_not_fails(self) -> None:
+        """An unresolved path-like token in a non-markdown file is WARN.
+
+        The heuristic has no validate_skill counterpart and the file
+        ships verbatim, so an unresolved hit (CLI docstring, error-
+        message example) must not block the bundle.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            # A .py docstring naming a path that does not resolve.
+            write_text(
+                os.path.join(skill_dir, "run.py"),
+                "# Usage: python scripts/missing.py --flag\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+            self.assertEqual(result["errors"], [])
+            warns = [w for w in result["warnings"] if "missing.py" in w]
+            self.assertEqual(len(warns), 1)
+            self.assertIn("Unresolved non-markdown reference", warns[0])
+
+    def test_bare_directory_fragment_in_non_markdown_ignored(self) -> None:
+        """A prose fragment with no extension is not a reference at all."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(
+                os.path.join(skill_dir, "notes.py"),
+                "# create skills/my-skill under the assets/.\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["warnings"], [])
 
     def test_valid_external_reference_collected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

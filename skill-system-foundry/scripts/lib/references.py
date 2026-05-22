@@ -49,6 +49,21 @@ RE_WRAPPED_LOCAL_REF = re.compile(r'''^\s*<[^<>]+>\s*(?:["'][^"']*["'])?\s*$''')
 # Uses re.escape so prefix values are never interpreted as metacharacters,
 # and a lookbehind so that "myreferences/foo.md" does not falsely match
 # as "references/foo.md".
+#
+# Three distinct extension/prefix policies coexist deliberately — do
+# NOT "harmonise" them:
+#   * markdown link  (RE_MARKDOWN_LINK_REF): recognized dir prefix OR a
+#     known extension — markdown links are syntactically anchored.
+#   * markdown backtick (RE_BACKTICK_REF): recognized dir prefix only.
+#   * text-detected (this pattern): recognized dir prefix AND a generic
+#     file-extension shape.  Non-markdown files have NO syntactic anchor
+#     (no [](…), no backticks) to separate a real path from prose, so a
+#     trailing extension is the only signal that a token is a file
+#     reference rather than a sentence fragment (``the assets/.`` ->
+#     dropped, ``skills/my-skill`` -> dropped) — while keeping real
+#     dependencies of any extension (``assets/logo.png``).  Unresolved
+#     text-detected hits are surfaced at WARN (never FAIL) because this
+#     heuristic has no validate_skill counterpart and cannot be certain.
 _TEXT_REF_PREFIXES = "|".join([
     re.escape(DIR_REFERENCES), re.escape(DIR_SCRIPTS),
     re.escape(DIR_ASSETS), re.escape(DIR_ROLES),
@@ -57,7 +72,10 @@ _TEXT_REF_PREFIXES = "|".join([
 RE_TEXT_FILE_REF = re.compile(
     r"(?:(?<=^)|(?<=[^\w/]))"    # start-of-line or preceded by non-word, non-path char
     r"(?:" + _TEXT_REF_PREFIXES + r")"
-    r"/[^\s'\"`,;:)}\]>]+",
+    r"/[^\s'\"`,;:)}\]>?#]*?"             # lazy path body (stops at query/anchor)
+    r"\.\w+"                              # required file-extension shape
+    r"(?:[?#][^\s'\"`,;:)}\]>]*)?"        # optional query/anchor suffix
+    r"(?=$|[\s'\"`,;:)}\]>]|\.(?:\s|$))",  # boundary, or sentence-final period
     re.MULTILINE,
 )
 
@@ -1134,6 +1152,25 @@ def scan_references(
 
             # ---- Broken reference ----
             if resolved is None:
+                # text_detected is a best-effort prose heuristic with no
+                # validate_skill counterpart (validation never scans
+                # non-markdown files).  An unresolved hit is far more
+                # likely a CLI-usage docstring or error-message example
+                # than a real missing dependency, and the non-markdown
+                # file ships into the bundle verbatim regardless — so it
+                # cannot break bundle integrity.  Surface it at WARN
+                # (never FAIL) for every fail_reason: severity matches
+                # the low detection confidence, and nothing is hidden.
+                if ref_type == "text_detected":
+                    warnings.append(
+                        f"{LEVEL_WARN}: Unresolved non-markdown reference "
+                        f"in '{_rel(filepath)}' line {line_num}: "
+                        f"'{raw_ref}'. A path-like token in a non-markdown "
+                        f"file did not resolve to a bundled file; it will "
+                        f"not be bundled or rewritten. Verify whether it "
+                        f"is a real dependency."
+                    )
+                    continue
                 if fail_reason == "absolute_path":
                     errors.append(
                         f"{LEVEL_FAIL}: Invalid absolute reference in "
