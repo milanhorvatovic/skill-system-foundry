@@ -2129,32 +2129,69 @@ class ScanReferencesFailReasonTests(unittest.TestCase):
         fails = [e for e in result["errors"] if "absolute" in e.lower()]
         self.assertGreaterEqual(len(fails), 1)
 
-    def test_escapes_system_root_produces_fail(self) -> None:
+    def test_escapes_system_root_warns_not_fails(self) -> None:
+        """A skill-escaping unresolved ref is WARN, not FAIL.
+
+        Severity keys off escaping the skill, so a path that escapes the
+        system root entirely is treated like any other out-of-skill,
+        non-resolving example: surfaced (never bundled), never blocking.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")
             skill_dir = os.path.join(system_root, "skills", "demo")
             write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
             write_text(
                 os.path.join(skill_dir, "doc.md"),
-                "See [out](../../../../outside.md)\n",
+                "See [out](../../../../shared/outside.md)\n",
             )
             result = scan_references(skill_dir, system_root)
-        fails = [e for e in result["errors"] if "escapes" in e.lower()]
-        self.assertGreaterEqual(len(fails), 1)
+        self.assertEqual(
+            [e for e in result["errors"] if "outside.md" in e], []
+        )
+        warns = [w for w in result["warnings"] if "escapes the skill" in w]
+        self.assertGreaterEqual(len(warns), 1)
 
     def test_is_directory_reference_produces_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")
             skill_dir = os.path.join(system_root, "skills", "demo")
             write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
-            os.makedirs(os.path.join(skill_dir, "somedir"))
+            # Use a directory-anchored shape so the unified reference
+            # definition captures it (a bare ``somedir`` is no longer a
+            # reference); it resolves to a directory, not a file.
+            os.makedirs(os.path.join(skill_dir, "references", "somedir"))
             write_text(
                 os.path.join(skill_dir, "doc.md"),
-                "See [dir](somedir)\n",
+                "See [dir](references/somedir)\n",
             )
             result = scan_references(skill_dir, system_root)
         fails = [e for e in result["errors"] if "directory" in e.lower()]
         self.assertGreaterEqual(len(fails), 1)
+
+    def test_skill_escaping_unresolved_markdown_reference_warns(self) -> None:
+        """A skill-escaping non-existent ref is a documented example, WARN.
+
+        Mirrors validate_skill, which surfaces out-of-skill paths as INFO
+        and declines to existence-check them.  An in-skill broken ref
+        still FAILs (covered elsewhere).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            # shared/ is a recognized prefix, so the narrow backtick
+            # captures this example; the file does not exist.
+            write_text(
+                os.path.join(skill_dir, "doc.md"),
+                "Example: `../../shared/references/file.md` is a resource.\n",
+            )
+            result = scan_references(skill_dir, system_root)
+        self.assertEqual(
+            [e for e in result["errors"] if "file.md" in e], []
+        )
+        warns = [w for w in result["warnings"] if "file.md" in w]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("escapes the skill", warns[0])
 
 
 # ===================================================================
@@ -2573,7 +2610,7 @@ class ScanReferencesDisplayPathTests(unittest.TestCase):
     """Tests for the _rel display path fallback (line 1084)."""
 
     def test_display_path_outside_both_skill_and_system(self) -> None:
-        """A reference escaping system root shows doc.md display path in error."""
+        """A skill-escaping reference shows doc.md display path in the WARN."""
         with tempfile.TemporaryDirectory() as tmpdir:
             system_root = os.path.join(tmpdir, "root")
             skill_dir = os.path.join(system_root, "skills", "demo")
@@ -2591,14 +2628,17 @@ class ScanReferencesDisplayPathTests(unittest.TestCase):
 
             result = scan_references(skill_dir, system_root)
 
-        # Should produce an escapes error with the referencing file's
-        # display path (relative to skill dir since doc.md is inside the skill)
-        fails = [e for e in result["errors"] if "escapes" in e.lower()]
-        self.assertGreaterEqual(len(fails), 1)
-        # The _rel() display path for doc.md is relative to skill_dir
+        # Skill-escaping refs are surfaced as WARN (never bundled), with
+        # the referencing file's display path (relative to skill dir
+        # since doc.md is inside the skill).
+        self.assertEqual(
+            [e for e in result["errors"] if "ext.md" in e], []
+        )
+        warns = [w for w in result["warnings"] if "escapes the skill" in w]
+        self.assertGreaterEqual(len(warns), 1)
         self.assertTrue(
-            any("doc.md" in e for e in fails),
-            f"Expected 'doc.md' in error messages, got: {fails}",
+            any("doc.md" in w for w in warns),
+            f"Expected 'doc.md' in warning messages, got: {warns}",
         )
 
     def test_display_path_no_system_root_outside_skill(self) -> None:

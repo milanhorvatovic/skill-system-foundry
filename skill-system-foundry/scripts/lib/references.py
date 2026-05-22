@@ -23,6 +23,8 @@ from .constants import (
     LEVEL_FAIL, LEVEL_WARN,
     EXT_MARKDOWN,
     RE_DEGRADED_SYMLINK,
+    RE_MARKDOWN_LINK_REF,
+    RE_BACKTICK_REF,
 )
 from .reporting import format_exception, to_posix
 
@@ -721,6 +723,18 @@ def extract_references(filepath: str) -> list[FilteredRef]:
 
     *ref_type* is one of ``'markdown_link'``, ``'backtick'``, or
     ``'text_detected'``.
+
+    Markdown extraction uses the narrow, configuration-driven patterns
+    (:data:`RE_MARKDOWN_LINK_REF` / :data:`RE_BACKTICK_REF` from
+    ``constants``) so the bundle's definition of a reference matches
+    ``validate_skill`` exactly — slash-commands (``/review``), model IDs
+    (``provider/model``), and prose path examples are NOT references.
+    This is deliberately distinct from the broad
+    :data:`RE_BUNDLE_MD_LINK` / :data:`RE_BUNDLE_BACKTICK` that the
+    bundle *rewriter* still uses: the rewriter is safe broad because it
+    only ever rewrites paths already present in the resolve-map, while
+    the scanner must not treat prose as a (broken) reference.  Do not
+    converge the two — see the rewriter in ``lib.bundling``.
     """
     if is_binary_file(filepath):
         return []
@@ -729,23 +743,26 @@ def extract_references(filepath: str) -> list[FilteredRef]:
         content = f.read()
 
     refs = []
-    lines = content.split("\n")
 
     if is_markdown_file(filepath):
-        for line_num, line in enumerate(lines, 1):
+        # Blank fenced code blocks so example links inside ``` are not
+        # treated as references (same rule validation applies), while
+        # preserving line numbers for diagnostics.
+        scan_lines = blank_fenced_blocks(content).split("\n")
+        for line_num, line in enumerate(scan_lines, 1):
             seen_in_line = set()
-            for match in RE_BUNDLE_MD_LINK.finditer(line):
-                ref_path = match.group(2)
+            for match in RE_MARKDOWN_LINK_REF.finditer(line):
+                ref_path = match.group(1)
                 refs.append((ref_path, line_num, "markdown_link"))
                 seen_in_line.add(ref_path)
             # Backtick refs — avoid duplicating paths already captured
-            for match in RE_BUNDLE_BACKTICK.finditer(line):
+            for match in RE_BACKTICK_REF.finditer(line):
                 ref_path = match.group(1)
                 if ref_path not in seen_in_line:
                     refs.append((ref_path, line_num, "backtick"))
                     seen_in_line.add(ref_path)
     else:
-        for line_num, line in enumerate(lines, 1):
+        for line_num, line in enumerate(content.split("\n"), 1):
             for match in RE_TEXT_FILE_REF.finditer(line):
                 ref_path = match.group(0)
                 refs.append((ref_path, line_num, "text_detected"))
@@ -762,6 +779,13 @@ def _filter_refs(refs: list[RawRef]) -> list[FilteredRef]:
     filtered = []
     for ref_path, line_num, ref_type in refs:
         if should_skip_reference(ref_path):
+            continue
+        # Glob-style mentions (``capabilities/**/*.md``,
+        # ``references/?ref.md``) are documentation patterns, not files.
+        # Drop before ``strip_fragment``, which would truncate a
+        # path-glob at the first ``?`` and lose the glob signal —
+        # mirrors ``lib.reachability.extract_body_references``.
+        if is_glob_path(ref_path):
             continue
         clean_path = strip_fragment(ref_path)
         if not clean_path:
@@ -1178,26 +1202,58 @@ def scan_references(
                         f"Bundle references must use relative paths within "
                         f"the skill system root."
                     )
-                elif fail_reason == "escapes_system_root":
-                    errors.append(
-                        f"{LEVEL_FAIL}: Reference escapes system root in "
-                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
-                        f"Bundling files outside the skill system root is "
-                        f"not allowed."
-                    )
-                elif fail_reason == "is_directory":
+                    continue
+                if fail_reason == "is_directory":
                     errors.append(
                         f"{LEVEL_FAIL}: Reference points to a directory in "
                         f"'{_rel(filepath)}' line {line_num}: '{raw_ref}'. "
                         f"Only file references can be bundled — point to a "
                         f"specific file instead."
                     )
+                    continue
+                # ``escapes_system_root`` and ``not_found`` are the two
+                # remaining reasons.  Severity keys off whether the
+                # reference escapes the SKILL root, not which of the two
+                # the resolver reported (the same example ref yields
+                # ``not_found`` when no system root is inferred and
+                # ``escapes_system_root`` when one is passed — geometry,
+                # not intent).  A reference that escapes the skill to a
+                # non-existent shared/cross-skill resource is a
+                # documentation example, not a bundle defect:
+                # validate_skill surfaces the same path as INFO and
+                # declines to existence-check out-of-skill paths ("not an
+                # existence oracle").  Match that posture with a WARN so
+                # spec/example prose like ``../../shared/references/file.md``
+                # does not block bundling — it is never added to
+                # external_files, so nothing outside the skill is bundled.
+                # An in-skill broken reference stays a FAIL.
+                candidate = os.path.normpath(
+                    os.path.join(os.path.dirname(filepath), clean_path)
+                )
+                cand_norm = os.path.normcase(os.path.abspath(candidate))
+                skill_norm = os.path.normcase(os.path.abspath(current_skill))
+                try:
+                    escapes_skill = (
+                        os.path.commonpath([cand_norm, skill_norm])
+                        != skill_norm
+                    )
+                except ValueError:
+                    escapes_skill = True
+                if escapes_skill:
+                    warnings.append(
+                        f"{LEVEL_WARN}: Unresolved external reference in "
+                        f"'{_rel(filepath)}' line {line_num}: '{raw_ref}' "
+                        f"escapes the skill and does not resolve to an "
+                        f"existing file; it will not be bundled. If it is "
+                        f"a real dependency, ensure it exists within the "
+                        f"system root."
+                    )
                 else:
                     errors.append(
                         f"{LEVEL_FAIL}: Broken reference in "
                         f"'{_rel(filepath)}' line {line_num}: "
-                        f"'{raw_ref}' does not resolve to any existing file. "
-                        f"Fix the reference path before bundling."
+                        f"'{raw_ref}' does not resolve to any existing "
+                        f"file. Fix the reference path before bundling."
                     )
                 continue
 

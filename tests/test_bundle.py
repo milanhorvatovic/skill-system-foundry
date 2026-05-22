@@ -1521,35 +1521,38 @@ class PostValidateCoverageTests(unittest.TestCase):
         self.assertIn(LEVEL_FAIL, missing[0])
         self.assertIn("orphan", missing[0])
 
-    def test_markdown_reference_escapes_bundle_reports_fail(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            bundle_dir = os.path.join(tmpdir, "bundle")
-            write_text(
-                os.path.join(bundle_dir, "SKILL.md"),
-                "---\nname: a\n---\n\n[x](../../outside.md)\n",
-            )
-            errors = postvalidate(bundle_dir)
-        escape = [
-            e for e in errors
-            if "Markdown reference escapes bundle" in e
-        ]
-        self.assertEqual(len(escape), 1)
-        self.assertIn(LEVEL_FAIL, escape[0])
+    def test_markdown_reference_escaping_bundle_is_skipped(self) -> None:
+        """A bundle-escaping markdown ref is a non-bundled example, not a FAIL.
 
-    def test_backtick_reference_escapes_bundle_reports_fail(self) -> None:
+        Real external deps are rewritten to in-bundle paths during
+        assembly, so any escaping ref left here is a documented example
+        already classified by prevalidate (skill-escape WARN).
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle_dir = os.path.join(tmpdir, "bundle")
             write_text(
                 os.path.join(bundle_dir, "SKILL.md"),
-                "---\nname: a\n---\n\nUse `../../etc/passwd` config.\n",
+                "---\nname: a\n---\n\n[x](../../shared/references/file.md)\n",
             )
             errors = postvalidate(bundle_dir)
-        escape = [
-            e for e in errors
-            if "Backtick reference escapes bundle" in e
-        ]
-        self.assertEqual(len(escape), 1)
-        self.assertIn(LEVEL_FAIL, escape[0])
+        self.assertEqual(
+            [e for e in errors if "file.md" in e or "escapes" in e.lower()],
+            [],
+        )
+
+    def test_backtick_reference_escaping_bundle_is_skipped(self) -> None:
+        """A bundle-escaping backtick ref is skipped, same as markdown links."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_dir = os.path.join(tmpdir, "bundle")
+            write_text(
+                os.path.join(bundle_dir, "SKILL.md"),
+                "---\nname: a\n---\n\nUse `../../shared/config.yaml` here.\n",
+            )
+            errors = postvalidate(bundle_dir)
+        self.assertEqual(
+            [e for e in errors if "config.yaml" in e or "escapes" in e.lower()],
+            [],
+        )
 
     def test_capabilities_non_directory_entry_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1617,10 +1620,10 @@ class PostValidateCoverageTests(unittest.TestCase):
             bundle_dir = os.path.join(tmpdir, "bundle")
             write_text(
                 os.path.join(bundle_dir, "SKILL.md"),
-                "---\nname: a\n---\n\nSee `refs/guide.md` for details.\n",
+                "---\nname: a\n---\n\nSee `references/guide.md` for details.\n",
             )
             write_text(
-                os.path.join(bundle_dir, "refs", "guide.md"), "# Guide\n",
+                os.path.join(bundle_dir, "references", "guide.md"), "# Guide\n",
             )
             errors = postvalidate(bundle_dir)
         self.assertEqual(errors, [])
@@ -1632,7 +1635,7 @@ class PostValidateCoverageTests(unittest.TestCase):
             write_text(
                 os.path.join(bundle_dir, "SKILL.md"),
                 "---\nname: a\n---\n\n"
-                "See `refs/missing-a.md` and `refs/missing-b.md` today.\n",
+                "See `references/missing-a.md` and `references/missing-b.md`.\n",
             )
             errors = postvalidate(bundle_dir)
         unresolved = [e for e in errors if "Unresolved backtick reference" in e]
@@ -1657,7 +1660,7 @@ class PostValidateCoverageTests(unittest.TestCase):
             bundle_dir = os.path.join(tmpdir, "bundle")
             write_text(
                 os.path.join(bundle_dir, "SKILL.md"),
-                "---\nname: a\n---\n\nUse `refs/missing.md` somewhere.\n",
+                "---\nname: a\n---\n\nUse `references/missing.md` somewhere.\n",
             )
             errors = postvalidate(bundle_dir)
         unresolved = [
