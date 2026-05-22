@@ -1172,6 +1172,24 @@ def scan_references(
             resolved, fail_reason = resolve_reference_with_reason(
                 clean_path, filepath, system_root
             )
+            # Skill-root fallback for the non-markdown heuristic only.
+            # Docstrings and config values name skill files
+            # skill-root-relative ("python scripts/bundle.py",
+            # "documentation_path: references/path-resolution.md"), which
+            # the source-relative / system-root resolution above misses.
+            # If the token names a real file inside the skill, it is a
+            # satisfied internal reference (already bundled by the tree
+            # copy) — not a finding.  Markdown stays file-relative to
+            # match validate_skill; the is_within_directory guard means
+            # only genuine in-skill files resolve here.
+            if resolved is None and ref_type == "text_detected":
+                skill_root_candidate = os.path.normpath(
+                    os.path.join(current_skill, clean_path)
+                )
+                if os.path.isfile(skill_root_candidate) and is_within_directory(
+                    skill_root_candidate, current_skill
+                ):
+                    resolved = skill_root_candidate
             resolved_refs.append((raw_ref, line_num, ref_type, resolved))
 
             # ---- Broken reference ----

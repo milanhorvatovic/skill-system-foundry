@@ -427,6 +427,28 @@ class ScanReferencesTests(unittest.TestCase):
             self.assertEqual(len(warns), 1)
             self.assertIn("Unresolved non-markdown reference", warns[0])
 
+    def test_text_detected_skill_root_relative_ref_resolves_internal(self) -> None:
+        """A docstring naming a real skill file (skill-root-relative) is internal.
+
+        ``python scripts/run.py`` inside ``scripts/run.py`` names a real
+        bundled file; it must resolve as internal (no finding), not WARN.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            system_root = os.path.join(tmpdir, "root")
+            skill_dir = os.path.join(system_root, "skills", "demo")
+            write_text(os.path.join(skill_dir, "SKILL.md"), "---\nname: demo\n---\n")
+            write_text(
+                os.path.join(skill_dir, "scripts", "run.py"),
+                "# Usage: python scripts/run.py --flag\n",
+            )
+
+            result = scan_references(skill_dir, system_root)
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(
+                [w for w in result["warnings"] if "run.py" in w], []
+            )
+
     def test_bare_directory_fragment_in_non_markdown_ignored(self) -> None:
         """A prose fragment with no extension is not a reference at all."""
         with tempfile.TemporaryDirectory() as tmpdir:
