@@ -32,13 +32,46 @@ from .constants import (
     RE_MARKDOWN_LINK_REF,
 )
 from .frontmatter import split_frontmatter, strip_frontmatter_for_scan
-from .references import is_drive_qualified, is_glob_path, is_within_directory
+from .references import (
+    is_drive_qualified,
+    is_glob_path,
+    is_within_directory,
+    should_skip_reference,
+)
 from .reporting import to_posix
 
 
 # ===================================================================
 # Public API
 # ===================================================================
+
+
+def _strip_title_and_unwrap(ref: str) -> tuple[str, bool, str]:
+    """Split a markdown target into ``(inner_ref, wrapped, title_suffix)``.
+
+    Mirrors :func:`references.strip_fragment`'s ordering for the
+    CommonMark angle-bracket form.  A link title sits *outside* the
+    angle brackets (``<dest> "title"``), so it is removed first; then a
+    fully ``<...>``-wrapped destination is unwrapped.  *inner_ref* still
+    carries any ``?query`` / ``#anchor`` suffix for
+    :func:`_split_path_and_suffix` to handle — those live *inside* the
+    brackets, so they must not be split before the unwrap or the bracket
+    pair would break.
+
+    When *wrapped* is True the caller re-wraps the rewritten path in
+    ``<...>`` and re-appends *title_suffix* so the written link form
+    survives the rewrite verbatim (e.g. ``[d](<refs/a b.md> "T")``
+    rewrites to ``[d](<../../refs/a b.md> "T")``).
+    """
+    title = ""
+    title_match = re.search(r'''\s+["'][^"']*["']\s*$''', ref)
+    if title_match:
+        title = ref[title_match.start():]
+        ref = ref[:title_match.start()].rstrip()
+    wrapped = len(ref) >= 2 and ref.startswith("<") and ref.endswith(">")
+    if wrapped:
+        ref = ref[1:-1].strip()
+    return ref, wrapped, title
 
 
 def _split_path_and_suffix(ref: str) -> tuple[str, str]:
@@ -97,6 +130,14 @@ def compute_recommended_replacement(
     source_dir = os.path.dirname(source_abs_path)
 
     ref_norm = ref.replace("\\", "/").strip()
+    # Unwrap a CommonMark angle-bracket destination (``<dest> "title"``)
+    # before any resolution: the brackets are not part of the
+    # filesystem path, and an inner ``#``/``?`` must stay attached to
+    # the path for ``_split_path_and_suffix`` (splitting before the
+    # unwrap would break the bracket pair).  ``wrapped``/``title`` are
+    # re-applied to the returned replacement so the written link form
+    # is preserved verbatim.
+    ref_norm, wrapped, title = _strip_title_and_unwrap(ref_norm)
     # Reject absolute and drive-qualified refs.  ``is_drive_qualified``
     # (lib/references) catches the Windows drive-relative form
     # (``C:foo.md``) that ``os.path.isabs`` misses — without the
@@ -184,7 +225,13 @@ def compute_recommended_replacement(
     )
     if new_path == ref_path_only:
         return None  # Identical — nothing to suggest.
-    return new_path + suffix
+    rewritten = new_path + suffix
+    if wrapped:
+        # Re-wrap so the destination keeps its angle-bracket form
+        # (``?``/``#`` stay inside the brackets); the title sits
+        # outside and is re-appended after.
+        rewritten = f"<{rewritten}>"
+    return rewritten + title
 
 
 def detect_ambiguous_legacy_target(
@@ -213,6 +260,10 @@ def detect_ambiguous_legacy_target(
     source_dir = os.path.dirname(source_abs_path)
 
     ref_norm = ref.replace("\\", "/").strip()
+    # Unwrap an angle-bracket destination before resolving; the
+    # ``wrapped``/``title`` parts are irrelevant here because this
+    # function reports the conflicting targets, not a rewritten string.
+    ref_norm, _wrapped, _title = _strip_title_and_unwrap(ref_norm)
     if (
         not ref_norm
         or os.path.isabs(ref_norm)
@@ -364,15 +415,18 @@ def find_fixable_references(skill_root: str) -> list[dict]:
                 if ref in seen:
                     continue
                 seen.add(ref)
-                # Skip template placeholders (``<...>``) and
-                # glob-style inline-code mentions.  ``is_glob_path``
-                # discriminates between a query-suffix ``?``
-                # (``foo.md?v=2`` — preserved through the rewrite)
+                # Skip non-file references (URLs, anchors, embedded
+                # ``<f>`` placeholders) via the shared classifier; a
+                # fully ``<...>``-wrapped local destination is kept and
+                # unwrapped inside ``compute_recommended_replacement``.
+                # Then drop glob-style inline-code mentions.
+                # ``is_glob_path`` discriminates between a query-suffix
+                # ``?`` (``foo.md?v=2`` — preserved through the rewrite)
                 # and a glob-inside-path ``?`` (``references/?ref.md``
                 # — must be filtered) by looking only at the path
                 # portion before any extension-anchored
                 # query/anchor boundary.
-                if "<" in ref or ">" in ref:
+                if should_skip_reference(ref):
                     continue
                 if is_glob_path(ref):
                     continue
@@ -477,15 +531,18 @@ def find_ambiguous_legacy_refs(skill_root: str) -> list[dict]:
                 if ref in seen:
                     continue
                 seen.add(ref)
-                # Skip template placeholders (``<...>``) and
-                # glob-style inline-code mentions.  ``is_glob_path``
-                # discriminates between a query-suffix ``?``
-                # (``foo.md?v=2`` — preserved through the rewrite)
+                # Skip non-file references (URLs, anchors, embedded
+                # ``<f>`` placeholders) via the shared classifier; a
+                # fully ``<...>``-wrapped local destination is kept and
+                # unwrapped inside ``detect_ambiguous_legacy_target``.
+                # Then drop glob-style inline-code mentions.
+                # ``is_glob_path`` discriminates between a query-suffix
+                # ``?`` (``foo.md?v=2`` — preserved through the rewrite)
                 # and a glob-inside-path ``?`` (``references/?ref.md``
                 # — must be filtered) by looking only at the path
                 # portion before any extension-anchored
                 # query/anchor boundary.
-                if "<" in ref or ">" in ref:
+                if should_skip_reference(ref):
                     continue
                 if is_glob_path(ref):
                     continue
