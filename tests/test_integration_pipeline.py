@@ -2,7 +2,7 @@
 
 Covers the scaffold -> validate -> bundle -> unzip -> validate flow across
 bundle targets, and the `zip -r` release-artifact shape produced by
-``.github/workflows/release.yml``. Runs on the ubuntu + windows matrix in
+``.github/workflows/release.yaml``. Runs on the ubuntu + windows matrix in
 ``python-tests.yaml`` without any workflow changes.
 """
 
@@ -212,13 +212,13 @@ class ScaffoldBundlePipelineTests(unittest.TestCase):
 
 
 class ReleaseArtifactPipelineTests(unittest.TestCase):
-    """Mirror release.yml's `zip -r skill-system-foundry/` artifact.
+    """Mirror release.yaml's `zip -r skill-system-foundry/` artifact.
 
-    release.yml does not run bundle.py — it ships a raw zip of the
+    release.yaml does not run bundle.py — it ships a raw zip of the
     skill directory. This test guards that specific artifact shape
     against the same "unzip and validate on a clean machine" regression
     the bundle pipeline case guards for user skills, plus the
-    yaml-conformance exclusion that release.yml asserts inline.
+    yaml-conformance exclusion that release.yaml asserts inline.
     """
 
     def test_released_artifact_unzips_and_validates(self) -> None:
@@ -233,11 +233,11 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
             # Stdlib zipfile mirrors `zip -r` semantics and works on
             # Windows matrix cells where the `zip` CLI is absent.
             # Bytecode (__pycache__/, *.pyc) is pruned so the local run
-            # matches release.yml's fresh-checkout shape; otherwise a
+            # matches release.yaml's fresh-checkout shape; otherwise a
             # developer's stale bytecode would diverge from the real
             # release artifact and could mask a regression. IDE / OS
             # scratch files (.DS_Store, Thumbs.db, .idea/, .vscode/)
-            # are not filtered — release.yml's `zip -r` would include
+            # are not filtered — release.yaml's `zip -r` would include
             # them too, so the test stays faithful to that behaviour.
             with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as zf:
                 for dirpath, dirnames, filenames in os.walk(FOUNDRY_DIR):
@@ -254,7 +254,7 @@ class ReleaseArtifactPipelineTests(unittest.TestCase):
                         arcname = os.path.relpath(abs_path, REPO_ROOT).replace(os.sep, "/")
                         zf.write(abs_path, arcname)
 
-            # Mirror release.yml's "Verify bundle excludes yaml-conformance
+            # Mirror release.yaml's "Verify bundle excludes yaml-conformance
             # corpus" step. The corpus currently lives outside the bundled
             # path, so this is a passive invariant — pin it here so a
             # future restructure that pulls the corpus into the bundle

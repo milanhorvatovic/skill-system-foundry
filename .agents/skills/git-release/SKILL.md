@@ -7,7 +7,7 @@ description: >
   bump a version, create a changelog, tag a release, publish a GitHub
   release, verify a release artifact, or update the version in SKILL.md
   frontmatter. Also triggers on questions about semver conventions,
-  release workflows, the release.yml GitHub Action, or distributing
+  release workflows, the release.yaml GitHub Action, or distributing
   skill bundles. Use this skill whenever version numbers, releases,
   tags, or distribution are mentioned.
 ---
@@ -43,7 +43,7 @@ The `audit_skill_system.py` version-drift rule (run from the repo root) fails th
 
 ## Dispatch-Driven Prep (Preferred)
 
-The `Release prep` workflow (`.github/workflows/release-prep.yml`) is the primary release-prep path. Trigger it from the GitHub Actions UI (or `gh workflow run release-prep.yml -f version=X.Y.Z`):
+The `Release prep` workflow (`.github/workflows/release-prep.yaml`) is the primary release-prep path. Trigger it from the GitHub Actions UI (or `gh workflow run release-prep.yaml -f version=X.Y.Z`):
 
 1. Dispatch the workflow with the target version (`X.Y.Z`, no leading `v`, no prerelease).
 2. The workflow creates `release/v<X.Y.Z>`, runs the `bump_version.py` helper (manifest lockstep), prepends a generated section to `CHANGELOG.md`, runs `validate_skill.py` and `audit_skill_system.py` (the latter from repo root, which fires the version-drift rule), runs the full test matrix via the reusable `python-tests.yaml`, and opens a PR titled `Release v<X.Y.Z>`.
@@ -54,7 +54,7 @@ The `Release prep` workflow (`.github/workflows/release-prep.yml`) is the primar
    ```bash
    gh release create v<X.Y.Z> --generate-notes
    ```
-   The post-merge `release.yml` workflow bundles the zip, computes the SHA256 checksum, and uploads both as release assets.
+   The post-merge `release.yaml` workflow bundles the zip, computes the SHA256 checksum, and uploads both as release assets.
 
 The workflow exposes a `dry_run` input that runs validation, bump, changelog generation, validate, and audit but skips the push and the PR — useful to verify a target version's gates before committing to a real prep.
 
@@ -64,7 +64,7 @@ Use this path when the dispatch workflow is unavailable (for example, when runni
 
 ### Step 1: Verify Pre-Release State
 
-Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yml` triggers on `release: published` and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
+Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yaml` triggers on `release: published` and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
 
 ```bash
 # Latest python-tests.yaml run on main — conclusion must be success
@@ -145,7 +145,7 @@ Or through the GitHub web UI: Releases → Draft a new release → Tag: `v1.1.0`
 
 ### Step 5: Automated Bundling
 
-The `release.yml` workflow triggers automatically on release publication. It:
+The `release.yaml` workflow triggers automatically on release publication. It:
 
 1. Checks out the tagged commit
 2. Creates a zip archive: `dist/skill-system-foundry-v1.1.0.zip`
@@ -198,11 +198,11 @@ The full CI pipeline for a release involves multiple workflows:
 
 | Workflow | Trigger | What It Does |
 |---|---|---|
-| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage + badge update; reusable from `release-prep.yml` |
+| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage + badge update; reusable from `release-prep.yaml` |
 | `shellcheck.yaml` | Changes to `.github/scripts/*.sh` | Lints shell scripts |
 | `codex-code-review.yaml` | PRs (non-draft) | AI-assisted code review |
-| `release-prep.yml` | `workflow_dispatch` | Bumps version, prepends changelog, opens release PR |
-| `release.yml` | Release published | Bundles zip + uploads asset (zip + SHA256) |
+| `release-prep.yaml` | `workflow_dispatch` | Bumps version, prepends changelog, opens release PR |
+| `release.yaml` | Release published | Bundles zip + uploads asset (zip + SHA256) |
 
 The coverage badge updates automatically on pushes to `main` via the `update-badge` job. It writes `coverage.json` to an orphan `badges` branch, which shields.io reads.
 
@@ -236,5 +236,5 @@ The bundle script applies stricter validation than the release workflow — it c
 - Tagging before pushing the bump commit to `main`.
 - Creating a release from a branch other than `main`.
 - Skipping validation — a broken SKILL.md ships in the zip.
-- Forgetting to verify the zip asset downloads and validates after `release.yml` runs.
+- Forgetting to verify the zip asset downloads and validates after `release.yaml` runs.
 - Using a commit subject other than `Release vX.Y.Z` for the bump — the changelog generator skip filter only matches that exact shape.

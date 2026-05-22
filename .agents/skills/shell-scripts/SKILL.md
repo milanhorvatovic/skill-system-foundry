@@ -28,7 +28,7 @@ These scripts are CI helpers called by GitHub Actions workflows. They handle cov
 │   ├── python-tests.yaml           ← runs tests, coverage, badge update
 │   ├── shellcheck.yaml             ← lints all .sh files with shellcheck
 │   ├── codex-code-review.yaml      ← Codex PR review via codex-ai-code-review-action
-│   └── release.yml                 ← bundles and uploads release assets
+│   └── release.yaml                 ← bundles and uploads release assets
 ├── instructions/
 │   ├── markdown.instructions.md    ← Markdown review rules
 │   └── scripts.instructions.md     ← Python review rules

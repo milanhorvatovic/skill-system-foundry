@@ -316,7 +316,7 @@ class ClassifyCommitsTests(unittest.TestCase):
         self.assertEqual(buckets["Added"], ["Add A", "Add B", "Add C"])
 
     def test_release_bump_commit_is_skipped(self) -> None:
-        # Bump commits produced by release-prep.yml ("Release vX.Y.Z")
+        # Bump commits produced by release-prep.yaml ("Release vX.Y.Z")
         # must not appear in the section they introduce, must not
         # surface on stderr as unmapped (the verb is intentionally not
         # mapped — see issue #106), and must be reported via the

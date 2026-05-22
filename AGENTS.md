@@ -108,7 +108,7 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
     │   ├── python-tests.yaml        ← tests + coverage + badge update (ubuntu + windows)
     │   ├── shellcheck.yaml          ← lints .github/scripts/*.sh
     │   ├── codex-code-review.yaml   ← Codex PR review via codex-ai-code-review-action
-    │   └── release.yml              ← bundles zip + uploads release asset
+    │   └── release.yaml              ← bundles zip + uploads release asset
     ├── instructions/                ← review rules for Copilot/Codex
     │   ├── markdown.instructions.md ← applies to **/*.md
     │   └── scripts.instructions.md  ← applies to scripts/**/*.py
@@ -328,7 +328,7 @@ Automated validation (`validate_skill.py`, `audit_skill_system.py`) handles many
 
 ## Release Process
 
-Version lives in three files that must agree: `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`, canonical), `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`. The version-consistency rule in `audit_skill_system.py` fails the repo-root audit if they drift. Tags mirror as `vX.Y.Z`. The `release.yml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
+Version lives in three files that must agree: `skill-system-foundry/SKILL.md` frontmatter (`metadata.version`, canonical), `.claude-plugin/plugin.json`, and `.claude-plugin/marketplace.json`. The version-consistency rule in `audit_skill_system.py` fails the repo-root audit if they drift. Tags mirror as `vX.Y.Z`. The `release.yaml` workflow auto-bundles a zip and uploads it as a release asset. Run full validation and tests before tagging.
 
 Bump all three manifest files in lockstep with `scripts/bump_version.py`:
 

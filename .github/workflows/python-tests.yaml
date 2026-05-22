@@ -12,7 +12,7 @@ on:
           Git ref (branch, tag, or commit SHA) to check out for testing.
           When empty (or unset, as on push/pull_request), checkout falls
           back to ``github.sha`` so the triggering commit is tested.
-          Used by release-prep.yml to test the bumped release branch
+          Used by release-prep.yaml to test the bumped release branch
           before opening the release PR.
         required: false
         type: string
@@ -51,7 +51,7 @@ jobs:
           # commit, which on a PR would test ``main`` instead of the
           # PR head.  Fall back to ``github.sha`` so push/PR runs
           # check out the triggering revision and ``workflow_call``
-          # callers (release-prep.yml) still get the ref they passed.
+          # callers (release-prep.yaml) still get the ref they passed.
           ref: ${{ inputs.ref || github.sha }}
 
       - name: Setup Python
