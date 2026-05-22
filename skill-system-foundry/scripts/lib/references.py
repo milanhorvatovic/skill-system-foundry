@@ -61,6 +61,31 @@ RE_TEXT_FILE_REF = re.compile(
     re.MULTILINE,
 )
 
+# Fenced code block (```lang\n...```).  Shared single source of truth:
+# ``reachability.extract_body_references`` (validation graph) and the
+# bundle scanner / post-validator (this module's consumers) both treat
+# example links inside a fence as prose, not references.  Only the
+# regex is shared — callers apply it differently (validation removes
+# the span; the bundle scanner blanks it to preserve line numbers via
+# ``blank_fenced_blocks``).
+RE_FENCED_BLOCK = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
+
+
+def blank_fenced_blocks(content: str) -> str:
+    """Blank fenced code-block regions, preserving line count.
+
+    Replaces every non-newline character inside a ```` ``` ```` fence
+    with a space and keeps newlines intact, so a per-line scanner sees
+    no references inside the fence while line numbers stay accurate for
+    diagnostics.  ``reachability`` strips fences with ``sub("", …)``
+    instead because it scans the whole blob and never reports line
+    numbers; both behaviours derive from the shared
+    :data:`RE_FENCED_BLOCK`.
+    """
+    return RE_FENCED_BLOCK.sub(
+        lambda m: re.sub(r"[^\n]", " ", m.group(0)), content
+    )
+
 # Binary file extensions — not scanned for references.
 BINARY_EXTENSIONS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
