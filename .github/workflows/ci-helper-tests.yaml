@@ -57,6 +57,7 @@ jobs:
     # cleanly distinguish meta-skill vs helper failures (raised in
     # PR #143 review by both Codex and Copilot).
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

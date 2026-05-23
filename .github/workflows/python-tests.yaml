@@ -21,9 +21,19 @@ on:
 permissions:
   contents: read
 
+# Concurrency: PR runs share a ref-based group so a new push to the PR cancels
+# the superseded run. Push-to-main and workflow_call (release-prep) runs instead
+# get a unique per-run group, so they neither cancel nor queue behind each other
+# — a shared group on refs/heads/main would serialize mainline CI and delay the
+# coverage-badge workflow_run that fires on a successful push run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +117,7 @@ jobs:
 
   validate-examples:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -158,6 +169,7 @@ jobs:
     # under standard markdown semantics or any markdown file under the
     # skill is unreachable from SKILL.md / capability.md roots.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -194,6 +206,7 @@ jobs:
     # archive arcnames) so those surfaces are exercised in this
     # workflow without making the happy-path bundle step fail.
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -287,38 +300,3 @@ jobs:
           python .github/scripts/smoke-validate-extracted.py smoke-extracted skill-system-foundry/scripts/validate_skill.py
         env:
           PYTHONUTF8: "1"
-
-  update-badge:
-    needs:
-      - test
-      - validate-examples
-      - reference-conformance
-      - bundle-extract-smoke
-    # Restrict to genuine pushes to main; this skips reusable
-    # workflow_call invocations (e.g. release-prep.yml) where
-    # github.event_name is the caller's event (workflow_dispatch) and
-    # the badge must not be updated from a release branch's coverage.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: update-badge-main
-      cancel-in-progress: true
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Download coverage total
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # @v4 as 4.3.0
-        with:
-          name: coverage-total
-
-      - name: Update coverage badge
-        run: |
-          TOTAL=$(cat coverage-total.txt)
-          export TOTAL
-          bash .github/scripts/update-coverage-badge.sh
