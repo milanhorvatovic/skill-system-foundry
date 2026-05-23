@@ -192,14 +192,15 @@ The full CI pipeline for a release involves multiple workflows:
 
 | Workflow | Trigger | What It Does |
 |---|---|---|
-| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage + badge update; reusable from `release-prep.yaml` |
+| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage (reusable from `release-prep.yaml`); read-only |
+| `coverage-badge.yaml` | After a successful `Python tests` run on `main` | Publishes the coverage badge |
 | `shellcheck.yaml` | Changes to `.github/scripts/*.sh` | Lints shell scripts |
 | `codex-code-review.yaml` | PRs (non-draft) | AI-assisted code review |
 | `release-prep.yaml` | `workflow_dispatch` | Bumps version, prepends changelog, dry-builds the bundle, opens + auto-merges the release PR |
 | `release-on-merge.yaml` | Release PR merged to `main` | Tags the merge commit `v<X.Y.Z>` (oss-release-bot) |
 | `release.yaml` | `v*.*.*` tag push | Builds the bundle and creates the Release (zip + SHA256 attached at creation) |
 
-The coverage badge updates automatically on pushes to `main` via the `update-badge` job. It writes `coverage.json` to an orphan `badges` branch, which shields.io reads.
+The coverage badge updates automatically via the `coverage-badge.yaml` workflow, which runs after a successful `Python tests` run on `main`, downloads that run's coverage total, and writes `coverage.json` to an orphan `badges` branch that shields.io reads. (Badge publishing was split out of `python-tests.yaml` so the test workflow stays read-only and reusable.)
 
 ## Distribution Channels
 
