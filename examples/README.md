@@ -2,7 +2,7 @@
 
 This directory is a self-contained mini skill-system that demonstrates the three patterns the foundry supports: a standalone skill, a router skill with capabilities, and a role that composes both. The layout mirrors a deployed skill-system root (a top-level `skills/` and `roles/` directory), so the examples teach the same paths bundling and orchestration use in real projects.
 
-The examples ship in the repository for onboarding only. The release zip published by `release.yml` packages just `skill-system-foundry/`, so nothing in `examples/` adds weight to the distributed bundle.
+The examples ship in the repository for onboarding only. The release zip published by `release.yaml` packages just `skill-system-foundry/`, so nothing in `examples/` adds weight to the distributed bundle.
 
 ## Layout
 

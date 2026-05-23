@@ -176,13 +176,13 @@ The [`examples/`](examples/) directory ships three reference examples — two sk
 - **[`examples/skills/hello-router/`](examples/skills/hello-router/SKILL.md)** — a router skill dispatching to two capabilities, with `allowed-tools: Bash` declared so a fenced bash example in one capability stays coherent.
 - **[`examples/roles/hello-orchestrator.md`](examples/roles/hello-orchestrator.md)** — a role contract composing the standalone and router skills above, with the canonical responsibility / allowed / forbidden / handoff / "Skills Used" structure.
 
-CI validates each skill example on every push and pull request. The examples ship in the repository for onboarding only — `release.yml` zips just `skill-system-foundry/`, so the directory adds no weight to the distributed bundle.
+CI validates each skill example on every push and pull request. The examples ship in the repository for onboarding only — `release.yaml` zips just `skill-system-foundry/`, so the directory adds no weight to the distributed bundle.
 
 ## Releases
 
 Shipped versions and what changed between them are tracked in [CHANGELOG.md](CHANGELOG.md). Each release is also published as a versioned zip on the [Releases](https://github.com/milanhorvatovic/skill-system-foundry/releases) page (with a SHA256 checksum file alongside it; see the [GitHub Releases](#github-releases) installation section for verification commands).
 
-Maintainer release flow at a glance: dispatch the `Release prep` workflow with the new version → review and merge the auto-opened release PR → run `gh release create vX.Y.Z --generate-notes`. The post-merge `release.yml` workflow then bundles the zip and publishes the assets. Detailed steps live in the `git-release` skill under `.agents/skills/git-release/SKILL.md`.
+Maintainer release flow at a glance: dispatch the `Release prep` workflow with the new version — it bumps the manifests, opens the release PR, auto-approves and auto-merges it on green, then tags the merge commit and publishes the versioned zip + checksum automatically. Detailed steps live in the `git-release` skill under `.agents/skills/git-release/SKILL.md`.
 
 ## Repository Structure
 

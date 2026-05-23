@@ -21,14 +21,20 @@ Guides the creation, modification, and review of GitHub Actions workflows in the
 
 | Workflow | File | Trigger | Jobs |
 |---|---|---|---|
-| Tests + coverage | `python-tests.yaml` | Push to `main`, PRs | `test` (matrix), `update-badge` |
+| Tests + coverage | `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | `test` (matrix), `validate-examples`, `reference-conformance`, `bundle-extract-smoke` |
+| Coverage badge | `coverage-badge.yaml` | `workflow_run` after Python tests | `badge` |
+| CI helper tests | `ci-helper-tests.yaml` | Push/PR (path-filtered to CI helpers) | `helper-tests` (matrix) |
 | Shell lint | `shellcheck.yaml` | Push/PR (path-filtered to `.sh`) | `shellcheck` |
 | Action-pin verify | `verify-action-pins.yaml` | Push to `main`, PRs | `verify` |
+| Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
 | Codex code review | `codex-code-review.yaml` | PR events (non-draft) | `review` (read-only), `publish` (write) |
+| Release-label check | `verify-pr-release-label.yaml` | PR events | `verify-release-label` (report-only) |
 | Supply-chain scorecard | `scorecard.yaml` | Schedule, push to `main`, branch-protection change | `analysis` |
 | CodeQL | `codeql.yaml` | Push to `main`, PRs, schedule | `analyze` |
-| Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
-| Release bundle | `release.yml` | Release published | `bundle` |
+| Tool-catalog drift | `tool-catalog-drift.yaml` | Schedule, `workflow_dispatch` | `detect-and-pr` |
+| Release prep | `release-prep.yaml` | `workflow_dispatch` | `prepare`, `test`, `open-pr` |
+| Release tag | `release-on-merge.yaml` | Release PR merged to `main` | `tag` |
+| Release bundle | `release.yaml` | `v*.*.*` tag push | `release` |
 
 ## Hard Requirements
 
@@ -53,10 +59,10 @@ This rule is enforced by `.github/scripts/verify-action-pins.py`, which the `ver
 
 ### App Token Identity
 
-When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). Across these OSS repos the automation identities follow a `<PREFIX>_CLIENT_ID` (repository variable) + `<PREFIX>_PRIVATE_KEY` (repository secret) convention:
+When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). Across these OSS repos each automation identity wires a `<PREFIX>_CLIENT_ID` repository variable for the App's client ID plus a repository secret holding its PEM private key; the private-key secret name is not uniform (`AUTOMATION_PRIVATE_KEY` for the automation App, `RELEASE_APP_PRIVATE_KEY` for the release App), so take the exact names from the list below:
 
-- **oss-automation-bot** — `vars.AUTOMATION_CLIENT_ID` + `secrets.AUTOMATION_PRIVATE_KEY` (the workhorse: dependency automation, opening/approving PRs). Wired in this repo's `tool-catalog-drift.yaml`.
-- **oss-release-bot** — `vars.RELEASE_CLIENT_ID` + `secrets.RELEASE_PRIVATE_KEY` (the release identity: tags and publishes). This repo's `release.yml` currently authenticates with `GITHUB_TOKEN`, not this identity.
+- **oss-automation-bot** — `vars.AUTOMATION_CLIENT_ID` + `secrets.AUTOMATION_PRIVATE_KEY` (the workhorse: dependency automation, opening/approving PRs). Wired in this repo's `tool-catalog-drift.yaml` and the release-PR approval in `release-prep.yaml`.
+- **oss-release-bot** — `vars.RELEASE_CLIENT_ID` + `secrets.RELEASE_APP_PRIVATE_KEY` (the release identity: opens the release PR, tags, and publishes). Wired in `release-prep.yaml`, `release-on-merge.yaml`, and `release.yaml`.
 
 ```yaml
 # Correct

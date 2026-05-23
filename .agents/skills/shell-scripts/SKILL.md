@@ -22,18 +22,22 @@ These scripts are CI helpers called by GitHub Actions workflows. They handle cov
 ```
 .github/
 ├── scripts/
-│   ├── check-per-file-coverage.py  ← enforces per-file branch coverage minimum
-│   └── update-coverage-badge.sh    ← pushes coverage.json to orphan badges branch
+│   ├── build-skill-bundle.sh      ← builds + verifies the release zip and checksum
+│   ├── check-per-file-coverage.py ← enforces per-file branch coverage minimum
+│   └── update-coverage-badge.sh   ← pushes coverage.json to orphan badges branch
 ├── workflows/
-│   ├── python-tests.yaml           ← runs tests, coverage, badge update
-│   ├── shellcheck.yaml             ← lints all .sh files with shellcheck
-│   ├── codex-code-review.yaml      ← Codex PR review via codex-ai-code-review-action
-│   └── release.yml                 ← bundles and uploads release assets
+│   ├── python-tests.yaml          ← runs tests + coverage (ubuntu + windows)
+│   ├── coverage-badge.yaml        ← updates the coverage badge on push to main
+│   ├── shellcheck.yaml            ← lints all .sh files with shellcheck
+│   ├── codex-code-review.yaml     ← Codex PR review via codex-ai-code-review-action
+│   ├── release-prep.yaml          ← dispatch: bump, changelog, open/auto-merge release PR
+│   ├── release-on-merge.yaml      ← tags vX.Y.Z when a release PR merges
+│   └── release.yaml               ← builds the bundle + creates the GitHub Release on tag push
 ├── instructions/
-│   ├── markdown.instructions.md    ← Markdown review rules
-│   └── scripts.instructions.md     ← Python review rules
-├── copilot-instructions.md         ← top-level review guidance
-└── CODEOWNERS                      ← requires code-owner approval
+│   ├── markdown.instructions.md   ← Markdown review rules
+│   └── scripts.instructions.md    ← Python review rules
+├── copilot-instructions.md        ← top-level review guidance
+└── CODEOWNERS                     ← requires code-owner approval
 ```
 
 ## Hard Requirements

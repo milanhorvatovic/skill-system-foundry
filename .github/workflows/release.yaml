@@ -1,0 +1,127 @@
+name: Release
+
+# Build the skill bundle and create the GitHub Release when a vX.Y.Z tag is
+# pushed by release-on-merge.yaml (under the oss-release-bot identity, so the
+# tag-push event triggers this workflow — a GITHUB_TOKEN tag push would not).
+#
+# The bundle + checksum are built by .github/scripts/build-skill-bundle.sh — the
+# same script release-prep.yaml dry-runs pre-merge, so the published bundle is
+# exactly what was proven buildable — and attached in the SAME `gh release
+# create` call. Attaching assets at creation is mandatory under GitHub immutable
+# releases: assets cannot be added after a release is created. The tag exists
+# only on already-green main, so a failed create never strands a reusable tag.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read  # the release is created with the release App token, not GITHUB_TOKEN
+    steps:
+      - name: Guard against non-core-semver tags
+        # The trigger glob ``v*.*.*`` also matches prerelease/build-metadata
+        # tags (e.g. ``v1.2.3-rc.1``), but this pipeline publishes core
+        # ``vX.Y.Z`` releases only. Reject anything else before minting tokens
+        # so a stray prerelease tag push cannot strand an immutable tag with a
+        # half-built or section-less release. The grammar mirrors the dispatch
+        # gate in release-prep.yaml.
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a core-semver vX.Y.Z release tag; refusing to publish."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME is a core-semver release tag."
+
+      - name: Mint release App token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
+        with:
+          client-id: ${{ vars.RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Verify the tag is on main
+        # release-on-merge.yaml only tags merged release PRs, but this workflow
+        # fires on any pushed v*.*.* tag. Refuse to publish from a tag whose
+        # commit is not reachable from origin/main, so an accidental or manual
+        # semver tag on an unmerged/feature commit cannot build an immutable
+        # release from unvalidated source. FETCH_HEAD is used rather than the
+        # origin/main remote-tracking ref because checkout configures a
+        # single-ref fetch refspec that may not populate refs/remotes/origin/*.
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          # Peel the tag to its commit before the ancestry check:
+          # release-on-merge.yaml creates annotated tags, and a tag-push event
+          # can surface the tag-object SHA in GITHUB_SHA rather than the commit,
+          # which git merge-base --is-ancestor would reject even when the tagged
+          # commit is on main.
+          TAG_COMMIT="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" FETCH_HEAD; then
+            echo "::error::Tag $GITHUB_REF_NAME ($TAG_COMMIT) is not reachable from origin/main; refusing to publish a release from an unmerged or untested commit."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME ($TAG_COMMIT) is on main."
+
+      - name: Build and verify bundle
+        run: |
+          set -euo pipefail
+          BUNDLE_PATH="dist/skill-system-foundry-${GITHUB_REF_NAME}.zip"
+          CHECKSUM_PATH="${BUNDLE_PATH}.sha256"
+          BUNDLE_PATH="$BUNDLE_PATH" CHECKSUM_PATH="$CHECKSUM_PATH" bash .github/scripts/build-skill-bundle.sh
+          echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
+          echo "CHECKSUM_PATH=$CHECKSUM_PATH" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release with assets (immutable-safe)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
+          : "${CHECKSUM_PATH:?CHECKSUM_PATH must be set}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # A release already exists for this tag. Under immutable releases it
+            # cannot be amended, and a name-only check cannot tell a correct
+            # release from one carrying stale or wrong assets under the same
+            # names. Content comparison is not reliable either: zip -r embeds
+            # file mtimes, so a fresh-checkout rebuild's bytes (and SHA256) do
+            # not match the originally published bundle even for identical
+            # sources. So refuse to silently pass over it: fail and let an
+            # operator confirm — if the existing release is wrong or incomplete,
+            # delete it and re-run; if it is correct, no action is needed.
+            echo "::error::Release $GITHUB_REF_NAME already exists; refusing to pass over it because its assets cannot be verified against this run. Inspect it manually, then delete and re-run if its assets are stale or incomplete."
+            exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE="$(mktemp)"
+          awk -v ver="## [$VERSION]" '
+            substr($0, 1, length(ver)) == ver { grab = 1; print; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "::error::No changelog section found for $VERSION in CHANGELOG.md."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            "$BUNDLE_PATH" "$CHECKSUM_PATH" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$NOTES_FILE"

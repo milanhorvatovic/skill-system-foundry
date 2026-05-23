@@ -7,7 +7,7 @@ description: >
   bump a version, create a changelog, tag a release, publish a GitHub
   release, verify a release artifact, or update the version in SKILL.md
   frontmatter. Also triggers on questions about semver conventions,
-  release workflows, the release.yml GitHub Action, or distributing
+  release workflows, the release.yaml GitHub Action, or distributing
   skill bundles. Use this skill whenever version numbers, releases,
   tags, or distribution are mentioned.
 ---
@@ -41,22 +41,20 @@ The `audit_skill_system.py` version-drift rule (run from the repo root) fails th
 - **MINOR** (1.0.2 → 1.1.0) — new features: new validation checks, new scripts, new reference documents, new template types, new bundling targets
 - **MAJOR** (1.0.2 → 2.0.0) — breaking changes: configuration.yaml schema changes that break existing setups, removed validation checks, renamed scripts, changed CLI arguments
 
-## Dispatch-Driven Prep (Preferred)
+## Dispatch-Driven Release (Preferred)
 
-The `Release prep` workflow (`.github/workflows/release-prep.yml`) is the primary release-prep path. Trigger it from the GitHub Actions UI (or `gh workflow run release-prep.yml -f version=X.Y.Z`):
+The `Release prep` workflow (`.github/workflows/release-prep.yaml`) is the entry point for a fully automated release. Dispatch it once with the target version; every step after that is hands-off.
 
-1. Dispatch the workflow with the target version (`X.Y.Z`, no leading `v`, no prerelease).
-2. The workflow creates `release/v<X.Y.Z>`, runs the `bump_version.py` helper (manifest lockstep), prepends a generated section to `CHANGELOG.md`, runs `validate_skill.py` and `audit_skill_system.py` (the latter from repo root, which fires the version-drift rule), runs the full test matrix via the reusable `python-tests.yaml`, and opens a PR titled `Release v<X.Y.Z>`.
-3. Review the PR. The PR body lists any manual follow-ups (notably: edit `.agents/skills/git-release/SKILL.md` prose if any examples reference an outdated release).
-4. Re-trigger CI on the PR by closing and reopening it (GitHub does not fire PR workflows for PRs opened by `GITHUB_TOKEN`).
-5. Merge the PR to `main`.
-6. Tag and publish:
-   ```bash
-   gh release create v<X.Y.Z> --generate-notes
-   ```
-   The post-merge `release.yml` workflow bundles the zip, computes the SHA256 checksum, and uploads both as release assets.
+1. Dispatch from the GitHub Actions UI, or `gh workflow run release-prep.yaml -f version=X.Y.Z` (`X.Y.Z`, no leading `v`, no prerelease).
+2. The workflow creates `release/v<X.Y.Z>`, runs `bump_version.py` (manifest lockstep), prepends a generated `CHANGELOG.md` section, runs `validate_skill.py` and `audit_skill_system.py` (repo root, firing the version-drift rule), dry-builds the distribution bundle via `build-skill-bundle.sh`, runs the full test matrix via the reusable `python-tests.yaml`, and opens a PR titled `Release v<X.Y.Z>` **as oss-release-bot** (so CI fires automatically — no close/reopen needed).
+3. oss-automation-bot approves the PR — a bot cannot approve its own PR, so the second identity satisfies the one-review rule — and GitHub auto-merges it once the required checks pass. There is no human step on the green path. To halt a release, close the PR before the checks pass; if Copilot leaves an unresolved review thread, auto-merge waits until it is resolved.
+4. On merge, `release-on-merge.yaml` tags the merge commit `v<X.Y.Z>` (as oss-release-bot), and the tag push triggers `release.yaml`, which builds the bundle and creates the GitHub Release with the zip + SHA256 checksum attached at creation.
 
-The workflow exposes a `dry_run` input that runs validation, bump, changelog generation, validate, and audit but skips the push and the PR — useful to verify a target version's gates before committing to a real prep.
+The workflow exposes a `dry_run` input that runs the input validation, bump, changelog generation, validate, audit, and bundle dry-build but skips the push, the test matrix, and the PR — useful to verify a version's gates before a real prep.
+
+### Identity prerequisites
+
+The auto-merge and publish steps need two GitHub App identities wired as repo variables/secrets. **oss-release-bot** (`RELEASE_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`, `RELEASE_APP_BOT_USER_ID`) opens the release PR, tags, and publishes; **oss-automation-bot** (`AUTOMATION_CLIENT_ID`, `AUTOMATION_PRIVATE_KEY`) approves. Every workflow mints via the `client-id` input of `actions/create-github-app-token` (the numeric App ID is the deprecated alternative), so each App's required variable holds its **client ID**, not its App ID. The repo setting "Allow auto-merge" must be on. Because the approval comes from an App, the release PR must touch no CODEOWNER-owned path — otherwise the App approval cannot satisfy the code-owner rule and the merge waits for a human.
 
 ## Manual Release Checklist (Fallback)
 
@@ -64,7 +62,7 @@ Use this path when the dispatch workflow is unavailable (for example, when runni
 
 ### Step 1: Verify Pre-Release State
 
-Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yml` triggers on `release: published` and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
+Confirm the release gate is green on `main` for the commit being tagged **before** publishing the release. `release.yaml` triggers on a `v*.*.*` tag push and does not run tests; `python-tests.yaml` on `main` is the only workflow that gates a release — `shellcheck.yaml` and `codex-code-review.yaml` are advisory and can be red at release time. Check the gate via the GitHub Actions UI or:
 
 ```bash
 # Latest python-tests.yaml run on main — conclusion must be success
@@ -130,30 +128,26 @@ git push origin main
 
 Use the commit message format `Release vX.Y.Z` so the changelog generator filters the bump commit out of future regenerations. The full subject is matched against `_RELEASE_COMMIT_RE` in `scripts/generate_changelog.py`, which mirrors the strict SemVer grammar the generator already enforces on `--version` (no leading zeros, optional dot-separated prerelease suffix; build metadata is intentionally unsupported). Off-grammar subjects like `Release v1.2.0 (RC)` or `Release v1.2.3-..1` are deliberately not skipped — they route to `unmapped — review manually` so the operator either fixes the subject or reclassifies it deliberately.
 
-### Step 4: Create the GitHub Release
+### Step 4: Tag to Trigger the Release
 
-Create a tag and release via the GitHub CLI or web UI:
+In the automated model the GitHub Release is created by `release.yaml` on a `v*.*.*` tag push — not by hand. For a manual release, push the tag from `main` under a release identity (so the push triggers workflows; a `GITHUB_TOKEN`-authored tag push would not):
 
 ```bash
-gh release create v1.1.0 \
-  --title "v1.1.0" \
-  --notes "Release notes here" \
-  --target main
+git tag -a v1.1.0 -m "Release v1.1.0" main
+git push origin v1.1.0
 ```
 
-Or through the GitHub web UI: Releases → Draft a new release → Tag: `v1.1.0` → Target: `main`.
+Do **not** run `gh release create` yourself — `release.yaml` owns release creation, and a tag name is permanent under GitHub immutable releases, so only tag a commit whose release gate is already green (Step 1).
 
-### Step 5: Automated Bundling
+### Step 5: Automated Bundling and Publication
 
-The `release.yml` workflow triggers automatically on release publication. It:
+The `release.yaml` workflow triggers on the `v*.*.*` tag push. It:
 
-1. Checks out the tagged commit
-2. Creates a zip archive: `dist/skill-system-foundry-v1.1.0.zip`
-3. Uploads it as a release asset using `gh release upload --clobber`
+1. Builds the bundle via `.github/scripts/build-skill-bundle.sh` — the same script `release-prep.yaml` dry-runs pre-merge — producing `dist/skill-system-foundry-v1.1.0.zip` plus its `.sha256` checksum, and asserting the bundle excludes the yaml-conformance corpus.
+2. Creates the GitHub Release with the zip and checksum attached **at creation**. Attaching at creation is required under GitHub immutable releases, which forbid adding assets after a release exists (the reason the old create-then-`upload --clobber` model was retired).
+3. Uses the matching `CHANGELOG.md` section as the release notes.
 
-The zip contains the entire `skill-system-foundry/` directory — SKILL.md, references, assets, and scripts. This is the distribution artifact for manual installation.
-
-No manual intervention is needed after creating the release.
+The zip contains the entire `skill-system-foundry/` directory — SKILL.md, references, assets, and scripts. No manual intervention is needed after the tag is pushed.
 
 ### Step 6: Post-Release Verification
 
@@ -198,13 +192,15 @@ The full CI pipeline for a release involves multiple workflows:
 
 | Workflow | Trigger | What It Does |
 |---|---|---|
-| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage + badge update; reusable from `release-prep.yml` |
+| `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | Tests + coverage (reusable from `release-prep.yaml`); read-only |
+| `coverage-badge.yaml` | After a successful `Python tests` run on `main` | Publishes the coverage badge |
 | `shellcheck.yaml` | Changes to `.github/scripts/*.sh` | Lints shell scripts |
 | `codex-code-review.yaml` | PRs (non-draft) | AI-assisted code review |
-| `release-prep.yml` | `workflow_dispatch` | Bumps version, prepends changelog, opens release PR |
-| `release.yml` | Release published | Bundles zip + uploads asset (zip + SHA256) |
+| `release-prep.yaml` | `workflow_dispatch` | Bumps version, prepends changelog, dry-builds the bundle, opens + auto-merges the release PR |
+| `release-on-merge.yaml` | Release PR merged to `main` | Tags the merge commit `v<X.Y.Z>` (oss-release-bot) |
+| `release.yaml` | `v*.*.*` tag push | Builds the bundle and creates the Release (zip + SHA256 attached at creation) |
 
-The coverage badge updates automatically on pushes to `main` via the `update-badge` job. It writes `coverage.json` to an orphan `badges` branch, which shields.io reads.
+The coverage badge updates automatically via the `coverage-badge.yaml` workflow, which runs after a successful `Python tests` run on `main`, downloads that run's coverage total, and writes `coverage.json` to an orphan `badges` branch that shields.io reads. (Badge publishing was split out of `python-tests.yaml` so the test workflow stays read-only and reusable.)
 
 ## Distribution Channels
 
@@ -236,5 +232,5 @@ The bundle script applies stricter validation than the release workflow — it c
 - Tagging before pushing the bump commit to `main`.
 - Creating a release from a branch other than `main`.
 - Skipping validation — a broken SKILL.md ships in the zip.
-- Forgetting to verify the zip asset downloads and validates after `release.yml` runs.
+- Forgetting to verify the zip asset downloads and validates after `release.yaml` runs.
 - Using a commit subject other than `Release vX.Y.Z` for the bump — the changelog generator skip filter only matches that exact shape.

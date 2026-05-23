@@ -140,7 +140,7 @@ _SEMVER_RE = re.compile(
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
-# Subjects produced by the ``release-prep.yml`` workflow's bump commit.
+# Subjects produced by the ``release-prep.yaml`` workflow's bump commit.
 # These are meta-commits that should not appear in the changelog of the
 # version they introduce — the section they prepend already records the
 # real changes.  They are also not candidates for "unmapped — review
