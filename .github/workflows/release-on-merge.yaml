@@ -67,9 +67,29 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${HEAD_REF#release/v}"
-          if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-            echo "Tag v${VERSION} already exists at origin; nothing to do."
-            exit 0
+          # If the tag already exists, a no-op is only safe when it points at
+          # this merge commit (an idempotent rerun). A tag at a different SHA
+          # means the version was already released from other content, so retag
+          # would either fail or silently diverge tag from manifest — fail loud.
+          # Query both the tag ref and its peeled form so annotated tags
+          # (peeled commit in ``^{}``) and lightweight tags (direct commit) are
+          # compared against the merge commit, not the annotated-tag object SHA.
+          existing=$(git ls-remote --tags origin "refs/tags/v${VERSION}" "refs/tags/v${VERSION}^{}" 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            # An annotated tag yields a peeled ``^{}`` line (the commit) plus the
+            # tag-object line; a lightweight tag yields only the direct commit
+            # line. Prefer the peeled commit. ``exit`` after the first match
+            # collapses any duplicate peeled line emitted by both default
+            # peeling and the explicit ``^{}`` pattern.
+            peeled=$(awk '/\^\{\}$/ {print $1; exit}' <<<"$existing")
+            direct=$(awk '!/\^\{\}$/ {print $1; exit}' <<<"$existing")
+            target="${peeled:-$direct}"
+            if [ "$target" = "$MERGE_SHA" ]; then
+              echo "Tag v${VERSION} already exists at origin and points to the merge commit; nothing to do."
+              exit 0
+            fi
+            echo "::error::Tag v${VERSION} already exists at origin but points to ${target}, not the merge commit ${MERGE_SHA}; refusing to retag."
+            exit 1
           fi
           if [ -z "${BOT_USER_ID}" ]; then
             echo "::error::vars.RELEASE_APP_BOT_USER_ID is empty; refusing to tag with a malformed bot email."
