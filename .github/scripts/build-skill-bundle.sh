@@ -24,7 +24,10 @@ mkdir -p "$(dirname "$BUNDLE_PATH")"
 # entries for files since deleted from skill-system-foundry/. Remove it first so
 # every build produces the bundle from scratch and stays idempotent on rerun.
 rm -f "$BUNDLE_PATH"
-zip -r "$BUNDLE_PATH" skill-system-foundry/
+# Exclude Python bytecode: validation/audit runs before the pre-merge dry-build
+# can leave __pycache__/*.pyc under skill-system-foundry/scripts/, which would
+# otherwise be bundled and diverge from release.yaml's fresh-checkout shape.
+zip -r "$BUNDLE_PATH" skill-system-foundry/ -x '*/__pycache__/*' '*.pyc'
 
 python - "$BUNDLE_PATH" <<'PY'
 import sys, zipfile
