@@ -3,10 +3,10 @@ name: verify-pr-release-label
 # Checks that each PR carries exactly one `release: major|minor|patch|skip`
 # label — the signal the (future) label-driven version computation reads.
 #
-# REPORT-ONLY for now: it warns but never fails, so it cannot strand open PRs
-# before the labeling habit and the Dependabot auto-labeler are in place. A
-# later change (WI-4 in docs/automation-unification-plan.md) flips it to a
-# required, blocking check.
+# REPORT-ONLY for now: it warns but never fails — not even on a transient
+# gh/API error — so it cannot strand open PRs or add red CI noise before the
+# labeling habit and the Dependabot auto-labeler are in place. A later change
+# makes it a required, blocking check.
 
 on:
   pull_request:
@@ -32,11 +32,15 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          total=$(gh pr view "$PR" --repo "$REPO" --json labels \
-            --jq '[.labels[].name | select(startswith("release: "))] | length')
-          valid=$(gh pr view "$PR" --repo "$REPO" --json labels \
-            --jq '[.labels[].name | select(. == "release: major" or . == "release: minor" or . == "release: patch" or . == "release: skip")] | length')
+          set -uo pipefail
+          # Fail-soft: a transient gh/API error must not turn this report-only
+          # check red. If the read fails, warn and pass.
+          if ! labels=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name'); then
+            echo "::warning::Could not read PR labels (transient gh/API error); skipping the report-only release-label check."
+            exit 0
+          fi
+          total=$(printf '%s\n' "$labels" | grep -c '^release: ' || true)
+          valid=$(printf '%s\n' "$labels" | grep -cE '^release: (major|minor|patch|skip)$' || true)
           if [ "$total" = "1" ] && [ "$valid" = "1" ]; then
             echo "OK: exactly one valid release label."
           else
