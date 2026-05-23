@@ -1,0 +1,44 @@
+name: verify-pr-release-label
+
+# Checks that each PR carries exactly one `release: major|minor|patch|skip`
+# label — the signal the (future) label-driven version computation reads.
+#
+# REPORT-ONLY for now: it warns but never fails, so it cannot strand open PRs
+# before the labeling habit and the Dependabot auto-labeler are in place. A
+# later change (WI-4 in docs/automation-unification-plan.md) flips it to a
+# required, blocking check.
+
+on:
+  pull_request:
+    types: [opened, reopened, labeled, unlabeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-pr-release-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Verify exactly one release label (report-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          total=$(gh pr view "$PR" --repo "$REPO" --json labels \
+            --jq '[.labels[].name | select(startswith("release: "))] | length')
+          valid=$(gh pr view "$PR" --repo "$REPO" --json labels \
+            --jq '[.labels[].name | select(. == "release: major" or . == "release: minor" or . == "release: patch" or . == "release: skip")] | length')
+          if [ "$total" = "1" ] && [ "$valid" = "1" ]; then
+            echo "OK: exactly one valid release label."
+          else
+            echo "::warning::This PR should carry exactly one of 'release: major', 'release: minor', 'release: patch', 'release: skip' (found $total release-prefixed label(s), $valid valid). Report-only for now — this becomes a required check once the labeling habit and the Dependabot auto-labeler are in place."
+          fi

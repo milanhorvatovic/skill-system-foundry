@@ -123,7 +123,15 @@ Fix <issue> in <component>
    - Which area of the project is affected (documentation, scripts, templates, etc.)
    - How you validated the changes
 
-6. **Respond to feedback.** PRs may require revisions before merging.
+6. **Label the release impact.** Apply exactly one `release:` label:
+   - `release: major` — a breaking change
+   - `release: minor` — a new, backwards-compatible feature
+   - `release: patch` — a bug fix, docs, or internal change
+   - `release: skip` — no user-facing change (does not influence the next version)
+
+   The next release version is computed from these labels across merged PRs, so each PR must declare its impact. The `verify-pr-release-label` check flags a missing or ambiguous label — currently report-only, becoming required once the labeling habit is established. Dependabot PRs are labeled automatically.
+
+7. **Respond to feedback.** PRs may require revisions before merging.
 
 ## What Happens Next
 
