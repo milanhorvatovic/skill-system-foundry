@@ -124,7 +124,7 @@ Fix <issue> in <component>
    - How you validated the changes
 
 6. **Label the release impact.** Apply exactly one `release:` label. The line between `patch` and `skip` is "does anything user-facing ship?":
-   - `release: major` — a breaking change to the shipped skill
+   - `release: major` — a breaking change to the published meta-skill (a removed or renamed capability or script, or a backwards-incompatible change to a validation rule or script interface)
    - `release: minor` — a new, backwards-compatible feature
    - `release: patch` — a user-facing fix or change worth a release note (bug fix, corrected/clarified skill docs)
    - `release: skip` — nothing user-facing ships, so it does not influence the next version (CI, tests, internal tooling, repo meta, contributor docs)
