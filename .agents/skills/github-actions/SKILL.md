@@ -21,13 +21,17 @@ Guides the creation, modification, and review of GitHub Actions workflows in the
 
 | Workflow | File | Trigger | Jobs |
 |---|---|---|---|
-| Tests + coverage | `python-tests.yaml` | Push to `main`, PRs | `test` (matrix), `update-badge` |
+| Tests + coverage | `python-tests.yaml` | Push to `main`, PRs, `workflow_call` | `test` (matrix), `validate-examples`, `reference-conformance`, `bundle-extract-smoke` |
+| Coverage badge | `coverage-badge.yaml` | `workflow_run` after Python tests | `badge` |
+| CI helper tests | `ci-helper-tests.yaml` | Push/PR (path-filtered to CI helpers) | `helper-tests` (matrix) |
 | Shell lint | `shellcheck.yaml` | Push/PR (path-filtered to `.sh`) | `shellcheck` |
 | Action-pin verify | `verify-action-pins.yaml` | Push to `main`, PRs | `verify` |
+| Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
 | Codex code review | `codex-code-review.yaml` | PR events (non-draft) | `review` (read-only), `publish` (write) |
+| Release-label check | `verify-pr-release-label.yaml` | PR events | `verify-release-label` (report-only) |
 | Supply-chain scorecard | `scorecard.yaml` | Schedule, push to `main`, branch-protection change | `analysis` |
 | CodeQL | `codeql.yaml` | Push to `main`, PRs, schedule | `analyze` |
-| Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
+| Tool-catalog drift | `tool-catalog-drift.yaml` | Schedule, `workflow_dispatch` | `detect-and-pr` |
 | Release prep | `release-prep.yaml` | `workflow_dispatch` | `prepare`, `test`, `open-pr` |
 | Release tag | `release-on-merge.yaml` | Release PR merged to `main` | `tag` |
 | Release bundle | `release.yaml` | `v*.*.*` tag push | `release` |
