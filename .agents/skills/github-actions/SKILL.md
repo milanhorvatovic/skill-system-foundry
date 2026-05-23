@@ -53,10 +53,10 @@ This rule is enforced by `.github/scripts/verify-action-pins.py`, which the `ver
 
 ### App Token Identity
 
-When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). The repo's automation identities are wired as:
+When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). Across these OSS repos the automation identities follow a `<PREFIX>_CLIENT_ID` (repository variable) + `<PREFIX>_PRIVATE_KEY` (repository secret) convention:
 
-- **oss-automation-bot** — `vars.AUTOMATION_CLIENT_ID` + `secrets.AUTOMATION_PRIVATE_KEY` (the workhorse: dependency automation, opening/approving PRs).
-- **oss-release-bot** — `vars.RELEASE_CLIENT_ID` + `secrets.RELEASE_APP_PRIVATE_KEY` (the release identity: tags and publishes).
+- **oss-automation-bot** — `vars.AUTOMATION_CLIENT_ID` + `secrets.AUTOMATION_PRIVATE_KEY` (the workhorse: dependency automation, opening/approving PRs). Wired in this repo's `tool-catalog-drift.yaml`.
+- **oss-release-bot** — `vars.RELEASE_CLIENT_ID` + `secrets.RELEASE_PRIVATE_KEY` (the release identity: tags and publishes). This repo's `release.yml` currently mints with `GITHUB_TOKEN`, not this identity.
 
 ```yaml
 # Correct
@@ -72,6 +72,7 @@ When minting a GitHub App token with `actions/create-github-app-token`, use the 
 - uses: actions/create-github-app-token@<sha>  # @v3 as 3.x
   with:
     app-id: ${{ vars.AUTOMATION_APP_ID }}
+    private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
 ```
 
 ### Least-Privilege Permissions
