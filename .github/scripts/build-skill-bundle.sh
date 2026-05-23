@@ -24,8 +24,8 @@ zip -r "$BUNDLE_PATH" skill-system-foundry/
 
 python - "$BUNDLE_PATH" <<'PY'
 import sys, zipfile
-z = zipfile.ZipFile(sys.argv[1])
-hits = [n for n in z.namelist() if 'yaml-conformance' in n]
+with zipfile.ZipFile(sys.argv[1]) as z:
+    hits = [n for n in z.namelist() if 'yaml-conformance' in n]
 if hits:
     print('Found forbidden yaml-conformance entries in bundle:', file=sys.stderr)
     for n in hits:
