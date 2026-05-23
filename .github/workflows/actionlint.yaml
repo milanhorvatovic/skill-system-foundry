@@ -1,0 +1,46 @@
+name: Lint workflows
+
+# Static-lint every workflow under .github/workflows with actionlint — catches
+# expression typos, bad `needs`/`if` references, shell mistakes in `run:` blocks,
+# and deprecated syntax that shellcheck (scripts only) and verify-action-pins
+# (SHA pins only) do not cover.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actionlint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # @v6 as 6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Lint .github/workflows with actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          # actionlint ships as a digest-pinned Docker image; no SHA-pinnable
+          # marketplace action exists, and verify-action-pins only checks `uses:`
+          # refs, so the image digest below is the pin of record.
+          actionlint_image='rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667' # v1.7.12
+          docker run --rm \
+            --env GITHUB_ACTIONS \
+            --volume "${GITHUB_WORKSPACE}:/repo" \
+            --workdir /repo \
+            "${actionlint_image}" \
+            -color

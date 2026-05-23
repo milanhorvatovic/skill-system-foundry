@@ -1,0 +1,28 @@
+# Dependency update automation.
+# Bumps the SHA-pinned GitHub Actions (verify-action-pins.yaml requires SHA
+# pins; Dependabot understands them and rewrites both the pin and its version
+# comment) and the Python dev dependency declared in requirements-dev.txt.
+# Updates are grouped so each ecosystem opens at most one rolling PR per week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      python-dev:
+        patterns:
+          - "*"
