@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read          # checkout + repository analysis (job-level perms replace the top-level read-all)
       security-events: write  # upload the SARIF result to code scanning
       id-token: write         # publish results to the OpenSSF API
     steps:

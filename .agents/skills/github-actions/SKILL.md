@@ -25,6 +25,9 @@ Guides the creation, modification, and review of GitHub Actions workflows in the
 | Shell lint | `shellcheck.yaml` | Push/PR (path-filtered to `.sh`) | `shellcheck` |
 | Action-pin verify | `verify-action-pins.yaml` | Push to `main`, PRs | `verify` |
 | Codex code review | `codex-code-review.yaml` | PR events (non-draft) | `review` (read-only), `publish` (write) |
+| Supply-chain scorecard | `scorecard.yaml` | Schedule, push to `main`, branch-protection change | `analysis` |
+| CodeQL | `codeql.yaml` | Push to `main`, PRs, schedule | `analyze` |
+| Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
 | Release bundle | `release.yml` | Release published | `bundle` |
 
 ## Hard Requirements
