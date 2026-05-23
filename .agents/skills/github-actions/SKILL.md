@@ -64,8 +64,12 @@ When minting a GitHub App token with `actions/create-github-app-token`, use the 
   with:
     client-id: ${{ vars.AUTOMATION_CLIENT_ID }}
     private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+```
 
+<!-- yaml-ignore -->
+```yaml
 # Wrong — deprecated app-id input
+- uses: actions/create-github-app-token@<sha>  # @v3 as 3.x
   with:
     app-id: ${{ vars.AUTOMATION_APP_ID }}
 ```
