@@ -33,11 +33,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # Report-only contract: this check warns but must never fail. The
-          # default Actions bash shell runs with -e (errexit), so disable it
-          # explicitly and end with an unconditional exit 0 — neither a
-          # transient gh/API error nor a future edit may turn this check red.
-          set -uo pipefail
+          # default Actions bash shell runs with -e (errexit); disable it and
+          # skip -u (nounset) — errexit aborts on any non-zero exit and
+          # nounset aborts on any unset variable, either of which could turn
+          # this check red after a future edit. Validate inputs defensively
+          # and end with an unconditional exit 0 instead.
           set +e
+          set -o pipefail
+          # The pull_request event always supplies these; guard anyway so a
+          # missing value warns and passes rather than aborting the job.
+          if [ -z "${PR:-}" ] || [ -z "${REPO:-}" ]; then
+            echo "::warning::PR number or repository unavailable; skipping the report-only release-label check."
+            exit 0
+          fi
           # Fail-soft: a transient gh/API error must not turn this report-only
           # check red. If the read fails, warn and pass.
           if ! labels=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name'); then
