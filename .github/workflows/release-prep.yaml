@@ -164,13 +164,16 @@ jobs:
         run: python skill-system-foundry/scripts/audit_skill_system.py .
 
       - name: Dry-build the release bundle
-        # Prove the distribution bundle builds and passes the yaml-conformance
-        # exclusion check BEFORE any release tag is cut.  release.yaml runs the
-        # same .github/scripts/build-skill-bundle.sh at publish time, so a green
-        # dry-build here means the post-merge build cannot fail and burn the
-        # (immutable) tag.  Output goes to RUNNER_TEMP so the git add -A below
-        # never stages it.
-        run: BUNDLE_PATH="$RUNNER_TEMP/dry-build.zip" bash .github/scripts/build-skill-bundle.sh
+        # Prove the distribution bundle builds, passes the yaml-conformance
+        # exclusion check, AND that the checksum write/self-verify path succeeds
+        # BEFORE any release tag is cut.  release.yaml runs the same
+        # .github/scripts/build-skill-bundle.sh with CHECKSUM_PATH set at publish
+        # time, so CHECKSUM_PATH is set here too — otherwise the helper takes the
+        # early exit and the checksum branch would stay untested until after the
+        # immutable tag is pushed.  A green dry-build here means the post-merge
+        # build cannot fail and burn the tag.  Output goes to RUNNER_TEMP so the
+        # git add -A below never stages it.
+        run: BUNDLE_PATH="$RUNNER_TEMP/dry-build.zip" CHECKSUM_PATH="$RUNNER_TEMP/dry-build.zip.sha256" bash .github/scripts/build-skill-bundle.sh
 
       - name: Commit release bump
         env:
