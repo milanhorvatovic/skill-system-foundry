@@ -58,6 +58,23 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
+      - name: Verify the tag is on main
+        # release-on-merge.yaml only tags merged release PRs, but this workflow
+        # fires on any pushed v*.*.* tag. Refuse to publish from a tag whose
+        # commit is not reachable from origin/main, so an accidental or manual
+        # semver tag on an unmerged/feature commit cannot build an immutable
+        # release from unvalidated source. FETCH_HEAD is used rather than the
+        # origin/main remote-tracking ref because checkout configures a
+        # single-ref fetch refspec that may not populate refs/remotes/origin/*.
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not reachable from origin/main; refusing to publish a release from an unmerged or untested commit."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME is on main."
+
       - name: Build and verify bundle
         run: |
           set -euo pipefail
