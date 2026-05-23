@@ -105,10 +105,20 @@ This repository contains **one skill** (`skill-system-foundry/`) and its **test 
     │   └── review-reference.md      ← repository-specific review guidance
     ├── scripts/                     ← CI helper scripts (bash + Python)
     ├── workflows/                   ← GitHub Actions CI/CD
-    │   ├── python-tests.yaml        ← tests + coverage + badge update (ubuntu + windows)
-    │   ├── shellcheck.yaml          ← lints .github/scripts/*.sh
-    │   ├── codex-code-review.yaml   ← Codex PR review via codex-ai-code-review-action
-    │   └── release.yaml              ← bundles zip + uploads release asset
+    │   ├── actionlint.yaml              ← lints workflow YAML
+    │   ├── ci-helper-tests.yaml         ← tests .github/scripts helpers (ubuntu + windows)
+    │   ├── codeql.yaml                  ← CodeQL security analysis
+    │   ├── codex-code-review.yaml       ← Codex PR review via codex-ai-code-review-action
+    │   ├── coverage-badge.yaml          ← updates the coverage badge on push to main
+    │   ├── python-tests.yaml            ← tests + coverage (ubuntu + windows)
+    │   ├── release-prep.yaml            ← dispatch: bump, changelog, open/approve/auto-merge release PR
+    │   ├── release-on-merge.yaml        ← tags vX.Y.Z when a release PR merges
+    │   ├── release.yaml                 ← builds the bundle + creates the GitHub Release on tag push
+    │   ├── scorecard.yaml               ← OpenSSF Scorecard supply-chain analysis
+    │   ├── shellcheck.yaml              ← lints .github/scripts/*.sh
+    │   ├── tool-catalog-drift.yaml      ← weekly Claude Code tool-catalog drift PR
+    │   ├── verify-action-pins.yaml      ← enforces SHA-pinned actions
+    │   └── verify-pr-release-label.yaml ← report-only PR release-label check
     ├── instructions/                ← review rules for Copilot/Codex
     │   ├── markdown.instructions.md ← applies to **/*.md
     │   └── scripts.instructions.md  ← applies to scripts/**/*.py

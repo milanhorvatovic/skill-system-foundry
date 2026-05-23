@@ -55,7 +55,7 @@ This rule is enforced by `.github/scripts/verify-action-pins.py`, which the `ver
 
 ### App Token Identity
 
-When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). Across these OSS repos the automation identities follow a `<PREFIX>_CLIENT_ID` (repository variable) + `<PREFIX>_PRIVATE_KEY` (repository secret) convention:
+When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). Across these OSS repos each automation identity wires a `<PREFIX>_CLIENT_ID` repository variable for the App's client ID plus a repository secret holding its PEM private key; the private-key secret name is not uniform (`AUTOMATION_PRIVATE_KEY` for the automation App, `RELEASE_APP_PRIVATE_KEY` for the release App), so take the exact names from the list below:
 
 - **oss-automation-bot** — `vars.AUTOMATION_CLIENT_ID` + `secrets.AUTOMATION_PRIVATE_KEY` (the workhorse: dependency automation, opening/approving PRs). Wired in this repo's `tool-catalog-drift.yaml` and the release-PR approval in `release-prep.yaml`.
 - **oss-release-bot** — `vars.RELEASE_CLIENT_ID` + `secrets.RELEASE_APP_PRIVATE_KEY` (the release identity: opens the release PR, tags, and publishes). Wired in `release-prep.yaml`, `release-on-merge.yaml`, and `release.yaml`.
