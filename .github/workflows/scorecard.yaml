@@ -10,7 +10,11 @@ on:
   push:
     branches: [main]
 
-permissions: read-all
+# Restrictive default for any future job. The analysis job below declares its
+# own permissions (a job-level block replaces this, it does not merge), granting
+# exactly what Scorecard needs.
+permissions:
+  contents: read
 
 concurrency:
   group: scorecard-${{ github.ref }}
