@@ -32,7 +32,12 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
+          # Report-only contract: this check warns but must never fail. The
+          # default Actions bash shell runs with -e (errexit), so disable it
+          # explicitly and end with an unconditional exit 0 — neither a
+          # transient gh/API error nor a future edit may turn this check red.
           set -uo pipefail
+          set +e
           # Fail-soft: a transient gh/API error must not turn this report-only
           # check red. If the read fails, warn and pass.
           if ! labels=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name'); then
@@ -46,3 +51,4 @@ jobs:
           else
             echo "::warning::This PR should carry exactly one of 'release: major', 'release: minor', 'release: patch', 'release: skip' (found $total release-prefixed label(s), $valid valid). Report-only for now — this becomes a required check once the labeling habit and the Dependabot auto-labeler are in place."
           fi
+          exit 0
