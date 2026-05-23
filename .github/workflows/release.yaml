@@ -69,11 +69,17 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --quiet origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
-            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not reachable from origin/main; refusing to publish a release from an unmerged or untested commit."
+          # Peel the tag to its commit before the ancestry check:
+          # release-on-merge.yaml creates annotated tags, and a tag-push event
+          # can surface the tag-object SHA in GITHUB_SHA rather than the commit,
+          # which git merge-base --is-ancestor would reject even when the tagged
+          # commit is on main.
+          TAG_COMMIT="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" FETCH_HEAD; then
+            echo "::error::Tag $GITHUB_REF_NAME ($TAG_COMMIT) is not reachable from origin/main; refusing to publish a release from an unmerged or untested commit."
             exit 1
           fi
-          echo "Tag $GITHUB_REF_NAME is on main."
+          echo "Tag $GITHUB_REF_NAME ($TAG_COMMIT) is on main."
 
       - name: Build and verify bundle
         run: |
