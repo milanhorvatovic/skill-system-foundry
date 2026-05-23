@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  verify-release-label:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
