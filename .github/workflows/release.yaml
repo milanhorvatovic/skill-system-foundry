@@ -30,6 +30,21 @@ jobs:
     permissions:
       contents: read  # the release is created with the release App token, not GITHUB_TOKEN
     steps:
+      - name: Guard against non-core-semver tags
+        # The trigger glob ``v*.*.*`` also matches prerelease/build-metadata
+        # tags (e.g. ``v1.2.3-rc.1``), but this pipeline publishes core
+        # ``vX.Y.Z`` releases only. Reject anything else before minting tokens
+        # so a stray prerelease tag push cannot strand an immutable tag with a
+        # half-built or section-less release. The grammar mirrors the dispatch
+        # gate in release-prep.yaml.
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a core-semver vX.Y.Z release tag; refusing to publish."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME is a core-semver release tag."
+
       - name: Mint release App token
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # @v3 as 3.1.1
@@ -60,7 +75,20 @@ jobs:
           : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
           : "${CHECKSUM_PATH:?CHECKSUM_PATH must be set}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; skipping creation."
+            # A release already exists for this tag. Under immutable releases an
+            # existing release cannot be amended, so a no-op is only safe when
+            # both expected assets are already attached; an asset-less or
+            # partial release must surface loudly for manual remediation rather
+            # than be treated as success.
+            echo "Release $GITHUB_REF_NAME already exists; verifying its assets."
+            existing_assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+            for want in "$(basename "$BUNDLE_PATH")" "$(basename "$CHECKSUM_PATH")"; do
+              if ! grep -qxF "$want" <<<"$existing_assets"; then
+                echo "::error::Release $GITHUB_REF_NAME exists but is missing asset '$want'; immutable releases cannot be amended, so remediate manually (delete and recreate the release with both assets)."
+                exit 1
+              fi
+            done
+            echo "Release $GITHUB_REF_NAME already has the expected assets; nothing to do."
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
