@@ -54,7 +54,7 @@ The workflow exposes a `dry_run` input that runs the input validation, bump, cha
 
 ### Identity prerequisites
 
-The auto-merge and publish steps need two GitHub App identities wired as repo variables/secrets. **oss-release-bot** (`RELEASE_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`, `RELEASE_APP_BOT_USER_ID`) opens the release PR, tags, and publishes; **oss-automation-bot** (`AUTOMATION_APP_ID`, `AUTOMATION_PRIVATE_KEY`) approves. The repo setting "Allow auto-merge" must be on. Because the approval comes from an App, the release PR must touch no CODEOWNER-owned path — otherwise the App approval cannot satisfy the code-owner rule and the merge waits for a human.
+The auto-merge and publish steps need two GitHub App identities wired as repo variables/secrets. **oss-release-bot** (`RELEASE_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`, `RELEASE_APP_BOT_USER_ID`) opens the release PR, tags, and publishes; **oss-automation-bot** (`AUTOMATION_CLIENT_ID`, `AUTOMATION_PRIVATE_KEY`) approves. Every workflow mints via the `client-id` input of `actions/create-github-app-token` (the numeric App ID is the deprecated alternative), so each App's required variable holds its **client ID**, not its App ID. The repo setting "Allow auto-merge" must be on. Because the approval comes from an App, the release PR must touch no CODEOWNER-owned path — otherwise the App approval cannot satisfy the code-owner rule and the merge waits for a human.
 
 ## Manual Release Checklist (Fallback)
 
