@@ -51,6 +51,25 @@ When updating an action version:
 
 This rule is enforced by `.github/scripts/verify-action-pins.py`, which the `verify-action-pins.yaml` workflow runs on every PR and push to `main`. Any `uses:` line that is not a 40-character lowercase commit SHA (or `./local-path` / `docker://...`) fails CI. Run the script locally with `python .github/scripts/verify-action-pins.py` to check before pushing.
 
+### App Token Identity
+
+When minting a GitHub App token with `actions/create-github-app-token`, use the **`client-id`** input — `app-id` is deprecated (the action carries a `deprecationMessage` pointing to `client-id`). The repo's automation identities are wired as:
+
+- **oss-automation-bot** — `vars.AUTOMATION_CLIENT_ID` + `secrets.AUTOMATION_PRIVATE_KEY` (the workhorse: dependency automation, opening/approving PRs).
+- **oss-release-bot** — `vars.RELEASE_CLIENT_ID` + `secrets.RELEASE_APP_PRIVATE_KEY` (the release identity: tags and publishes).
+
+```yaml
+# Correct
+- uses: actions/create-github-app-token@<sha>  # @v3 as 3.x
+  with:
+    client-id: ${{ vars.AUTOMATION_CLIENT_ID }}
+    private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+
+# Wrong — deprecated app-id input
+  with:
+    app-id: ${{ vars.AUTOMATION_APP_ID }}
+```
+
 ### Least-Privilege Permissions
 
 Scope permissions as narrowly as possible. Default to `contents: read`. Only add write permissions where required, and prefer job-level over workflow-level permissions:
