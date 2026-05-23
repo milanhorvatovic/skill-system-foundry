@@ -20,6 +20,10 @@ set -euo pipefail
 : "${BUNDLE_PATH:?Environment variable BUNDLE_PATH is required}"
 
 mkdir -p "$(dirname "$BUNDLE_PATH")"
+# zip -r updates an archive in place, so a pre-existing BUNDLE_PATH would retain
+# entries for files since deleted from skill-system-foundry/. Remove it first so
+# every build produces the bundle from scratch and stays idempotent on rerun.
+rm -f "$BUNDLE_PATH"
 zip -r "$BUNDLE_PATH" skill-system-foundry/
 
 python - "$BUNDLE_PATH" <<'PY'
