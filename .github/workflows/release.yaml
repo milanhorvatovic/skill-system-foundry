@@ -92,21 +92,17 @@ jobs:
           : "${BUNDLE_PATH:?BUNDLE_PATH must be set}"
           : "${CHECKSUM_PATH:?CHECKSUM_PATH must be set}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            # A release already exists for this tag. Under immutable releases an
-            # existing release cannot be amended, so a no-op is only safe when
-            # both expected assets are already attached; an asset-less or
-            # partial release must surface loudly for manual remediation rather
-            # than be treated as success.
-            echo "Release $GITHUB_REF_NAME already exists; verifying its assets."
-            existing_assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
-            for want in "$(basename "$BUNDLE_PATH")" "$(basename "$CHECKSUM_PATH")"; do
-              if ! grep -qxF "$want" <<<"$existing_assets"; then
-                echo "::error::Release $GITHUB_REF_NAME exists but is missing asset '$want'; immutable releases cannot be amended, so remediate manually (delete and recreate the release with both assets)."
-                exit 1
-              fi
-            done
-            echo "Release $GITHUB_REF_NAME already has the expected assets; nothing to do."
-            exit 0
+            # A release already exists for this tag. Under immutable releases it
+            # cannot be amended, and a name-only check cannot tell a correct
+            # release from one carrying stale or wrong assets under the same
+            # names. Content comparison is not reliable either: zip -r embeds
+            # file mtimes, so a fresh-checkout rebuild's bytes (and SHA256) do
+            # not match the originally published bundle even for identical
+            # sources. So refuse to silently pass over it: fail and let an
+            # operator confirm — if the existing release is wrong or incomplete,
+            # delete it and re-run; if it is correct, no action is needed.
+            echo "::error::Release $GITHUB_REF_NAME already exists; refusing to pass over it because its assets cannot be verified against this run. Inspect it manually, then delete and re-run if its assets are stale or incomplete."
+            exit 1
           fi
           VERSION="${GITHUB_REF_NAME#v}"
           NOTES_FILE="$(mktemp)"
