@@ -12,7 +12,7 @@ import io
 import json
 import os
 import unittest
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from unittest import mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -122,7 +122,9 @@ class FetchMergedPrsTests(unittest.TestCase):
 # ===========================================================================
 
 
-def _fake_git(tag_list: str, revlist: str, date: str = "2026-05-22\n"):
+def _fake_git(
+    tag_list: str, revlist: str, date: str = "2026-05-22\n"
+) -> Callable[[list[str], str], str]:
     def fake(args: list[str], repo_root: str) -> str:
         if args[:2] == ["tag", "-l"]:
             return tag_list
