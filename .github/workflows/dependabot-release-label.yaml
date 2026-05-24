@@ -121,10 +121,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Map the effective update-type to the desired release label.
+          # Map the effective update-type to the desired release label. Grouped
+          # patch/minor bumps release as patch (project policy), so semver-minor
+          # maps to `release: patch` here too — the workflow never *assigns*
+          # `release: minor` itself; that label only ever survives as a maintainer
+          # override (preserved by the keep-current branch below). This keeps the
+          # absent-label backstop policy-consistent: a grouped minor with no static
+          # label yet is labeled `release: patch`, not `release: minor`. Only a
+          # standalone semver-major maps to `release: major`.
           case "$UPDATE_TYPE" in
             version-update:semver-major) desired="release: major" ;;
-            version-update:semver-minor) desired="release: minor" ;;
             *)                            desired="release: patch" ;;
           esac
 
@@ -168,14 +174,17 @@ jobs:
             exit 0
           fi
 
-          # Post-edit recheck closes the check-then-act window. If a maintainer
-          # applied a different `release: *` label between the state query and the
-          # `gh pr edit` call, the PR now carries two release labels; roll back
-          # the label this workflow just applied so the manual override wins. We
-          # only ever remove `$desired` (the one we just added).
+          # Post-edit recheck: if the PR now carries more than one release label,
+          # a second label raced in after our state query — either a maintainer
+          # override or Dependabot's static `release: patch` landing late. We do
+          # NOT blind-remove `$desired` here: when the racer is the static patch
+          # and `$desired` is `release: major`, removing `$desired` would delete
+          # the *correct* label and leave the wrong one. Leave both and warn for
+          # manual triage instead; `verify-pr-release-label` surfaces the
+          # ambiguity, and the labels are groundwork (not yet consumed for
+          # version computation), so a transient two-label state is recoverable.
           post_count=$(gh pr view "$PR_URL" --json labels \
             --jq '[.labels[].name | select(startswith("release: "))] | length')
           if [ "$post_count" -gt 1 ]; then
-            echo "::warning::A different release label appears to have been applied during the edit window; removing the workflow-applied '$desired' so the manual override wins."
-            gh pr edit "$PR_URL" --remove-label "$desired"
+            echo "::warning::PR now carries multiple release labels (a maintainer override or Dependabot's static label raced into the edit window); leaving them for manual triage rather than risk removing the correct one."
           fi
