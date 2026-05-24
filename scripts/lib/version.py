@@ -156,6 +156,20 @@ def release_levels_in(labels: list[str]) -> list[str]:
     return levels
 
 
+def release_prefixed_labels(labels: list[str]) -> list[str]:
+    """Return every label using the ``release: `` prefix, valid or not.
+
+    Unlike :func:`release_levels_in`, this does not filter to the known
+    taxonomy — a malformed entry such as ``release: huge`` or ``release: minor``
+    with a trailing space is included.  Callers enforce the one-valid-label
+    rule with it: a PR is well-labeled only when it carries exactly one
+    ``release: `` label that names a known level, so a valid label sitting next
+    to a malformed one is still an ambiguous (gap) PR rather than being
+    silently reduced to the valid one.
+    """
+    return [label for label in labels if label.startswith(_RELEASE_LABEL_PREFIX)]
+
+
 def highest_level(levels: list[str]) -> str | None:
     """Return the highest-precedence non-skip level in *levels*, or ``None``.
 

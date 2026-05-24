@@ -549,6 +549,22 @@ class ReleaseLevelsInTests(unittest.TestCase):
         self.assertEqual(version.release_levels_in(["bug", "enhancement"]), [])
 
 
+class ReleasePrefixedLabelsTests(unittest.TestCase):
+    def test_includes_valid_and_malformed(self) -> None:
+        labels = ["release: patch", "release: huge", "dependencies"]
+        self.assertEqual(
+            version.release_prefixed_labels(labels),
+            ["release: patch", "release: huge"],
+        )
+
+    def test_includes_trailing_space_variant(self) -> None:
+        labels = ["release: minor "]
+        self.assertEqual(version.release_prefixed_labels(labels), ["release: minor "])
+
+    def test_empty_when_no_release_prefix(self) -> None:
+        self.assertEqual(version.release_prefixed_labels(["bug", "ci"]), [])
+
+
 class HighestLevelTests(unittest.TestCase):
     def test_major_beats_minor_and_patch(self) -> None:
         self.assertEqual(

@@ -85,6 +85,25 @@ class SelectWindowLevelsTests(unittest.TestCase):
         counted, _, _ = compute.select_window_levels({"aaa"}, rows)
         self.assertEqual(counted, [(3, "t", "skip")])
 
+    def test_valid_plus_malformed_sibling_is_ambiguous(self) -> None:
+        rows = [_row(11, ["release: patch", "release: huge"], "aaa")]
+        counted, unlabeled, ambiguous = compute.select_window_levels({"aaa"}, rows)
+        self.assertEqual(counted, [])
+        self.assertEqual(unlabeled, [])
+        self.assertEqual(ambiguous, [(11, "t", ["release: patch", "release: huge"])])
+
+    def test_single_malformed_label_is_ambiguous(self) -> None:
+        rows = [_row(12, ["release: huge"], "aaa")]
+        counted, unlabeled, ambiguous = compute.select_window_levels({"aaa"}, rows)
+        self.assertEqual(counted, [])
+        self.assertEqual(ambiguous, [(12, "t", ["release: huge"])])
+
+    def test_null_labels_does_not_crash(self) -> None:
+        rows = [{"number": 5, "title": "t", "labels": None, "mergeCommit": {"oid": "aaa"}}]
+        counted, unlabeled, ambiguous = compute.select_window_levels({"aaa"}, rows)
+        self.assertEqual((counted, ambiguous), ([], []))
+        self.assertEqual(unlabeled, [(5, "t")])
+
 
 # ===========================================================================
 # Tag selection
@@ -112,6 +131,26 @@ class FetchMergedPrsTests(unittest.TestCase):
     def test_raises_when_pr_list_cap_hit(self) -> None:
         rows = [_row(n, ["release: patch"], f"oid{n}") for n in range(compute.PR_LIST_LIMIT)]
         payload = json.dumps(rows)
+        with mock.patch.object(compute, "run_gh", lambda args, root: payload):
+            with self.assertRaises(compute.ComputeError):
+                compute.fetch_merged_prs("/repo", "2026-05-22")
+
+    def test_raises_on_non_object_row(self) -> None:
+        payload = json.dumps(["not-an-object"])
+        with mock.patch.object(compute, "run_gh", lambda args, root: payload):
+            with self.assertRaises(compute.ComputeError):
+                compute.fetch_merged_prs("/repo", "2026-05-22")
+
+    def test_raises_on_null_labels(self) -> None:
+        payload = json.dumps(
+            [{"number": 1, "title": "t", "labels": None, "mergeCommit": {"oid": "a"}}]
+        )
+        with mock.patch.object(compute, "run_gh", lambda args, root: payload):
+            with self.assertRaises(compute.ComputeError):
+                compute.fetch_merged_prs("/repo", "2026-05-22")
+
+    def test_raises_on_missing_number(self) -> None:
+        payload = json.dumps([{"title": "t", "labels": [], "mergeCommit": {"oid": "a"}}])
         with mock.patch.object(compute, "run_gh", lambda args, root: payload):
             with self.assertRaises(compute.ComputeError):
                 compute.fetch_merged_prs("/repo", "2026-05-22")
@@ -240,6 +279,31 @@ class MainTests(unittest.TestCase):
         # Concrete, shell-safe: keeps the highest (major), removes the rest quoted.
         self.assertIn('--remove-label "release: skip"', err)
         self.assertNotIn("<all but one", err)
+
+    def test_valid_plus_malformed_label_fails_with_remove_hint(self) -> None:
+        with _run_env(
+            manifest="1.2.1",
+            tag_list="v1.2.1\n",
+            revlist="aaa\n",
+            gh_rows=[_row(50, ["release: patch", "release: huge"], "aaa")],
+        ):
+            code, out, err = _invoke()
+        self.assertEqual(code, compute.EXIT_LABEL_GAP)
+        self.assertEqual(out, "")
+        self.assertIn('--remove-label "release: huge"', err)
+
+    def test_only_malformed_label_fails_with_add_hint(self) -> None:
+        with _run_env(
+            manifest="1.2.1",
+            tag_list="v1.2.1\n",
+            revlist="aaa\n",
+            gh_rows=[_row(51, ["release: huge"], "aaa")],
+        ):
+            code, out, err = _invoke()
+        self.assertEqual(code, compute.EXIT_LABEL_GAP)
+        self.assertEqual(out, "")
+        self.assertIn('--remove-label "release: huge"', err)
+        self.assertIn("--add-label", err)
 
     def test_empty_window_reports_nothing_to_release(self) -> None:
         with _run_env(

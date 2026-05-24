@@ -186,7 +186,10 @@ def commits_since_tag(tag_core: str, repo_root: str) -> set[str]:
 def fetch_merged_prs(repo_root: str, since_date: str) -> list[dict]:
     """Return merged PRs to ``main`` since *since_date* (coarse bound).
 
-    Raises :class:`ComputeError` on a malformed payload or when the result hits
+    Raises :class:`ComputeError` when the payload is not a JSON array, when any
+    row is not an object or lacks an integer ``number`` or a list ``labels``
+    (so a malformed ``gh`` payload fails cleanly here rather than crashing the
+    window scan or emitting a garbled fix hint), or when the result hits
     :data:`PR_LIST_LIMIT` (an implausibly large window that would otherwise be
     silently truncated).
     """
@@ -217,6 +220,13 @@ def fetch_merged_prs(repo_root: str, since_date: str) -> list[dict]:
         raise ComputeError(f"could not parse gh pr list output: {exc}") from exc
     if not isinstance(rows, list):
         raise ComputeError("gh pr list did not return a JSON array")
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ComputeError("gh pr list returned a non-object row")
+        if not isinstance(row.get("number"), int):
+            raise ComputeError("gh pr list row is missing an integer 'number'")
+        if not isinstance(row.get("labels"), list):
+            raise ComputeError("gh pr list row has a non-list 'labels' field")
     if len(rows) >= PR_LIST_LIMIT:
         raise ComputeError(
             f"gh pr list hit the {PR_LIST_LIMIT}-result cap since {since_date}; "
@@ -239,9 +249,11 @@ def select_window_levels(
     * ``counted`` — ``(number, title, level)`` for each in-window PR carrying
       exactly one ``release:`` label (``skip`` included);
     * ``unlabeled`` — ``(number, title)`` for in-window PRs with no release label;
-    * ``ambiguous`` — ``(number, title, labels)`` for in-window PRs with more
-      than one release label (``labels`` are the ``release: *`` strings found,
-      for the operator-facing remove hint).
+    * ``ambiguous`` — ``(number, title, labels)`` for in-window PRs that do not
+      carry exactly one valid release label: either more than one ``release: ``
+      label, or a single malformed one (a ``release: `` prefix with an unknown
+      suffix). ``labels`` are the raw ``release: `` labels found (valid or not),
+      for the operator-facing fix hint.
 
     A PR whose ``mergeCommit`` is missing/null, or whose oid is not in
     *commit_set*, is out of window and ignored.
@@ -258,16 +270,21 @@ def select_window_levels(
         title = row.get("title", "")
         labels = [
             label.get("name", "")
-            for label in row.get("labels", [])
+            for label in (row.get("labels") or [])
             if isinstance(label, dict)
         ]
+        prefixed = _version.release_prefixed_labels(labels)
         levels = _version.release_levels_in(labels)
-        if not levels:
+        if not prefixed:
             unlabeled.append((number, title))
-        elif len(levels) > 1:
-            ambiguous.append((number, title, [f"release: {lv}" for lv in levels]))
-        else:
+        elif len(prefixed) == 1 and len(levels) == 1:
             counted.append((number, title, levels[0]))
+        else:
+            # More than one release-prefixed label, or a single malformed one
+            # (a release: prefix with an unknown suffix): the PR does not carry
+            # exactly one valid release label. Surface the raw release-prefixed
+            # labels so the fix hint can name them.
+            ambiguous.append((number, title, prefixed))
     return counted, unlabeled, ambiguous
 
 
@@ -353,23 +370,43 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         for number, title, found in ambiguous:
-            # Suggest keeping the highest-precedence label and removing the rest,
-            # as a concrete, shell-safe command (each surplus label quoted). The
-            # maintainer can keep a different one; this is an example resolution.
-            bare = [label[len("release: "):] for label in found]
-            keep = _version.highest_level(bare) or bare[0]
-            keep_label = f"release: {keep}"
-            remove_args = " ".join(
-                f'--remove-label "{label}"' for label in found if label != keep_label
-            )
+            valid = [
+                label
+                for label in found
+                if label[len("release: "):] in _version.RELEASE_LEVELS
+            ]
             print(
-                f"  #{number} multiple labels ({', '.join(found)}) — {title}",
+                f"  #{number} release labels ({', '.join(found)}) — {title}",
                 file=sys.stderr,
             )
-            print(
-                f"    fix: keep one, e.g. gh pr edit {number} {remove_args}",
-                file=sys.stderr,
-            )
+            if valid:
+                # Keep the highest-precedence valid label and remove every other
+                # release-prefixed label (including any malformed ones), as a
+                # concrete, shell-safe command. The maintainer can keep a
+                # different one; this is an example resolution.
+                bare = [label[len("release: "):] for label in valid]
+                keep_label = f"release: {_version.highest_level(bare) or bare[0]}"
+                remove_args = " ".join(
+                    f'--remove-label "{label}"'
+                    for label in found
+                    if label != keep_label
+                )
+                print(
+                    f"    fix: keep one, e.g. gh pr edit {number} {remove_args}",
+                    file=sys.stderr,
+                )
+            else:
+                # Only malformed release-prefixed labels — remove them all and
+                # add one valid label.
+                remove_args = " ".join(
+                    f'--remove-label "{label}"' for label in found
+                )
+                print(
+                    f"    fix: replace with one valid label, e.g. gh pr edit "
+                    f'{number} {remove_args} '
+                    f'--add-label "release: <major|minor|patch|skip>"',
+                    file=sys.stderr,
+                )
         return EXIT_LABEL_GAP
 
     bump = _version.highest_level([level for _, _, level in counted])
