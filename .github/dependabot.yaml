@@ -2,7 +2,25 @@
 # Bumps the SHA-pinned GitHub Actions (verify-action-pins.yaml requires SHA
 # pins; Dependabot understands them and rewrites both the pin and its version
 # comment) and the Python dev dependency declared in requirements-dev.txt.
-# Updates are grouped so each ecosystem opens at most one rolling PR per week.
+#
+# Each ecosystem opens one rolling group PR per week for minor + patch bumps.
+# Semver-major bumps split into standalone PRs so the auto-merge workflow's
+# semver-major gate can route them to manual review without holding unrelated
+# patch/minor bumps along with them.
+#
+# Trust-boundary actions that execute with secrets in scope are excluded from
+# the github-actions group so they always arrive as standalone PRs that the
+# auto-merge exclude-by-name guard holds for manual review, instead of one of
+# their bumps poisoning the whole group's auto-merge:
+#   - actions/create-github-app-token mints the App private key.
+#   - milanhorvatovic/codex-ai-code-review-action runs with OPENAI_API_KEY.
+# Extend exclude-patterns (and the auto-merge guard) when a new action-level
+# trust-boundary dependency is added to the repo.
+#
+# Static labels per ecosystem entry (applied to grouped and standalone PRs
+# alike): `dependencies` + the ecosystem + `release: patch`. The fast-path
+# `release: patch` default is corrected to `release: major` for standalone
+# semver-major PRs by dependabot-release-label.yaml.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,11 +28,23 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    # Raised from 5: majors and the two excluded trust-boundary actions now
+    # split into standalone PRs, structurally increasing the open-PR count.
+    open-pull-requests-limit: 10
     groups:
       github-actions:
         patterns:
           - "*"
+        exclude-patterns:
+          - "actions/create-github-app-token"
+          - "milanhorvatovic/codex-ai-code-review-action"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "release: patch"
 
   - package-ecosystem: pip
     directory: "/"
@@ -26,3 +56,10 @@ updates:
       python-dev:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "python"
+      - "release: patch"

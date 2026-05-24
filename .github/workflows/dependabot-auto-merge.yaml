@@ -1,0 +1,416 @@
+name: Dependabot Auto-Merge
+
+# Auto-merges patch/minor Dependabot PRs hands-off; holds majors, the two
+# trust-boundary actions, and security-review-labeled PRs for manual review.
+#
+# Hold gate (any one holds the PR):
+#   - effective update-type is semver-major (majors split into standalone PRs);
+#   - the bump touches a trust-boundary action that runs with secrets in scope
+#     (actions/create-github-app-token, milanhorvatovic/codex-ai-code-review-action);
+#   - the PR carries `trust-boundary` or `security-review-required`.
+#
+# A repository variable DEPENDABOT_AUTOMERGE_ENABLED is the kill-switch: the job
+# always runs and logs the switch state, but the approve and merge steps only
+# act when it is exactly 'true'. Missing/unset disables auto-merge (PRs wait for
+# a manual merge) — a fail-safe default, surfaced in the log so a misconfigured
+# switch is not mistaken for a deliberate "disabled".
+#
+# Note on Copilot review: the `main` ruleset sets required_review_thread_resolution
+# with Copilot reviewing on push, so an unresolved Copilot comment blocks the
+# merge. The synchronous merge then fails and falls back to GitHub auto-merge,
+# which waits — a maintainer must resolve the threads (or `@dependabot recreate`)
+# to unstick such a PR. See CONTRIBUTING.md -> Dependency Updates.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# Serialize per PR so rapid synchronize/labeled events do not race the merge
+# against itself. Cancel for opened/reopened/synchronize (fresher state to merge
+# against) and for either security-review `labeled` event (stop the merge now).
+# Do NOT cancel for other `labeled` events: Dependabot adds dependencies/release
+# labels in rapid succession right after opening, and those replacement runs skip
+# the merge path per their `if:` guards, so canceling the in-flight merge run for
+# them would strand the PR. Letting them queue is harmless (they no-op the merge).
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'trust-boundary' || github.event.label.name == 'security-review-required' }}
+
+jobs:
+  auto-merge:
+    # Skip on label events — auto-merge is set once at open/synchronize time. A
+    # later security-review label is handled by disable-auto-merge-on-security-review.
+    if: >-
+      github.event.action != 'labeled' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # `gh pr checks --watch` blocks until every required check is terminal. Cap
+    # well above typical required-check runtime (1-3 min) so a genuine hang
+    # surfaces as a failure without flaking on normal runs.
+    timeout-minutes: 30
+    # `checks: read` + `statuses: read` back `gh pr checks --required --watch`.
+    # With an explicit permissions block, unlisted scopes default to none.
+    permissions:
+      checks: read
+      contents: write
+      pull-requests: write
+      statuses: read
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # @v3 as 3.1.0
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Pick the most-severe update-type across the (possibly grouped) bump.
+      # Kept inline and identical to dependabot-release-label.yaml so the merge
+      # policy and the release label agree — the two copies MUST stay in sync.
+      # The `else` defaults to semver-major (not patch): an empty or unrecognized
+      # updateType is unclassifiable, and the merge gate excludes semver-major, so
+      # defaulting there fails closed — an unclassifiable bump is held for manual
+      # review instead of silently routed into the auto-merge path.
+      - name: Derive effective update-type
+        id: effective
+        env:
+          UPDATED_JSON: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          effective=$(jq -r '
+            [.[] | .updateType]
+            | if any(. == "version-update:semver-major") then "version-update:semver-major"
+              elif any(. == "version-update:semver-minor") then "version-update:semver-minor"
+              elif any(. == "version-update:semver-patch") then "version-update:semver-patch"
+              else "version-update:semver-major"
+              end
+          ' <<<"$UPDATED_JSON")
+          echo "update-type=$effective" >> "$GITHUB_OUTPUT"
+
+      # Always-run observability for the kill-switch. A skipped job step is
+      # invisible; logging the resolved state here distinguishes "deliberately
+      # disabled" from "vars not resolving in Dependabot context".
+      - name: Report auto-merge switch state
+        env:
+          ENABLED: ${{ vars.DEPENDABOT_AUTOMERGE_ENABLED }}
+        run: |
+          set -euo pipefail
+          if [ "${ENABLED:-}" = "true" ]; then
+            echo "DEPENDABOT_AUTOMERGE_ENABLED=true; auto-merge path active."
+          else
+            echo "::notice::DEPENDABOT_AUTOMERGE_ENABLED is '${ENABLED:-<unset>}' (not 'true'); approve/merge steps are skipped. Set the repository variable to 'true' to enable. If it IS set to 'true' and you still see this, vars are not resolving in the Dependabot context."
+          fi
+
+      # Auto-approve before enabling/attempting merge so the required code-owner
+      # review is in place. GITHUB_TOKEN (and Dependabot) cannot approve PRs; a
+      # code-owner PAT stored as a *Dependabot* secret is required. When unset
+      # the step warns and skips — the merge step then falls back to GitHub
+      # auto-merge, which waits for a manual code-owner approval.
+      - name: Approve PR (so the required code-owner review passes)
+        if: >-
+          steps.effective.outputs.update-type != 'version-update:semver-major'
+          && !contains(steps.metadata.outputs.dependency-names, 'actions/create-github-app-token')
+          && !contains(steps.metadata.outputs.dependency-names, 'milanhorvatovic/codex-ai-code-review-action')
+          && !contains(github.event.pull_request.labels.*.name, 'trust-boundary')
+          && !contains(github.event.pull_request.labels.*.name, 'security-review-required')
+          && vars.DEPENDABOT_AUTOMERGE_ENABLED == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEOWNER_APPROVER_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        # Intentionally fail-open: any failure warns and exits 0. The merge step
+        # queries the authoritative reviewDecision and falls back when it is not
+        # APPROVED, so a later manual code-owner approval can still fire the merge.
+        # errexit is disabled explicitly; every external call is guarded with
+        # `if !` and warns before exit 0 — preserve that pattern when extending.
+        run: |
+          set +e
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::CODEOWNER_APPROVER_TOKEN is not set in the Dependabot secret store — skipping auto-approval. The merge step will fall back to GitHub auto-merge, which waits for a manual code-owner approval. Configure a fine-grained PAT (Pull requests: write) belonging to a code-owner under Settings -> Secrets and variables -> Dependabot."
+            exit 0
+          fi
+          if ! label_state=$(gh pr view "$PR_URL" --json labels --jq 'any(.labels[]; .name == "trust-boundary" or .name == "security-review-required")'); then
+            echo "::warning::Failed to query security-review label state; skipping auto-approval. The merge step will fall back to GitHub auto-merge."
+            exit 0
+          fi
+          if [ "$label_state" = "true" ]; then
+            echo "security-review label (trust-boundary or security-review-required) is now present (applied after workflow start); skipping auto-approval."
+            exit 0
+          fi
+          if ! gh pr review --approve --body "Auto-approved by the Dependabot Auto-Merge workflow (non-major, not a trust-boundary action, no security-review label)." "$PR_URL"; then
+            echo "::warning::Failed to post auto-approval review (likely a revoked or insufficiently-scoped CODEOWNER_APPROVER_TOKEN, or a transient GitHub API error). The merge step will fall back to GitHub auto-merge."
+            exit 0
+          fi
+
+      # Wait for required checks, then squash-merge synchronously when the PR has
+      # the required code-owner review; otherwise fall back to enabling GitHub
+      # auto-merge so a later manual approval (or rerun-to-green) can finish it.
+      # The synchronous path avoids the auto-merge worker's occasional dropped
+      # fire after the last required check goes green. The server-side ruleset is
+      # the safety boundary: a non-bypass merge is refused unless every required
+      # check has passed, so an early watch exit only causes a fallback, never an
+      # unsafe merge.
+      - name: Wait for required checks, then squash-merge
+        if: >-
+          steps.effective.outputs.update-type != 'version-update:semver-major'
+          && !contains(steps.metadata.outputs.dependency-names, 'actions/create-github-app-token')
+          && !contains(steps.metadata.outputs.dependency-names, 'milanhorvatovic/codex-ai-code-review-action')
+          && !contains(github.event.pull_request.labels.*.name, 'trust-boundary')
+          && !contains(github.event.pull_request.labels.*.name, 'security-review-required')
+          && vars.DEPENDABOT_AUTOMERGE_ENABLED == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+
+          # Tri-state security-review label query: "true"/"false" on success,
+          # "unknown" on a gh failure. Callers fail closed on "unknown".
+          security_review_state() {
+            local result
+            if ! result=$(gh pr view "$PR_URL" --json labels --jq 'any(.labels[]; .name == "trust-boundary" or .name == "security-review-required")'); then
+              echo "unknown"
+              return
+            fi
+            echo "$result"
+          }
+
+          # `gh pr merge --auto` may exit non-zero (already enabled, already
+          # merged/closed, transient error); verify the desired state actually
+          # holds (MERGED/CLOSED, or OPEN with auto-merge enabled) and surface a
+          # real failure as a workflow error instead of pretending success.
+          verify_auto_merge_or_terminal() {
+            local state_json pr_state has_auto
+            if ! state_json=$(gh pr view "$PR_URL" --json state,autoMergeRequest); then
+              echo "::error::Failed to verify PR state after gh pr merge --auto. Cannot confirm auto-merge was enabled; manual intervention required."
+              return 1
+            fi
+            pr_state=$(jq -r '.state' <<<"$state_json")
+            has_auto=$(jq -r '.autoMergeRequest != null' <<<"$state_json")
+            case "$pr_state" in
+              MERGED|CLOSED)
+                echo "PR is $pr_state; nothing more to do."
+                return 0 ;;
+              OPEN)
+                if [ "$has_auto" = "true" ]; then
+                  return 0
+                fi
+                echo "::error::gh pr merge --auto exited but autoMergeRequest is still null on an OPEN PR. The enable failed for a real reason — the bot lacks merge permission, the repository's Allow auto-merge setting is disabled, or a GitHub-side error. Investigate and re-run."
+                return 1 ;;
+              *)
+                echo "::error::Unexpected PR state '$pr_state' after auto-merge attempt; manual intervention required."
+                return 1 ;;
+            esac
+          }
+
+          # Confirm auto-merge is actually cleared after a --disable-auto call.
+          # A --disable-auto that reports success without taking effect would
+          # leave a security-review PR armed, so re-query and treat a still-armed
+          # (or unverifiable) PR as a failure — the same verify-it-took pattern as
+          # verify_auto_merge_or_terminal. Emits its own ::error on failure.
+          verify_disarmed() {
+            local am
+            if ! am=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest'); then
+              echo "::error::Failed to verify auto-merge was disabled after --disable-auto; cannot confirm the PR is disarmed. Investigate immediately."
+              return 1
+            fi
+            if [ "$am" != "null" ]; then
+              echo "::error::auto-merge is still enabled after --disable-auto. The PR may merge automatically despite the security-review hold. Investigate immediately."
+              return 1
+            fi
+            return 0
+          }
+
+          # Enable GitHub auto-merge, verify it took, and revert it if a
+          # security-review label is now present (or its state is unknown).
+          # Disable-auto on a security-review PR is a hard failure: a silently
+          # armed auto-merge on a must-stay-manual PR is worse than a noisy fail.
+          # Both revert paths verify the disarm actually cleared auto-merge.
+          arm_auto_merge() {
+            gh pr merge --auto --squash "$PR_URL" 2>&1 || true
+            if ! verify_auto_merge_or_terminal; then
+              return 1
+            fi
+            case "$(security_review_state)" in
+              true)
+                echo "security-review label is now present; reverting auto-merge."
+                gh pr merge --disable-auto "$PR_URL" || true
+                # Hard-stop if the disarm cannot be confirmed: a still-armed
+                # security-review PR is a policy bypass. exit (not return) so the
+                # failure can't be swallowed by a caller's `|| true`. On a
+                # confirmed disarm, fall through to `return 1` to abort the merge.
+                verify_disarmed || exit 1
+                return 1 ;;
+              unknown)
+                echo "::error::Failed to verify security-review label state after arming auto-merge. Defensively disabling auto-merge to avoid a possible policy bypass."
+                gh pr merge --disable-auto "$PR_URL" || true
+                # Hard-stop if the disarm cannot be confirmed: a still-armed
+                # security-review PR is a policy bypass. exit (not return) so the
+                # failure can't be swallowed by a caller's `|| true`. On a
+                # confirmed disarm, fall through to `return 1` to abort the merge.
+                verify_disarmed || exit 1
+                return 1 ;;
+            esac
+            return 0
+          }
+
+          # Unhappy-path fallback (review not APPROVED, label state unknown):
+          # enable auto-merge so a later code-owner approval finishes the merge.
+          fall_back_to_auto_merge() {
+            echo "::warning::$1; enabling GitHub auto-merge so a later code-owner approval (or the reactive disable-auto-merge job for security-review labels) can finish or halt the merge."
+            if ! arm_auto_merge; then
+              exit 1
+            fi
+            exit 0
+          }
+
+          # Pre-poll security-review check. `unknown` fails closed: if a label is
+          # actually present, the reactive disable job may have already run, so
+          # arming auto-merge here could leave it active on a must-stay-manual PR.
+          case "$(security_review_state)" in
+            true)
+              echo "security-review label is present (applied after workflow start); skipping merge."
+              exit 0
+              ;;
+            unknown)
+              echo "::error::Failed to query security-review label state pre-poll. Refusing to arm auto-merge — investigate the gh pr view error above and re-run."
+              exit 1
+              ;;
+          esac
+
+          # Modest registration guard: wait until the required-check set is
+          # visible and stable across two reads before entering --watch. The
+          # required checks fire on the same pull_request event as this workflow
+          # and register within seconds, so a brief settle avoids --watch exiting
+          # "all passed" against an empty set on a freshly-opened PR. This is an
+          # optimization for the synchronous path, not a safety gate — the ruleset
+          # enforces the full required set server-side. `gh pr checks --required`
+          # exits 8 when checks are pending (count on stdout is still valid); any
+          # other non-zero is a real CLI error and is treated as "not yet visible".
+          prev=-1
+          deadline=$(($(date +%s) + 15))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            rc=0
+            count=$(gh pr checks "$PR_URL" --required --json name --jq 'length' 2>/dev/null) || rc=$?
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 8 ]; then
+              count=0
+            fi
+            count=${count:-0}
+            if [ "$count" -gt 0 ] && [ "$count" = "$prev" ]; then
+              break
+            fi
+            prev=$count
+            sleep 5
+          done
+
+          # `--required` filters to the ruleset's required_status_checks; `--watch`
+          # polls until each is terminal; `--fail-fast` aborts on the first
+          # failure. On failure, re-arm via auto-merge so a later rerun-to-green
+          # can fire the merge without a manual workflow re-trigger, then exit 1
+          # so the failure stays visible.
+          if ! gh pr checks "$PR_URL" --required --watch --fail-fast; then
+            echo "::warning::A required check failed during the wait; enabling GitHub auto-merge as a re-armed safety net so a later rerun-to-green can fire the merge."
+            arm_auto_merge || true
+            exit 1
+          fi
+
+          # Post-poll security-review re-check (same fail-closed treatment).
+          case "$(security_review_state)" in
+            true)
+              echo "security-review label was applied while waiting for checks; skipping merge."
+              exit 0
+              ;;
+            unknown)
+              echo "::error::Failed to query security-review label state post-poll. Refusing to arm auto-merge — investigate and re-run."
+              exit 1
+              ;;
+          esac
+
+          # reviewDecision is GitHub's authoritative answer to "is this PR
+          # sufficiently approved per the ruleset (incl. code-owner review)?",
+          # regardless of whether gh pr review --approve exited 0 above.
+          if ! review_decision=$(gh pr view "$PR_URL" --json reviewDecision --jq .reviewDecision); then
+            fall_back_to_auto_merge "Failed to query reviewDecision"
+          fi
+          if [ "$review_decision" != "APPROVED" ]; then
+            fall_back_to_auto_merge "reviewDecision is '${review_decision:-<empty>}' (need APPROVED for synchronous merge)"
+          fi
+
+          # Final fail-closed security-review re-check, immediately before the
+          # merge call. The post-poll re-check above runs before the reviewDecision
+          # query, leaving a multi-second window in which a security-review label
+          # could be applied and then squashed before the concurrency-cancel or the
+          # reactive disable job intervenes — and a completed squash cannot be
+          # un-merged. This shrinks the TOCTOU window to the single merge API call.
+          # `unknown` fails closed, matching the pre/post-poll checks.
+          case "$(security_review_state)" in
+            true)
+              echo "security-review label was applied just before merge; skipping."
+              exit 0
+              ;;
+            unknown)
+              echo "::error::Failed to query security-review label state immediately before merge; refusing to merge."
+              exit 1
+              ;;
+          esac
+
+          # Mergeability can change between the watch returning and this call (the
+          # ruleset sets strict_required_status_checks_policy, so BEHIND blocks the
+          # merge). This workflow does not re-trigger on base-branch updates, so a
+          # naked failure would strand the PR — fall back to verified auto-merge.
+          if ! gh pr merge --squash "$PR_URL"; then
+            fall_back_to_auto_merge "Synchronous squash merge failed (mergeability may have changed — base advanced, transient error, or branch is BEHIND)"
+          fi
+
+  # Reactive disable: if a maintainer applies a security-review label after
+  # auto-merge was already enabled, the label-guard `if:` above only prevents
+  # re-enabling — it does not revoke. This job runs on the `labeled` event and
+  # disables auto-merge so the PR stays open for manual review.
+  disable-auto-merge-on-security-review:
+    if: >-
+      github.event.action == 'labeled' &&
+      (github.event.label.name == 'trust-boundary' || github.event.label.name == 'security-review-required') &&
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Disable auto-merge if enabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        # Auto-merge may legitimately be unset (semver-major, excluded action, or
+        # the kill-switch was off), in which case --disable-auto errors; skip
+        # cleanly when there is nothing to disable.
+        run: |
+          set -euo pipefail
+          auto_merge=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest')
+          if [ "$auto_merge" = "null" ]; then
+            echo "Auto-merge is not enabled on this PR; nothing to disable."
+            exit 0
+          fi
+          # Tolerate a non-zero exit here: between the pre-check above and this
+          # call another run (or the merge landing) can clear auto-merge, and
+          # `--disable-auto` then errors with "no auto-merge to disable" even
+          # though the desired state is already reached. The authoritative check
+          # is the re-query below, not this call's exit code.
+          gh pr merge --disable-auto "$PR_URL" || true
+          # Verify the disarm took: a --disable-auto that reported success without
+          # clearing the request would leave this security-review PR armed.
+          auto_merge=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest')
+          if [ "$auto_merge" != "null" ]; then
+            echo "::error::auto-merge is still enabled after --disable-auto. The PR may merge automatically despite the security-review hold. Investigate immediately."
+            exit 1
+          fi
+          echo "Auto-merge disabled."
