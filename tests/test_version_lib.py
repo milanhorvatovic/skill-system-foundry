@@ -530,5 +530,70 @@ class PathHelperTests(unittest.TestCase):
         )
 
 
+class ReleaseLevelsInTests(unittest.TestCase):
+    def test_extracts_single_level(self) -> None:
+        self.assertEqual(version.release_levels_in(["release: minor"]), ["minor"])
+
+    def test_ignores_non_release_labels(self) -> None:
+        labels = ["dependencies", "release: patch", "github-actions"]
+        self.assertEqual(version.release_levels_in(labels), ["patch"])
+
+    def test_ignores_unknown_release_suffix(self) -> None:
+        self.assertEqual(version.release_levels_in(["release: huge"]), [])
+
+    def test_preserves_order_of_multiple(self) -> None:
+        labels = ["release: major", "release: skip"]
+        self.assertEqual(version.release_levels_in(labels), ["major", "skip"])
+
+    def test_empty_when_no_release_label(self) -> None:
+        self.assertEqual(version.release_levels_in(["bug", "enhancement"]), [])
+
+
+class HighestLevelTests(unittest.TestCase):
+    def test_major_beats_minor_and_patch(self) -> None:
+        self.assertEqual(
+            version.highest_level(["patch", "major", "minor"]), "major"
+        )
+
+    def test_minor_beats_patch(self) -> None:
+        self.assertEqual(version.highest_level(["patch", "minor"]), "minor")
+
+    def test_skip_contributes_nothing(self) -> None:
+        self.assertIsNone(version.highest_level(["skip", "skip"]))
+
+    def test_empty_returns_none(self) -> None:
+        self.assertIsNone(version.highest_level([]))
+
+    def test_skip_alongside_patch_yields_patch(self) -> None:
+        self.assertEqual(version.highest_level(["skip", "patch"]), "patch")
+
+
+class NextVersionTests(unittest.TestCase):
+    def test_major_bump_zeros_minor_and_patch(self) -> None:
+        self.assertEqual(version.next_version("1.2.3", "major"), "2.0.0")
+
+    def test_minor_bump_zeros_patch(self) -> None:
+        self.assertEqual(version.next_version("1.2.3", "minor"), "1.3.0")
+
+    def test_patch_bump(self) -> None:
+        self.assertEqual(version.next_version("1.2.3", "patch"), "1.2.4")
+
+    def test_rejects_prerelease_base(self) -> None:
+        with self.assertRaises(ValueError):
+            version.next_version("1.2.3-rc.1", "patch")
+
+    def test_rejects_skip_level(self) -> None:
+        with self.assertRaises(ValueError):
+            version.next_version("1.2.3", "skip")
+
+    def test_rejects_unknown_level(self) -> None:
+        with self.assertRaises(ValueError):
+            version.next_version("1.2.3", "huge")
+
+    def test_rejects_invalid_base(self) -> None:
+        with self.assertRaises(ValueError):
+            version.next_version("not-a-version", "patch")
+
+
 if __name__ == "__main__":
     unittest.main()

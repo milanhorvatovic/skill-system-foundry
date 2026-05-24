@@ -120,6 +120,86 @@ def compare(a: str, b: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# release-level helpers
+# ---------------------------------------------------------------------------
+
+
+# The label taxonomy WI-1 established: exactly one ``release: <level>`` per PR.
+# ``skip`` is a real signal (the PR ships nothing user-facing) and is distinct
+# from an absent label, which ``compute_release_version.py`` treats as an error.
+RELEASE_LEVELS: tuple[str, ...] = ("major", "minor", "patch", "skip")
+
+# Precedence for the "highest bump wins" rule.  ``skip`` is intentionally
+# absent: it contributes nothing to the computed version.
+LEVEL_RANK: dict[str, int] = {"major": 3, "minor": 2, "patch": 1}
+
+_RELEASE_LABEL_PREFIX = "release: "
+
+
+def release_levels_in(labels: list[str]) -> list[str]:
+    """Return the levels named by ``release: <level>`` entries in *labels*.
+
+    Each recognized ``release: major|minor|patch|skip`` label maps to its
+    bare level, preserving input order.  A ``release:`` prefix with an
+    unknown suffix, or any non-release label, is ignored.  An empty result
+    means the PR carries no release label; a result of length > 1 means it
+    carries several (an ambiguous PR).  The caller decides the policy for
+    those two cases.
+    """
+    levels: list[str] = []
+    for label in labels:
+        if not label.startswith(_RELEASE_LABEL_PREFIX):
+            continue
+        candidate = label[len(_RELEASE_LABEL_PREFIX):]
+        if candidate in RELEASE_LEVELS:
+            levels.append(candidate)
+    return levels
+
+
+def highest_level(levels: list[str]) -> str | None:
+    """Return the highest-precedence non-skip level in *levels*, or ``None``.
+
+    ``skip`` (and any value absent from :data:`LEVEL_RANK`) contributes
+    nothing.  ``None`` means there is no bump to apply — every input was
+    ``skip`` or the list was empty.
+    """
+    best: str | None = None
+    best_rank = 0
+    for level in levels:
+        rank = LEVEL_RANK.get(level, 0)
+        if rank > best_rank:
+            best_rank = rank
+            best = level
+    return best
+
+
+def next_version(base: str, level: str) -> str:
+    """Return the version produced by bumping *base* by *level*.
+
+    *base* must be a core ``X.Y.Z`` version with no pre-release suffix — a
+    pre-release base raises ``ValueError`` because the bump semantics are
+    ambiguous (the foundry never ships pre-releases; pass an explicit
+    version instead).  *level* must be ``major`` / ``minor`` / ``patch``;
+    ``skip`` and unknown values raise ``ValueError`` because they never
+    produce a version.  Propagates ``ValueError`` from :func:`parse` when
+    *base* is not valid semver.
+    """
+    major, minor, patch, pre = parse(base)
+    if pre:
+        raise ValueError(
+            f"base version {base!r} is a pre-release; pass an explicit "
+            "version instead of computing from a pre-release base"
+        )
+    if level == "major":
+        return f"{major + 1}.0.0"
+    if level == "minor":
+        return f"{major}.{minor + 1}.0"
+    if level == "patch":
+        return f"{major}.{minor}.{patch + 1}"
+    raise ValueError(f"level must be one of major/minor/patch; got {level!r}")
+
+
+# ---------------------------------------------------------------------------
 # read helpers
 # ---------------------------------------------------------------------------
 
