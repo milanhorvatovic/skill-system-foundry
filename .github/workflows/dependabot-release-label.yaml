@@ -50,11 +50,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
-# `pull-requests: write` covers `gh pr edit --add-label/--remove-label` for
-# *existing* labels. The four release labels already exist on the repo, so we
-# never hit the create-label path that would also require `issues: write`.
+# `gh pr edit --add-label/--remove-label` mutates labels through GitHub's
+# issue-labels API (PRs are issues for labeling), which can require
+# `issues: write` — `pull-requests: write` alone is not reliably sufficient
+# across gh's REST/GraphQL label paths. Grant both so the reconcile write
+# cannot 403 at runtime; `pull-requests: write` also covers the `gh pr view`
+# / `gh pr edit` PR context. The four `release:` labels already exist, so the
+# create-label path is never exercised either.
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
