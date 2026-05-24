@@ -74,7 +74,10 @@ jobs:
       # Pick the most-severe update-type across the (possibly grouped) bump.
       # Kept inline and identical to dependabot-auto-merge.yaml so the label and
       # the merge policy agree on what a PR is — the two copies MUST stay in
-      # sync. The default `version-update:semver-patch` covers an empty array.
+      # sync. The `else` defaults to semver-major (not patch): an empty or
+      # unrecognized updateType is unclassifiable, so it labels `release: major`
+      # — the safe conservative default that matches the auto-merge gate, which
+      # holds an unclassifiable bump for manual review.
       - name: Derive effective update-type
         id: effective
         env:
@@ -86,7 +89,7 @@ jobs:
             | if any(. == "version-update:semver-major") then "version-update:semver-major"
               elif any(. == "version-update:semver-minor") then "version-update:semver-minor"
               elif any(. == "version-update:semver-patch") then "version-update:semver-patch"
-              else "version-update:semver-patch"
+              else "version-update:semver-major"
               end
           ' <<<"$UPDATED_JSON")
           echo "update-type=$effective" >> "$GITHUB_OUTPUT"

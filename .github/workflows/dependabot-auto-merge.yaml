@@ -74,6 +74,10 @@ jobs:
       # Pick the most-severe update-type across the (possibly grouped) bump.
       # Kept inline and identical to dependabot-release-label.yaml so the merge
       # policy and the release label agree — the two copies MUST stay in sync.
+      # The `else` defaults to semver-major (not patch): an empty or unrecognized
+      # updateType is unclassifiable, and the merge gate excludes semver-major, so
+      # defaulting there fails closed — an unclassifiable bump is held for manual
+      # review instead of silently routed into the auto-merge path.
       - name: Derive effective update-type
         id: effective
         env:
@@ -85,7 +89,7 @@ jobs:
             | if any(. == "version-update:semver-major") then "version-update:semver-major"
               elif any(. == "version-update:semver-minor") then "version-update:semver-minor"
               elif any(. == "version-update:semver-patch") then "version-update:semver-patch"
-              else "version-update:semver-patch"
+              else "version-update:semver-major"
               end
           ' <<<"$UPDATED_JSON")
           echo "update-type=$effective" >> "$GITHUB_OUTPUT"
@@ -314,6 +318,24 @@ jobs:
           if [ "$review_decision" != "APPROVED" ]; then
             fall_back_to_auto_merge "reviewDecision is '${review_decision:-<empty>}' (need APPROVED for synchronous merge)"
           fi
+
+          # Final fail-closed security-review re-check, immediately before the
+          # merge call. The post-poll re-check above runs before the reviewDecision
+          # query, leaving a multi-second window in which a security-review label
+          # could be applied and then squashed before the concurrency-cancel or the
+          # reactive disable job intervenes — and a completed squash cannot be
+          # un-merged. This shrinks the TOCTOU window to the single merge API call.
+          # `unknown` fails closed, matching the pre/post-poll checks.
+          case "$(security_review_state)" in
+            true)
+              echo "security-review label was applied just before merge; skipping."
+              exit 0
+              ;;
+            unknown)
+              echo "::error::Failed to query security-review label state immediately before merge; refusing to merge."
+              exit 1
+              ;;
+          esac
 
           # Mergeability can change between the watch returning and this call (the
           # ruleset sets strict_required_status_checks_policy, so BEHIND blocks the
