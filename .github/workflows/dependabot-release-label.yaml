@@ -31,11 +31,13 @@ name: Dependabot Release Label
 #      are preserved on the same principle.
 #
 # Race protection: the edit combines `--remove-label` and `--add-label` in one
-# `gh pr edit` call where applicable, and a post-edit recheck rolls back the
-# workflow-applied label if a maintainer's manual `release: *` raced into the
-# check-then-act window. The rollback only ever removes the label this workflow
-# just applied, so a maintainer applying the *same* label is a set-semantics
-# no-op and no rollback fires.
+# `gh pr edit` call where applicable, and a post-edit recheck warns — without
+# removing anything — when more than one `release: *` label is present after the
+# edit (a second label can race in from a maintainer or from Dependabot's static
+# `release: patch` landing late). The recheck deliberately does NOT roll back
+# the workflow-applied label: blind removal could delete the correct label (e.g.
+# drop `release: major` and leave the static `release: patch`), so the ambiguous
+# state is left for manual triage and `verify-pr-release-label` to flag.
 #
 # Trigger scope is `opened`/`reopened` only. `synchronize` is deliberately
 # omitted: a rebase/force-push does not change a bump's update-type, so the
@@ -58,8 +60,8 @@ on:
       - reopened
 
 # Queue concurrent runs on the same PR rather than cancel them. Label edits are
-# idempotent and run in 1-2 s; the post-edit recheck + rollback step should not
-# be interrupted mid-flight by the next `opened`/`reopened` event.
+# idempotent and run in 1-2 s; the post-edit recheck should not be interrupted
+# mid-flight by the next `opened`/`reopened` event.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: false
