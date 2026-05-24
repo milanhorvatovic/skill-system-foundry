@@ -110,6 +110,24 @@ class SelectWindowLevelsTests(unittest.TestCase):
 # ===========================================================================
 
 
+class RunHelperErrorTests(unittest.TestCase):
+    def test_run_git_missing_binary_raises_compute_error(self) -> None:
+        def boom(*args: object, **kwargs: object) -> object:
+            raise FileNotFoundError("git")
+
+        with mock.patch.object(compute.subprocess, "run", boom):
+            with self.assertRaises(compute.ComputeError):
+                compute.run_git(["status"], "/repo")
+
+    def test_run_gh_missing_binary_raises_compute_error(self) -> None:
+        def boom(*args: object, **kwargs: object) -> object:
+            raise FileNotFoundError("gh")
+
+        with mock.patch.object(compute.subprocess, "run", boom):
+            with self.assertRaises(compute.ComputeError):
+                compute.run_gh(["pr", "list"], "/repo")
+
+
 class LatestReleaseTagTests(unittest.TestCase):
     def test_picks_semver_max_and_excludes_prereleases(self) -> None:
         tags = "v1.0.0\nv1.2.1\nv1.10.0\nv2.0.0-rc.1\n"
@@ -240,6 +258,25 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertIn("does not match the latest tag", err)
         self.assertIn("leads the latest tag", err)
+
+    def test_unreadable_manifest_aborts_cleanly(self) -> None:
+        def boom(path: str) -> str | None:
+            raise OSError("unreadable")
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(compute, "find_repo_root", lambda start: "/repo")
+            )
+            stack.enter_context(
+                mock.patch.object(compute, "run_git", _fake_git("v1.2.1\n", "aaa\n"))
+            )
+            stack.enter_context(
+                mock.patch.object(compute._version, "read_skill_md_version", boom)
+            )
+            code, out, err = _invoke()
+        self.assertEqual(code, compute.EXIT_PRECONDITION)
+        self.assertEqual(out, "")
+        self.assertIn("SKILL.md", err)
 
     def test_drift_manifest_behind_tag_aborts(self) -> None:
         with _run_env(

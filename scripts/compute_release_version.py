@@ -36,8 +36,9 @@ Exit codes:
     0   success — the computed X.Y.Z is on stdout
     2   usage error (argparse)
     3   precondition failed — not inside a git repository, no vX.Y.Z tag,
-        manifest/tag drift, a pre-release manifest base, a git/gh invocation
-        failed, or the PR-list cap was hit
+        manifest/tag drift, a pre-release manifest base, an unreadable SKILL.md,
+        git/gh missing or failing, a malformed gh payload, or the PR-list cap
+        was hit
     4   label gap — one or more in-window PRs are unlabeled or carry more than
         one release label (printed as a fail-and-list with fix hints)
     5   nothing to release — no PRs merged since the last tag, or every merged
@@ -104,32 +105,50 @@ def find_repo_root(start: str) -> str | None:
 
 
 def run_git(args: list[str], repo_root: str) -> str:
-    """Run ``git *args`` in *repo_root*; raise :class:`ComputeError` on failure."""
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    """Run ``git *args`` in *repo_root*; raise :class:`ComputeError` on failure.
+
+    A missing or non-executable ``git`` (the ``OSError`` the spawn raises) is
+    mapped to :class:`ComputeError` so the caller's exit-code contract holds
+    instead of surfacing an uncaught traceback.
+    """
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        raise ComputeError(f"could not run git (is it installed?): {exc}") from exc
     if result.returncode != 0:
         raise ComputeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
 
 
 def run_gh(args: list[str], repo_root: str) -> str:
-    """Run ``gh *args`` in *repo_root*; raise :class:`ComputeError` on failure."""
-    result = subprocess.run(
-        ["gh", *args],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    """Run ``gh *args`` in *repo_root*; raise :class:`ComputeError` on failure.
+
+    A missing or non-executable ``gh`` (the ``OSError`` the spawn raises) is
+    mapped to :class:`ComputeError` so the caller's exit-code contract holds
+    instead of surfacing an uncaught traceback.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        raise ComputeError(
+            f"could not run gh (is the GitHub CLI installed?): {exc}"
+        ) from exc
     if result.returncode != 0:
         raise ComputeError(f"gh {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
@@ -318,7 +337,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         tag_core = latest_release_tag(repo_root)
-        manifest = _version.read_skill_md_version(_version.skill_md_path(repo_root))
+        try:
+            manifest = _version.read_skill_md_version(
+                _version.skill_md_path(repo_root)
+            )
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ComputeError(
+                f"could not read skill-system-foundry/SKILL.md: {exc}"
+            ) from exc
         if manifest is None:
             raise ComputeError(
                 "could not read metadata.version from skill-system-foundry/SKILL.md."
