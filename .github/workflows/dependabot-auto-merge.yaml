@@ -242,12 +242,20 @@ jobs:
               true)
                 echo "security-review label is now present; reverting auto-merge."
                 gh pr merge --disable-auto "$PR_URL" || true
-                verify_disarmed || true
+                # Hard-stop if the disarm cannot be confirmed: a still-armed
+                # security-review PR is a policy bypass. exit (not return) so the
+                # failure can't be swallowed by a caller's `|| true`. On a
+                # confirmed disarm, fall through to `return 1` to abort the merge.
+                verify_disarmed || exit 1
                 return 1 ;;
               unknown)
                 echo "::error::Failed to verify security-review label state after arming auto-merge. Defensively disabling auto-merge to avoid a possible policy bypass."
                 gh pr merge --disable-auto "$PR_URL" || true
-                verify_disarmed || true
+                # Hard-stop if the disarm cannot be confirmed: a still-armed
+                # security-review PR is a policy bypass. exit (not return) so the
+                # failure can't be swallowed by a caller's `|| true`. On a
+                # confirmed disarm, fall through to `return 1` to abort the merge.
+                verify_disarmed || exit 1
                 return 1 ;;
             esac
             return 0
