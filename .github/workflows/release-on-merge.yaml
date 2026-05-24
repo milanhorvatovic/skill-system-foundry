@@ -5,9 +5,9 @@ name: Release on merge
 # event triggers release.yaml — a ``GITHUB_TOKEN``-authored tag push would not.
 #
 # Keying off the head ref + ``merged == true`` ties tagging to an actual merged
-# release PR, so it never mis-fires on the manifest/tag drift the repo currently
-# carries (manifests at 1.2.0, published tag v1.2.1) the way a bare
-# "manifest version has no tag" trigger would.
+# release PR, so it never mis-fires on transient manifest/tag drift (e.g. a
+# manifest bumped for a release whose tag failed or was abandoned) the way a
+# bare "manifest version has no tag" trigger would.
 
 on:
   pull_request:
