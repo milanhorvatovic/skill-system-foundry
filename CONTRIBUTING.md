@@ -146,7 +146,7 @@ Dependabot opens grouped pull requests weekly for the GitHub Actions and Python 
 `dependabot-auto-merge.yaml` merges a Dependabot PR hands-off once its required checks pass and a code-owner approval is in place. It deliberately **holds** a PR for manual review when any of the following is true:
 
 - the effective update-type is **semver-major** (these arrive as standalone PRs);
-- the bump touches a **trust-boundary action** that runs with secrets in scope — currently `actions/create-github-app-token` (mints the App private key) and `milanhorvatovic/codex-ai-code-review-action` (runs with `OPENAI_API_KEY`). When a new action-level trust-boundary dependency is added, extend the exclude list in both `.github/dependabot.yaml` and `.github/workflows/dependabot-auto-merge.yaml`;
+- the bump touches a **trust-boundary action** that runs with secrets in scope — currently `actions/create-github-app-token` (mints the App private key) and `milanhorvatovic/codex-ai-code-review-action` (runs with `OPENAI_API_KEY`). When a new action-level trust-boundary dependency is added, extend the exclude list in `.github/dependabot.yaml`, the auto-merge guard in `.github/workflows/dependabot-auto-merge.yaml`, and the `check_dependency_gates` guard in `.github/workflows/dependabot-reconciler.yaml`;
 - the PR carries **`trust-boundary`** or **`security-review-required`**. Apply either to any dependency PR you want a human to review before it merges; applying one to an already-armed PR disarms the pending auto-merge.
 
 The repository variable **`DEPENDABOT_AUTOMERGE_ENABLED`** is the kill-switch: auto-merge acts only when it is exactly `true`. Unset or any other value disables it, and the PR waits for a manual merge.
@@ -154,6 +154,16 @@ The repository variable **`DEPENDABOT_AUTOMERGE_ENABLED`** is the kill-switch: a
 A held PR is merged the normal way after review. Note that an unresolved **Copilot review comment** parks a PR — the `main` ruleset requires review-thread resolution — so resolve the threads (or comment `@dependabot recreate`) to let auto-merge proceed.
 
 When the grouping or label configuration changes, existing open Dependabot PRs keep their old shape until recreated — comment `@dependabot recreate` (or close them) so they adopt the new configuration.
+
+### Reconciler
+
+`dependabot-auto-merge.yaml` only sees `pull_request` events, so a PR can stall in a state no `pull_request` event re-fires on. `dependabot-reconciler.yaml` is the backstop that re-drives every open Dependabot PR each tick. It runs reactively (when the auto-merge workflow completes, and on pushes to `main`), hourly on a schedule, and on manual `workflow_dispatch`. It covers three cases the auto-merge workflow cannot: a PR that goes **`BEHIND`** when another PR in the batch merges (the `main` ruleset requires branches to be up to date, and GitHub does not auto-rebase in that mode); an approval **dismissed** by the reconciler's own branch-update push (the ruleset dismisses stale reviews on push); and an auto-merge enable that **dropped or silently failed**.
+
+It never merges synchronously itself — it updates `BEHIND` branches, posts a `@dependabot recreate` on a real conflict, restores a dismissed approval on an already-armed PR, and enables auto-merge on an approved + mergeable PR. It applies the **same holds** as the auto-merge workflow (semver-major, the trust-boundary actions, and the `trust-boundary` / `security-review-required` labels), and it honors the **`DEPENDABOT_AUTOMERGE_ENABLED`** kill-switch for those merge-advancing actions — while the switch is off it still updates `BEHIND` branches and posts recreate nudges, but it does not re-approve or arm. A genuinely stuck reconciliation (a silent auto-merge enable, or a failed defensive disable on a security-review PR) fails the run red rather than passing silently.
+
+The reconciler **restores** a PR the auto-merge workflow already approved or armed; it does not **initiate** the first approval. If a Dependabot PR is open, unapproved, and unarmed — for example because its initial `Dependabot Auto-Merge` run dropped entirely and no later push re-fired it — the reconciler intentionally leaves it for manual triage. Recover it by re-running the `Dependabot Auto-Merge` workflow against that PR, or by pushing to (or `@dependabot rebase`-ing) the branch so a fresh `synchronize` re-fires the auto-merge path.
+
+Because the reconciler runs outside the Dependabot event context, its re-approval reads **`CODEOWNER_APPROVER_TOKEN` from the Actions secret store** — the auto-merge workflow reads the same PAT from the Dependabot secret store. The single code-owner PAT must therefore be stored under that name in **both** stores (workflows triggered by Dependabot cannot read Actions secrets, and vice versa). Rotate both copies together.
 
 ## Scope
 
