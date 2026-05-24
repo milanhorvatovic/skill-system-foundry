@@ -1,0 +1,159 @@
+name: Dependabot Release Label
+
+# Reconciles the `release: <level>` label on every Dependabot PR to match the
+# effective update-type derived from Dependabot's metadata.
+#
+# Groundwork for label-driven release automation (WI-3): `verify-pr-release-label`
+# is report-only today and nothing computes the next version from labels yet, so
+# these labels are not consumed for versioning at the moment. The workflow ships
+# now so the labels are correct from day one when the compute-from-labels layer
+# lands — and so the auto-merge policy and the release label agree on what a PR is.
+#
+# Two scenarios it addresses:
+#
+#   1. Backstop for absent labels. A Dependabot PR that does not inherit the
+#      static label list from `.github/dependabot.yaml` (e.g. a built-in
+#      security-update group) would otherwise carry no `release:` label.
+#
+#   2. Corrector for the standalone-semver-major case. `.github/dependabot.yaml`
+#      applies `release: patch` statically to every PR from the configured
+#      ecosystems, but since those groups carry `update-types: [minor, patch]`,
+#      semver-major bumps split out of the group and arrive as standalone PRs.
+#      A standalone semver-major PR inherits `release: patch` from the static
+#      config, which mis-classifies it. This workflow recomputes the effective
+#      update-type and REPLACES `release: patch` with `release: major` only for
+#      that specific static-default mismatch (`current == "release: patch"` +
+#      effective type semver-major). Grouped patch/minor PRs keep the static
+#      `release: patch` even when the group's effective update-type rolls up to
+#      `version-update:semver-minor`, because the static label encodes the
+#      project's policy that grouped patch/minor bumps release as patch.
+#      Maintainer-applied overrides (`release: skip`, `release: minor`, etc.)
+#      are preserved on the same principle.
+#
+# Race protection: the edit combines `--remove-label` and `--add-label` in one
+# `gh pr edit` call where applicable, and a post-edit recheck rolls back the
+# workflow-applied label if a maintainer's manual `release: *` raced into the
+# check-then-act window. The rollback only ever removes the label this workflow
+# just applied, so a maintainer applying the *same* label is a set-semantics
+# no-op and no rollback fires.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+
+# Queue concurrent runs on the same PR rather than cancel them. Label edits are
+# idempotent and run in 1-2 s; the post-edit recheck + rollback step should not
+# be interrupted mid-flight by the next `opened`/`reopened` event.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+# `pull-requests: write` covers `gh pr edit --add-label/--remove-label` for
+# *existing* labels. The four release labels already exist on the repo, so we
+# never hit the create-label path that would also require `issues: write`.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  add-release-label:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # @v3 as 3.1.0
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Pick the most-severe update-type across the (possibly grouped) bump.
+      # Kept inline and identical to dependabot-auto-merge.yaml so the label and
+      # the merge policy agree on what a PR is — the two copies MUST stay in
+      # sync. The default `version-update:semver-patch` covers an empty array.
+      - name: Derive effective update-type
+        id: effective
+        env:
+          UPDATED_JSON: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          effective=$(jq -r '
+            [.[] | .updateType]
+            | if any(. == "version-update:semver-major") then "version-update:semver-major"
+              elif any(. == "version-update:semver-minor") then "version-update:semver-minor"
+              elif any(. == "version-update:semver-patch") then "version-update:semver-patch"
+              else "version-update:semver-patch"
+              end
+          ' <<<"$UPDATED_JSON")
+          echo "update-type=$effective" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile release label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          UPDATE_TYPE: ${{ steps.effective.outputs.update-type }}
+        run: |
+          set -euo pipefail
+
+          # Map the effective update-type to the desired release label.
+          case "$UPDATE_TYPE" in
+            version-update:semver-major) desired="release: major" ;;
+            version-update:semver-minor) desired="release: minor" ;;
+            *)                            desired="release: patch" ;;
+          esac
+
+          # Inventory the current release labels on the PR. Sorted JSON array so
+          # `jq -r '.[0]'` is deterministic when exactly one is present.
+          list_release_labels() {
+            gh pr view "$PR_URL" --json labels \
+              --jq '[.labels[].name | select(startswith("release: "))] | sort'
+          }
+
+          current_json="$(list_release_labels)"
+          current_count=$(jq 'length' <<<"$current_json")
+
+          # Decision tree:
+          #   - 0 release labels -> add `desired` (absent-label backstop).
+          #   - 1 label matching `desired` -> no-op (static label already right).
+          #   - 1 label not matching `desired`:
+          #       - desired == "release: major" AND current == "release: patch"
+          #         -> replace (the standalone-semver-major correction, narrowly
+          #         scoped to the known static-default mismatch).
+          #       - otherwise -> keep current (grouped-intent for patch/minor, or
+          #         a deliberate maintainer override).
+          #   - >1 labels -> leave for verify-pr-release-label and the maintainer.
+          if [ "$current_count" = "0" ]; then
+            echo "No release label present; adding '$desired'."
+            gh pr edit "$PR_URL" --add-label "$desired"
+          elif [ "$current_count" = "1" ]; then
+            current=$(jq -r '.[0]' <<<"$current_json")
+            if [ "$current" = "$desired" ]; then
+              echo "Release label '$desired' already correct; nothing to do."
+              exit 0
+            fi
+            if [ "$desired" != "release: major" ] || [ "$current" != "release: patch" ]; then
+              echo "Keeping '$current' (effective update-type: $UPDATE_TYPE). Auto-correction only fires for the known static-default mismatch (current 'release: patch' + standalone semver-major); anything else is grouped-intent or a manual override."
+              exit 0
+            fi
+            echo "Replacing '$current' with '$desired' (standalone semver-major correction; effective update-type: $UPDATE_TYPE)."
+            gh pr edit "$PR_URL" --add-label "$desired" --remove-label "$current"
+          else
+            echo "::warning::PR has multiple release labels ($(jq -c '.' <<<"$current_json")); leaving as-is for manual triage."
+            exit 0
+          fi
+
+          # Post-edit recheck closes the check-then-act window. If a maintainer
+          # applied a different `release: *` label between the state query and the
+          # `gh pr edit` call, the PR now carries two release labels; roll back
+          # the label this workflow just applied so the manual override wins. We
+          # only ever remove `$desired` (the one we just added).
+          post_count=$(gh pr view "$PR_URL" --json labels \
+            --jq '[.labels[].name | select(startswith("release: "))] | length')
+          if [ "$post_count" -gt 1 ]; then
+            echo "::warning::A different release label appears to have been applied during the edit window; removing the workflow-applied '$desired' so the manual override wins."
+            gh pr edit "$PR_URL" --remove-label "$desired"
+          fi
