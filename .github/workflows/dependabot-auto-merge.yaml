@@ -9,6 +9,11 @@ name: Dependabot Auto-Merge
 #     (actions/create-github-app-token, milanhorvatovic/codex-ai-code-review-action);
 #   - the PR carries `trust-boundary` or `security-review-required`.
 #
+# This trust-boundary action list is duplicated in three places that MUST stay in
+# sync: `.github/dependabot.yaml` (exclude-patterns), the hold conditions below,
+# and `check_dependency_gates` in `.github/workflows/dependabot-reconciler.yaml`.
+# When a new action-level trust-boundary dependency is added, update all three.
+#
 # A repository variable DEPENDABOT_AUTOMERGE_ENABLED is the kill-switch: the job
 # always runs and logs the switch state, but the approve and merge steps only
 # act when it is exactly 'true'. Missing/unset disables auto-merge (PRs wait for
