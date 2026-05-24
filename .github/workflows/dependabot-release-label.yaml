@@ -36,6 +36,20 @@ name: Dependabot Release Label
 # check-then-act window. The rollback only ever removes the label this workflow
 # just applied, so a maintainer applying the *same* label is a set-semantics
 # no-op and no rollback fires.
+#
+# Trigger scope is `opened`/`reopened` only. `synchronize` is deliberately
+# omitted: a rebase/force-push does not change a bump's update-type, so the
+# desired label is unchanged and re-running would only risk re-fighting a
+# maintainer override. Known limitation: Dependabot applies the static
+# `release: patch` label at PR creation, but if it is not yet visible when the
+# `opened` run queries (labels can surface as separate events just after open),
+# the absent-label branch can add the metadata-derived label and the static
+# `release: patch` can then land too, leaving a standalone semver-major PR with
+# two release labels for manual triage. This is accepted rather than papered
+# over with a `labeled` trigger — that would only re-surface the conflict as a
+# warning, not resolve it, since the >1-label case is left for the maintainer —
+# and it is bounded: the labels are not yet consumed for version computation
+# (groundwork) and `verify-pr-release-label` is report-only.
 
 on:
   pull_request:
