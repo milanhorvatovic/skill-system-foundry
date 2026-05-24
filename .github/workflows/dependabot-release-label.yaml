@@ -3,11 +3,11 @@ name: Dependabot Release Label
 # Reconciles the `release: <level>` label on every Dependabot PR to match the
 # effective update-type derived from Dependabot's metadata.
 #
-# Groundwork for label-driven release automation (WI-3): `verify-pr-release-label`
-# is report-only today and nothing computes the next version from labels yet, so
-# these labels are not consumed for versioning at the moment. The workflow ships
-# now so the labels are correct from day one when the compute-from-labels layer
-# lands — and so the auto-merge policy and the release label agree on what a PR is.
+# Part of label-driven release automation (WI-3): `release-prep.yaml` now
+# computes the next version from these labels (via compute_release_version.py),
+# so keeping every Dependabot PR's release label correct keeps the computed
+# version and the auto-merge policy in agreement about what a PR is.
+# `verify-pr-release-label` stays report-only until WI-4 makes it required.
 #
 # Two scenarios it addresses:
 #
@@ -50,8 +50,9 @@ name: Dependabot Release Label
 # two release labels for manual triage. This is accepted rather than papered
 # over with a `labeled` trigger — that would only re-surface the conflict as a
 # warning, not resolve it, since the >1-label case is left for the maintainer —
-# and it is bounded: the labels are not yet consumed for version computation
-# (groundwork) and `verify-pr-release-label` is report-only.
+# and it is bounded: a two-label PR is caught downstream — `verify-pr-release-label`
+# warns, and if it falls in a release window compute_release_version.py fails-and-
+# lists it — so it surfaces for the maintainer rather than being silently miscounted.
 
 on:
   pull_request:
@@ -183,8 +184,9 @@ jobs:
           # and `$desired` is `release: major`, removing `$desired` would delete
           # the *correct* label and leave the wrong one. Leave both and warn for
           # manual triage instead; `verify-pr-release-label` surfaces the
-          # ambiguity, and the labels are groundwork (not yet consumed for
-          # version computation), so a transient two-label state is recoverable.
+          # ambiguity, and compute_release_version.py fails-and-lists a >1-label
+          # PR that lands in a release window, so a transient two-label state is
+          # surfaced rather than silently miscounted, and stays recoverable.
           post_count=$(gh pr view "$PR_URL" --json labels \
             --jq '[.labels[].name | select(startswith("release: "))] | length')
           if [ "$post_count" -gt 1 ]; then

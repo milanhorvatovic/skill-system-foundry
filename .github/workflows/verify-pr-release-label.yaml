@@ -1,7 +1,7 @@
 name: verify-pr-release-label
 
 # Checks that each PR carries exactly one `release: major|minor|patch|skip`
-# label — the signal the (future) label-driven version computation reads.
+# label — the signal compute_release_version.py reads to compute the next release.
 #
 # REPORT-ONLY for now: it warns but never fails — not even on a transient
 # gh/API error — so it cannot strand open PRs or add red CI noise before the
