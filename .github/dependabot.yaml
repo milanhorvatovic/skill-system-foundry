@@ -14,8 +14,11 @@
 # their bumps poisoning the whole group's auto-merge:
 #   - actions/create-github-app-token mints the App private key.
 #   - milanhorvatovic/codex-ai-code-review-action runs with OPENAI_API_KEY.
-# Extend exclude-patterns (and the auto-merge guard) when a new action-level
-# trust-boundary dependency is added to the repo.
+# Extend exclude-patterns when a new action-level trust-boundary dependency is
+# added to the repo — in lockstep with the auto-merge guard in
+# dependabot-auto-merge.yaml, the check_dependency_gates guard in
+# dependabot-reconciler.yaml, and the contributor-facing copy in CONTRIBUTING.md
+# (this list lives in all four).
 #
 # Static labels per ecosystem entry (applied to grouped and standalone PRs
 # alike): `dependencies` + the ecosystem + `release: patch`. The fast-path
