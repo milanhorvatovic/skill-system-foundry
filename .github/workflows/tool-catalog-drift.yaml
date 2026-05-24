@@ -362,16 +362,31 @@ jobs:
           # owner so a fork PR cannot be mistakenly edited.
           existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,headRepositoryOwner --jq "[.[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number][0] // empty")
           if [ -n "$existing" ]; then
+            # Deliberately do not touch labels here: the rolling PR was created
+            # with `release: patch` and labels persist across edits, so re-adding
+            # would risk a second `release:` label if a maintainer relabeled a
+            # removal-bearing PR `release: major`.
             gh pr edit "$existing" \
               --title "Sync claude_code tool catalog with upstream" \
               --body-file "$RUNNER_TEMP/pr-body.md"
             echo "Updated rolling PR #$existing."
             echo "number=$existing" >> "$GITHUB_OUTPUT"
           else
+            # Label at create so the required `release:` gate
+            # (verify-pr-release-label) passes as soon as the label lands: when
+            # gh attaches it in the create call the `opened` event already
+            # carries the label and the synchronous auto-merge below stays on its
+            # fast path; if the label lands a moment later the gate re-runs green
+            # on the `labeled` event and the wait-and-merge step falls back to
+            # GitHub auto-merge — either way the PR is never stranded.
+            # The catalog ships in the release bundle, so an additions sync is a
+            # user-facing patch. Additions are auto-applied; a manually applied
+            # removal is breaking — relabel that PR `release: major` by hand.
             pr_url=$(gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "Sync claude_code tool catalog with upstream" \
+              --label "release: patch" \
               --body-file "$RUNNER_TEMP/pr-body.md")
             pr_number=$(basename "$pr_url")
             echo "Opened rolling PR #$pr_number."
