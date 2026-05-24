@@ -293,21 +293,16 @@ jobs:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
           BRANCH: ${{ needs.prepare.outputs.branch }}
+        # The release PR is labeled ``release: skip`` in a later step under the
+        # automation App, not here with ``gh pr create --label``: label writes go
+        # through GitHub's issue-labels API and need ``issues: write``, which
+        # oss-release-bot does not have (oss-automation-bot does).
         run: |
           set -euo pipefail
-          # Self-label the release PR ``release: skip`` so it carries exactly
-          # one release label for the (eventually-required) verify-pr-release-
-          # label gate without counting toward the next computed version.
-          # Applied at create time, which needs only pull-requests: write (the
-          # release App has it); a post-create ``gh pr edit --add-label`` would
-          # require issues: write, which it does not.  Compute already excludes
-          # this PR from the window by commit membership, so the label is for
-          # the gate, not for the version math.
           url=$(gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "Release v$VERSION" \
-            --label "release: skip" \
             --body-file "$RUNNER_TEMP/pr-body.md")
           echo "Opened $url"
           number=$(gh pr view "$url" --json number --jq '.number')
@@ -319,6 +314,21 @@ jobs:
         with:
           client-id: ${{ vars.AUTOMATION_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+
+      - name: Self-label the release PR (oss-automation-bot)
+        env:
+          GH_TOKEN: ${{ steps.automation-token.outputs.token }}
+          PR_NUMBER: ${{ steps.open.outputs.number }}
+        # Label the release PR ``release: skip`` so it carries exactly one release
+        # label for the (eventually-required) verify-pr-release-label gate without
+        # counting toward the next computed version — compute already excludes it
+        # from the window by commit membership, so this is for the gate, not the
+        # version math.  Done under the automation App because label writes go
+        # through GitHub's issue-labels API and need ``issues: write``, which
+        # oss-automation-bot has and oss-release-bot does not.
+        run: |
+          set -euo pipefail
+          gh pr edit "$PR_NUMBER" --add-label "release: skip"
 
       - name: Approve release PR (oss-automation-bot)
         env:
