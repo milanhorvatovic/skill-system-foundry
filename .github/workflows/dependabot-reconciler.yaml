@@ -26,23 +26,28 @@ name: Dependabot Reconciler
 #      events (a dismissed approval, or an arm that never landed) from transient
 #      GitHub API errors.
 #
-# Coverage boundary: this workflow acts only on a PR the auto-merge workflow has
-# already ARMED. For an armed PR it re-runs every policy gate and then posts an
-# approval — restoring one a push dismissed, or completing one the auto-merge
-# workflow could not post from the Dependabot-secret context (this workflow reads
-# the Actions-store CODEOWNER_APPROVER_TOKEN). So on an armed-but-unapproved PR it
-# MAY post the first approval: the armed precondition plus the re-run gates are
-# the safety boundary, NOT a prior-approval check. A prior-approval check is not
-# used because the two armed-but-unapproved causes are indistinguishable from
-# review history — the auto-merge workflow arming as a fallback when its
-# Dependabot-store approve step failed (a designed recovery this workflow must
-# complete) versus a maintainer manually arming an unapproved PR — and gating on
-# prior approval would break the former. A maintainer who manually arms a PR they
-# want held should request changes or apply a `trust-boundary` /
-# `security-review-required` label, both of which the gates honor. A PR that was
-# never armed (e.g. a fully-dropped initial run where the `opened` event never
-# reached the approve/arm path and no later `synchronize` re-fired it) is left for
-# manual triage — re-run `Dependabot Auto-Merge` or push to the PR to recover it.
+# Coverage boundary: this workflow acts on a PR the auto-merge workflow has
+# already APPROVED or ARMED, via two paths — it re-approves an ARMED PR whose
+# approval was dismissed (or that the workflow could not approve from the
+# Dependabot-secret context; this workflow reads the Actions-store
+# CODEOWNER_APPROVER_TOKEN), and it ARMS an APPROVED + mergeable but unarmed PR.
+# Both re-run every policy gate first, so it never approves or arms a PR the
+# policy would hold. Because the re-approve path approves, on an armed-but-
+# unapproved PR it MAY post the first approval: the approved/armed precondition
+# plus the re-run gates are the safety boundary, NOT a prior-approval check. A
+# prior-approval check is not used because the two armed-but-unapproved causes are
+# indistinguishable from review history — the auto-merge workflow arming as a
+# fallback when its Dependabot-store approve step failed (a designed recovery this
+# workflow must complete) versus a maintainer manually arming an unapproved PR —
+# and gating on prior approval would break the former. A maintainer who manually
+# arms or approves a PR they want held should request changes or apply a
+# `trust-boundary` / `security-review-required` label, both of which the gates
+# honor. A PR that is neither approved nor armed (e.g. a fully-dropped initial run
+# where the `opened` event never reached the approve/arm path and no later
+# `synchronize` re-fired it) is left for manual triage — re-run `Dependabot
+# Auto-Merge` or push to the PR to recover it. The same dependency gates also
+# guard the update-branch and recreate paths (see those steps), so a held
+# trust-boundary or semver-major bump is never re-driven into App-authored CI.
 #
 # Triggers:
 #   - `workflow_run` on `Dependabot Auto-Merge` is the primary reactive trigger.
@@ -510,6 +515,21 @@ jobs:
               # PR branch — a maintainer may have applied the label since the
               # top-of-function check, and update-branch is itself a write.
               if ! gate_security_review "$pr" "update-branch"; then
+                return 0
+              fi
+              # Apply the dependency policy gates BEFORE the App-authored
+              # update-branch, not just before re-approve/arm. `gh pr update-branch`
+              # with UPDATE_BRANCH_TOKEN creates a non-Dependabot `synchronize`
+              # event, which (unlike a Dependabot-authored run) executes the PR's
+              # workflows in the full Actions-secrets context. For a held
+              # trust-boundary action bump that would re-run CI with the unreviewed
+              # new action version AND repository secrets in scope before a human
+              # review — exactly the escalation the trust-boundary hold exists to
+              # prevent. Gating here leaves a held PR (semver-major or a
+              # trust-boundary action) BEHIND for manual handling instead of
+              # re-driving it into privileged CI. Fail-closed on a metadata-fetch
+              # error (return 2), same as the re-approve / arm paths.
+              if ! check_dependency_gates "$pr" "update-branch"; then
                 return 0
               fi
               echo "BEHIND main; calling update-branch."
