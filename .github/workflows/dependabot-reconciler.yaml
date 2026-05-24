@@ -395,10 +395,14 @@ jobs:
             # already held the known-major case; this counts every `update-type:`
             # line that is neither minor nor patch (an unrecognized or future
             # Dependabot value) so the reconciler can never be MORE permissive
-            # than the workflow it backstops. No `$` anchor — the count tolerates
-            # trailing whitespace and grouped PRs with multiple trailers.
+            # than the workflow it backstops. The accepted value is anchored to
+            # end-of-line (`[[:space:]]*$` tolerates trailing whitespace) so a
+            # substring variant like `version-update:semver-patch-preview` is
+            # treated as unrecognized and held, not accepted by a loose match.
+            # The count is line-oriented, so a grouped PR's multiple trailers are
+            # each checked independently.
             unrecognized=$(grep "update-type: " <<<"$commit_msg" \
-              | grep -Evc "update-type: version-update:semver-(minor|patch)" || true)
+              | grep -Evc "update-type: version-update:semver-(minor|patch)[[:space:]]*$" || true)
             if [ "${unrecognized:-0}" -gt 0 ]; then
               echo "PR #${pr}: ${unrecognized} update-type line(s) are not explicit semver-minor/patch (unrecognized value); failing closed, not performing ${stage}."
               return 1
