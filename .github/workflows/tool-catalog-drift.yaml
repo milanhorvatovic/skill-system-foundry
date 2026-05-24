@@ -92,8 +92,8 @@ jobs:
     # never-reporting integration, etc.) the run would otherwise wait
     # up to GitHub's 6-hour default and tie up the per-run concurrency
     # slot.  30 minutes is well above the realistic runtime of the
-    # required checks (python-tests + ci-helper-tests finish in 1-3
-    # minutes apiece) so a 30-minute cap surfaces a genuine hang as a
+    # required checks (python-tests + verify-action-pins finish in
+    # 1-3 minutes apiece) so a 30-minute cap surfaces a genuine hang as a
     # workflow failure without flaking on normal runs.
     timeout-minutes: 30
     # Job-level ``permissions:`` apply to ``GITHUB_TOKEN`` only —
@@ -457,7 +457,7 @@ jobs:
 
           # Wait for the FULL required-check set to register before
           # entering ``--watch``.  Downstream workflows (python-tests,
-          # ci-helper-tests) take a few seconds to create their check
+          # verify-action-pins) take a few seconds to create their check
           # runs after the PR's head moves; ``gh pr checks --watch``
           # only tracks check runs that exist at watch-start and does
           # NOT subscribe to future check-suite creation, so entering
