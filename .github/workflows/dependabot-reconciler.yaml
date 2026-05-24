@@ -26,13 +26,23 @@ name: Dependabot Reconciler
 #      events (a dismissed approval, or an arm that never landed) from transient
 #      GitHub API errors.
 #
-# Coverage boundary: this workflow RESTORES a PR the auto-merge workflow already
-# approved or armed — it does not INITIATE the first approval. A fully-dropped
-# *initial* auto-merge run (the `opened` event never reached the approve/arm path
-# and no later `synchronize` re-fired it, so the PR is open, unapproved, and
-# unarmed) is intentionally left for manual triage rather than progressed from
-# scratch — the reconciler cannot distinguish "never eligible" from "transiently
-# failed". Re-run `Dependabot Auto-Merge` or push to the PR to recover it.
+# Coverage boundary: this workflow acts only on a PR the auto-merge workflow has
+# already ARMED. For an armed PR it re-runs every policy gate and then posts an
+# approval — restoring one a push dismissed, or completing one the auto-merge
+# workflow could not post from the Dependabot-secret context (this workflow reads
+# the Actions-store CODEOWNER_APPROVER_TOKEN). So on an armed-but-unapproved PR it
+# MAY post the first approval: the armed precondition plus the re-run gates are
+# the safety boundary, NOT a prior-approval check. A prior-approval check is not
+# used because the two armed-but-unapproved causes are indistinguishable from
+# review history — the auto-merge workflow arming as a fallback when its
+# Dependabot-store approve step failed (a designed recovery this workflow must
+# complete) versus a maintainer manually arming an unapproved PR — and gating on
+# prior approval would break the former. A maintainer who manually arms a PR they
+# want held should request changes or apply a `trust-boundary` /
+# `security-review-required` label, both of which the gates honor. A PR that was
+# never armed (e.g. a fully-dropped initial run where the `opened` event never
+# reached the approve/arm path and no later `synchronize` re-fired it) is left for
+# manual triage — re-run `Dependabot Auto-Merge` or push to the PR to recover it.
 #
 # Triggers:
 #   - `workflow_run` on `Dependabot Auto-Merge` is the primary reactive trigger.
@@ -562,12 +572,17 @@ jobs:
             fi
 
             # Re-approve only when auto-merge is already armed AND the kill-switch
-            # is on. An armed PR means dependabot-auto-merge.yaml previously
-            # cleared every policy gate and approved it — so a dismissed review
-            # here can only mean a push (typically our own update-branch) cleared
-            # it. Restoring approval matches the prior policy decision exactly.
-            # Gating on automerge_enabled keeps the switch authoritative: a paused
-            # switch must not let the reconciler resurrect an approval.
+            # is on. An armed PR is one dependabot-auto-merge.yaml already
+            # processed; a non-APPROVED reviewDecision means either a push
+            # (typically our own update-branch) dismissed the approval, or the
+            # workflow's approve step could not post it from the Dependabot-secret
+            # context. Either way we re-run the full policy gates below before
+            # approving, so we never approve a PR the policy would hold — the
+            # armed precondition (not a prior-approval check) is the boundary, so
+            # on an armed-but-unapproved PR this can post the first approval by
+            # design (see the Coverage boundary note in the header). Gating on
+            # automerge_enabled keeps the switch authoritative: a paused switch
+            # must not let the reconciler approve or arm.
             if [ "$has_auto" = "true" ] && [ "$review" != "APPROVED" ] && automerge_enabled; then
               # A non-APPROVED reviewDecision on an armed PR is not unique to a
               # dismissed bot approval. It also matches CHANGES_REQUESTED (a
