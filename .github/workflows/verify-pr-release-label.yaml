@@ -3,10 +3,18 @@ name: verify-pr-release-label
 # Checks that each PR carries exactly one `release: major|minor|patch|skip`
 # label — the signal compute_release_version.py reads to compute the next release.
 #
-# REPORT-ONLY for now: it warns but never fails — not even on a transient
-# gh/API error — so it cannot strand open PRs or add red CI noise before the
-# labeling habit and the Dependabot auto-labeler are in place. A later change
-# makes it a required, blocking check.
+# REQUIRED, BLOCKING check: a PR missing exactly one valid label fails
+# (exit 1), blocking the merge until the label is added or corrected (adding
+# it fires a `labeled` event that re-runs this check green). It stays
+# fail-soft — exit 0 — on a transient gh/API read error and on a missing
+# PR/REPO input, so a hiccup can never strand a PR; compute_release_version.py
+# re-validates every in-window label at release time as the hard backstop.
+# Because `pull_request` runs the workflow from the PR head, enforcement
+# applies to PRs whose branch carries this version — stale or fork branches
+# run the older copy until they sync. Bot-opened PRs are labeled at source
+# (Dependabot via dependabot.yaml + dependabot-release-label.yaml; the release
+# PR self-labels `release: skip`; the tool-catalog drift PR labels
+# `release: patch`), so the auto-merge flows are never stranded by this gate.
 
 on:
   pull_request:
@@ -28,37 +36,42 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify exactly one release label (report-only)
+      - name: Verify exactly one release label
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # Report-only contract: this check warns but must never fail. The
-          # default Actions bash shell runs with -e (errexit); disable it and
-          # skip -u (nounset) — errexit aborts on any non-zero exit and
-          # nounset aborts on any unset variable, either of which could turn
-          # this check red after a future edit. Validate inputs defensively
-          # and end with an unconditional exit 0 instead.
+          # Fail-on-violation contract: a PR missing exactly one valid
+          # `release:` label fails (exit 1). Two cases still pass softly so a
+          # transient fault can never strand an otherwise-valid PR: a missing
+          # PR/REPO input and a gh/API read error. The default Actions bash
+          # shell runs with -e (errexit); disable it and skip -u (nounset) so
+          # an intermediate non-zero (e.g. grep's no-match exit) cannot abort
+          # the job out from under the explicit exit codes below.
           set +e
           set -o pipefail
           # The pull_request event always supplies these; guard anyway so a
-          # missing value warns and passes rather than aborting the job.
+          # missing value passes softly rather than aborting the job.
           if [ -z "${PR:-}" ] || [ -z "${REPO:-}" ]; then
-            echo "::warning::PR number or repository unavailable; skipping the report-only release-label check."
+            echo "::warning::PR number or repository unavailable; skipping the release-label check (fail-soft)."
             exit 0
           fi
-          # Fail-soft: a transient gh/API error must not turn this report-only
-          # check red. If the read fails, warn and pass.
+          # Fail-soft: a transient gh/API error must not block a PR.
+          # compute_release_version.py re-validates every in-window label
+          # before a release is cut, so a skipped read here cannot let an
+          # unlabeled PR slip into a computed version.
           if ! labels=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name'); then
-            echo "::warning::Could not read PR labels (transient gh/API error); skipping the report-only release-label check."
+            echo "::warning::Could not read PR labels (transient gh/API error); skipping the release-label check (fail-soft)."
             exit 0
           fi
           total=$(printf '%s\n' "$labels" | grep -c '^release: ' || true)
           valid=$(printf '%s\n' "$labels" | grep -cE '^release: (major|minor|patch|skip)$' || true)
           if [ "$total" = "1" ] && [ "$valid" = "1" ]; then
             echo "OK: exactly one valid release label."
-          else
-            echo "::warning::This PR should carry exactly one of 'release: major', 'release: minor', 'release: patch', 'release: skip' (found $total release-prefixed label(s), $valid valid). Report-only for now — this becomes a required check once the labeling habit and the Dependabot auto-labeler are in place."
+            exit 0
           fi
-          exit 0
+          # Violation: block the PR. Adding or correcting the label fires a
+          # `labeled`/`unlabeled` event that re-runs this check green.
+          echo "::error::This PR must carry exactly one of 'release: major', 'release: minor', 'release: patch', 'release: skip' (found $total release-prefixed label(s), $valid valid). Add or correct the label to unblock the merge."
+          exit 1
