@@ -362,10 +362,19 @@ jobs:
           # owner so a fork PR cannot be mistakenly edited.
           existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,headRepositoryOwner --jq "[.[] | select(.headRepositoryOwner.login == \"$GITHUB_REPOSITORY_OWNER\") | .number][0] // empty")
           if [ -n "$existing" ]; then
-            # Deliberately do not touch labels here: the rolling PR was created
-            # with `release: patch` and labels persist across edits, so re-adding
-            # would risk a second `release:` label if a maintainer relabeled a
-            # removal-bearing PR `release: major`.
+            # Heal the rolling PR's release label so the required
+            # verify-pr-release-label gate can pass. The create path below labels
+            # new PRs `release: patch`, but a rolling PR opened before this label
+            # existed (or one whose label was removed) would otherwise stay
+            # unlabeled and be blocked. Add `release: patch` only when no
+            # `release:` label is present; leave an existing one untouched —
+            # including a maintainer's `release: major` for a removal-bearing
+            # sync — so this never produces a second, conflicting label.
+            release_label_count=$(gh pr view "$existing" --json labels \
+              --jq '[.labels[].name | select(startswith("release: "))] | length')
+            if [ "$release_label_count" -eq 0 ]; then
+              gh pr edit "$existing" --add-label "release: patch"
+            fi
             gh pr edit "$existing" \
               --title "Sync claude_code tool catalog with upstream" \
               --body-file "$RUNNER_TEMP/pr-body.md"
