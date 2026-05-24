@@ -210,10 +210,29 @@ jobs:
             esac
           }
 
+          # Confirm auto-merge is actually cleared after a --disable-auto call.
+          # A --disable-auto that reports success without taking effect would
+          # leave a security-review PR armed, so re-query and treat a still-armed
+          # (or unverifiable) PR as a failure — the same verify-it-took pattern as
+          # verify_auto_merge_or_terminal. Emits its own ::error on failure.
+          verify_disarmed() {
+            local am
+            if ! am=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest'); then
+              echo "::error::Failed to verify auto-merge was disabled after --disable-auto; cannot confirm the PR is disarmed. Investigate immediately."
+              return 1
+            fi
+            if [ "$am" != "null" ]; then
+              echo "::error::auto-merge is still enabled after --disable-auto. The PR may merge automatically despite the security-review hold. Investigate immediately."
+              return 1
+            fi
+            return 0
+          }
+
           # Enable GitHub auto-merge, verify it took, and revert it if a
           # security-review label is now present (or its state is unknown).
           # Disable-auto on a security-review PR is a hard failure: a silently
           # armed auto-merge on a must-stay-manual PR is worse than a noisy fail.
+          # Both revert paths verify the disarm actually cleared auto-merge.
           arm_auto_merge() {
             gh pr merge --auto --squash "$PR_URL" 2>&1 || true
             if ! verify_auto_merge_or_terminal; then
@@ -222,16 +241,13 @@ jobs:
             case "$(security_review_state)" in
               true)
                 echo "security-review label is now present; reverting auto-merge."
-                if ! gh pr merge --disable-auto "$PR_URL"; then
-                  echo "::error::Failed to disable auto-merge on a security-review PR. It may still merge automatically, bypassing required manual review. Investigate immediately."
-                  return 1
-                fi
+                gh pr merge --disable-auto "$PR_URL" || true
+                verify_disarmed || true
                 return 1 ;;
               unknown)
                 echo "::error::Failed to verify security-review label state after arming auto-merge. Defensively disabling auto-merge to avoid a possible policy bypass."
-                if ! gh pr merge --disable-auto "$PR_URL"; then
-                  echo "::error::Failed to defensively disable auto-merge on a possibly security-review-required PR. Investigate immediately."
-                fi
+                gh pr merge --disable-auto "$PR_URL" || true
+                verify_disarmed || true
                 return 1 ;;
             esac
             return 0
@@ -353,6 +369,7 @@ jobs:
     if: >-
       github.event.action == 'labeled' &&
       (github.event.label.name == 'trust-boundary' || github.event.label.name == 'security-review-required') &&
+      github.event.pull_request.state == 'open' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -376,3 +393,11 @@ jobs:
             exit 0
           fi
           gh pr merge --disable-auto "$PR_URL"
+          # Verify the disarm took: a --disable-auto that reports success without
+          # clearing the request would leave this security-review PR armed.
+          auto_merge=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest')
+          if [ "$auto_merge" != "null" ]; then
+            echo "::error::auto-merge is still enabled after --disable-auto. The PR may merge automatically despite the security-review hold. Investigate immediately."
+            exit 1
+          fi
+          echo "Auto-merge disabled."
