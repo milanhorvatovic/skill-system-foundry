@@ -129,7 +129,7 @@ Fix <issue> in <component>
    - `release: patch` — a user-facing fix or change worth a release note (bug fix, corrected/clarified skill docs)
    - `release: skip` — nothing user-facing ships, so it does not influence the next version (CI, tests, internal tooling, repo meta, contributor docs)
 
-   These labels are the planned input for label-driven release automation, so each PR must declare its impact before that check becomes blocking. The `verify-pr-release-label` check flags a missing or ambiguous label (currently report-only; it becomes required once the labeling habit is established). Dependabot PRs are labeled automatically by `dependabot-release-label.yaml` (see [Dependency Updates](#dependency-updates)); label human-authored PRs by hand.
+   These labels are the input to label-driven release automation: when a release is prepared without an explicit version, `release-prep.yaml` computes the next version from the `release:` labels of PRs merged since the last tag (highest bump wins; `skip` contributes nothing). Labeling does not block your PR from merging today — `verify-pr-release-label` is report-only — but an unlabeled or ambiguously labeled merged PR blocks the next computed release until it is fixed (the check becomes required once the labeling habit is established). Dependabot PRs are labeled automatically by `dependabot-release-label.yaml` (see [Dependency Updates](#dependency-updates)); label human-authored PRs by hand.
 
 7. **Respond to feedback.** PRs may require revisions before merging.
 
