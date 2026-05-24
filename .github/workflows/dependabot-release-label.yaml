@@ -7,7 +7,7 @@ name: Dependabot Release Label
 # computes the next version from these labels (via compute_release_version.py),
 # so keeping every Dependabot PR's release label correct keeps the computed
 # version and the auto-merge policy in agreement about what a PR is.
-# `verify-pr-release-label` stays report-only until WI-4 makes it required.
+# `verify-pr-release-label` is now a required, blocking check on every PR.
 #
 # Two scenarios it addresses:
 #

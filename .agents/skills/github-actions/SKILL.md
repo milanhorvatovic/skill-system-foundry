@@ -28,7 +28,7 @@ Guides the creation, modification, and review of GitHub Actions workflows in the
 | Action-pin verify | `verify-action-pins.yaml` | Push to `main`, PRs | `verify` |
 | Workflow lint | `actionlint.yaml` | Push to `main`, PRs | `actionlint` |
 | Codex code review | `codex-code-review.yaml` | PR events (non-draft) | `review` (read-only), `publish` (write) |
-| Release-label check | `verify-pr-release-label.yaml` | PR events | `verify-release-label` (report-only) |
+| Release-label check | `verify-pr-release-label.yaml` | PR events | `verify-release-label` (required) |
 | Supply-chain scorecard | `scorecard.yaml` | Schedule, push to `main`, branch-protection change | `analysis` |
 | CodeQL | `codeql.yaml` | Push to `main`, PRs, schedule | `analyze` |
 | Tool-catalog drift | `tool-catalog-drift.yaml` | Schedule, `workflow_dispatch` | `detect-and-pr` |
