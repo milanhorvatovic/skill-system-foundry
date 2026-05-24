@@ -129,13 +129,31 @@ Fix <issue> in <component>
    - `release: patch` — a user-facing fix or change worth a release note (bug fix, corrected/clarified skill docs)
    - `release: skip` — nothing user-facing ships, so it does not influence the next version (CI, tests, internal tooling, repo meta, contributor docs)
 
-   These labels are the planned input for label-driven release automation, so each PR must declare its impact before that check becomes blocking. The `verify-pr-release-label` check flags a missing or ambiguous label (currently report-only; it becomes required once the labeling habit is established). A follow-up will label Dependabot PRs automatically — until then, label them by hand.
+   These labels are the planned input for label-driven release automation, so each PR must declare its impact before that check becomes blocking. The `verify-pr-release-label` check flags a missing or ambiguous label (currently report-only; it becomes required once the labeling habit is established). Dependabot PRs are labeled automatically by `dependabot-release-label.yaml` (see [Dependency Updates](#dependency-updates)); label human-authored PRs by hand.
 
 7. **Respond to feedback.** PRs may require revisions before merging.
 
 ## What Happens Next
 
 Maintainers review PRs on a best-effort basis. Smaller, focused PRs are reviewed faster than large ones. If your PR has not received feedback after a reasonable time, a polite ping in the PR comments is welcome.
+
+## Dependency Updates
+
+Dependabot opens grouped pull requests weekly for the GitHub Actions and Python dev dependencies. Each ecosystem groups minor and patch bumps into one rolling PR; semver-major bumps split into standalone PRs. Every Dependabot PR is labeled automatically — `dependencies`, its ecosystem, and a `release:` level reconciled by `dependabot-release-label.yaml`.
+
+### Auto-merge
+
+`dependabot-auto-merge.yaml` merges a Dependabot PR hands-off once its required checks pass and a code-owner approval is in place. It deliberately **holds** a PR for manual review when any of the following is true:
+
+- the effective update-type is **semver-major** (these arrive as standalone PRs);
+- the bump touches a **trust-boundary action** that runs with secrets in scope — currently `actions/create-github-app-token` (mints the App private key) and `milanhorvatovic/codex-ai-code-review-action` (runs with `OPENAI_API_KEY`). When a new action-level trust-boundary dependency is added, extend the exclude list in both `.github/dependabot.yaml` and `.github/workflows/dependabot-auto-merge.yaml`;
+- the PR carries **`trust-boundary`** or **`security-review-required`**. Apply either to any dependency PR you want a human to review before it merges; applying one to an already-armed PR disarms the pending auto-merge.
+
+The repository variable **`DEPENDABOT_AUTOMERGE_ENABLED`** is the kill-switch: auto-merge acts only when it is exactly `true`. Unset or any other value disables it, and the PR waits for a manual merge.
+
+A held PR is merged the normal way after review. Note that an unresolved **Copilot review comment** parks a PR — the `main` ruleset requires review-thread resolution — so resolve the threads (or comment `@dependabot recreate`) to let auto-merge proceed.
+
+When the grouping or label configuration changes, existing open Dependabot PRs keep their old shape until recreated — comment `@dependabot recreate` (or close them) so they adopt the new configuration.
 
 ## Scope
 
