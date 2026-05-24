@@ -400,8 +400,13 @@ jobs:
             echo "Auto-merge is not enabled on this PR; nothing to disable."
             exit 0
           fi
-          gh pr merge --disable-auto "$PR_URL"
-          # Verify the disarm took: a --disable-auto that reports success without
+          # Tolerate a non-zero exit here: between the pre-check above and this
+          # call another run (or the merge landing) can clear auto-merge, and
+          # `--disable-auto` then errors with "no auto-merge to disable" even
+          # though the desired state is already reached. The authoritative check
+          # is the re-query below, not this call's exit code.
+          gh pr merge --disable-auto "$PR_URL" || true
+          # Verify the disarm took: a --disable-auto that reported success without
           # clearing the request would leave this security-review PR armed.
           auto_merge=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest')
           if [ "$auto_merge" != "null" ]; then
