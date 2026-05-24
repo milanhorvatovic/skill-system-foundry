@@ -47,7 +47,9 @@ name: Dependabot Reconciler
 # `synchronize` re-fired it) is left for manual triage — re-run `Dependabot
 # Auto-Merge` or push to the PR to recover it. The same dependency gates also
 # guard the update-branch and recreate paths (see those steps), so a held
-# trust-boundary or semver-major bump is never re-driven into App-authored CI.
+# trust-boundary or semver-major bump is left untouched: never branch-updated
+# under the App identity (which would re-run CI with secrets in scope) and never
+# nudged to recreate.
 #
 # Triggers:
 #   - `workflow_run` on `Dependabot Auto-Merge` is the primary reactive trigger.
@@ -437,6 +439,20 @@ jobs:
           handle_dirty() {
             local pr=$1 comments_json head_sha marker nudge_count
             echo "DIRTY (real conflict)."
+            # Apply the dependency policy gates before any recreate nudge so a
+            # held bump (semver-major or a trust-boundary action) is left fully
+            # untouched, matching the update-branch / re-approve / arm paths and
+            # the documented boundary. The BEHIND callers already gate before
+            # update-branch, but the top-level DIRTY `elif` reaches here directly,
+            # so gating inside handle_dirty makes every caller inherit the policy.
+            # Unlike update-branch, `@dependabot recreate` is Dependabot-authored
+            # (its rebuild runs CI in the restricted Dependabot context, not the
+            # Actions-secrets context), so this is a leave-held-PRs-alone boundary
+            # rather than the secret-escalation guard that motivates the
+            # update-branch gate. Fail-closed on a metadata-fetch error (return 2).
+            if ! check_dependency_gates "$pr" "recreate comment"; then
+              return 0
+            fi
             # Tag the marker with the current head SHA. A fetch failure fails
             # closed (skip posting) so a transient error can't drop the SHA and
             # collapse the per-head marker back to a coarse, easily-duplicated one.
