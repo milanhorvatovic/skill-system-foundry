@@ -194,6 +194,14 @@ def fetch_merged_prs(repo_root: str, since_date: str) -> list[dict]:
         [
             "pr",
             "list",
+            # `--state merged` is the documented filter; `is:merged` is repeated
+            # in the search query because older gh versions ignore `--state`
+            # once `--search` is supplied and would otherwise inject the default
+            # `state:open`, returning an empty set even when merged PRs exist.
+            # Both agree, so a gh that honours either path returns only merged
+            # PRs (modern gh also accepts the `merged:>=` qualifier alone).
+            "--state",
+            "merged",
             "--search",
             f"is:merged base:main merged:>={since_date}",
             "--json",
@@ -299,11 +307,27 @@ def main(argv: list[str] | None = None) -> int:
                 "could not read metadata.version from skill-system-foundry/SKILL.md."
             )
         if manifest != tag_core:
+            try:
+                order = _version.compare(manifest, tag_core)
+            except ValueError:
+                # A non-semver manifest cannot be ordered against the tag;
+                # treat it as a reconcile case rather than guessing a direction.
+                order = 0
+            if order > 0:
+                detail = (
+                    "the manifest leads the latest tag — a release may be "
+                    "mid-tag (release-on-merge runs in a separate workflow), so "
+                    "wait and retry; if it persists, run the audit and reconcile"
+                )
+            else:
+                detail = (
+                    "the manifest is behind the latest tag — the manifests were "
+                    "not reconciled to the published tag; run the audit and "
+                    "reconcile before computing a release"
+                )
             raise ComputeError(
                 f"manifest version {manifest} does not match the latest tag "
-                f"v{tag_core}. The manifest leads the latest tag — a release "
-                "may be mid-tag (release-on-merge runs in a separate workflow), "
-                "so wait and retry; if it persists, run the audit and reconcile."
+                f"v{tag_core}; {detail}."
             )
         since_date = tag_commit_date(tag_core, repo_root)
         commit_set = commits_since_tag(tag_core, repo_root)
@@ -329,13 +353,21 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         for number, title, found in ambiguous:
+            # Suggest keeping the highest-precedence label and removing the rest,
+            # as a concrete, shell-safe command (each surplus label quoted). The
+            # maintainer can keep a different one; this is an example resolution.
+            bare = [label[len("release: "):] for label in found]
+            keep = _version.highest_level(bare) or bare[0]
+            keep_label = f"release: {keep}"
+            remove_args = " ".join(
+                f'--remove-label "{label}"' for label in found if label != keep_label
+            )
             print(
                 f"  #{number} multiple labels ({', '.join(found)}) — {title}",
                 file=sys.stderr,
             )
             print(
-                f"    fix: gh pr edit {number} --remove-label "
-                "<all but one of the above>",
+                f"    fix: keep one, e.g. gh pr edit {number} {remove_args}",
                 file=sys.stderr,
             )
         return EXIT_LABEL_GAP

@@ -187,7 +187,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("skipped #166", err)
         self.assertNotIn("999", out)
 
-    def test_drift_between_manifest_and_tag_aborts(self) -> None:
+    def test_drift_manifest_ahead_of_tag_aborts(self) -> None:
         with _run_env(
             manifest="1.3.0",
             tag_list="v1.2.1\n",
@@ -198,6 +198,19 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, compute.EXIT_PRECONDITION)
         self.assertEqual(out, "")
         self.assertIn("does not match the latest tag", err)
+        self.assertIn("leads the latest tag", err)
+
+    def test_drift_manifest_behind_tag_aborts(self) -> None:
+        with _run_env(
+            manifest="1.2.0",
+            tag_list="v1.2.1\n",
+            revlist="aaa\n",
+            gh_rows=[_row(1, ["release: patch"], "aaa")],
+        ):
+            code, out, err = _invoke()
+        self.assertEqual(code, compute.EXIT_PRECONDITION)
+        self.assertEqual(out, "")
+        self.assertIn("behind the latest tag", err)
 
     def test_unlabeled_pr_fails_with_add_label_hint(self) -> None:
         with _run_env(
@@ -222,7 +235,9 @@ class MainTests(unittest.TestCase):
             code, out, err = _invoke()
         self.assertEqual(code, compute.EXIT_LABEL_GAP)
         self.assertEqual(out, "")
-        self.assertIn("--remove-label", err)
+        # Concrete, shell-safe: keeps the highest (major), removes the rest quoted.
+        self.assertIn('--remove-label "release: skip"', err)
+        self.assertNotIn("<all but one", err)
 
     def test_empty_window_reports_nothing_to_release(self) -> None:
         with _run_env(
