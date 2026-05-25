@@ -1,18 +1,29 @@
 name: Dependabot Auto-Merge
 
-# Auto-merges patch/minor Dependabot PRs hands-off; holds majors, the two
-# trust-boundary actions, and security-review-labeled PRs for manual review.
+# Drives Dependabot PRs to merge on a three-tier policy:
 #
-# Hold gate (any one holds the PR):
-#   - effective update-type is semver-major (majors split into standalone PRs);
-#   - the bump touches a trust-boundary action that runs with secrets in scope
-#     (actions/create-github-app-token, milanhorvatovic/codex-ai-code-review-action);
-#   - the PR carries `trust-boundary` or `security-review-required`.
+#   Tier 1 — eligible (patch/minor, not a trust-boundary action, no veto label):
+#     the bot approves AND arms -> hands-off merge once required checks pass.
+#   Tier 2 — held (effective update-type is semver-major, OR the bump touches a
+#     trust-boundary action that runs with secrets in scope —
+#     actions/create-github-app-token, milanhorvatovic/codex-ai-code-review-action):
+#     the bot ARMS but does NOT approve -> auto-merge is enabled and the branch
+#     ruleset holds the merge until a code-owner approves, then it merges. The
+#     maintainer's approval is the only gate, even for the secret-scoped actions.
+#   Tier 3 — veto (`trust-boundary` or `security-review-required` LABEL):
+#     the bot neither approves nor arms -> fully manual.
 #
-# This trust-boundary action list is duplicated across three automation guards
-# that MUST stay in sync — `.github/dependabot.yaml` (exclude-patterns), the hold
-# conditions below, and `check_dependency_gates` in
-# `.github/workflows/dependabot-reconciler.yaml` — plus the contributor-facing
+# The split is enforced by the two steps' `if:` guards: the APPROVE step excludes
+# semver-major + the trust-boundary actions + the veto labels (so the bot never
+# approves a held PR); the MERGE step excludes only the veto labels (so a held PR
+# still reaches it and arms via the fall_back_to_auto_merge path — armed, never
+# approved). Both steps also require the DEPENDABOT_AUTOMERGE_ENABLED kill-switch.
+#
+# The trust-boundary action list now governs only the APPROVE step (a held
+# trust-boundary action is armed-not-approved, like any other held PR). It is
+# duplicated across guards that MUST stay in sync — `.github/dependabot.yaml`
+# (exclude-patterns), the approve step's `if:` below, and `check_dependency_gates`
+# in `.github/workflows/dependabot-reconciler.yaml` — plus the contributor-facing
 # copy in `CONTRIBUTING.md` (Dependency Updates). When a new action-level
 # trust-boundary dependency is added, update all four.
 #
@@ -156,20 +167,29 @@ jobs:
             exit 0
           fi
 
-      # Wait for required checks, then squash-merge synchronously when the PR has
-      # the required code-owner review; otherwise fall back to enabling GitHub
-      # auto-merge so a later manual approval (or rerun-to-green) can finish it.
-      # The synchronous path avoids the auto-merge worker's occasional dropped
-      # fire after the last required check goes green. The server-side ruleset is
-      # the safety boundary: a non-bypass merge is refused unless every required
-      # check has passed, so an early watch exit only causes a fallback, never an
-      # unsafe merge.
-      - name: Wait for required checks, then squash-merge
+      # Tier 1 (approved) squash-merges synchronously; tier 2 (held — semver-major
+      # or a trust-boundary action, never approved by the bot) reaches this step
+      # too and falls back to ARMING auto-merge, which the branch ruleset holds
+      # until a code-owner approves. The `if:` therefore excludes only the veto
+      # labels + the kill-switch — NOT semver-major or the trust-boundary actions.
+      # A held PR consequently holds a runner through the check-watch before it
+      # arms (accepted; a batch-scale runner-pressure occurrence is the trigger to
+      # revisit a pre-watch short-circuit).
+      #
+      # Squash-merge synchronously when reviewDecision is APPROVED (tier 1);
+      # otherwise fall back to enabling GitHub auto-merge so a later code-owner
+      # approval (or rerun-to-green) finishes it. The synchronous path avoids the
+      # auto-merge worker's occasional dropped fire after the last required check
+      # goes green; tier 2 always takes the fallback (the bot never approves it),
+      # so the synchronous `gh pr merge --squash` tail below is unreachable for a
+      # held PR — its merge is completed by the worker, backstopped by the
+      # reconciler's arm-or-advance path. The server-side ruleset is the safety
+      # boundary: a non-bypass merge is refused unless every required check has
+      # passed AND the required review is in place, so an early watch exit or an
+      # arm on an unapproved held PR only causes a wait, never an unsafe merge.
+      - name: Wait for required checks, then arm or squash-merge
         if: >-
-          steps.effective.outputs.update-type != 'version-update:semver-major'
-          && !contains(steps.metadata.outputs.dependency-names, 'actions/create-github-app-token')
-          && !contains(steps.metadata.outputs.dependency-names, 'milanhorvatovic/codex-ai-code-review-action')
-          && !contains(github.event.pull_request.labels.*.name, 'trust-boundary')
+          !contains(github.event.pull_request.labels.*.name, 'trust-boundary')
           && !contains(github.event.pull_request.labels.*.name, 'security-review-required')
           && vars.DEPENDABOT_AUTOMERGE_ENABLED == 'true'
         env:
