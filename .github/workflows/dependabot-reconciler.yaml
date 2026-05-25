@@ -30,9 +30,14 @@ name: Dependabot Reconciler
 # already APPROVED or ARMED, via two paths — it re-approves an ARMED PR whose
 # approval was dismissed (or that the workflow could not approve from the
 # Dependabot-secret context; this workflow reads the Actions-store
-# CODEOWNER_APPROVER_TOKEN), and it ARMS an APPROVED + mergeable but unarmed PR.
-# Both re-run every policy gate first, so it never approves or arms a PR the
-# policy would hold. Because the re-approve path approves, on an armed-but-
+# CODEOWNER_APPROVER_TOKEN), and it ARMS-OR-ADVANCES an APPROVED + mergeable PR
+# (arming it if unarmed, or re-issuing the idempotent merge to backstop the async
+# auto-merge worker if already armed — tier 2's only merge path).
+# The re-approve path re-runs every policy gate first, so the bot never approves
+# a PR the policy would hold; the arm-or-advance path drops the dependency gate
+# (arming/merging is ruleset-gated — a held PR cannot merge until a code-owner
+# approves), keeping only the veto-label and kill-switch guards. Because the
+# re-approve path approves, on an armed-but-
 # unapproved PR it MAY post the first approval: the approved/armed precondition
 # plus the re-run gates are the safety boundary, NOT a prior-approval check. A
 # prior-approval check is not used because the two armed-but-unapproved causes are
@@ -46,10 +51,13 @@ name: Dependabot Reconciler
 # where the `opened` event never reached the approve/arm path and no later
 # `synchronize` re-fired it) is left for manual triage — re-run `Dependabot
 # Auto-Merge` or push to the PR to recover it. The same dependency gates also
-# guard the update-branch and recreate paths (see those steps), so a held
-# trust-boundary or semver-major bump is left untouched: never branch-updated
-# under the App identity (which would re-run CI with secrets in scope) and never
-# nudged to recreate.
+# guard the recreate path and — until the PR is APPROVED — the update-branch path
+# (see those steps), so a held trust-boundary or semver-major bump that no
+# code-owner has approved is left untouched: not branch-updated under the App
+# identity (which would re-run CI with secrets in scope) and not nudged to
+# recreate. Once a code-owner approval is in place the update-branch path is
+# allowed (the approved version is vetted, so privileged CI on it is authorized);
+# the recreate nudge stays gated regardless.
 #
 # Triggers:
 #   - `workflow_run` on `Dependabot Auto-Merge` is the primary reactive trigger.
@@ -69,8 +77,10 @@ name: Dependabot Reconciler
 # Conservative by design: this workflow never invokes a synchronous merge
 # directly. It nudges PRs into states the existing infrastructure can complete —
 # updates BEHIND branches, posts one `@dependabot recreate` comment on real
-# conflicts, restores dismissed approvals on already-armed PRs, and ENABLES
-# auto-merge on approved+mergeable PRs via `gh pr merge --auto --squash`. That
+# conflicts, restores dismissed approvals on already-armed PRs, and ARMS OR
+# ADVANCES approved+mergeable PRs via `gh pr merge --auto --squash` (arming an
+# unarmed PR, or re-issuing the idempotent merge to advance an already-armed one
+# the async worker missed). That
 # last call IS the same one GitHub uses to merge synchronously when every
 # required protection on the PR is already satisfied at the moment of the call
 # (the common path for an APPROVED + MERGEABLE PR), so "enable auto-merge" can
@@ -82,10 +92,16 @@ name: Dependabot Reconciler
 # Policy parity with `dependabot-auto-merge.yaml`:
 #   - Skips PRs labeled `trust-boundary` or `security-review-required` (re-checked
 #     immediately before every state-mutating action, fail-closed on query error).
-#   - Skips re-approving / arming a PR whose first commit carries a
-#     `version-update:semver-major` trailer, or that bumps a trust-boundary action
-#     (`actions/create-github-app-token`, `milanhorvatovic/codex-ai-code-review-action`).
-#     Detection reads the PR's first commit message — Dependabot's authoritative
+#   - Applies `check_dependency_gates` (a `version-update:semver-major` trailer,
+#     or a trust-boundary action bump — `actions/create-github-app-token`,
+#     `milanhorvatovic/codex-ai-code-review-action`) to RE-APPROVAL only, so the
+#     bot never approves a held PR. The arm-or-advance path does NOT apply it —
+#     arming/merging is ruleset-gated, so a held PR cannot merge until a code-owner
+#     approves. update-branch applies it only when the PR is NOT yet APPROVED (an
+#     approved held version is authorized for the privileged App-identity CI an
+#     update-branch triggers); the recreate nudge keeps it unconditionally (a held
+#     PR, even approved, is left for manual conflict resolution). Detection reads
+#     the PR's first commit message — Dependabot's authoritative
 #     `updated-dependencies:` block — because `dependabot/fetch-metadata` is only
 #     available inside the `pull_request` event, not the push/schedule/workflow_run
 #     triggers this workflow runs under. When a new action-level trust-boundary
@@ -357,13 +373,16 @@ jobs:
             esac
           }
 
-          # Apply the dependency policy gates from dependabot-auto-merge.yaml so
-          # neither the re-approve path nor the arm-auto-merge path can act on a
-          # PR that workflow would hold for manual review. The label gates
-          # (trust-boundary / security-review-required) are handled separately by
-          # gate_security_review; this checks the two remaining hold conditions
-          # from the auto-merge `if:`: a trust-boundary action bump (held by name,
-          # any update-type), and a semver-major effective update-type. Reads the
+          # Apply the dependency policy gates from dependabot-auto-merge.yaml's
+          # approve step. The re-approve and recreate paths gate on this
+          # unconditionally; the update-branch path gates on it only until the PR
+          # is APPROVED (an approved version is vetted, so privileged CI on it is
+          # authorized); the arm-or-advance path skips it entirely (arming and
+          # merging are ruleset-gated). The label gates (trust-boundary /
+          # security-review-required) are handled separately by gate_security_review;
+          # this checks the two remaining hold conditions from the approve step's
+          # `if:`: a trust-boundary action bump (held by name, any update-type), and
+          # a semver-major effective update-type. Reads the
           # Dependabot-authored first commit message because fetch-metadata is
           # unavailable outside the pull_request event. Returns 0 eligible, 1 a
           # gate refuses, 2 on commit-metadata fetch failure (fail-closed).
@@ -441,8 +460,10 @@ jobs:
             echo "DIRTY (real conflict)."
             # Apply the dependency policy gates before any recreate nudge so a
             # held bump (semver-major or a trust-boundary action) is left fully
-            # untouched, matching the update-branch / re-approve / arm paths and
-            # the documented boundary. The BEHIND callers already gate before
+            # untouched. The re-approve path gates the same way; the update-branch
+            # path gates too but allows an already-approved PR through, and the
+            # arm-or-advance path relies on the ruleset instead. The BEHIND callers
+            # already gate before
             # update-branch, but the top-level DIRTY `elif` reaches here directly,
             # so gating inside handle_dirty makes every caller inherit the policy.
             # Unlike update-branch, `@dependabot recreate` is Dependabot-authored
@@ -534,18 +555,23 @@ jobs:
                 return 0
               fi
               # Apply the dependency policy gates BEFORE the App-authored
-              # update-branch, not just before re-approve/arm. `gh pr update-branch`
-              # with UPDATE_BRANCH_TOKEN creates a non-Dependabot `synchronize`
-              # event, which (unlike a Dependabot-authored run) executes the PR's
-              # workflows in the full Actions-secrets context. For a held
-              # trust-boundary action bump that would re-run CI with the unreviewed
-              # new action version AND repository secrets in scope before a human
-              # review — exactly the escalation the trust-boundary hold exists to
-              # prevent. Gating here leaves a held PR (semver-major or a
-              # trust-boundary action) BEHIND for manual handling instead of
-              # re-driving it into privileged CI. Fail-closed on a metadata-fetch
-              # error (return 2), same as the re-approve / arm paths.
-              if ! check_dependency_gates "$pr" "update-branch"; then
+              # update-branch — UNLESS the PR's reviewDecision is already APPROVED
+              # (the ruleset-required approving review — a code owner for owned paths).
+              # `gh pr update-branch` with UPDATE_BRANCH_TOKEN creates a
+              # non-Dependabot `synchronize` event, which (unlike a Dependabot-
+              # authored run) executes the PR's workflows in the full Actions-
+              # secrets context. For a held trust-boundary action bump that would
+              # re-run CI with the new action version AND repository secrets in
+              # scope — the escalation the trust-boundary hold exists to prevent —
+              # so we gate it. But once reviewDecision is APPROVED a maintainer has
+              # vetted the version, so the privileged CI an update-branch triggers
+              # on it is authorized (each BEHIND cycle re-runs it, and the ruleset's
+              # dismiss_stale_reviews_on_push means the maintainer re-approves each
+              # cycle — see CONTRIBUTING). Skip the gate when APPROVED so its "not
+              # performing update-branch" log can't contradict the override; an
+              # unapproved held PR still hits the gate and is left BEHIND for manual
+              # handling. The gate fails closed on a metadata-fetch error (return 2).
+              if [ "$review" != "APPROVED" ] && ! check_dependency_gates "$pr" "update-branch"; then
                 return 0
               fi
               echo "BEHIND main; calling update-branch."
@@ -629,8 +655,8 @@ jobs:
               # deliberate maintainer block — never re-approve) and a maintainer
               # manually arming auto-merge on a semver-major / trust-boundary PR
               # for human review. Skip CHANGES_REQUESTED outright, then re-run the
-              # same dependency gates the arm path uses so the reconciler can
-              # never re-approve a PR the auto-merge workflow would have refused.
+              # same dependency gates the auto-merge approve step uses so the
+              # reconciler can never re-approve a PR that workflow would refuse.
               if [ "$review" = "CHANGES_REQUESTED" ]; then
                 echo "PR #${pr}: reviewDecision=CHANGES_REQUESTED; not re-approving (deliberate maintainer block)."
                 return 0
@@ -668,15 +694,27 @@ jobs:
               fi
             fi
 
-            # Arm auto-merge if the PR is otherwise ready AND the kill-switch is
-            # on. Apply the full set of policy gates from dependabot-auto-merge.yaml
-            # so this workflow can never enable auto-merge on a PR that workflow
-            # deliberately left unarmed.
-            if [ "$has_auto" = "false" ] && [ "$mergeable" = "MERGEABLE" ] && [ "$review" = "APPROVED" ] && automerge_enabled; then
+            # Arm-or-advance backstop. Fires on any approved + mergeable PR while
+            # the kill-switch is on — regardless of whether auto-merge is already
+            # armed. `gh pr merge --auto --squash` is idempotent: it arms a PR
+            # whose open-time arm was dropped, and on an already-armed + approved +
+            # green PR it completes the merge the async auto-merge worker may have
+            # silently failed to fire. That advance case is tier 2's safety net:
+            # a held PR is never approved by the bot, so its dependabot-auto-merge
+            # run always falls back to arming and then relies entirely on the
+            # worker; re-issuing the idempotent merge here each tick is the backstop.
+            # Re-issuing on a PR that is already armed and still waiting on checks is
+            # benign, NOT a failure: `gh pr merge --auto` returns "already enabled"
+            # (tolerated by `|| true`), and verify_arm_or_terminal treats an
+            # OPEN+armed PR as success — an armed-and-waiting PR never reddens the run.
+            # check_dependency_gates is intentionally NOT applied: arming and
+            # merging are ruleset-gated (the server refuses a non-bypass merge
+            # without the required code-owner review), so a held PR cannot merge
+            # until a human approves it — only *approval* is dangerous, and the
+            # re-approve path above keeps the gate. gate_security_review and the
+            # kill-switch remain the live guards.
+            if [ "$mergeable" = "MERGEABLE" ] && [ "$review" = "APPROVED" ] && automerge_enabled; then
               if ! gate_security_review "$pr" "arm auto-merge"; then
-                return 0
-              fi
-              if ! check_dependency_gates "$pr" "arm auto-merge"; then
                 return 0
               fi
               # Re-check the security-review state IMMEDIATELY before the merge
@@ -747,7 +785,22 @@ jobs:
                   fi
                   return 0 ;;
               esac
-              echo "Armed auto-merge."
+              # Log from the authoritative post-call state, not the pre-call
+              # has_auto: `gh pr merge --auto --squash` can merge synchronously, so
+              # the PR may now be MERGED (verify_arm_or_terminal already logged that
+              # as "reconciled"). Only emit an arm/advance line while still OPEN; the
+              # pre-call has_auto then distinguishes a fresh arm from a re-confirmed
+              # backstop advance.
+              case "$(gh pr view "$pr" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)" in
+                OPEN)
+                  if [ "$has_auto" = "true" ]; then
+                    echo "Auto-merge already armed; re-confirmed (backstop advance)."
+                  else
+                    echo "Armed auto-merge."
+                  fi ;;
+                MERGED|CLOSED) : ;;  # verify_arm_or_terminal already logged this
+                *) echo "PR #${pr}: post-arm state unverified for logging." ;;
+              esac
             fi
 
             return 0
