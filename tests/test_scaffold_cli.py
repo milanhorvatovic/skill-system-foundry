@@ -3301,6 +3301,49 @@ class ErrorSchemaTests(unittest.TestCase):
         self.assertTrue(role["dry_run"])
 
 
+class CliErrorSchemaTests(unittest.TestCase):
+    """CLI-level JSON errors share the stable schema (dry_run + path list).
+
+    These failure paths live in main() / _validate_flags and only fire
+    through argv parsing, so they are exercised via the CLI.
+    """
+
+    def test_unknown_flag_dry_run_uses_planned(self) -> None:
+        proc = _run(
+            ["skill", "demo", "--bogus", "--dry-run", "--json"], cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertTrue(data["dry_run"])
+        self.assertIn("planned", data)
+        self.assertNotIn("created", data)
+
+    def test_unknown_flag_real_uses_created(self) -> None:
+        proc = _run(["skill", "demo", "--bogus", "--json"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["dry_run"])
+        self.assertIn("created", data)
+        self.assertNotIn("planned", data)
+
+    def test_unknown_component_carries_path_list(self) -> None:
+        proc = _run(["bogus", "x", "--json"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertIn("dry_run", data)
+        self.assertIn("created", data)
+
+    def test_missing_root_arg_dry_run_uses_planned(self) -> None:
+        proc = _run(
+            ["skill", "demo", "--root", "--dry-run", "--json"], cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertTrue(data["dry_run"])
+        self.assertIn("planned", data)
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 

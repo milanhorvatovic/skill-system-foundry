@@ -274,7 +274,7 @@ def _blocking_dir_error(blocking: str) -> str:
 
 
 def _scaffold_error(
-    component: str,
+    component: str | None,
     error: str,
     *,
     dry_run: bool,
@@ -283,22 +283,24 @@ def _scaffold_error(
 ) -> dict:
     """Build a scaffold error result with the stable JSON schema.
 
-    Every scaffold JSON payload — success or failure — carries the same
-    top-level keys so consumers parse one shape: ``tool``, ``component``,
-    ``success``, ``dry_run``, the component-specific identifiers in
-    *fields* (``name`` / ``domain`` / ``group``), ``error``, an empty
+    Every scaffold JSON payload — success or failure, component-level or
+    CLI-level — carries the same top-level keys so consumers parse one
+    shape: ``tool``, ``success``, ``dry_run``, ``error``, and an empty
     path list under the run-mode key (``planned`` under dry-run,
-    ``created`` otherwise — empty because an error path records nothing),
-    and ``details`` when supplied. Carrying ``dry_run`` and the path-list
-    key on errors too keeps the schema identical to the success payload.
+    ``created`` otherwise — empty because an error path records nothing).
+    ``component`` is included when known and omitted for pre-dispatch CLI
+    errors that have no component yet (pass ``None``). *fields* supplies
+    the component-specific identifiers (``name`` / ``domain`` / ``group``)
+    and ``details`` is added when supplied. Carrying ``dry_run`` and the
+    path-list key on every error keeps the schema identical to the
+    success payload.
     """
-    result: dict = {
-        "tool": "scaffold",
-        "component": component,
-        "success": False,
-        "dry_run": dry_run,
-        "error": error,
-    }
+    result: dict = {"tool": "scaffold"}
+    if component is not None:
+        result["component"] = component
+    result["success"] = False
+    result["dry_run"] = dry_run
+    result["error"] = error
     result.update(fields)
     result["planned" if dry_run else "created"] = []
     if details is not None:
@@ -1072,16 +1074,11 @@ def _validate_flags(
     if unknown:
         if json_mode:
             allowed = ", ".join(sorted(known)) or "(none)"
-            print(to_json_output({
-                "tool": "scaffold",
-                "component": component,
-                "success": False,
-                "dry_run": dry_run,
-                "error": (
-                    f"Unknown flag(s): {', '.join(unknown)}. "
-                    f"Allowed: {allowed}"
-                ),
-            }))
+            print(to_json_output(_scaffold_error(
+                component,
+                f"Unknown flag(s): {', '.join(unknown)}. Allowed: {allowed}",
+                dry_run=dry_run,
+            )))
         else:
             print(
                 f"{LEVEL_FAIL}: Unknown flag(s) for '{component}': "
@@ -1127,12 +1124,9 @@ def main() -> None:
         idx = args.index("--root")
         if idx + 1 >= len(args) or args[idx + 1].startswith("--"):
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": "--root requires a path argument",
-                }))
+                print(to_json_output(_scaffold_error(
+                    None, "--root requires a path argument", dry_run=dry_run,
+                )))
             else:
                 print(f"{LEVEL_FAIL}: --root requires a path argument")
             sys.exit(1)
@@ -1141,12 +1135,9 @@ def main() -> None:
 
     if len(args) < 3:
         if json_output:
-            print(to_json_output({
-                "tool": "scaffold",
-                "success": False,
-                "dry_run": dry_run,
-                "error": "Insufficient arguments",
-            }))
+            print(to_json_output(_scaffold_error(
+                None, "Insufficient arguments", dry_run=dry_run,
+            )))
         else:
             print(__doc__)
         sys.exit(1)
@@ -1158,13 +1149,9 @@ def main() -> None:
         flags = [a for a in args[2:] if a.startswith("--")]
         if not positional:
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "component": "skill",
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": "Missing skill name",
-                }))
+                print(to_json_output(_scaffold_error(
+                    "skill", "Missing skill name", dry_run=dry_run,
+                )))
             else:
                 print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
@@ -1181,14 +1168,10 @@ def main() -> None:
             )
         except Exception as exc:
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "component": "skill",
-                    "name": name,
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": f"{exc.__class__.__name__}: {exc}",
-                }))
+                print(to_json_output(_scaffold_error(
+                    "skill", f"{exc.__class__.__name__}: {exc}",
+                    dry_run=dry_run, name=name,
+                )))
                 sys.exit(1)
             raise
         if json_output and result is not None:
@@ -1200,13 +1183,10 @@ def main() -> None:
         flags = [a for a in args[2:] if a.startswith("--")]
         if len(positional) < 2:
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "component": "capability",
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": "Missing domain or capability name",
-                }))
+                print(to_json_output(_scaffold_error(
+                    "capability", "Missing domain or capability name",
+                    dry_run=dry_run,
+                )))
             else:
                 print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
@@ -1221,15 +1201,10 @@ def main() -> None:
             )
         except Exception as exc:
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "component": "capability",
-                    "name": positional[1],
-                    "domain": positional[0],
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": f"{exc.__class__.__name__}: {exc}",
-                }))
+                print(to_json_output(_scaffold_error(
+                    "capability", f"{exc.__class__.__name__}: {exc}",
+                    dry_run=dry_run, name=positional[1], domain=positional[0],
+                )))
                 sys.exit(1)
             raise
         if json_output and result is not None:
@@ -1241,13 +1216,9 @@ def main() -> None:
         flags = [a for a in args[2:] if a.startswith("--")]
         if len(positional) < 2:
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "component": "role",
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": "Missing group or role name",
-                }))
+                print(to_json_output(_scaffold_error(
+                    "role", "Missing group or role name", dry_run=dry_run,
+                )))
             else:
                 print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
@@ -1261,15 +1232,10 @@ def main() -> None:
             )
         except Exception as exc:
             if json_output:
-                print(to_json_output({
-                    "tool": "scaffold",
-                    "component": "role",
-                    "name": positional[1],
-                    "group": positional[0],
-                    "success": False,
-                    "dry_run": dry_run,
-                    "error": f"{exc.__class__.__name__}: {exc}",
-                }))
+                print(to_json_output(_scaffold_error(
+                    "role", f"{exc.__class__.__name__}: {exc}",
+                    dry_run=dry_run, name=positional[1], group=positional[0],
+                )))
                 sys.exit(1)
             raise
         if json_output and result is not None:
@@ -1278,12 +1244,9 @@ def main() -> None:
 
     else:
         if json_output:
-            print(to_json_output({
-                "tool": "scaffold",
-                "success": False,
-                "dry_run": dry_run,
-                "error": f"Unknown component type: {component}",
-            }))
+            print(to_json_output(_scaffold_error(
+                None, f"Unknown component type: {component}", dry_run=dry_run,
+            )))
         else:
             print(f"{LEVEL_FAIL}: Unknown component type: {component}")
             print("  Valid types: skill, capability, role")
