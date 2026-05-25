@@ -5365,5 +5365,300 @@ class DanglingSymlinkReferenceTests(unittest.TestCase):
             )
 
 
+# ===================================================================
+# --fix name normalization (folded into the unified --fix/--apply flow)
+# ===================================================================
+
+
+class FixNameNormalizationTests(unittest.TestCase):
+    """``validate_skill.py --fix`` previews safe SKILL.md ``name``
+    normalization (lowercase; underscores and spaces to hyphens) and
+    ``--fix --apply`` writes it — the same preview/apply structure that
+    drives the path-resolution rewriter.  Ambiguous problems (name does
+    not match directory; over-length description) are reported as
+    "manual fix needed" and never auto-applied.
+    """
+
+    def _make_skill(self, parent: str, dir_name: str, name: str) -> str:
+        skill_dir = os.path.join(parent, dir_name)
+        os.makedirs(skill_dir)
+        write_skill_md(skill_dir, name=name)
+        return skill_dir
+
+    def _read_skill_md(self, skill_dir: str) -> str:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            return f.read()
+
+    # --- preview (--fix, no --apply): reports but never writes -------
+
+    def test_preview_reports_name_fix_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "myskill", "MySkill")
+            before = self._read_skill_md(skill_dir)
+            code, out, _ = _run_main(["validate_skill.py", skill_dir, "--fix"])
+            after = self._read_skill_md(skill_dir)
+        # dir 'myskill' matches the fixed name 'myskill' → clean preview.
+        self.assertEqual(code, 0)
+        self.assertIn("Would apply name normalization", out)
+        self.assertIn("lowercased", out)
+        # Dry-run must not modify the source.
+        self.assertEqual(after, before)
+        self.assertIn("name: MySkill\n", after)
+
+    def test_preview_underscore_and_space_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "my-skill-name", "My_Skill Name")
+            before = self._read_skill_md(skill_dir)
+            code, out, _ = _run_main(["validate_skill.py", skill_dir, "--fix"])
+            after = self._read_skill_md(skill_dir)
+        self.assertEqual(code, 0)
+        self.assertIn("underscores", out)
+        self.assertIn("spaces", out)
+        self.assertEqual(after, before)
+
+    # --- apply (--fix --apply): writes name fixes -------------------
+
+    def test_apply_writes_lowercase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "myskill", "MySkill")
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+            after = self._read_skill_md(skill_dir)
+        self.assertEqual(code, 0)
+        self.assertIn("Applied name normalization", out)
+        self.assertIn("name: myskill\n", after)
+
+    def test_apply_writes_underscores_to_hyphens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "my-skill", "my_skill")
+            code, _out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+            after = self._read_skill_md(skill_dir)
+        self.assertEqual(code, 0)
+        self.assertIn("name: my-skill\n", after)
+
+    def test_apply_writes_combined(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "my-skill-name", "My_Skill Name")
+            code, _out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+            after = self._read_skill_md(skill_dir)
+        self.assertEqual(code, 0)
+        self.assertIn("name: my-skill-name\n", after)
+
+    def test_apply_preserves_body_byte_for_byte_except_name(self) -> None:
+        body = (
+            "# Demo\n\nProse name: keep-this stays.\n\n"
+            "```yaml\nname: also_kept\n```\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="My_Skill", body=body)
+            path = os.path.join(skill_dir, "SKILL.md")
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            code, _out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+        self.assertEqual(code, 0)
+        self.assertEqual(after, before.replace("My_Skill", "my-skill", 1))
+        self.assertIn("name: keep-this stays.", after)
+        self.assertIn("name: also_kept", after)
+
+    # --- combined: both a path-ref fix AND a name fix ---------------
+
+    def test_preview_both_path_and_name_fixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            # Name needs normalization; dir 'demo-skill' matches the fix.
+            write_skill_md(skill_dir, name="Demo_Skill")
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(cap_md, "# Demo\n\nSee [g](references/guide.md).\n")
+            with open(cap_md, encoding="utf-8") as f:
+                before_cap = f.read()
+            before_skill = self._read_skill_md(skill_dir)
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+            with open(cap_md, encoding="utf-8") as f:
+                after_cap = f.read()
+            after_skill = self._read_skill_md(skill_dir)
+        payload = json.loads(out)
+        self.assertEqual(code, 0, msg=out)
+        # Both categories present in one coherent payload.
+        self.assertEqual(len(payload["fixes"]), 1)
+        self.assertEqual(payload["name_fix"]["new_name"], "demo-skill")
+        self.assertTrue(payload["name_fix"]["applied"])
+        self.assertEqual(payload["name_fix"]["manual_fix_needed"], [])
+        self.assertFalse(payload["name_fix"]["modified"])
+        # Nothing written under preview — both sources unchanged.
+        self.assertEqual(after_cap, before_cap)
+        self.assertEqual(after_skill, before_skill)
+
+    def test_apply_both_path_and_name_fixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir, name="Demo_Skill")
+            write_text(
+                os.path.join(skill_dir, "references", "guide.md"), "# Guide\n",
+            )
+            cap_md = os.path.join(cap_dir, "capability.md")
+            write_text(cap_md, "# Demo\n\nSee [g](references/guide.md).\n")
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+            with open(cap_md, encoding="utf-8") as f:
+                after_cap = f.read()
+            after_skill = self._read_skill_md(skill_dir)
+        payload = json.loads(out)
+        self.assertEqual(code, 0, msg=out)
+        # Both writes landed; the modified count covers both files.
+        self.assertTrue(payload["applied"])
+        self.assertTrue(payload["name_fix"]["modified"])
+        self.assertEqual(payload["modified"], 2)
+        self.assertIn("[g](../../references/guide.md)", after_cap)
+        self.assertIn("name: demo-skill\n", after_skill)
+
+    # --- no-op: name already valid leaves the file untouched --------
+
+    def test_noop_when_name_already_valid_leaves_file_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "my-skill", "my-skill")
+            path = os.path.join(skill_dir, "SKILL.md")
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            mtime_before = os.stat(path).st_mtime_ns
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+            mtime_after = os.stat(path).st_mtime_ns
+        self.assertEqual(code, 0)
+        self.assertIn("No mechanical fixes needed", out)
+        self.assertEqual(after, before)
+        # File never opened for writing — mtime unchanged.
+        self.assertEqual(mtime_after, mtime_before)
+
+    # --- manual-fix-needed: dir mismatch and over-length description -
+
+    def test_dir_mismatch_reported_manual_not_applied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "expected-dir", "actual-name")
+            path = os.path.join(skill_dir, "SKILL.md")
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+        # Manual finding gates the run; nothing auto-applied.
+        self.assertEqual(code, 1)
+        self.assertIn("manual fix", out.lower())
+        self.assertIn("does not match directory", out)
+        self.assertEqual(after, before)
+
+    def test_over_length_description_reported_manual(self) -> None:
+        long_desc = "x" * (MAX_DESCRIPTION_CHARS + 5)
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="my-skill", description=long_desc)
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        # The over-length description is owned by the name-fix category,
+        # not double-reported under non_path_fails.
+        self.assertTrue(any(
+            "description" in f for f in payload["name_fix"]["manual_fix_needed"]
+        ))
+        self.assertFalse(any(
+            "description' exceeds" in f for f in payload["non_path_fails"]
+        ))
+
+    # --- JSON shape carries both categories -------------------------
+
+    def test_json_shape_includes_name_fix_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "myskill", "MySkill")
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["mode"], "fix")
+        self.assertTrue(payload["success"])
+        # The name_fix block is a peer category to fixes/ambiguous.
+        nf = payload["name_fix"]
+        self.assertEqual(nf["new_name"], "myskill")
+        self.assertTrue(nf["applied"])
+        self.assertEqual(nf["manual_fix_needed"], [])
+        self.assertTrue(nf["modified"])
+        self.assertEqual(nf["errors"], [])
+        # Path-resolution categories still present alongside it.
+        self.assertIn("fixes", payload)
+        self.assertIn("ambiguous_findings", payload)
+        self.assertEqual(
+            payload["path_resolution"]["rule_name"], "path-resolution",
+        )
+
+    def test_name_dir_mismatch_not_double_reported_in_non_path_fails(self) -> None:
+        # The name-frontmatter [spec] FAILs are owned by name_fix, not
+        # the generic non_path_fails bucket.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = self._make_skill(tmp, "expected-dir", "Actual_Name")
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        # Lexical fix proposed; dir-mismatch surfaced as manual.
+        self.assertEqual(payload["name_fix"]["new_name"], "actual-name")
+        self.assertTrue(any(
+            "does not match directory" in f
+            for f in payload["name_fix"]["manual_fix_needed"]
+        ))
+        # No name [spec] FAIL leaked into non_path_fails.
+        self.assertFalse(any(
+            "[spec] 'name'" in f for f in payload["non_path_fails"]
+        ))
+
+    # --- capability mode targets the enclosing skill root's name ----
+
+    def test_capability_mode_fixes_enclosing_skill_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "demo-skill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            write_skill_md(skill_dir, name="Demo_Skill")
+            write_text(os.path.join(cap_dir, "capability.md"), "# Demo\n")
+            code, out, _ = _run_main(
+                ["validate_skill.py", cap_dir, "--capability", "--fix",
+                 "--apply", "--json"],
+            )
+            with open(
+                os.path.join(skill_dir, "SKILL.md"), encoding="utf-8",
+            ) as f:
+                after = f.read()
+        payload = json.loads(out)
+        self.assertEqual(code, 0, msg=out)
+        # Name fixing runs against the enclosing skill root's SKILL.md.
+        self.assertEqual(payload["name_fix"]["new_name"], "demo-skill")
+        self.assertIn("name: demo-skill\n", after)
+
+
 if __name__ == "__main__":
     unittest.main()
