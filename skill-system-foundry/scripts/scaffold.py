@@ -218,6 +218,14 @@ def _record_planned_dirs(
     scaffold function before the first write, while the filesystem is
     still pristine, so an absent ancestor is counted exactly once.
 
+    The directories are recorded in *created_paths* in both modes (so the
+    JSON ``planned``/``created`` set is complete), but narrated only
+    under dry-run. A real run does not print them here because they are
+    not on disk yet — they are materialised by the file writes that
+    follow, which print their own ``Created:`` lines; narrating them now
+    would claim directories the run might never reach if a later step
+    (e.g. a missing template) fails before the first write.
+
     If an ancestor exists but is not a directory, ``os.makedirs`` cannot
     create through it and a real run would fail. In that case nothing is
     recorded and the blocking path is returned so the caller can surface
@@ -237,8 +245,8 @@ def _record_planned_dirs(
         cur = parent
     for d in reversed(missing):
         created_paths.append(d)
-        if not quiet:
-            _print_created(d, dry_run=dry_run)
+        if dry_run and not quiet:
+            print(planned_line(d))
     return None
 
 

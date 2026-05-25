@@ -3174,6 +3174,26 @@ class BlockingDirAncestorTests(unittest.TestCase):
             self.assertIn("is not a directory", proc.stdout)
 
 
+class RealRunDirNarrationTests(unittest.TestCase):
+    """A real run does not narrate directories before they exist."""
+
+    def test_no_premature_created_line_on_template_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch(
+                    "scaffold.read_template",
+                    side_effect=FileNotFoundError("missing template"),
+                ):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit):
+                    scaffold_skill("demo", root=tmpdir)
+            output = buf.getvalue()
+        # The run failed before the first write, so nothing was created and
+        # nothing should have been narrated as created.
+        self.assertNotIn("Created:", output)
+        self.assertFalse(os.path.exists(os.path.join(tmpdir, DIR_SKILLS)))
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 
