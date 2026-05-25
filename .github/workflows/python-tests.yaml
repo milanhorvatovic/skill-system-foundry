@@ -38,7 +38,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.12"]
+        # 3.12 is the required floor — only the (ubuntu, 3.12) and
+        # (windows, 3.12) contexts are listed as required status checks
+        # in the main ruleset. 3.13 and 3.14 are advisory (non-required)
+        # forward-compat signals exercising the project's "3.12+" claim.
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
