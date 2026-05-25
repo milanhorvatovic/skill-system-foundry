@@ -1,58 +1,38 @@
 name: Dependabot Release Label
 
-# Reconciles the `release: <level>` label on every Dependabot PR to match the
-# effective update-type derived from Dependabot's metadata.
+# Absent-label backstop for Dependabot PRs.
 #
-# Part of label-driven release automation (WI-3): `release-prep.yaml` now
-# computes the next version from these labels (via compute_release_version.py),
-# so keeping every Dependabot PR's release label correct keeps the computed
-# version and the auto-merge policy in agreement about what a PR is.
-# `verify-pr-release-label` is now a required, blocking check on every PR.
+# Policy: a dependency bump is at most a project PATCH. Dependencies are not
+# shipped in the skill bundle (github-actions is CI infra; requirements-dev.txt
+# is dev-only), so a dependency's own semver-major is NOT the project's major.
+# `.github/dependabot.yaml` statically labels every PR it opens `release: patch`,
+# and that is the final label for every Dependabot PR — this workflow does NOT
+# escalate any bump to `release: major`. (It used to, which drove the computed
+# release version to a spurious major from CI-only action upgrades.) A bump that
+# genuinely warrants a larger project bump is a maintainer call: apply
+# `release: minor` / `release: major` by hand and this workflow preserves it.
 #
-# Two scenarios it addresses:
+# The only thing this workflow does is BACKFILL `release: patch` when a PR
+# carries no `release:` label at all — e.g. a built-in security-update group that
+# does not inherit the static label list from `.github/dependabot.yaml`. Without
+# it such a PR would fail the required `verify-pr-release-label` check. An
+# existing `release:` label (the static default or a maintainer override) is
+# always left untouched; the workflow never reclassifies.
 #
-#   1. Backstop for absent labels. A Dependabot PR that does not inherit the
-#      static label list from `.github/dependabot.yaml` (e.g. a built-in
-#      security-update group) would otherwise carry no `release:` label.
+# Why no update-type classification: the auto-merge hold for semver-major and
+# trust-boundary-action bumps does NOT rely on this label — both
+# `dependabot-auto-merge.yaml` and `dependabot-reconciler.yaml` gate on the
+# Dependabot update-type metadata, independent of the release label. So the label
+# carries no hold semantics and never needs to encode the update-type; this
+# workflow needs neither `dependabot/fetch-metadata` nor a classifier.
 #
-#   2. Corrector for the standalone-semver-major case. `.github/dependabot.yaml`
-#      applies `release: patch` statically to every PR from the configured
-#      ecosystems, but since those groups carry `update-types: [minor, patch]`,
-#      semver-major bumps split out of the group and arrive as standalone PRs.
-#      A standalone semver-major PR inherits `release: patch` from the static
-#      config, which mis-classifies it. This workflow recomputes the effective
-#      update-type and REPLACES `release: patch` with `release: major` only for
-#      that specific static-default mismatch (`current == "release: patch"` +
-#      effective type semver-major). Grouped patch/minor PRs keep the static
-#      `release: patch` even when the group's effective update-type rolls up to
-#      `version-update:semver-minor`, because the static label encodes the
-#      project's policy that grouped patch/minor bumps release as patch.
-#      Maintainer-applied overrides (`release: skip`, `release: minor`, etc.)
-#      are preserved on the same principle.
-#
-# Race protection: the edit combines `--remove-label` and `--add-label` in one
-# `gh pr edit` call where applicable, and a post-edit recheck warns — without
-# removing anything — when more than one `release: *` label is present after the
-# edit (a second label can race in from a maintainer or from Dependabot's static
-# `release: patch` landing late). The recheck deliberately does NOT roll back
-# the workflow-applied label: blind removal could delete the correct label (e.g.
-# drop `release: major` and leave the static `release: patch`), so the ambiguous
-# state is left for manual triage and `verify-pr-release-label` to flag.
-#
-# Trigger scope is `opened`/`reopened` only. `synchronize` is deliberately
-# omitted: a rebase/force-push does not change a bump's update-type, so the
-# desired label is unchanged and re-running would only risk re-fighting a
-# maintainer override. Known limitation: Dependabot applies the static
-# `release: patch` label at PR creation, but if it is not yet visible when the
-# `opened` run queries (labels can surface as separate events just after open),
-# the absent-label branch can add the metadata-derived label and the static
-# `release: patch` can then land too, leaving a standalone semver-major PR with
-# two release labels for manual triage. This is accepted rather than papered
-# over with a `labeled` trigger — that would only re-surface the conflict as a
-# warning, not resolve it, since the >1-label case is left for the maintainer —
-# and it is bounded: a two-label PR is caught downstream — `verify-pr-release-label`
-# warns, and if it falls in a release window compute_release_version.py fails-and-
-# lists it — so it surfaces for the maintainer rather than being silently miscounted.
+# Trigger scope is `opened`/`reopened` only — whether a `release:` label is
+# present does not change on a rebase/force-push, so `synchronize` would only
+# risk re-fighting a maintainer override. Known benign race: Dependabot's static
+# `release: patch` can land just after the `opened` run queries; if the backstop
+# already added `release: patch` the two are identical (`--add-label` is
+# idempotent, no duplicate), and any other late label is left for
+# `verify-pr-release-label` and the maintainer.
 
 on:
   pull_request:
@@ -60,20 +40,18 @@ on:
       - opened
       - reopened
 
-# Queue concurrent runs on the same PR rather than cancel them. Label edits are
-# idempotent and run in 1-2 s; the post-edit recheck should not be interrupted
-# mid-flight by the next `opened`/`reopened` event.
+# Queue concurrent runs on the same PR rather than cancel them. The label edit is
+# idempotent and runs in 1-2 s.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
-# `gh pr edit --add-label/--remove-label` mutates labels through GitHub's
-# issue-labels API (PRs are issues for labeling), which can require
-# `issues: write` — `pull-requests: write` alone is not reliably sufficient
-# across gh's REST/GraphQL label paths. Grant both so the reconcile write
-# cannot 403 at runtime; `pull-requests: write` also covers the `gh pr view`
-# / `gh pr edit` PR context. The four `release:` labels already exist, so the
-# create-label path is never exercised either.
+# `gh pr edit --add-label` mutates labels through GitHub's issue-labels API (PRs
+# are issues for labeling), which can require `issues: write` — `pull-requests:
+# write` alone is not reliably sufficient across gh's REST/GraphQL label paths.
+# Grant both so the write cannot 403 at runtime; `pull-requests: write` also
+# covers the `gh pr view` / `gh pr edit` PR context. The `release:` labels already
+# exist, so the create-label path is never exercised.
 permissions:
   contents: read
   issues: write
@@ -87,108 +65,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fetch Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # @v3 as 3.1.0
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      # Pick the most-severe update-type across the (possibly grouped) bump.
-      # Kept inline and identical to dependabot-auto-merge.yaml so the label and
-      # the merge policy agree on what a PR is — the two copies MUST stay in
-      # sync. The `else` defaults to semver-major (not patch): an empty or
-      # unrecognized updateType is unclassifiable, so it labels `release: major`
-      # — the safe conservative default that matches the auto-merge gate, which
-      # holds an unclassifiable bump for manual review.
-      - name: Derive effective update-type
-        id: effective
-        env:
-          UPDATED_JSON: ${{ steps.metadata.outputs.updated-dependencies-json }}
-        run: |
-          set -euo pipefail
-          effective=$(jq -r '
-            [.[] | .updateType]
-            | if any(. == "version-update:semver-major") then "version-update:semver-major"
-              elif any(. == "version-update:semver-minor") then "version-update:semver-minor"
-              elif any(. == "version-update:semver-patch") then "version-update:semver-patch"
-              else "version-update:semver-major"
-              end
-          ' <<<"$UPDATED_JSON")
-          echo "update-type=$effective" >> "$GITHUB_OUTPUT"
-
-      - name: Reconcile release label
+      - name: Backfill release: patch when no release label is present
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-          UPDATE_TYPE: ${{ steps.effective.outputs.update-type }}
         run: |
           set -euo pipefail
 
-          # Map the effective update-type to the desired release label. Grouped
-          # patch/minor bumps release as patch (project policy), so semver-minor
-          # maps to `release: patch` here too — the workflow never *assigns*
-          # `release: minor` itself; that label only ever survives as a maintainer
-          # override (preserved by the keep-current branch below). This keeps the
-          # absent-label backstop policy-consistent: a grouped minor with no static
-          # label yet is labeled `release: patch`, not `release: minor`. Only a
-          # standalone semver-major maps to `release: major`.
-          case "$UPDATE_TYPE" in
-            version-update:semver-major) desired="release: major" ;;
-            *)                            desired="release: patch" ;;
-          esac
-
-          # Inventory the current release labels on the PR. Sorted JSON array so
-          # `jq -r '.[0]'` is deterministic when exactly one is present.
-          list_release_labels() {
-            gh pr view "$PR_URL" --json labels \
-              --jq '[.labels[].name | select(startswith("release: "))] | sort'
-          }
-
-          current_json="$(list_release_labels)"
-          current_count=$(jq 'length' <<<"$current_json")
-
-          # Decision tree:
-          #   - 0 release labels -> add `desired` (absent-label backstop).
-          #   - 1 label matching `desired` -> no-op (static label already right).
-          #   - 1 label not matching `desired`:
-          #       - desired == "release: major" AND current == "release: patch"
-          #         -> replace (the standalone-semver-major correction, narrowly
-          #         scoped to the known static-default mismatch).
-          #       - otherwise -> keep current (grouped-intent for patch/minor, or
-          #         a deliberate maintainer override).
-          #   - >1 labels -> leave for verify-pr-release-label and the maintainer.
-          if [ "$current_count" = "0" ]; then
-            echo "No release label present; adding '$desired'."
-            gh pr edit "$PR_URL" --add-label "$desired"
-          elif [ "$current_count" = "1" ]; then
-            current=$(jq -r '.[0]' <<<"$current_json")
-            if [ "$current" = "$desired" ]; then
-              echo "Release label '$desired' already correct; nothing to do."
-              exit 0
-            fi
-            if [ "$desired" != "release: major" ] || [ "$current" != "release: patch" ]; then
-              echo "Keeping '$current' (effective update-type: $UPDATE_TYPE). Auto-correction only fires for the known static-default mismatch (current 'release: patch' + standalone semver-major); anything else is grouped-intent or a manual override."
-              exit 0
-            fi
-            echo "Replacing '$current' with '$desired' (standalone semver-major correction; effective update-type: $UPDATE_TYPE)."
-            gh pr edit "$PR_URL" --add-label "$desired" --remove-label "$current"
-          else
-            echo "::warning::PR has multiple release labels ($(jq -c '.' <<<"$current_json")); leaving as-is for manual triage."
-            exit 0
-          fi
-
-          # Post-edit recheck: if the PR now carries more than one release label,
-          # a second label raced in after our state query — either a maintainer
-          # override or Dependabot's static `release: patch` landing late. We do
-          # NOT blind-remove `$desired` here: when the racer is the static patch
-          # and `$desired` is `release: major`, removing `$desired` would delete
-          # the *correct* label and leave the wrong one. Leave both and warn for
-          # manual triage instead; `verify-pr-release-label` surfaces the
-          # ambiguity, and compute_release_version.py fails-and-lists a >1-label
-          # PR that lands in a release window, so a transient two-label state is
-          # surfaced rather than silently miscounted, and stays recoverable.
-          post_count=$(gh pr view "$PR_URL" --json labels \
+          # Count existing release: labels. The backstop acts only when none is
+          # present; an existing label (the dependabot.yaml static `release: patch`
+          # or a maintainer override) is always preserved — never reclassified.
+          current_count=$(gh pr view "$PR_URL" --json labels \
             --jq '[.labels[].name | select(startswith("release: "))] | length')
-          if [ "$post_count" -gt 1 ]; then
-            echo "::warning::PR now carries multiple release labels (a maintainer override or Dependabot's static label raced into the edit window); leaving them for manual triage rather than risk removing the correct one."
+
+          if [ "$current_count" = "0" ]; then
+            echo "No release label present; adding 'release: patch' (a dependency bump is at most a project patch)."
+            gh pr edit "$PR_URL" --add-label "release: patch"
+          else
+            echo "A release label is already present (static default or maintainer override); leaving it untouched."
           fi
