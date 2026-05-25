@@ -51,10 +51,13 @@ name: Dependabot Reconciler
 # where the `opened` event never reached the approve/arm path and no later
 # `synchronize` re-fired it) is left for manual triage — re-run `Dependabot
 # Auto-Merge` or push to the PR to recover it. The same dependency gates also
-# guard the update-branch and recreate paths (see those steps), so a held
-# trust-boundary or semver-major bump is left untouched: never branch-updated
-# under the App identity (which would re-run CI with secrets in scope) and never
-# nudged to recreate.
+# guard the recreate path and — until the PR is APPROVED — the update-branch path
+# (see those steps), so a held trust-boundary or semver-major bump that no
+# code-owner has approved is left untouched: not branch-updated under the App
+# identity (which would re-run CI with secrets in scope) and not nudged to
+# recreate. Once a code-owner approval is in place the update-branch path is
+# allowed (the approved version is vetted, so privileged CI on it is authorized);
+# the recreate nudge stays gated regardless.
 #
 # Triggers:
 #   - `workflow_run` on `Dependabot Auto-Merge` is the primary reactive trigger.
@@ -371,10 +374,11 @@ jobs:
           }
 
           # Apply the dependency policy gates from dependabot-auto-merge.yaml's
-          # approve step so the re-approve, update-branch, and recreate paths
-          # cannot act on a PR that workflow would hold for manual review (the
-          # arm-or-advance path deliberately skips this — arming and merging are
-          # ruleset-gated). The label gates (trust-boundary /
+          # approve step. The re-approve and recreate paths gate on this
+          # unconditionally; the update-branch path gates on it only until the PR
+          # is APPROVED (an approved version is vetted, so privileged CI on it is
+          # authorized); the arm-or-advance path skips it entirely (arming and
+          # merging are ruleset-gated). The label gates (trust-boundary /
           # security-review-required) are handled separately by gate_security_review;
           # this checks the two remaining hold conditions from the approve step's
           # `if:`: a trust-boundary action bump (held by name, any update-type), and
