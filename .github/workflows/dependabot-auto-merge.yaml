@@ -182,9 +182,12 @@ jobs:
       # otherwise fall back to enabling GitHub auto-merge so a later code-owner
       # approval (or rerun-to-green) finishes it. The synchronous path avoids the
       # auto-merge worker's occasional dropped fire after the last required check
-      # goes green; tier 2 always takes the fallback (the bot never approves it),
-      # so the synchronous `gh pr merge --squash` tail below is unreachable for a
-      # held PR — its merge is completed by the worker, backstopped by the
+      # goes green; tier 2 NORMALLY takes the fallback, because a code-owner
+      # approval does not re-fire this `pull_request` workflow. It is not strictly
+      # unreachable, though: a maintainer who approves *during* the check-watch
+      # makes reviewDecision APPROVED within this same run, so the synchronous
+      # `gh pr merge --squash` tail below can complete a held PR's merge too;
+      # otherwise the merge is completed later by the worker, backstopped by the
       # reconciler's arm-or-advance path. The server-side ruleset is the safety
       # boundary: a non-bypass merge is refused unless every required check has
       # passed AND the required review is in place, so an early watch exit or an
