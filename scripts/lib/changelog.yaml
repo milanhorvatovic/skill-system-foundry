@@ -25,6 +25,8 @@ changelog:
       - Suggest
       - Fail
       - Emit
+      - Arm
+      - Automate
     Changed:
       - Update
       - Refactor
@@ -43,6 +45,7 @@ changelog:
       - Move
       - Make
       - Recognize
+      - Require
     Deprecated:
       - Deprecate
     Removed:
@@ -54,6 +57,7 @@ changelog:
       - Catch
       - Resolve
       - Address
+      - Correct
     Security:
       - Patch
       - Secure
