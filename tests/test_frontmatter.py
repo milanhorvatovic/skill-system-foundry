@@ -17,7 +17,11 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.frontmatter import count_body_lines, load_frontmatter  # noqa: E402
+from lib.frontmatter import (  # noqa: E402
+    count_body_lines,
+    load_frontmatter,
+    parse_frontmatter,
+)
 
 
 def _write_bytes(content_bytes: bytes) -> str:
@@ -68,6 +72,43 @@ class LoadFrontmatterLineEndingsTests(unittest.TestCase):
     def test_body_contains_no_carriage_returns(self) -> None:
         _, body, _ = self._load_with_endings("\r\n")
         self.assertNotIn("\r", body)
+
+
+class ParseFrontmatterTests(unittest.TestCase):
+    """``parse_frontmatter`` validates in-memory content (no file read)."""
+
+    def test_valid_content_parses(self) -> None:
+        fm, body, findings = parse_frontmatter(
+            "---\nname: example\n---\nBody line\n"
+        )
+        self.assertEqual(fm, {"name": "example"})
+        self.assertEqual(body, "Body line")
+        self.assertEqual(findings, [])
+
+    def test_missing_closing_delimiter_is_parse_error(self) -> None:
+        fm, _body, _findings = parse_frontmatter("---\nname: example\n")
+        self.assertIsInstance(fm, dict)
+        self.assertIn("_parse_error", fm)
+
+    def test_no_frontmatter_returns_none(self) -> None:
+        fm, body, findings = parse_frontmatter("# Just a heading\n")
+        self.assertIsNone(fm)
+        self.assertEqual(body, "# Just a heading\n")
+        self.assertEqual(findings, [])
+
+    def test_crlf_normalized(self) -> None:
+        fm, body, _ = parse_frontmatter("---\r\nname: x\r\n---\r\nBody\r\n")
+        self.assertEqual(fm, {"name": "x"})
+        self.assertNotIn("\r", body)
+
+    def test_matches_load_frontmatter(self) -> None:
+        content = "---\nname: example\ndescription: text\n---\nBody\n"
+        path = _write_bytes(content.encode("utf-8"))
+        try:
+            from_file = load_frontmatter(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(parse_frontmatter(content), from_file)
 
 
 class CountBodyLinesTests(unittest.TestCase):

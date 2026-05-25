@@ -3174,6 +3174,43 @@ class BlockingDirAncestorTests(unittest.TestCase):
             self.assertIn("is not a directory", proc.stdout)
 
 
+class DryRunFrontmatterValidationTests(unittest.TestCase):
+    """Dry-run validates rendered frontmatter in memory, like the real run."""
+
+    # Opening delimiter with no closing '---' — a parse failure the real
+    # run would surface after writing.
+    _BAD_TEMPLATE = "---\nname: demo\n"
+
+    def test_dry_run_reports_malformed_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("scaffold.read_template", return_value=self._BAD_TEMPLATE):
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(
+            any("Invalid frontmatter" in w for w in result.get("warnings", [])),
+            msg=f"expected a frontmatter parse finding: {result.get('warnings')}",
+        )
+
+    def test_dry_run_matches_real_run_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as dry_root, \
+                tempfile.TemporaryDirectory() as real_root, \
+                patch("scaffold.read_template", return_value=self._BAD_TEMPLATE):
+            dry = scaffold_skill(
+                "demo", root=dry_root, json_output=True, dry_run=True,
+            )
+            real = scaffold_skill("demo", root=real_root, json_output=True)
+        self.assertFalse(dry["success"])
+        self.assertEqual(dry["success"], real["success"])
+
+    def test_dry_run_writes_nothing_even_when_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("scaffold.read_template", return_value=self._BAD_TEMPLATE):
+            scaffold_skill("demo", root=tmpdir, json_output=True, dry_run=True)
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, DIR_SKILLS)))
+
+
 class RealRunDirNarrationTests(unittest.TestCase):
     """A real run does not narrate directories before they exist."""
 

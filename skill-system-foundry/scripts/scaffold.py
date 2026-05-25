@@ -43,7 +43,7 @@ _scripts_dir = os.path.dirname(os.path.abspath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
-from lib.frontmatter import load_frontmatter
+from lib.frontmatter import load_frontmatter, parse_frontmatter
 from lib.reporting import to_json_output, to_posix
 from lib.dry_run import planned_line, planned_update_line
 from lib.validation import validate_name as _validate_name_detailed
@@ -145,20 +145,30 @@ def _has_frontmatter_parse_error(findings: list[str]) -> bool:
     return any(f.startswith(marker) for f in findings)
 
 
-def _collect_frontmatter_findings(path: str) -> list[str]:
-    """Return frontmatter findings from the written entry file.
+def _collect_frontmatter_findings(
+    path: str, content: str | None = None
+) -> list[str]:
+    """Return frontmatter findings for the entry file.
 
     Re-parses the rendered frontmatter so post-write divergences surface
     even when they would otherwise bypass validate_name's gate (template
-    changes, programmatic callers, etc.).  Missing files and files
-    without frontmatter yield an empty list.  Frontmatter structural
-    parse failures are surfaced as a FAIL finding tagged with
-    ``_FRONTMATTER_PARSE_ERROR_MARKER`` so callers can promote them to
-    a hard failure via :func:`_has_frontmatter_parse_error`.
+    changes, programmatic callers, etc.).  When *content* is given the
+    rendered text is validated in memory — scaffold's ``--dry-run`` uses
+    this so its preview reports the same frontmatter findings a real run
+    would, without writing anything; *path* then only labels a
+    parse-error finding.  Without *content* the file at *path* is read
+    (real run); a missing file or a file without frontmatter yields an
+    empty list.  Frontmatter structural parse failures are surfaced as a
+    FAIL finding tagged with ``_FRONTMATTER_PARSE_ERROR_MARKER`` so
+    callers can promote them to a hard failure via
+    :func:`_has_frontmatter_parse_error`.
     """
-    if not os.path.isfile(path):
-        return []
-    frontmatter, _body, findings = load_frontmatter(path)
+    if content is not None:
+        frontmatter, _body, findings = parse_frontmatter(content)
+    else:
+        if not os.path.isfile(path):
+            return []
+        frontmatter, _body, findings = load_frontmatter(path)
     parse_error = (
         frontmatter.get("_parse_error")
         if isinstance(frontmatter, dict)
@@ -385,9 +395,11 @@ def scaffold_skill(
         update_manifest: If True, validate and update manifest.yaml
             after scaffolding.
         dry_run: If True, write nothing to disk. The same set of paths a
-            real run would create is reported as planned actions, the
-            manifest is left untouched, and the post-write frontmatter
-            re-parse is skipped (there is no file on disk to re-parse).
+            real run would create is reported as planned actions; the
+            manifest may be read to preview a conflict or parse error but
+            is never written; and the rendered frontmatter is validated
+            in memory so the preview reports the same findings and
+            success/exit status a real run would.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -511,18 +523,19 @@ def scaffold_skill(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
-    # --- Frontmatter re-parse of the written entry file ---
-    # Skipped under dry-run: no file was written, so there is nothing to
-    # re-parse and no parse error can arise from this run.
-    frontmatter_findings: list[str] = []
-    frontmatter_parse_error = False
-    if not dry_run:
-        skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
-        frontmatter_findings = _collect_frontmatter_findings(skill_md_full_path)
-        frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
-        if frontmatter_findings and not json_output:
-            for f in frontmatter_findings:
-                print(f"  {f}")
+    # --- Frontmatter validation of the rendered entry file ---
+    # Validated in both modes: a real run re-parses the written file; a
+    # dry run validates the rendered content in memory, so the preview
+    # reports the same findings and success/exit status a real run would
+    # without writing anything.
+    skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
+    frontmatter_findings = _collect_frontmatter_findings(
+        skill_md_full_path, content=content if dry_run else None,
+    )
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
 
     # --- Manifest update ---
     manifest_updated = False
@@ -641,7 +654,9 @@ def scaffold_capability(
             should be added to the parent skill's manifest entry.
         dry_run: If True, write nothing to disk. The same set of paths a
             real run would create is reported as planned actions and the
-            post-write frontmatter re-parse is skipped.
+            rendered frontmatter is validated in memory so the preview
+            reports the same findings and success/exit status a real run
+            would.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -754,17 +769,17 @@ def scaffold_capability(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
-    # --- Frontmatter re-parse of the written entry file ---
-    # Skipped under dry-run: no file was written to re-parse.
-    frontmatter_findings: list[str] = []
-    frontmatter_parse_error = False
-    if not dry_run:
-        cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
-        frontmatter_findings = _collect_frontmatter_findings(cap_md_full_path)
-        frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
-        if frontmatter_findings and not json_output:
-            for f in frontmatter_findings:
-                print(f"  {f}")
+    # --- Frontmatter validation of the rendered entry file ---
+    # Validated in both modes (in memory under dry-run) so the preview
+    # reports the same findings and success/exit status a real run would.
+    cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
+    frontmatter_findings = _collect_frontmatter_findings(
+        cap_md_full_path, content=content if dry_run else None,
+    )
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
 
     # Capabilities are not added to the manifest directly — they
     # belong under their parent skill's ``capabilities:`` list.
@@ -953,16 +968,16 @@ def scaffold_role(
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
-    # --- Frontmatter re-parse of the written role file ---
-    # Skipped under dry-run: no file was written to re-parse.
-    frontmatter_findings: list[str] = []
-    frontmatter_parse_error = False
-    if not dry_run:
-        frontmatter_findings = _collect_frontmatter_findings(role_path)
-        frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
-        if frontmatter_findings and not json_output:
-            for f in frontmatter_findings:
-                print(f"  {f}")
+    # --- Frontmatter validation of the rendered role file ---
+    # Validated in both modes (in memory under dry-run) so the preview
+    # reports the same findings and success/exit status a real run would.
+    frontmatter_findings = _collect_frontmatter_findings(
+        role_path, content=content if dry_run else None,
+    )
+    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+    if frontmatter_findings and not json_output:
+        for f in frontmatter_findings:
+            print(f"  {f}")
 
     # --- Manifest update ---
     manifest_updated = False
