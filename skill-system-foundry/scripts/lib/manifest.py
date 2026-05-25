@@ -294,6 +294,24 @@ def append_role_entry(
     return _collect_emit_findings(manifest_path)
 
 
+def manifest_needs_scaffold(manifest_path: str) -> bool:
+    """Return True when *manifest_path* must be seeded before an append.
+
+    A manifest needs scaffolding when it does not exist or when it
+    exists but holds only whitespace — both states a fresh append has to
+    seed with an empty manifest skeleton first, so both are reported as a
+    newly *created* manifest. The check is read-only: it stats the path
+    and, for an existing file, reads its bytes without parsing or
+    mutating it. That lets callers ask "would a real run create this
+    file?" without side effects — scaffold's ``--dry-run`` preview relies
+    on it to mirror the real run's created-vs-updated split.
+    """
+    if not os.path.isfile(manifest_path):
+        return True
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        return not fh.read().strip()
+
+
 def _collect_emit_findings(manifest_path: str) -> list[str]:
     """Re-validate the post-write manifest for divergences and shape.
 
@@ -338,11 +356,7 @@ def update_manifest_for_skill(
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
-    needs_scaffold = not os.path.isfile(manifest_path)
-    if not needs_scaffold:
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            needs_scaffold = not fh.read().strip()
-    if needs_scaffold:
+    if manifest_needs_scaffold(manifest_path):
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
@@ -394,11 +408,7 @@ def update_manifest_for_role(
     """
     created_manifest = False
     # Treat non-existent or empty/whitespace-only files as missing.
-    needs_scaffold = not os.path.isfile(manifest_path)
-    if not needs_scaffold:
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            needs_scaffold = not fh.read().strip()
-    if needs_scaffold:
+    if manifest_needs_scaffold(manifest_path):
         scaffold_empty_manifest(manifest_path)
         created_manifest = True
 
