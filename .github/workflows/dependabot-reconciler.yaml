@@ -699,6 +699,10 @@ jobs:
             # a held PR is never approved by the bot, so its dependabot-auto-merge
             # run always falls back to arming and then relies entirely on the
             # worker; re-issuing the idempotent merge here each tick is the backstop.
+            # Re-issuing on a PR that is already armed and still waiting on checks is
+            # benign, NOT a failure: `gh pr merge --auto` returns "already enabled"
+            # (tolerated by `|| true`), and verify_arm_or_terminal treats an
+            # OPEN+armed PR as success — an armed-and-waiting PR never reddens the run.
             # check_dependency_gates is intentionally NOT applied: arming and
             # merging are ruleset-gated (the server refuses a non-bypass merge
             # without the required code-owner review), so a held PR cannot merge
@@ -777,14 +781,22 @@ jobs:
                   fi
                   return 0 ;;
               esac
-              # Distinguish a fresh arm from a backstop advance on an
-              # already-armed PR (verify_arm_or_terminal already logged "reconciled"
-              # when the call completed the merge, so reaching here means OPEN+armed).
-              if [ "$has_auto" = "true" ]; then
-                echo "Auto-merge already armed; re-confirmed (backstop advance)."
-              else
-                echo "Armed auto-merge."
-              fi
+              # Log from the authoritative post-call state, not the pre-call
+              # has_auto: `gh pr merge --auto --squash` can merge synchronously, so
+              # the PR may now be MERGED (verify_arm_or_terminal already logged that
+              # as "reconciled"). Only emit an arm/advance line while still OPEN; the
+              # pre-call has_auto then distinguishes a fresh arm from a re-confirmed
+              # backstop advance.
+              case "$(gh pr view "$pr" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)" in
+                OPEN)
+                  if [ "$has_auto" = "true" ]; then
+                    echo "Auto-merge already armed; re-confirmed (backstop advance)."
+                  else
+                    echo "Armed auto-merge."
+                  fi ;;
+                MERGED|CLOSED) : ;;  # verify_arm_or_terminal already logged this
+                *) echo "PR #${pr}: post-arm state unverified for logging." ;;
+              esac
             fi
 
             return 0
