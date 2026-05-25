@@ -155,7 +155,7 @@ Dependabot opens grouped pull requests weekly for the GitHub Actions and Python 
 
 The repository variable **`DEPENDABOT_AUTOMERGE_ENABLED`** is the kill-switch: the bot approves/arms only when it is exactly `true`. Unset or any other value disables auto-merge, and the PR waits for a manual merge.
 
-A held PR merges automatically once the required approving review is present (a code owner where the changed files are owned); a veto-labeled PR is merged the normal way after review. Note that an unresolved **Copilot review comment** parks a PR — the `main` ruleset requires review-thread resolution — so resolve the threads (or comment `@dependabot recreate`) to let auto-merge proceed.
+A held PR merges automatically once the required approving review is present — a code owner where the changed files are owned (`.github/workflows/`), or any approving reviewer for unowned paths such as `requirements-dev.txt`; a veto-labeled PR is merged the normal way after review. Note that an unresolved **Copilot review comment** parks a PR — the `main` ruleset requires review-thread resolution — so resolve the threads (or comment `@dependabot recreate`) to let auto-merge proceed.
 
 When the grouping or label configuration changes, existing open Dependabot PRs keep their old shape until recreated — comment `@dependabot recreate` (or close them) so they adopt the new configuration.
 
