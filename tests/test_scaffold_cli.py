@@ -3002,6 +3002,67 @@ class DryRunExistingManifestTests(unittest.TestCase):
         )
 
 
+class DryRunImplicitDirsTests(unittest.TestCase):
+    """Dry-run lists the directories a real run creates implicitly.
+
+    ``write_file`` / ``create_dir_with_gitkeep`` create parent
+    directories via ``os.makedirs``; the plan must enumerate them so the
+    preview is complete and ``planned`` stays equal to a real run's
+    ``created``.
+    """
+
+    def test_skill_plan_includes_skill_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("skills", rels)
+        self.assertIn("skills/demo", rels)
+
+    def test_router_skill_plan_includes_skill_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", router=True, root=tmpdir,
+                json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("skills/demo", rels)
+        self.assertIn("skills/demo/capabilities", rels)
+
+    def test_capability_plan_includes_cap_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "dom", "cap", root=tmpdir, json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("skills/dom/capabilities/cap", rels)
+
+    def test_role_plan_includes_group_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("roles/grp", rels)
+
+    def test_real_run_created_includes_skill_dir(self) -> None:
+        """Parity: a real run records the same implicit container dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("demo", root=tmpdir, json_output=True)
+        rels = _strip_root(result["created"], tmpdir)
+        self.assertIn("skills/demo", rels)
+
+    def test_skill_dry_run_human_lists_skill_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("demo", root=tmpdir, dry_run=True)
+            output = buf.getvalue()
+        self.assertIn("skills/demo", output)
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 

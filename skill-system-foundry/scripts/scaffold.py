@@ -202,6 +202,36 @@ def _print_dir_created(dir_path: str, gitkeep_path: str, *, dry_run: bool) -> No
         print(planned_line(gitkeep_path))
 
 
+def _record_planned_dirs(
+    target_dir: str, created_paths: list[str], *, quiet: bool, dry_run: bool
+) -> None:
+    """Record the directories ``os.makedirs(target_dir)`` would newly create.
+
+    ``write_file`` and ``create_dir_with_gitkeep`` create their parent
+    directories implicitly via ``os.makedirs(..., exist_ok=True)``; a
+    real run leaves those on disk, so the dry-run plan must list the same
+    set to stay complete and to keep ``planned`` equal to a real run's
+    ``created``. This appends every not-yet-existing ancestor of
+    *target_dir* (outermost first) — the chain a real run would
+    materialise — based on the current on-disk state, which is identical
+    in both modes because dry-run writes nothing. Call it once per
+    scaffold function before the first write, while the filesystem is
+    still pristine, so an absent ancestor is counted exactly once.
+    """
+    missing: list[str] = []
+    cur = target_dir
+    while cur and not os.path.isdir(cur):
+        missing.append(cur)
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    for d in reversed(missing):
+        created_paths.append(d)
+        if not quiet:
+            _print_created(d, dry_run=dry_run)
+
+
 def read_template(template_name: str) -> str:
     """Read a template file from assets/."""
     template_path = os.path.join(ASSETS_DIR, template_name)
@@ -358,10 +388,14 @@ def scaffold_skill(
         print(f"{LEVEL_FAIL}: Directory already exists: {to_posix(skill_path)}")
         sys.exit(1)
 
-    # Tracks created filesystem entries: content files (e.g. SKILL.md),
-    # optional directories, and their .gitkeep sentinel files.
-    # Exposed as the ``"created"`` list in JSON output.
+    # Tracks created filesystem entries: the skill directory and any
+    # ancestors it needs, content files (e.g. SKILL.md), optional
+    # directories, and their .gitkeep sentinel files. Exposed as the
+    # ``"created"`` list in JSON output.
     created_paths: list[str] = []
+    _record_planned_dirs(
+        skill_path, created_paths, quiet=json_output, dry_run=dry_run,
+    )
 
     if router:
         try:
@@ -625,9 +659,13 @@ def scaffold_capability(
         print(f"{LEVEL_FAIL}: Parent skill not found: {to_posix(router_skill)}")
         sys.exit(1)
 
-    # Tracks created filesystem entries: content files (e.g.
-    # capability.md), optional directories, and their .gitkeep files.
+    # Tracks created filesystem entries: the capability directory and any
+    # ancestors it needs, content files (e.g. capability.md), optional
+    # directories, and their .gitkeep files.
     created_paths: list[str] = []
+    _record_planned_dirs(
+        cap_path, created_paths, quiet=json_output, dry_run=dry_run,
+    )
 
     try:
         template = read_template(TEMPLATE_CAPABILITY)
@@ -789,8 +827,14 @@ def scaffold_role(
         print(f"{LEVEL_FAIL}: File already exists: {to_posix(role_path)}")
         sys.exit(1)
 
-    # Tracks all filesystem entries created (files only for roles).
+    # Tracks all filesystem entries created: the role-group directory and
+    # any ancestors it needs, plus the role file and group/top-level
+    # READMEs.
     created_paths: list[str] = []
+    _record_planned_dirs(
+        os.path.dirname(role_path), created_paths,
+        quiet=json_output, dry_run=dry_run,
+    )
 
     try:
         template = read_template(TEMPLATE_ROLE)
