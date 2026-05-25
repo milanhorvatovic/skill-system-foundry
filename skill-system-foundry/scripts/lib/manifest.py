@@ -8,6 +8,7 @@ empty manifest.
 import os
 
 from .yaml_parser import parse_yaml_subset
+from .reporting import to_posix
 from .constants import (
     DIR_SKILLS,
     DIR_ROLES,
@@ -327,7 +328,7 @@ def _non_file_manifest_warning(manifest_path: str) -> str | None:
     """
     if os.path.exists(manifest_path) and not os.path.isfile(manifest_path):
         return (
-            f"Manifest path {manifest_path} is not a regular file "
+            f"Manifest path {to_posix(manifest_path)} is not a regular file "
             f"— skipping manifest update"
         )
     return None
