@@ -3,9 +3,9 @@
 Scaffold new skill system components from templates.
 
 Usage:
-    python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--json]
-    python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--json]
-    python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--json]
+    python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--dry-run] [--json]
+    python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--dry-run] [--json]
+    python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--dry-run] [--json]
 
 Options:
     --root <path>        Base directory for output (default: current working
@@ -19,6 +19,9 @@ Options:
                          to the parent skill's capabilities list, not directly
                          to manifest.yaml). Creates a minimal manifest if none
                          exists. Detects name conflicts and warns without overwriting.
+    --dry-run            Preview what would be created without writing anything to
+                         disk. No files or directories are created and no manifest
+                         is modified; planned paths are reported instead.
     --json               Output results as machine-readable JSON.
 
 Examples:
@@ -27,6 +30,7 @@ Examples:
     python scripts/scaffold.py skill my-skill --with-references --with-scripts
     python scripts/scaffold.py skill my-domain --router
     python scripts/scaffold.py skill my-skill --update-manifest
+    python scripts/scaffold.py skill my-skill --dry-run
     python scripts/scaffold.py capability my-domain my-capability
     python scripts/scaffold.py role my-group my-role
     python scripts/scaffold.py skill my-skill --json
@@ -41,6 +45,7 @@ if _scripts_dir not in sys.path:
 
 from lib.frontmatter import load_frontmatter
 from lib.reporting import to_json_output, to_posix
+from lib.dry_run import planned_line
 from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
     update_manifest_for_skill,
@@ -167,6 +172,21 @@ def _collect_frontmatter_findings(path: str) -> list[str]:
     return findings
 
 
+def _print_created(path: str, *, dry_run: bool) -> None:
+    """Print the human-mode created/planned line for a directory *path*.
+
+    Mirrors ``write_file``'s own line for the file case: a real run
+    prints ``Created: <path>`` while a dry run prints
+    ``Would create: <path>``.  Centralises the verb switch so the three
+    scaffold functions stay free of dry-run branching at each
+    directory-creation site.
+    """
+    if dry_run:
+        print(planned_line(path))
+    else:
+        print(f"  Created: {to_posix(path)}")
+
+
 def read_template(template_name: str) -> str:
     """Read a template file from assets/."""
     template_path = os.path.join(ASSETS_DIR, template_name)
@@ -176,7 +196,9 @@ def read_template(template_name: str) -> str:
         return f.read()
 
 
-def write_file(path: str, content: str, *, quiet: bool = False) -> None:
+def write_file(
+    path: str, content: str, *, quiet: bool = False, dry_run: bool = False
+) -> None:
     """Write content to a file, creating directories as needed.
 
     The human-mode "Created:" line normalises *path* through
@@ -188,7 +210,15 @@ def write_file(path: str, content: str, *, quiet: bool = False) -> None:
     normalisation the line would render with backslashes on
     Windows and forward slashes on POSIX, diverging from
     ``validate_skill.py`` / ``bundle.py`` / ``stats.py``.
+
+    When *dry_run* is True, nothing is written to disk; the path is
+    reported as a planned action ("Would create: <path>") instead, so
+    the caller can preview the scaffold without side effects.
     """
+    if dry_run:
+        if not quiet:
+            print(planned_line(path))
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
@@ -196,15 +226,23 @@ def write_file(path: str, content: str, *, quiet: bool = False) -> None:
         print(f"  Created: {to_posix(path)}")
 
 
-def create_dir_with_gitkeep(path: str) -> str:
+def create_dir_with_gitkeep(path: str, *, dry_run: bool = False) -> str:
     """Create directory with .gitkeep so it tracks in git.
+
+    When *dry_run* is True, nothing is written to disk; the directory
+    and its ``.gitkeep`` are recorded as planned actions only.  The
+    return value (the ``.gitkeep`` path) is identical in both modes so
+    callers can accumulate the same planned-path list they would
+    accumulate for a real run.
 
     Returns:
         The path to the ``.gitkeep`` file (relative or absolute,
         matching the input *path*).
     """
-    os.makedirs(path, exist_ok=True)
     gitkeep = os.path.join(path, FILE_GITKEEP)
+    if dry_run:
+        return gitkeep
+    os.makedirs(path, exist_ok=True)
     if not os.path.exists(gitkeep):
         with open(gitkeep, "w", encoding="utf-8", newline="\n") as f:
             pass
@@ -218,6 +256,7 @@ def scaffold_skill(
     optional_dirs: list[str] | None = None,
     json_output: bool = False,
     update_manifest: bool = False,
+    dry_run: bool = False,
 ) -> dict | None:
     """Create a new skill directory.
 
@@ -231,6 +270,10 @@ def scaffold_skill(
             result dict instead.
         update_manifest: If True, validate and update manifest.yaml
             after scaffolding.
+        dry_run: If True, write nothing to disk. The same set of paths a
+            real run would create is reported as planned actions, the
+            manifest is left untouched, and the post-write frontmatter
+            re-parse is skipped (there is no file on disk to re-parse).
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -286,21 +329,24 @@ def scaffold_skill(
         content = template.replace(PH_DOMAIN_NAME, name).replace(
             PH_DOMAIN_TITLE, title
         )
-        write_file(os.path.join(skill_path, FILE_SKILL_MD), content, quiet=json_output)
+        write_file(
+            os.path.join(skill_path, FILE_SKILL_MD), content,
+            quiet=json_output, dry_run=dry_run,
+        )
         created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
         caps_dir = os.path.join(skill_path, DIR_CAPABILITIES)
-        gitkeep = create_dir_with_gitkeep(caps_dir)
+        gitkeep = create_dir_with_gitkeep(caps_dir, dry_run=dry_run)
         created_paths.append(caps_dir)
         created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Created: {to_posix(caps_dir)}")
+            _print_created(caps_dir, dry_run=dry_run)
         for d in optional_dirs:
             opt_dir = os.path.join(skill_path, d)
-            gitkeep = create_dir_with_gitkeep(opt_dir)
+            gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
             created_paths.append(opt_dir)
             created_paths.append(gitkeep)
             if not json_output:
-                print(f"  Created: {to_posix(opt_dir)}")
+                _print_created(opt_dir, dry_run=dry_run)
         if not json_output:
             print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
     else:
@@ -321,25 +367,33 @@ def scaffold_skill(
         content = template.replace(PH_SKILL_NAME, name).replace(
             PH_SKILL_TITLE, title
         )
-        write_file(os.path.join(skill_path, FILE_SKILL_MD), content, quiet=json_output)
+        write_file(
+            os.path.join(skill_path, FILE_SKILL_MD), content,
+            quiet=json_output, dry_run=dry_run,
+        )
         created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
         for d in optional_dirs:
             opt_dir = os.path.join(skill_path, d)
-            gitkeep = create_dir_with_gitkeep(opt_dir)
+            gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
             created_paths.append(opt_dir)
             created_paths.append(gitkeep)
             if not json_output:
-                print(f"  Created: {to_posix(opt_dir)}")
+                _print_created(opt_dir, dry_run=dry_run)
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
     # --- Frontmatter re-parse of the written entry file ---
-    skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
-    frontmatter_findings = _collect_frontmatter_findings(skill_md_full_path)
-    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
-    if frontmatter_findings and not json_output:
-        for f in frontmatter_findings:
-            print(f"  {f}")
+    # Skipped under dry-run: no file was written, so there is nothing to
+    # re-parse and no parse error can arise from this run.
+    frontmatter_findings: list[str] = []
+    frontmatter_parse_error = False
+    if not dry_run:
+        skill_md_full_path = os.path.join(skill_path, FILE_SKILL_MD)
+        frontmatter_findings = _collect_frontmatter_findings(skill_md_full_path)
+        frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+        if frontmatter_findings and not json_output:
+            for f in frontmatter_findings:
+                print(f"  {f}")
 
     # --- Manifest update ---
     manifest_updated = False
@@ -347,7 +401,14 @@ def scaffold_skill(
     manifest_findings: list[str] = []
     manifest_emit_corrupted = False
 
-    if update_manifest:
+    if update_manifest and dry_run:
+        # Preview only: the manifest is never read or mutated. Report it
+        # as a planned path so the dry-run plan mirrors the real run's
+        # created set without touching disk.
+        created_paths.append(manifest_path)
+        if not json_output:
+            _print_created(manifest_path, dry_run=True)
+    elif update_manifest:
         (
             manifest_updated,
             manifest_warning,
@@ -373,13 +434,18 @@ def scaffold_skill(
     hard_failure = manifest_emit_corrupted or frontmatter_parse_error
 
     if json_output:
+        # In dry-run mode ``created`` reports the paths a real run would
+        # create — none exist on disk. ``dry_run`` lets consumers tell
+        # the two apart.
+        created_key = "planned" if dry_run else "created"
         result_dict: dict = {
             "tool": "scaffold",
             "component": "skill",
             "name": name,
             "success": not hard_failure,
+            "dry_run": dry_run,
             "path": to_posix(os.path.abspath(skill_path)),
-            "created": [to_posix(os.path.abspath(p)) for p in created_paths],
+            created_key: [to_posix(os.path.abspath(p)) for p in created_paths],
             "router": router,
         }
         # All plain-scalar divergence findings merge into a single
@@ -397,9 +463,12 @@ def scaffold_skill(
                 result_dict["manifest_warning"] = manifest_warning
         return result_dict
 
-    print(f"\n\u2713 Skill '{name}' scaffolded at {to_posix(skill_path)}")
+    verb = "would be scaffolded" if dry_run else "scaffolded"
+    print(f"\n\u2713 Skill '{name}' {verb} at {to_posix(skill_path)}")
     skill_md_path = os.path.join(skill_path, FILE_SKILL_MD)
-    if not update_manifest:
+    if dry_run:
+        print("  Dry run: no files were written.")
+    elif not update_manifest:
         print(
             f"  Next: edit {to_posix(skill_md_path)} and update "
             f"{to_posix(manifest_path)}"
@@ -418,6 +487,7 @@ def scaffold_capability(
     optional_dirs: list[str] | None = None,
     json_output: bool = False,
     update_manifest: bool = False,
+    dry_run: bool = False,
 ) -> dict | None:
     """Create a new capability under an existing router skill.
 
@@ -431,6 +501,9 @@ def scaffold_capability(
             result dict instead.
         update_manifest: If True, print a message that capabilities
             should be added to the parent skill's manifest entry.
+        dry_run: If True, write nothing to disk. The same set of paths a
+            real run would create is reported as planned actions and the
+            post-write frontmatter re-parse is skipped.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -512,25 +585,32 @@ def scaffold_capability(
     content = template.replace(PH_CAPABILITY_NAME, name).replace(
         PH_CAPABILITY_TITLE, title
     )
-    write_file(os.path.join(cap_path, FILE_CAPABILITY_MD), content, quiet=json_output)
+    write_file(
+        os.path.join(cap_path, FILE_CAPABILITY_MD), content,
+        quiet=json_output, dry_run=dry_run,
+    )
     created_paths.append(os.path.join(cap_path, FILE_CAPABILITY_MD))
     for d in optional_dirs:
         opt_dir = os.path.join(cap_path, d)
-        gitkeep = create_dir_with_gitkeep(opt_dir)
+        gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
         created_paths.append(opt_dir)
         created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Created: {to_posix(opt_dir)}")
+            _print_created(opt_dir, dry_run=dry_run)
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
     # --- Frontmatter re-parse of the written entry file ---
-    cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
-    frontmatter_findings = _collect_frontmatter_findings(cap_md_full_path)
-    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
-    if frontmatter_findings and not json_output:
-        for f in frontmatter_findings:
-            print(f"  {f}")
+    # Skipped under dry-run: no file was written to re-parse.
+    frontmatter_findings: list[str] = []
+    frontmatter_parse_error = False
+    if not dry_run:
+        cap_md_full_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
+        frontmatter_findings = _collect_frontmatter_findings(cap_md_full_path)
+        frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+        if frontmatter_findings and not json_output:
+            for f in frontmatter_findings:
+                print(f"  {f}")
 
     # Capabilities are not added to the manifest directly — they
     # belong under their parent skill's ``capabilities:`` list.
@@ -541,14 +621,19 @@ def scaffold_capability(
     )
 
     if json_output:
+        # In dry-run mode the path list reports what a real run would
+        # create \u2014 none exist on disk. ``dry_run`` lets consumers tell
+        # the two apart.
+        created_key = "planned" if dry_run else "created"
         result_dict: dict = {
             "tool": "scaffold",
             "component": "capability",
             "name": name,
             "domain": domain,
             "success": not frontmatter_parse_error,
+            "dry_run": dry_run,
             "path": to_posix(os.path.abspath(cap_path)),
-            "created": [to_posix(os.path.abspath(p)) for p in created_paths],
+            created_key: [to_posix(os.path.abspath(p)) for p in created_paths],
         }
         if frontmatter_findings:
             result_dict["warnings"] = list(frontmatter_findings)
@@ -557,16 +642,20 @@ def scaffold_capability(
             result_dict["manifest_warning"] = cap_manifest_msg
         return result_dict
 
-    print(f"\n\u2713 Capability '{name}' scaffolded at {to_posix(cap_path)}")
+    verb = "would be scaffolded" if dry_run else "scaffolded"
+    print(f"\n\u2713 Capability '{name}' {verb} at {to_posix(cap_path)}")
     cap_md_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
-    print(f"  Next: edit {to_posix(cap_md_path)}")
-    print(
-        f"  Next: add capability to {to_posix(router_skill)} routing table"
-    )
-    if update_manifest:
-        print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
+    if dry_run:
+        print("  Dry run: no files were written.")
     else:
-        print(f"  Next: update {to_posix(manifest_path)}")
+        print(f"  Next: edit {to_posix(cap_md_path)}")
+        print(
+            f"  Next: add capability to {to_posix(router_skill)} routing table"
+        )
+        if update_manifest:
+            print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
+        else:
+            print(f"  Next: update {to_posix(manifest_path)}")
     if frontmatter_parse_error:
         sys.exit(1)
     return None
@@ -578,6 +667,7 @@ def scaffold_role(
     root: str = "",
     json_output: bool = False,
     update_manifest: bool = False,
+    dry_run: bool = False,
 ) -> dict | None:
     """Create a new role file.
 
@@ -589,6 +679,11 @@ def scaffold_role(
             result dict instead.
         update_manifest: If True, validate and update manifest.yaml
             after scaffolding.
+        dry_run: If True, write nothing to disk. The same set of paths a
+            real run would create — the role file and any not-yet-present
+            README files — is reported as planned actions, the manifest
+            is left untouched, and the post-write frontmatter re-parse is
+            skipped.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
@@ -651,10 +746,12 @@ def scaffold_role(
         sys.exit(1)
     title = name.replace("-", " ").title()
     content = template.replace(PH_ROLE_TITLE, title)
-    write_file(role_path, content, quiet=json_output)
+    write_file(role_path, content, quiet=json_output, dry_run=dry_run)
     created_paths.append(role_path)
 
-    # Create top-level roles README if it doesn't exist
+    # Create top-level roles README if it doesn't exist. Under dry-run
+    # nothing is written, so os.path.exists reflects the true on-disk
+    # state and the planned set matches what a real run would create.
     roles_readme = os.path.join(root, DIR_ROLES, FILE_README) if root else os.path.join(DIR_ROLES, FILE_README)
     if not os.path.exists(roles_readme):
         write_file(
@@ -662,6 +759,7 @@ def scaffold_role(
             "# Roles\n\nOrchestration patterns that compose skills into workflows.\n\n"
             "See subdirectories for role groups.\n",
             quiet=json_output,
+            dry_run=dry_run,
         )
         created_paths.append(roles_readme)
 
@@ -672,17 +770,22 @@ def scaffold_role(
             readme_path,
             f"# {group.replace('-', ' ').title()}\n\nRoles:\n- {name}\n",
             quiet=json_output,
+            dry_run=dry_run,
         )
         created_paths.append(readme_path)
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
     # --- Frontmatter re-parse of the written role file ---
-    frontmatter_findings = _collect_frontmatter_findings(role_path)
-    frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
-    if frontmatter_findings and not json_output:
-        for f in frontmatter_findings:
-            print(f"  {f}")
+    # Skipped under dry-run: no file was written to re-parse.
+    frontmatter_findings: list[str] = []
+    frontmatter_parse_error = False
+    if not dry_run:
+        frontmatter_findings = _collect_frontmatter_findings(role_path)
+        frontmatter_parse_error = _has_frontmatter_parse_error(frontmatter_findings)
+        if frontmatter_findings and not json_output:
+            for f in frontmatter_findings:
+                print(f"  {f}")
 
     # --- Manifest update ---
     manifest_updated = False
@@ -690,7 +793,13 @@ def scaffold_role(
     manifest_findings: list[str] = []
     manifest_emit_corrupted = False
 
-    if update_manifest:
+    if update_manifest and dry_run:
+        # Preview only: the manifest is never read or mutated. Report it
+        # as a planned path so the dry-run plan mirrors the real run.
+        created_paths.append(manifest_path)
+        if not json_output:
+            _print_created(manifest_path, dry_run=True)
+    elif update_manifest:
         (
             manifest_updated,
             manifest_warning,
@@ -716,14 +825,19 @@ def scaffold_role(
     hard_failure = manifest_emit_corrupted or frontmatter_parse_error
 
     if json_output:
+        # In dry-run mode the path list reports what a real run would
+        # create \u2014 none exist on disk. ``dry_run`` lets consumers tell
+        # the two apart.
+        created_key = "planned" if dry_run else "created"
         result_dict: dict = {
             "tool": "scaffold",
             "component": "role",
             "name": name,
             "group": group,
             "success": not hard_failure,
+            "dry_run": dry_run,
             "path": to_posix(os.path.abspath(role_path)),
-            "created": [to_posix(os.path.abspath(p)) for p in created_paths],
+            created_key: [to_posix(os.path.abspath(p)) for p in created_paths],
         }
         combined_warnings = _dedupe_preserving_order(
             list(frontmatter_findings) + list(manifest_findings)
@@ -736,10 +850,14 @@ def scaffold_role(
                 result_dict["manifest_warning"] = manifest_warning
         return result_dict
 
-    print(f"\n\u2713 Role '{name}' scaffolded at {to_posix(role_path)}")
-    print(f"  Next: edit {to_posix(role_path)}")
-    if not update_manifest:
-        print(f"  Next: update {to_posix(manifest_path)}")
+    verb = "would be scaffolded" if dry_run else "scaffolded"
+    print(f"\n\u2713 Role '{name}' {verb} at {to_posix(role_path)}")
+    if dry_run:
+        print("  Dry run: no files were written.")
+    else:
+        print(f"  Next: edit {to_posix(role_path)}")
+        if not update_manifest:
+            print(f"  Next: update {to_posix(manifest_path)}")
     if hard_failure:
         sys.exit(1)
     return None
@@ -816,6 +934,13 @@ def main() -> None:
     if update_manifest:
         args = [a for a in args if a != "--update-manifest"]
 
+    # Parse --dry-run flag. Stripped before component dispatch (like
+    # --json / --update-manifest) so it applies to every component
+    # without entering the per-component _KNOWN_FLAGS validation.
+    dry_run = "--dry-run" in args
+    if dry_run:
+        args = [a for a in args if a != "--dry-run"]
+
     # Parse --root option
     root = ""
     if "--root" in args:
@@ -858,7 +983,7 @@ def main() -> None:
                     "error": "Missing skill name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--json]")
+                print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
         _validate_flags(flags, "skill", json_mode=json_output)
         name = positional[0]
@@ -869,6 +994,7 @@ def main() -> None:
                 name, router, root, optional_dirs,
                 json_output=json_output,
                 update_manifest=update_manifest,
+                dry_run=dry_run,
             )
         except Exception as exc:
             if json_output:
@@ -897,7 +1023,7 @@ def main() -> None:
                     "error": "Missing domain or capability name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--json]")
+                print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
         _validate_flags(flags, "capability", json_mode=json_output)
         optional_dirs = _parse_optional_dirs(flags)
@@ -906,6 +1032,7 @@ def main() -> None:
                 positional[0], positional[1], root, optional_dirs,
                 json_output=json_output,
                 update_manifest=update_manifest,
+                dry_run=dry_run,
             )
         except Exception as exc:
             if json_output:
@@ -935,7 +1062,7 @@ def main() -> None:
                     "error": "Missing group or role name",
                 }))
             else:
-                print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--json]")
+                print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
         _validate_flags(flags, "role", json_mode=json_output)
         try:
@@ -943,6 +1070,7 @@ def main() -> None:
                 positional[0], positional[1], root,
                 json_output=json_output,
                 update_manifest=update_manifest,
+                dry_run=dry_run,
             )
         except Exception as exc:
             if json_output:
