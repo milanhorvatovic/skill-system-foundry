@@ -551,7 +551,8 @@ jobs:
                 return 0
               fi
               # Apply the dependency policy gates BEFORE the App-authored
-              # update-branch — UNLESS a code-owner has already approved this PR.
+              # update-branch — UNLESS the PR's reviewDecision is already APPROVED
+              # (the ruleset-required approving review — a code owner for owned paths).
               # `gh pr update-branch` with UPDATE_BRANCH_TOKEN creates a
               # non-Dependabot `synchronize` event, which (unlike a Dependabot-
               # authored run) executes the PR's workflows in the full Actions-

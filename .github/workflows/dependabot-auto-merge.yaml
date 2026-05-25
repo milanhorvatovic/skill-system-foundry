@@ -8,8 +8,9 @@ name: Dependabot Auto-Merge
 #     trust-boundary action that runs with secrets in scope —
 #     actions/create-github-app-token, milanhorvatovic/codex-ai-code-review-action):
 #     the bot ARMS but does NOT approve -> auto-merge is enabled and the branch
-#     ruleset holds the merge until a code-owner approves, then it merges. The
-#     maintainer's approval is the only gate, even for the secret-scoped actions.
+#     ruleset holds the merge until the required approving review is present (a
+#     code owner for owned paths), then it merges. The maintainer's approval is
+#     the only gate, even for the secret-scoped actions.
 #   Tier 3 — veto (`trust-boundary` or `security-review-required` LABEL):
 #     the bot neither approves nor arms -> fully manual.
 #
@@ -170,8 +171,9 @@ jobs:
       # Tier 1 (approved) squash-merges synchronously; tier 2 (held — semver-major
       # or a trust-boundary action, never approved by the bot) reaches this step
       # too and falls back to ARMING auto-merge, which the branch ruleset holds
-      # until a code-owner approves. The `if:` therefore excludes only the veto
-      # labels + the kill-switch — NOT semver-major or the trust-boundary actions.
+      # until the required approving review is present (a code owner for owned
+      # paths). The `if:` therefore excludes only the veto labels + the
+      # kill-switch — NOT semver-major or the trust-boundary actions.
       # A held PR consequently holds a runner through the check-watch before it
       # arms (accepted; a batch-scale runner-pressure occurrence is the trigger to
       # revisit a pre-watch short-circuit).
