@@ -3105,6 +3105,75 @@ class NonFileManifestScaffoldTests(unittest.TestCase):
         self.assertTrue(result["success"])
 
 
+class BlockingDirAncestorTests(unittest.TestCase):
+    """A non-directory path component is an error, not a planned create.
+
+    ``os.makedirs`` cannot create a directory tree through a path
+    component that exists as a regular file, so both a real run and the
+    dry-run preview report an error rather than a (real run) crash or a
+    (dry-run) bogus zero-exit plan.
+    """
+
+    @staticmethod
+    def _root_file(tmpdir: str) -> str:
+        rootfile = os.path.join(tmpdir, "out")
+        with open(rootfile, "w", encoding="utf-8") as f:
+            f.write("")
+        return rootfile
+
+    def test_skill_dry_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=self._root_file(tmpdir),
+                json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_skill_real_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=self._root_file(tmpdir), json_output=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_role_dry_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "grp", "rl", root=self._root_file(tmpdir),
+                json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_capability_dry_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Parent skill exists, but a regular file occupies the
+            # capabilities/ slot, blocking the capability subtree.
+            dom_dir = os.path.join(tmpdir, "skills", "dom")
+            os.makedirs(dom_dir)
+            with open(os.path.join(dom_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: dom\n---\n")
+            with open(os.path.join(dom_dir, "capabilities"), "w", encoding="utf-8") as f:
+                f.write("")
+            result = scaffold_capability(
+                "dom", "cap", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_cli_human_mode_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rootfile = self._root_file(tmpdir)
+            proc = _run(
+                ["skill", "demo", "--root", rootfile, "--dry-run"],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+            self.assertIn("is not a directory", proc.stdout)
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 

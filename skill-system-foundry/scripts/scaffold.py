@@ -204,7 +204,7 @@ def _print_dir_created(dir_path: str, gitkeep_path: str, *, dry_run: bool) -> No
 
 def _record_planned_dirs(
     target_dir: str, created_paths: list[str], *, quiet: bool, dry_run: bool
-) -> None:
+) -> str | None:
     """Record the directories ``os.makedirs(target_dir)`` would newly create.
 
     ``write_file`` and ``create_dir_with_gitkeep`` create their parent
@@ -217,10 +217,19 @@ def _record_planned_dirs(
     in both modes because dry-run writes nothing. Call it once per
     scaffold function before the first write, while the filesystem is
     still pristine, so an absent ancestor is counted exactly once.
+
+    If an ancestor exists but is not a directory, ``os.makedirs`` cannot
+    create through it and a real run would fail. In that case nothing is
+    recorded and the blocking path is returned so the caller can surface
+    an error instead of a bogus planned create. Returns None on success.
     """
     missing: list[str] = []
     cur = target_dir
     while cur and not os.path.isdir(cur):
+        if os.path.exists(cur):
+            # cur exists but is not a directory: os.makedirs would fail
+            # here, so the chain cannot be created.
+            return cur
         missing.append(cur)
         parent = os.path.dirname(cur)
         if parent == cur:
@@ -230,6 +239,20 @@ def _record_planned_dirs(
         created_paths.append(d)
         if not quiet:
             _print_created(d, dry_run=dry_run)
+    return None
+
+
+def _blocking_dir_error(blocking: str) -> str:
+    """Human-readable error for a non-directory ancestor that blocks makedirs.
+
+    Surfaced — in both real and dry-run mode — when ``_record_planned_dirs``
+    finds a path component that exists but is not a directory, so a real
+    run's ``os.makedirs`` could not create the component tree through it.
+    """
+    return (
+        f"Cannot create directory: {to_posix(blocking)} exists and is "
+        f"not a directory"
+    )
 
 
 def read_template(template_name: str) -> str:
@@ -393,9 +416,20 @@ def scaffold_skill(
     # directories, and their .gitkeep sentinel files. Exposed as the
     # ``"created"`` list in JSON output.
     created_paths: list[str] = []
-    _record_planned_dirs(
+    blocking = _record_planned_dirs(
         skill_path, created_paths, quiet=json_output, dry_run=dry_run,
     )
+    if blocking is not None:
+        if json_output:
+            return {
+                "tool": "scaffold",
+                "component": "skill",
+                "name": name,
+                "success": False,
+                "error": _blocking_dir_error(blocking),
+            }
+        print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
+        sys.exit(1)
 
     if router:
         try:
@@ -663,9 +697,21 @@ def scaffold_capability(
     # ancestors it needs, content files (e.g. capability.md), optional
     # directories, and their .gitkeep files.
     created_paths: list[str] = []
-    _record_planned_dirs(
+    blocking = _record_planned_dirs(
         cap_path, created_paths, quiet=json_output, dry_run=dry_run,
     )
+    if blocking is not None:
+        if json_output:
+            return {
+                "tool": "scaffold",
+                "component": "capability",
+                "name": name,
+                "domain": domain,
+                "success": False,
+                "error": _blocking_dir_error(blocking),
+            }
+        print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
+        sys.exit(1)
 
     try:
         template = read_template(TEMPLATE_CAPABILITY)
@@ -831,10 +877,22 @@ def scaffold_role(
     # any ancestors it needs, plus the role file and group/top-level
     # READMEs.
     created_paths: list[str] = []
-    _record_planned_dirs(
+    blocking = _record_planned_dirs(
         os.path.dirname(role_path), created_paths,
         quiet=json_output, dry_run=dry_run,
     )
+    if blocking is not None:
+        if json_output:
+            return {
+                "tool": "scaffold",
+                "component": "role",
+                "name": name,
+                "group": group,
+                "success": False,
+                "error": _blocking_dir_error(blocking),
+            }
+        print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
+        sys.exit(1)
 
     try:
         template = read_template(TEMPLATE_ROLE)
