@@ -3063,6 +3063,48 @@ class DryRunImplicitDirsTests(unittest.TestCase):
         self.assertIn("skills/demo", output)
 
 
+class NonFileManifestScaffoldTests(unittest.TestCase):
+    """--update-manifest skips gracefully when manifest.yaml is not a file."""
+
+    def test_skill_dry_run_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, "manifest.yaml"))
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("not a regular file", result["manifest_warning"])
+        self.assertTrue(result["success"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+
+    def test_skill_real_run_does_not_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, "manifest.yaml"))
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, update_manifest=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("not a regular file", result["manifest_warning"])
+        # The skill itself is still scaffolded; only the manifest is skipped.
+        self.assertTrue(
+            any(p.endswith("SKILL.md") for p in result["created"])
+        )
+
+    def test_role_dry_run_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, "manifest.yaml"))
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("not a regular file", result["manifest_warning"])
+        self.assertTrue(result["success"])
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 

@@ -313,6 +313,26 @@ def manifest_needs_scaffold(manifest_path: str) -> bool:
         return not fh.read().strip()
 
 
+def _non_file_manifest_warning(manifest_path: str) -> str | None:
+    """Return a skip warning when *manifest_path* exists but is not a file.
+
+    A real ``update_manifest_*`` run would try to write ``manifest.yaml``
+    at this path and fail when something other than a regular file (most
+    often a directory) already occupies it — ``manifest_needs_scaffold``
+    reports any non-file as "needs scaffold", so without this guard the
+    run would crash mid-write and the ``--dry-run`` preview would claim a
+    bogus create/update. Detecting it up front lets both the real run and
+    the read-only preview report a graceful skip. Returns None for the
+    normal cases (path absent, or a regular file).
+    """
+    if os.path.exists(manifest_path) and not os.path.isfile(manifest_path):
+        return (
+            f"Manifest path {manifest_path} is not a regular file "
+            f"— skipping manifest update"
+        )
+    return None
+
+
 def _collect_emit_findings(manifest_path: str) -> list[str]:
     """Re-validate the post-write manifest for divergences and shape.
 
@@ -369,6 +389,9 @@ def update_manifest_for_skill(
     ``--dry-run`` to report an accurate manifest plan without touching
     disk.
     """
+    non_file_warning = _non_file_manifest_warning(manifest_path)
+    if non_file_warning is not None:
+        return False, non_file_warning, False, []
     created_manifest = manifest_needs_scaffold(manifest_path)
     # Treat non-existent or empty/whitespace-only files as missing.
     if created_manifest and preview:
@@ -445,6 +468,9 @@ def update_manifest_for_role(
     by scaffold's ``--dry-run`` to report an accurate manifest plan
     without touching disk.
     """
+    non_file_warning = _non_file_manifest_warning(manifest_path)
+    if non_file_warning is not None:
+        return False, non_file_warning, False, []
     created_manifest = manifest_needs_scaffold(manifest_path)
     # Treat non-existent or empty/whitespace-only files as missing.
     if created_manifest and preview:

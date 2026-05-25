@@ -1147,6 +1147,60 @@ class UpdateManifestPreviewTests(unittest.TestCase):
                 self.assertEqual(f.read(), SAMPLE_MANIFEST)
 
 
+class NonFileManifestPathTests(unittest.TestCase):
+    """A non-file at manifest_path is a graceful skip, not a mid-write crash."""
+
+    @staticmethod
+    def _dir_at_manifest(tmpdir: str) -> str:
+        path = os.path.join(tmpdir, "manifest.yaml")
+        os.mkdir(path)
+        return path
+
+    def test_skill_real_run_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, findings = update_manifest_for_skill(
+                path, "x",
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+            self.assertEqual(findings, [])
+            self.assertTrue(os.path.isdir(path))  # left untouched
+
+    def test_skill_preview_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "x", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+
+    def test_role_real_run_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, findings = update_manifest_for_role(
+                path, "grp", "rl",
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+            self.assertEqual(findings, [])
+            self.assertTrue(os.path.isdir(path))
+
+    def test_role_preview_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, _findings = update_manifest_for_role(
+                path, "grp", "rl", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+
+
 class ReadManifestFindingsTests(unittest.TestCase):
     """``read_manifest`` threads divergence findings to the caller."""
 
