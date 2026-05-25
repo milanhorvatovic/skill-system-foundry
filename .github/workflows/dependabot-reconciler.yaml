@@ -74,8 +74,10 @@ name: Dependabot Reconciler
 # Conservative by design: this workflow never invokes a synchronous merge
 # directly. It nudges PRs into states the existing infrastructure can complete —
 # updates BEHIND branches, posts one `@dependabot recreate` comment on real
-# conflicts, restores dismissed approvals on already-armed PRs, and ENABLES
-# auto-merge on approved+mergeable PRs via `gh pr merge --auto --squash`. That
+# conflicts, restores dismissed approvals on already-armed PRs, and ARMS OR
+# ADVANCES approved+mergeable PRs via `gh pr merge --auto --squash` (arming an
+# unarmed PR, or re-issuing the idempotent merge to advance an already-armed one
+# the async worker missed). That
 # last call IS the same one GitHub uses to merge synchronously when every
 # required protection on the PR is already satisfied at the moment of the call
 # (the common path for an APPROVED + MERGEABLE PR), so "enable auto-merge" can
@@ -368,13 +370,15 @@ jobs:
             esac
           }
 
-          # Apply the dependency policy gates from dependabot-auto-merge.yaml so
-          # neither the re-approve path nor the arm-auto-merge path can act on a
-          # PR that workflow would hold for manual review. The label gates
-          # (trust-boundary / security-review-required) are handled separately by
-          # gate_security_review; this checks the two remaining hold conditions
-          # from the auto-merge `if:`: a trust-boundary action bump (held by name,
-          # any update-type), and a semver-major effective update-type. Reads the
+          # Apply the dependency policy gates from dependabot-auto-merge.yaml's
+          # approve step so the re-approve, update-branch, and recreate paths
+          # cannot act on a PR that workflow would hold for manual review (the
+          # arm-or-advance path deliberately skips this — arming and merging are
+          # ruleset-gated). The label gates (trust-boundary /
+          # security-review-required) are handled separately by gate_security_review;
+          # this checks the two remaining hold conditions from the approve step's
+          # `if:`: a trust-boundary action bump (held by name, any update-type), and
+          # a semver-major effective update-type. Reads the
           # Dependabot-authored first commit message because fetch-metadata is
           # unavailable outside the pull_request event. Returns 0 eligible, 1 a
           # gate refuses, 2 on commit-metadata fetch failure (fail-closed).
@@ -452,8 +456,10 @@ jobs:
             echo "DIRTY (real conflict)."
             # Apply the dependency policy gates before any recreate nudge so a
             # held bump (semver-major or a trust-boundary action) is left fully
-            # untouched, matching the update-branch / re-approve / arm paths and
-            # the documented boundary. The BEHIND callers already gate before
+            # untouched. The re-approve path gates the same way; the update-branch
+            # path gates too but allows an already-approved PR through, and the
+            # arm-or-advance path relies on the ruleset instead. The BEHIND callers
+            # already gate before
             # update-branch, but the top-level DIRTY `elif` reaches here directly,
             # so gating inside handle_dirty makes every caller inherit the policy.
             # Unlike update-branch, `@dependabot recreate` is Dependabot-authored
@@ -644,8 +650,8 @@ jobs:
               # deliberate maintainer block — never re-approve) and a maintainer
               # manually arming auto-merge on a semver-major / trust-boundary PR
               # for human review. Skip CHANGES_REQUESTED outright, then re-run the
-              # same dependency gates the arm path uses so the reconciler can
-              # never re-approve a PR the auto-merge workflow would have refused.
+              # same dependency gates the auto-merge approve step uses so the
+              # reconciler can never re-approve a PR that workflow would refuse.
               if [ "$review" = "CHANGES_REQUESTED" ]; then
                 echo "PR #${pr}: reviewDecision=CHANGES_REQUESTED; not re-approving (deliberate maintainer block)."
                 return 0

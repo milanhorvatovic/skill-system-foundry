@@ -90,12 +90,12 @@ jobs:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
       # Pick the most-severe update-type across the (possibly grouped) bump.
-      # Kept inline and identical to dependabot-release-label.yaml so the merge
-      # policy and the release label agree — the two copies MUST stay in sync.
-      # The `else` defaults to semver-major (not patch): an empty or unrecognized
-      # updateType is unclassifiable, and the merge gate excludes semver-major, so
-      # defaulting there fails closed — an unclassifiable bump is held for manual
-      # review instead of silently routed into the auto-merge path.
+      # Kept inline and identical to dependabot-release-label.yaml so the
+      # auto-merge policy and the release label agree — the two copies MUST stay
+      # in sync. The `else` defaults to semver-major (not patch): an empty or
+      # unrecognized updateType is unclassifiable, and the approve gate excludes
+      # semver-major, so defaulting there fails closed — an unclassifiable bump is
+      # armed but not auto-approved (held for a code-owner) rather than auto-approved.
       - name: Derive effective update-type
         id: effective
         env:
