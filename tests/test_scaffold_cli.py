@@ -3230,6 +3230,26 @@ class RealRunDirNarrationTests(unittest.TestCase):
         self.assertNotIn("Created:", output)
         self.assertFalse(os.path.exists(os.path.join(tmpdir, DIR_SKILLS)))
 
+    def test_dry_run_template_failure_advertises_no_dirs(self) -> None:
+        """A pre-write failure yields no planned dirs in either dry-run mode."""
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch(
+                    "scaffold.read_template",
+                    side_effect=FileNotFoundError("missing template"),
+                ):
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+            self.assertFalse(result["success"])
+            # JSON: no planned paths advertised for a command that can't run.
+            self.assertEqual(result.get("planned", []), [])
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit):
+                    scaffold_skill("demo", root=tmpdir, dry_run=True)
+            # Human matches JSON: no "Would create" lines before the failure.
+            self.assertNotIn("Would create", buf.getvalue())
+
 
 class ErrorSchemaTests(unittest.TestCase):
     """Error JSON carries dry_run and the run-mode path-list key."""

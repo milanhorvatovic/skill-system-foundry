@@ -464,6 +464,21 @@ def scaffold_skill(
     # directories, and their .gitkeep sentinel files. Exposed as the
     # ``"created"`` list in JSON output.
     created_paths: list[str] = []
+
+    # Load the template before recording planned directories. A missing
+    # template is a pre-write failure, so the dry-run plan must not
+    # advertise directories for a command that cannot proceed — recording
+    # after this keeps the human preview and JSON ``planned`` set
+    # consistent on the failure path.
+    template_name = TEMPLATE_SKILL_ROUTER if router else TEMPLATE_SKILL_STANDALONE
+    try:
+        template = read_template(template_name)
+    except FileNotFoundError as e:
+        if json_output:
+            return _scaffold_error("skill", str(e), dry_run=dry_run, name=name)
+        print(f"{LEVEL_FAIL}: {e}")
+        sys.exit(1)
+
     blocking = _record_planned_dirs(
         skill_path, created_paths, quiet=json_output, dry_run=dry_run,
     )
@@ -476,67 +491,36 @@ def scaffold_skill(
         print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
         sys.exit(1)
 
+    title = name.replace("-", " ").title()
     if router:
-        try:
-            template = read_template(TEMPLATE_SKILL_ROUTER)
-        except FileNotFoundError as e:
-            if json_output:
-                return _scaffold_error(
-                    "skill", str(e), dry_run=dry_run, name=name,
-                )
-            print(f"{LEVEL_FAIL}: {e}")
-            sys.exit(1)
-        # Replace placeholders
-        title = name.replace("-", " ").title()
         content = template.replace(PH_DOMAIN_NAME, name).replace(
             PH_DOMAIN_TITLE, title
         )
-        write_file(
-            os.path.join(skill_path, FILE_SKILL_MD), content,
-            quiet=json_output, dry_run=dry_run,
+    else:
+        content = template.replace(PH_SKILL_NAME, name).replace(
+            PH_SKILL_TITLE, title
         )
-        created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
+    write_file(
+        os.path.join(skill_path, FILE_SKILL_MD), content,
+        quiet=json_output, dry_run=dry_run,
+    )
+    created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
+    if router:
         caps_dir = os.path.join(skill_path, DIR_CAPABILITIES)
         gitkeep = create_dir_with_gitkeep(caps_dir, dry_run=dry_run)
         created_paths.append(caps_dir)
         created_paths.append(gitkeep)
         if not json_output:
             _print_dir_created(caps_dir, gitkeep, dry_run=dry_run)
-        for d in optional_dirs:
-            opt_dir = os.path.join(skill_path, d)
-            gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
-            created_paths.append(opt_dir)
-            created_paths.append(gitkeep)
-            if not json_output:
-                _print_dir_created(opt_dir, gitkeep, dry_run=dry_run)
+    for d in optional_dirs:
+        opt_dir = os.path.join(skill_path, d)
+        gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
+        created_paths.append(opt_dir)
+        created_paths.append(gitkeep)
         if not json_output:
-            print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
-    else:
-        try:
-            template = read_template(TEMPLATE_SKILL_STANDALONE)
-        except FileNotFoundError as e:
-            if json_output:
-                return _scaffold_error(
-                    "skill", str(e), dry_run=dry_run, name=name,
-                )
-            print(f"{LEVEL_FAIL}: {e}")
-            sys.exit(1)
-        title = name.replace("-", " ").title()
-        content = template.replace(PH_SKILL_NAME, name).replace(
-            PH_SKILL_TITLE, title
-        )
-        write_file(
-            os.path.join(skill_path, FILE_SKILL_MD), content,
-            quiet=json_output, dry_run=dry_run,
-        )
-        created_paths.append(os.path.join(skill_path, FILE_SKILL_MD))
-        for d in optional_dirs:
-            opt_dir = os.path.join(skill_path, d)
-            gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
-            created_paths.append(opt_dir)
-            created_paths.append(gitkeep)
-            if not json_output:
-                _print_dir_created(opt_dir, gitkeep, dry_run=dry_run)
+            _print_dir_created(opt_dir, gitkeep, dry_run=dry_run)
+    if router and not json_output:
+        print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
@@ -723,6 +707,22 @@ def scaffold_capability(
     # ancestors it needs, content files (e.g. capability.md), optional
     # directories, and their .gitkeep files.
     created_paths: list[str] = []
+
+    # Load the template before recording planned directories so a missing
+    # template (a pre-write failure) does not advertise directories the
+    # command cannot create — keeps human and JSON output consistent on
+    # the failure path.
+    try:
+        template = read_template(TEMPLATE_CAPABILITY)
+    except FileNotFoundError as e:
+        if json_output:
+            return _scaffold_error(
+                "capability", str(e),
+                dry_run=dry_run, name=name, domain=domain,
+            )
+        print(f"{LEVEL_FAIL}: {e}")
+        sys.exit(1)
+
     blocking = _record_planned_dirs(
         cap_path, created_paths, quiet=json_output, dry_run=dry_run,
     )
@@ -735,16 +735,6 @@ def scaffold_capability(
         print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
         sys.exit(1)
 
-    try:
-        template = read_template(TEMPLATE_CAPABILITY)
-    except FileNotFoundError as e:
-        if json_output:
-            return _scaffold_error(
-                "capability", str(e),
-                dry_run=dry_run, name=name, domain=domain,
-            )
-        print(f"{LEVEL_FAIL}: {e}")
-        sys.exit(1)
     title = name.replace("-", " ").title()
     content = template.replace(PH_CAPABILITY_NAME, name).replace(
         PH_CAPABILITY_TITLE, title
@@ -890,6 +880,21 @@ def scaffold_role(
     # any ancestors it needs, plus the role file and group/top-level
     # READMEs.
     created_paths: list[str] = []
+
+    # Load the template before recording planned directories so a missing
+    # template (a pre-write failure) does not advertise directories the
+    # command cannot create — keeps human and JSON output consistent on
+    # the failure path.
+    try:
+        template = read_template(TEMPLATE_ROLE)
+    except FileNotFoundError as e:
+        if json_output:
+            return _scaffold_error(
+                "role", str(e), dry_run=dry_run, name=name, group=group,
+            )
+        print(f"{LEVEL_FAIL}: {e}")
+        sys.exit(1)
+
     blocking = _record_planned_dirs(
         os.path.dirname(role_path), created_paths,
         quiet=json_output, dry_run=dry_run,
@@ -903,15 +908,6 @@ def scaffold_role(
         print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
         sys.exit(1)
 
-    try:
-        template = read_template(TEMPLATE_ROLE)
-    except FileNotFoundError as e:
-        if json_output:
-            return _scaffold_error(
-                "role", str(e), dry_run=dry_run, name=name, group=group,
-            )
-        print(f"{LEVEL_FAIL}: {e}")
-        sys.exit(1)
     title = name.replace("-", " ").title()
     content = template.replace(PH_ROLE_TITLE, title)
     write_file(role_path, content, quiet=json_output, dry_run=dry_run)
