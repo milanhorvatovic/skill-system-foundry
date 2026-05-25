@@ -302,15 +302,20 @@ def manifest_needs_scaffold(manifest_path: str) -> bool:
     A manifest needs scaffolding when it does not exist or when it
     exists but holds only whitespace — both states a fresh append has to
     seed with an empty manifest skeleton first, so both are reported as a
-    newly *created* manifest. The check is read-only: it stats the path
-    and, for an existing file, reads its contents as text (text mode,
-    UTF-8) without parsing the YAML or mutating the file. That lets
-    callers ask "would a real run create this file?" without side
-    effects — scaffold's ``--dry-run`` preview relies on it to mirror the
-    real run's created-vs-updated split.
+    newly *created* manifest. A path that exists but is not a regular
+    file (most often a directory) returns False: a real run cannot seed
+    ``manifest.yaml`` there, so it does not "need scaffold" — that case
+    is a skip, surfaced separately via :func:`_non_file_manifest_warning`.
+    The check is read-only: it stats the path and, for an existing file,
+    reads its contents as text (text mode, UTF-8) without parsing the
+    YAML or mutating the file. That lets callers ask "would a real run
+    create this file?" without side effects — scaffold's ``--dry-run``
+    preview relies on it to mirror the real run's created-vs-updated split.
     """
-    if not os.path.isfile(manifest_path):
+    if not os.path.exists(manifest_path):
         return True
+    if not os.path.isfile(manifest_path):
+        return False
     with open(manifest_path, "r", encoding="utf-8") as fh:
         return not fh.read().strip()
 

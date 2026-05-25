@@ -23,6 +23,7 @@ from lib.manifest import (
     has_role_conflict,
     append_skill_entry,
     append_role_entry,
+    manifest_needs_scaffold,
     scaffold_empty_manifest,
     update_manifest_for_skill,
     update_manifest_for_role,
@@ -1145,6 +1146,43 @@ class UpdateManifestPreviewTests(unittest.TestCase):
             self.assertFalse(created)
             with open(path, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+
+class ManifestNeedsScaffoldTests(unittest.TestCase):
+    """manifest_needs_scaffold matches its docstring for every path state."""
+
+    def test_absent_path_needs_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            self.assertTrue(manifest_needs_scaffold(path))
+
+    def test_empty_file_needs_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+            self.assertTrue(manifest_needs_scaffold(path))
+
+    def test_whitespace_only_file_needs_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("   \n\n")
+            self.assertTrue(manifest_needs_scaffold(path))
+
+    def test_nonempty_file_does_not_need_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            self.assertFalse(manifest_needs_scaffold(path))
+
+    def test_directory_does_not_need_scaffold(self) -> None:
+        """A non-regular-file path returns False: a real run can't seed it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            os.mkdir(path)
+            self.assertFalse(manifest_needs_scaffold(path))
 
 
 class NonFileManifestPathTests(unittest.TestCase):
