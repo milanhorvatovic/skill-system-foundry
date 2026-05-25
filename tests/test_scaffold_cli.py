@@ -3231,6 +3231,56 @@ class RealRunDirNarrationTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(tmpdir, DIR_SKILLS)))
 
 
+class ErrorSchemaTests(unittest.TestCase):
+    """Error JSON carries dry_run and the run-mode path-list key."""
+
+    @staticmethod
+    def _existing_skill_dir(tmpdir: str) -> None:
+        os.makedirs(os.path.join(tmpdir, DIR_SKILLS, "demo"))
+
+    def test_error_dry_run_true_uses_planned_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._existing_skill_dir(tmpdir)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+        self.assertNotIn("created", result)
+
+    def test_error_dry_run_false_uses_created_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._existing_skill_dir(tmpdir)
+            result = scaffold_skill("demo", root=tmpdir, json_output=True)
+        self.assertFalse(result["success"])
+        self.assertFalse(result["dry_run"])
+        self.assertIn("created", result)
+        self.assertNotIn("planned", result)
+
+    def test_invalid_name_error_carries_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "INVALID", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+
+    def test_capability_and_role_errors_carry_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap = scaffold_capability(
+                "INVALID", "x", root=tmpdir, json_output=True, dry_run=True,
+            )
+            role = scaffold_role(
+                "INVALID", "x", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertIn("dry_run", cap)
+        self.assertIn("dry_run", role)
+        self.assertTrue(cap["dry_run"])
+        self.assertTrue(role["dry_run"])
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 

@@ -273,6 +273,39 @@ def _blocking_dir_error(blocking: str) -> str:
     )
 
 
+def _scaffold_error(
+    component: str,
+    error: str,
+    *,
+    dry_run: bool,
+    details: list[str] | None = None,
+    **fields: str,
+) -> dict:
+    """Build a scaffold error result with the stable JSON schema.
+
+    Every scaffold JSON payload — success or failure — carries the same
+    top-level keys so consumers parse one shape: ``tool``, ``component``,
+    ``success``, ``dry_run``, the component-specific identifiers in
+    *fields* (``name`` / ``domain`` / ``group``), ``error``, an empty
+    path list under the run-mode key (``planned`` under dry-run,
+    ``created`` otherwise — empty because an error path records nothing),
+    and ``details`` when supplied. Carrying ``dry_run`` and the path-list
+    key on errors too keeps the schema identical to the success payload.
+    """
+    result: dict = {
+        "tool": "scaffold",
+        "component": component,
+        "success": False,
+        "dry_run": dry_run,
+        "error": error,
+    }
+    result.update(fields)
+    result["planned" if dry_run else "created"] = []
+    if details is not None:
+        result["details"] = details
+    return result
+
+
 def read_template(template_name: str) -> str:
     """Read a template file from assets/."""
     template_path = os.path.join(ASSETS_DIR, template_name)
@@ -408,26 +441,21 @@ def scaffold_skill(
         optional_dirs = []
     if not validate_name(name, json_output=json_output):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "skill",
-                "name": name,
-                "success": False,
-                "error": f"Invalid name: '{name}'",
-                "details": _name_validation_details(name),
-            }
+            return _scaffold_error(
+                "skill", f"Invalid name: '{name}'",
+                dry_run=dry_run, name=name,
+                details=_name_validation_details(name),
+            )
         sys.exit(1)
 
     skill_path = os.path.join(root, DIR_SKILLS, name) if root else os.path.join(DIR_SKILLS, name)
     if os.path.exists(skill_path):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "skill",
-                "name": name,
-                "success": False,
-                "error": f"Directory already exists: {to_posix(skill_path)}",
-            }
+            return _scaffold_error(
+                "skill",
+                f"Directory already exists: {to_posix(skill_path)}",
+                dry_run=dry_run, name=name,
+            )
         print(f"{LEVEL_FAIL}: Directory already exists: {to_posix(skill_path)}")
         sys.exit(1)
 
@@ -441,13 +469,10 @@ def scaffold_skill(
     )
     if blocking is not None:
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "skill",
-                "name": name,
-                "success": False,
-                "error": _blocking_dir_error(blocking),
-            }
+            return _scaffold_error(
+                "skill", _blocking_dir_error(blocking),
+                dry_run=dry_run, name=name,
+            )
         print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
         sys.exit(1)
 
@@ -456,13 +481,9 @@ def scaffold_skill(
             template = read_template(TEMPLATE_SKILL_ROUTER)
         except FileNotFoundError as e:
             if json_output:
-                return {
-                    "tool": "scaffold",
-                    "component": "skill",
-                    "name": name,
-                    "success": False,
-                    "error": str(e),
-                }
+                return _scaffold_error(
+                    "skill", str(e), dry_run=dry_run, name=name,
+                )
             print(f"{LEVEL_FAIL}: {e}")
             sys.exit(1)
         # Replace placeholders
@@ -495,13 +516,9 @@ def scaffold_skill(
             template = read_template(TEMPLATE_SKILL_STANDALONE)
         except FileNotFoundError as e:
             if json_output:
-                return {
-                    "tool": "scaffold",
-                    "component": "skill",
-                    "name": name,
-                    "success": False,
-                    "error": str(e),
-                }
+                return _scaffold_error(
+                    "skill", str(e), dry_run=dry_run, name=name,
+                )
             print(f"{LEVEL_FAIL}: {e}")
             sys.exit(1)
         title = name.replace("-", " ").title()
@@ -665,54 +682,40 @@ def scaffold_capability(
         optional_dirs = []
     if not validate_name(domain, json_output=json_output):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "capability",
-                "name": name,
-                "domain": domain,
-                "success": False,
-                "error": f"Invalid domain name: '{domain}'",
-                "details": _name_validation_details(domain),
-            }
+            return _scaffold_error(
+                "capability", f"Invalid domain name: '{domain}'",
+                dry_run=dry_run, name=name, domain=domain,
+                details=_name_validation_details(domain),
+            )
         sys.exit(1)
     if not validate_name(name, json_output=json_output):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "capability",
-                "name": name,
-                "domain": domain,
-                "success": False,
-                "error": f"Invalid name: '{name}'",
-                "details": _name_validation_details(name),
-            }
+            return _scaffold_error(
+                "capability", f"Invalid name: '{name}'",
+                dry_run=dry_run, name=name, domain=domain,
+                details=_name_validation_details(name),
+            )
         sys.exit(1)
 
     cap_path = os.path.join(root, DIR_SKILLS, domain, DIR_CAPABILITIES, name) if root else os.path.join(DIR_SKILLS, domain, DIR_CAPABILITIES, name)
     if os.path.exists(cap_path):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "capability",
-                "name": name,
-                "domain": domain,
-                "success": False,
-                "error": f"Directory already exists: {to_posix(cap_path)}",
-            }
+            return _scaffold_error(
+                "capability",
+                f"Directory already exists: {to_posix(cap_path)}",
+                dry_run=dry_run, name=name, domain=domain,
+            )
         print(f"{LEVEL_FAIL}: Directory already exists: {to_posix(cap_path)}")
         sys.exit(1)
 
     router_skill = os.path.join(root, DIR_SKILLS, domain, FILE_SKILL_MD) if root else os.path.join(DIR_SKILLS, domain, FILE_SKILL_MD)
     if not os.path.exists(router_skill):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "capability",
-                "name": name,
-                "domain": domain,
-                "success": False,
-                "error": f"Parent skill not found: {to_posix(router_skill)}",
-            }
+            return _scaffold_error(
+                "capability",
+                f"Parent skill not found: {to_posix(router_skill)}",
+                dry_run=dry_run, name=name, domain=domain,
+            )
         print(f"{LEVEL_FAIL}: Parent skill not found: {to_posix(router_skill)}")
         sys.exit(1)
 
@@ -725,14 +728,10 @@ def scaffold_capability(
     )
     if blocking is not None:
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "capability",
-                "name": name,
-                "domain": domain,
-                "success": False,
-                "error": _blocking_dir_error(blocking),
-            }
+            return _scaffold_error(
+                "capability", _blocking_dir_error(blocking),
+                dry_run=dry_run, name=name, domain=domain,
+            )
         print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
         sys.exit(1)
 
@@ -740,14 +739,10 @@ def scaffold_capability(
         template = read_template(TEMPLATE_CAPABILITY)
     except FileNotFoundError as e:
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "capability",
-                "name": name,
-                "domain": domain,
-                "success": False,
-                "error": str(e),
-            }
+            return _scaffold_error(
+                "capability", str(e),
+                dry_run=dry_run, name=name, domain=domain,
+            )
         print(f"{LEVEL_FAIL}: {e}")
         sys.exit(1)
     title = name.replace("-", " ").title()
@@ -855,49 +850,39 @@ def scaffold_role(
             after scaffolding.
         dry_run: If True, write nothing to disk. The same set of paths a
             real run would create — the role file and any not-yet-present
-            README files — is reported as planned actions, the manifest
-            is left untouched, and the post-write frontmatter re-parse is
-            skipped.
+            README files — is reported as planned actions; the manifest
+            may be read to preview a conflict or parse error but is never
+            written; and the rendered frontmatter is validated in memory
+            so the preview reports the same findings and success/exit
+            status a real run would.
 
     Returns:
         A result dict when *json_output* is True, otherwise None.
     """
     if not validate_name(group, json_output=json_output):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "role",
-                "name": name,
-                "group": group,
-                "success": False,
-                "error": f"Invalid group name: '{group}'",
-                "details": _name_validation_details(group),
-            }
+            return _scaffold_error(
+                "role", f"Invalid group name: '{group}'",
+                dry_run=dry_run, name=name, group=group,
+                details=_name_validation_details(group),
+            )
         sys.exit(1)
     if not validate_name(name, json_output=json_output):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "role",
-                "name": name,
-                "group": group,
-                "success": False,
-                "error": f"Invalid name: '{name}'",
-                "details": _name_validation_details(name),
-            }
+            return _scaffold_error(
+                "role", f"Invalid name: '{name}'",
+                dry_run=dry_run, name=name, group=group,
+                details=_name_validation_details(name),
+            )
         sys.exit(1)
 
     role_path = os.path.join(root, DIR_ROLES, group, f"{name}{EXT_MARKDOWN}") if root else os.path.join(DIR_ROLES, group, f"{name}{EXT_MARKDOWN}")
     if os.path.exists(role_path):
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "role",
-                "name": name,
-                "group": group,
-                "success": False,
-                "error": f"File already exists: {to_posix(role_path)}",
-            }
+            return _scaffold_error(
+                "role", f"File already exists: {to_posix(role_path)}",
+                dry_run=dry_run, name=name, group=group,
+            )
         print(f"{LEVEL_FAIL}: File already exists: {to_posix(role_path)}")
         sys.exit(1)
 
@@ -911,14 +896,10 @@ def scaffold_role(
     )
     if blocking is not None:
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "role",
-                "name": name,
-                "group": group,
-                "success": False,
-                "error": _blocking_dir_error(blocking),
-            }
+            return _scaffold_error(
+                "role", _blocking_dir_error(blocking),
+                dry_run=dry_run, name=name, group=group,
+            )
         print(f"{LEVEL_FAIL}: {_blocking_dir_error(blocking)}")
         sys.exit(1)
 
@@ -926,14 +907,9 @@ def scaffold_role(
         template = read_template(TEMPLATE_ROLE)
     except FileNotFoundError as e:
         if json_output:
-            return {
-                "tool": "scaffold",
-                "component": "role",
-                "name": name,
-                "group": group,
-                "success": False,
-                "error": str(e),
-            }
+            return _scaffold_error(
+                "role", str(e), dry_run=dry_run, name=name, group=group,
+            )
         print(f"{LEVEL_FAIL}: {e}")
         sys.exit(1)
     title = name.replace("-", " ").title()
@@ -1082,12 +1058,17 @@ _KNOWN_FLAGS = {
 }
 
 
-def _validate_flags(flags: list[str], component: str, *, json_mode: bool = False) -> None:
+def _validate_flags(
+    flags: list[str], component: str, *, json_mode: bool = False,
+    dry_run: bool = False,
+) -> None:
     """Validate *flags* against the known set for *component*.
 
     Exits with an error message listing the unrecognised flags.
     When *json_mode* is ``True`` the error is emitted as a JSON object
-    instead of human-readable text.  Duplicates are silently ignored.
+    instead of human-readable text.  *dry_run* is carried into that JSON
+    so every scaffold response, success or failure, exposes the flag.
+    Duplicates are silently ignored.
     """
     known = _KNOWN_FLAGS.get(component, set())
     unique_flags = list(dict.fromkeys(flags))
@@ -1099,6 +1080,7 @@ def _validate_flags(flags: list[str], component: str, *, json_mode: bool = False
                 "tool": "scaffold",
                 "component": component,
                 "success": False,
+                "dry_run": dry_run,
                 "error": (
                     f"Unknown flag(s): {', '.join(unknown)}. "
                     f"Allowed: {allowed}"
@@ -1152,6 +1134,7 @@ def main() -> None:
                 print(to_json_output({
                     "tool": "scaffold",
                     "success": False,
+                    "dry_run": dry_run,
                     "error": "--root requires a path argument",
                 }))
             else:
@@ -1165,6 +1148,7 @@ def main() -> None:
             print(to_json_output({
                 "tool": "scaffold",
                 "success": False,
+                "dry_run": dry_run,
                 "error": "Insufficient arguments",
             }))
         else:
@@ -1182,12 +1166,13 @@ def main() -> None:
                     "tool": "scaffold",
                     "component": "skill",
                     "success": False,
+                    "dry_run": dry_run,
                     "error": "Missing skill name",
                 }))
             else:
                 print("Usage: python scripts/scaffold.py skill <name> [--router] [--root <path>] [--with-references] [--with-scripts] [--with-assets] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
-        _validate_flags(flags, "skill", json_mode=json_output)
+        _validate_flags(flags, "skill", json_mode=json_output, dry_run=dry_run)
         name = positional[0]
         router = "--router" in flags
         optional_dirs = _parse_optional_dirs(flags)
@@ -1205,6 +1190,7 @@ def main() -> None:
                     "component": "skill",
                     "name": name,
                     "success": False,
+                    "dry_run": dry_run,
                     "error": f"{exc.__class__.__name__}: {exc}",
                 }))
                 sys.exit(1)
@@ -1222,12 +1208,13 @@ def main() -> None:
                     "tool": "scaffold",
                     "component": "capability",
                     "success": False,
+                    "dry_run": dry_run,
                     "error": "Missing domain or capability name",
                 }))
             else:
                 print("Usage: python scripts/scaffold.py capability <domain> <name> [--root <path>] [--with-references] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
-        _validate_flags(flags, "capability", json_mode=json_output)
+        _validate_flags(flags, "capability", json_mode=json_output, dry_run=dry_run)
         optional_dirs = _parse_optional_dirs(flags)
         try:
             result = scaffold_capability(
@@ -1244,6 +1231,7 @@ def main() -> None:
                     "name": positional[1],
                     "domain": positional[0],
                     "success": False,
+                    "dry_run": dry_run,
                     "error": f"{exc.__class__.__name__}: {exc}",
                 }))
                 sys.exit(1)
@@ -1261,12 +1249,13 @@ def main() -> None:
                     "tool": "scaffold",
                     "component": "role",
                     "success": False,
+                    "dry_run": dry_run,
                     "error": "Missing group or role name",
                 }))
             else:
                 print("Usage: python scripts/scaffold.py role <group> <name> [--root <path>] [--update-manifest] [--dry-run] [--json]")
             sys.exit(1)
-        _validate_flags(flags, "role", json_mode=json_output)
+        _validate_flags(flags, "role", json_mode=json_output, dry_run=dry_run)
         try:
             result = scaffold_role(
                 positional[0], positional[1], root,
@@ -1282,6 +1271,7 @@ def main() -> None:
                     "name": positional[1],
                     "group": positional[0],
                     "success": False,
+                    "dry_run": dry_run,
                     "error": f"{exc.__class__.__name__}: {exc}",
                 }))
                 sys.exit(1)
@@ -1295,6 +1285,7 @@ def main() -> None:
             print(to_json_output({
                 "tool": "scaffold",
                 "success": False,
+                "dry_run": dry_run,
                 "error": f"Unknown component type: {component}",
             }))
         else:
