@@ -17,6 +17,7 @@ LEVEL_WARN = "WARN"
 LEVEL_INFO = "INFO"
 
 from .yaml_parser import parse_yaml_subset
+from .config_validation import validate_config_structure
 
 # ===================================================================
 # Script Internals (structural — rarely changes)
@@ -102,6 +103,15 @@ CONFIG_PATH = os.path.abspath(
 # _check_plain_scalar imports PLAIN_SCALAR_INDICATORS from this module.
 with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
     _config = parse_yaml_subset(_f.read())
+
+# Structure validation runs before any dereference below so a missing or
+# wrong-typed key produces a clear ConfigurationError naming the offending
+# dotted key path (e.g. 'skill.description.evaluation') instead of a bare
+# KeyError / TypeError / ValueError from the constant assignments that
+# follow.  The deeper per-entry semantic checks (empty / duplicate /
+# traversal list entries, integer range bounds) stay inline below where
+# the normalized values are produced.
+validate_config_structure(_config)
 
 _CONFIG_FINDINGS: list[str] | None = None
 
@@ -221,30 +231,11 @@ RE_IMPERATIVE_START = re.compile(_voice["imperative_start"])
 # lib/description_eval.py and the evaluate_descriptions.py entry point.
 # The custom YAML parser returns every scalar as a string, so counts go
 # through int(), thresholds/ratios through float(); the stopword list passes
-# through as a frozenset.
-if "evaluation" not in _skill_desc:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.description.evaluation'; update your checkout or restore the "
-        "full configuration file."
-    )
+# through as a frozenset.  Presence and shape of the section and its
+# required keys are guaranteed by validate_config_structure (called above);
+# the per-entry semantic checks below (empty / non-string entries) are
+# unique to this loader.
 _eval = _skill_desc["evaluation"]
-if not isinstance(_eval, dict):
-    raise RuntimeError(
-        "configuration.yaml has invalid value for "
-        f"'skill.description.evaluation': expected a mapping, got {_eval!r}."
-    )
-_required_eval_keys = (
-    "default_min_precision", "default_min_recall", "heuristic_min_overlap",
-    "max_prompt_chars", "diversity_distinct_bigram_min_ratio",
-    "min_prompts_per_side", "recommended_prompts_per_side", "stopwords",
-)
-_missing_eval = [_k for _k in _required_eval_keys if _k not in _eval]
-if _missing_eval:
-    raise RuntimeError(
-        "configuration.yaml 'skill.description.evaluation' is missing required "
-        f"keys: {', '.join(_missing_eval)}."
-    )
 EVAL_DEFAULT_MIN_PRECISION = float(_eval["default_min_precision"])
 EVAL_DEFAULT_MIN_RECALL = float(_eval["default_min_recall"])
 EVAL_HEURISTIC_MIN_OVERLAP = float(_eval["heuristic_min_overlap"])
@@ -272,33 +263,16 @@ EVAL_STOPWORDS = frozenset(_normalized_stopwords)
 # the skill-root self-check (no corpus under the skill) stays quiet.
 # The size-escalation rule reuses EVAL_MIN_PROMPTS / EVAL_RECOMMENDED_
 # PROMPTS above rather than a parallel floor that could drift.
-if "coverage" not in _eval:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'skill.description.evaluation.coverage'; update your checkout."
-    )
+# Presence and mapping-shape of the coverage block and presence of
+# corpus_root_relative are guaranteed by validate_config_structure
+# (called above); the non-string / path-traversal semantic checks below
+# are unique to this loader.
 _coverage = _eval["coverage"]
-if not isinstance(_coverage, dict):
-    raise RuntimeError(
-        "configuration.yaml has invalid value for "
-        "'skill.description.evaluation.coverage': expected a mapping, got "
-        f"{type(_coverage).__name__}."
-    )
-if "corpus_root_relative" not in _coverage:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'skill.description.evaluation.coverage.corpus_root_relative'."
-    )
-# Reject non-string YAML values (a list / mapping survives ``str(...)`` as a
-# bogus path like ``['tests/skill-corpus']`` and would self-skip coverage
-# instead of failing fast) — the loader exposes typed, fail-fast constants.
+# A scalar string value for corpus_root_relative is guaranteed by
+# validate_config_structure (a list / mapping is rejected there as a
+# non-scalar, naming the key); the path-traversal semantic checks below
+# are unique to this loader.
 _corpus_root_raw = _coverage["corpus_root_relative"]
-if not isinstance(_corpus_root_raw, str):
-    raise RuntimeError(
-        "configuration.yaml has invalid value for "
-        "'skill.description.evaluation.coverage.corpus_root_relative': "
-        f"expected a string, got {type(_corpus_root_raw).__name__}."
-    )
 EVAL_COVERAGE_CORPUS_ROOT = _corpus_root_raw.replace("\\", "/").strip()
 if EVAL_COVERAGE_CORPUS_ROOT.startswith("./"):
     EVAL_COVERAGE_CORPUS_ROOT = EVAL_COVERAGE_CORPUS_ROOT[2:]
@@ -389,14 +363,11 @@ EVAL_COVERAGE_ALLOWED_MISSING = tuple(_normalized_missing)
 # way RESERVED_NAMES does.  Empty / whitespace-only entries are
 # rejected at load time: a substring match against an empty string
 # always succeeds, which would silently neuter the rule.
-if "trigger_phrases" not in _skill_desc:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.description.trigger_phrases'; update your checkout "
-        "or restore the full configuration file."
-    )
+# Presence and list-shape are guaranteed by validate_config_structure
+# (called above); the non-empty / empty-entry / duplicate semantic
+# checks below are unique to this loader.
 _raw_trigger_phrases = _skill_desc["trigger_phrases"]
-if not isinstance(_raw_trigger_phrases, list) or not _raw_trigger_phrases:
+if not _raw_trigger_phrases:
     raise RuntimeError(
         "configuration.yaml has invalid value for "
         "'skill.description.trigger_phrases': expected a non-empty "
@@ -453,19 +424,10 @@ DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
 # tuples and the stopword list as a frozenset.  Fail-fast on a missing
 # or malformed section mirrors the trigger_phrases / evaluation loaders
 # above so a stale checkout errors loudly at import.
-if "structural_rules" not in _skill_desc:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.description.structural_rules'; update your checkout "
-        "or restore the full configuration file."
-    )
+# Presence and mapping-shape are guaranteed by validate_config_structure
+# (called above); the per-key presence, list-shape, and per-entry
+# semantic checks below (via the helpers) are unique to this loader.
 _structural = _skill_desc["structural_rules"]
-if not isinstance(_structural, dict):
-    raise RuntimeError(
-        "configuration.yaml has invalid value for "
-        "'skill.description.structural_rules': expected a mapping, got "
-        f"{_structural!r}."
-    )
 
 
 def _require_structural_key(structural: dict, key: str) -> object:
@@ -628,22 +590,10 @@ del _structural, _require_structural_key, _normalize_structural_phrases
 # the body regex consumes the *validated* extension tuple — empty,
 # dotted, whitespace-bearing, or duplicate entries fail loudly at
 # import instead of silently neutering reference extraction.
-if "path_resolution" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'path_resolution'; this foundry build is incomplete."
-    )
+# Presence and shape of path_resolution and its keys are guaranteed by
+# validate_config_structure (called above); the empty-value, per-entry,
+# and range semantic checks below are unique to this loader.
 _path_resolution = _config["path_resolution"]
-if "rule_name" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'path_resolution.rule_name'."
-    )
-if "documentation_path" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'path_resolution.documentation_path'."
-    )
 PATH_RESOLUTION_RULE_NAME = str(_path_resolution["rule_name"]).strip()
 PATH_RESOLUTION_DOC_PATH = str(_path_resolution["documentation_path"]).strip()
 if not PATH_RESOLUTION_RULE_NAME:
@@ -656,13 +606,8 @@ if not PATH_RESOLUTION_DOC_PATH:
         "configuration.yaml has an empty value for "
         "'path_resolution.documentation_path'."
     )
-if "reference_extensions" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'path_resolution.reference_extensions'."
-    )
 _raw_extensions = _path_resolution["reference_extensions"]
-if not isinstance(_raw_extensions, list) or not _raw_extensions:
+if not _raw_extensions:
     raise RuntimeError(
         "configuration.yaml 'path_resolution.reference_extensions' "
         "must be a non-empty list."
@@ -724,17 +669,11 @@ del _raw_extensions, _normalized_extensions, _seen_extensions
 # foundry's text extensions.  The byte cap and extension allow-list
 # live in YAML so integrators can audit and tune the rule from the
 # single source of truth.
-if "degraded_symlink" not in _path_resolution:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'path_resolution.degraded_symlink'; update your checkout."
-    )
+# Presence and shape of degraded_symlink, max_bytes, and
+# foundry_extensions are guaranteed by validate_config_structure (called
+# above); the positive-value, non-empty, and per-entry semantic checks
+# below are unique to this loader.
 _degraded_symlink_cfg = _path_resolution["degraded_symlink"]
-if "max_bytes" not in _degraded_symlink_cfg:
-    raise RuntimeError(
-        "configuration.yaml is missing "
-        "'path_resolution.degraded_symlink.max_bytes'."
-    )
 DEGRADED_SYMLINK_MAX_BYTES = int(_degraded_symlink_cfg["max_bytes"])
 if DEGRADED_SYMLINK_MAX_BYTES <= 0:
     raise RuntimeError(
@@ -742,13 +681,8 @@ if DEGRADED_SYMLINK_MAX_BYTES <= 0:
         "'path_resolution.degraded_symlink.max_bytes': "
         f"{DEGRADED_SYMLINK_MAX_BYTES} (must be positive)."
     )
-if "foundry_extensions" not in _degraded_symlink_cfg:
-    raise RuntimeError(
-        "configuration.yaml is missing "
-        "'path_resolution.degraded_symlink.foundry_extensions'."
-    )
 _raw_shim_exts = _degraded_symlink_cfg["foundry_extensions"]
-if not isinstance(_raw_shim_exts, list) or not _raw_shim_exts:
+if not _raw_shim_exts:
     raise RuntimeError(
         "configuration.yaml has invalid value for "
         "'path_resolution.degraded_symlink.foundry_extensions': "
@@ -835,14 +769,9 @@ MAX_COMPATIBILITY_CHARS = int(_skill["compatibility"]["max_length"])
 KNOWN_FRONTMATTER_KEYS = frozenset(_skill["known_frontmatter_keys"])
 
 # "Did you mean?" suggestion parameters (difflib.get_close_matches).
-# Fail-fast so a stale checkout missing this section produces a clear
-# error at import rather than a later bare KeyError.
-if "frontmatter_suggestions" not in _skill:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.frontmatter_suggestions'; update your checkout or "
-        "restore the full configuration file."
-    )
+# Presence and shape of the section and its max_matches / cutoff scalars
+# are guaranteed by validate_config_structure (called above); the range
+# semantic checks below are unique to this loader.
 _fm_suggest = _skill["frontmatter_suggestions"]
 FRONTMATTER_SUGGEST_MAX_MATCHES = int(_fm_suggest["max_matches"])
 if FRONTMATTER_SUGGEST_MAX_MATCHES <= 0:
@@ -865,20 +794,9 @@ MAX_ALLOWED_TOOLS = int(_allowed_tools["max_tools"])
 
 # Per-harness tool catalogs.  Today only ``claude_code`` consumes the
 # ``allowed-tools`` field; new harnesses go alongside as additional
-# buckets.  Fail-fast so a stale checkout missing the catalog produces
-# a clear error at import rather than a silent ``KeyError`` later.
-if "catalogs" not in _allowed_tools:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.allowed_tools.catalogs'; update your checkout or "
-        "restore the full configuration file."
-    )
+# buckets.  Presence and shape of catalogs and the claude_code catalog
+# are guaranteed by validate_config_structure (called above).
 _catalogs = _allowed_tools["catalogs"]
-if "claude_code" not in _catalogs:
-    raise RuntimeError(
-        "configuration.yaml is missing required catalog "
-        "'skill.allowed_tools.catalogs.claude_code'."
-    )
 _claude_code_catalog = _catalogs["claude_code"]
 HARNESS_TOOLS_CLAUDE_CODE = frozenset(_claude_code_catalog["harness_tools"])
 CLI_TOOLS_CLAUDE_CODE = frozenset(_claude_code_catalog["cli_tools"])
@@ -898,18 +816,8 @@ KNOWN_TOOLS = HARNESS_TOOLS_CLAUDE_CODE | CLI_TOOLS_CLAUDE_CODE
 #   add *)``) via ``_RE_PAREN_ARGS`` in ``validation`` *before*
 #   applying this regex, so the regex itself does not need to model
 #   parens.
-if "mcp_tool_pattern" not in _allowed_tools:
-    raise RuntimeError(
-        "configuration.yaml is missing required pattern "
-        "'skill.allowed_tools.mcp_tool_pattern'; this foundry build "
-        "is incomplete."
-    )
-if "harness_tool_shape_pattern" not in _allowed_tools:
-    raise RuntimeError(
-        "configuration.yaml is missing required pattern "
-        "'skill.allowed_tools.harness_tool_shape_pattern'; this "
-        "foundry build is incomplete."
-    )
+# Presence of both patterns is guaranteed by validate_config_structure
+# (called above).
 RE_MCP_TOOL_NAME = re.compile(_allowed_tools["mcp_tool_pattern"])
 RE_HARNESS_TOOL_SHAPE = re.compile(_allowed_tools["harness_tool_shape_pattern"])
 
@@ -921,12 +829,9 @@ RE_HARNESS_TOOL_SHAPE = re.compile(_allowed_tools["harness_tool_shape_pattern"])
 # expected to be declared whenever the skill carries a top-level
 # ``scripts/`` directory (WARN, not FAIL — non-shell ``scripts/``
 # trees are legitimate).  Adding a tool is a YAML edit only.
-if "fence_languages" not in _allowed_tools:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.allowed_tools.fence_languages'; this foundry build "
-        "is incomplete."
-    )
+# Presence and shape of fence_languages (a mapping of tool-name to an
+# entry with a ``languages`` list) are guaranteed by
+# validate_config_structure (called above).
 _fence_languages = _allowed_tools["fence_languages"]
 TOOL_FENCE_LANGUAGES: dict[str, frozenset[str]] = {
     tool_name: frozenset(entry["languages"])
@@ -959,36 +864,13 @@ RECOGNIZED_DIRS = frozenset(_skill["recognized_subdirectories"])
 # them get an INFO redirect.  Dotted entries (``metadata.author``)
 # traverse nested mappings.  The list is YAML-driven so adding a new
 # field is a configuration edit only.
-if "capability_frontmatter" not in _skill:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'skill.capability_frontmatter'; this foundry build is "
-        "incomplete."
-    )
+# Presence and mapping-shape of capability_frontmatter, and the
+# list-shape of skill_only_fields, are guaranteed by
+# validate_config_structure (called above); the non-empty / empty-entry
+# / duplicate semantic checks below are unique to this loader.
 _capability_frontmatter = _skill["capability_frontmatter"]
-# Reject scalar / list shapes before indexing — a typo like
-# ``capability_frontmatter: []`` would otherwise pass the ``in``
-# check (lists support ``in`` for elements) and crash with a bare
-# ``TypeError`` on the next subscript, breaking the fail-fast
-# RuntimeError contract used elsewhere in this loader.
-if not isinstance(_capability_frontmatter, dict):
-    raise RuntimeError(
-        "configuration.yaml has invalid value for "
-        "'skill.capability_frontmatter': expected a mapping, got "
-        f"{type(_capability_frontmatter).__name__}."
-    )
-if "skill_only_fields" not in _capability_frontmatter:
-    raise RuntimeError(
-        "configuration.yaml is missing required list "
-        "'skill.capability_frontmatter.skill_only_fields'; this "
-        "foundry build is incomplete."
-    )
-# Fail-fast normalization mirrors the trigger_phrases handling above.
-# A malformed list (empty, non-list, empty entries, duplicates) would
-# otherwise silently neuter the skill-only-fields rule and let
-# capability frontmatter drift land without a finding.
 _raw_skill_only_fields = _capability_frontmatter["skill_only_fields"]
-if not isinstance(_raw_skill_only_fields, list) or not _raw_skill_only_fields:
+if not _raw_skill_only_fields:
     raise RuntimeError(
         "configuration.yaml has invalid value for "
         "'skill.capability_frontmatter.skill_only_fields': expected "
@@ -1046,21 +928,11 @@ RE_SKILL_REF = re.compile(_role["skill_ref_pattern"])
 RE_CAPABILITY_REF = re.compile(_role["capability_ref_pattern"])
 
 # --- Orphan Reference Audit ---
-# Fail-fast when the section is missing so a stale checkout produces a
-# clear error at import rather than a silent KeyError later.
-if "orphan_references" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'orphan_references'; this foundry build is incomplete."
-    )
+# Presence of the section and the allowed_orphans key (which may be
+# blank) is guaranteed by validate_config_structure (called above); the
+# blank-coercion, list-shape, and per-entry semantic checks below are
+# unique to this loader.
 _orphan_refs = _config["orphan_references"]
-if "allowed_orphans" not in _orphan_refs:
-    raise RuntimeError(
-        "configuration.yaml is missing required key "
-        "'orphan_references.allowed_orphans'; leave the value blank "
-        "(or list block-style entries beneath it) to keep the rule "
-        "fully active."
-    )
 _raw_allowed_orphans = _orphan_refs["allowed_orphans"]
 # A key with no value (``allowed_orphans:`` followed by no items) is
 # returned as ``""`` by the YAML subset parser; ``None`` is also
@@ -1145,12 +1017,9 @@ BUNDLE_DEFAULT_TARGET = _bundle["default_target"]
 # reserves space for a representative install location
 # (``C:\\Users\\<name>\\<repo>\\`` style) so the rule fires on the
 # arcname length the integrator can actually control.
-if "long_path" not in _bundle:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'bundle.long_path'; update your checkout or restore the "
-        "full configuration file."
-    )
+# Presence and shape of long_path and its threshold / user_prefix_budget
+# integers are guaranteed by validate_config_structure (called above);
+# the range / ordering semantic checks below are unique to this loader.
 _long_path = _bundle["long_path"]
 LONG_PATH_THRESHOLD = int(_long_path["threshold"])
 LONG_PATH_USER_PREFIX_BUDGET = int(_long_path["user_prefix_budget"])
@@ -1174,17 +1043,10 @@ if LONG_PATH_USER_PREFIX_BUDGET >= LONG_PATH_THRESHOLD:
 # integrators can opt out without code changes; the fields it gates
 # (``line_endings`` per file, ``*_lf`` aggregates) are additive — the
 # raw byte counts continue to be reported regardless.
-if "stats" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section 'stats'; "
-        "update your checkout or restore the full configuration file."
-    )
+# Presence and mapping-shape of stats and stats.line_endings are
+# guaranteed by validate_config_structure (called above); the
+# enabled-value semantic check below is unique to this loader.
 _stats = _config["stats"]
-if "line_endings" not in _stats:
-    raise RuntimeError(
-        "configuration.yaml is missing required section "
-        "'stats.line_endings'; update your checkout."
-    )
 _stats_le = _stats["line_endings"]
 _stats_le_enabled = str(
     _stats_le.get("enabled", "true")
@@ -1200,23 +1062,15 @@ if _stats_le_enabled not in ("true", "false"):
 STATS_LINE_ENDINGS_ENABLED = _stats_le_enabled == "true"
 
 # --- Prose YAML Validation ---
-# Fail-fast: a stale checkout missing this section produces a clear
-# error at import rather than a subtle KeyError later.
-if "prose_yaml" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section 'prose_yaml'; "
-        "this foundry build is incomplete."
-    )
+# Presence and shape of prose_yaml and its keys are guaranteed by
+# validate_config_structure (called above).
 _prose = _config["prose_yaml"]
 PROSE_YAML_OPT_OUT_MARKER = _prose["opt_out_marker"]
 PROSE_YAML_IN_SCOPE_GLOBS = tuple(_prose["in_scope_globs"])
 
 # --- YAML Conformance (construct-id enumeration) ---
-if "yaml_conformance" not in _config:
-    raise RuntimeError(
-        "configuration.yaml is missing required section 'yaml_conformance'; "
-        "this foundry build is incomplete."
-    )
+# Presence and shape of yaml_conformance.construct_ids are guaranteed by
+# validate_config_structure (called above).
 _yaml_conf = _config["yaml_conformance"]
 YAML_CONFORMANCE_CONSTRUCT_IDS = tuple(_yaml_conf["construct_ids"])
 
@@ -1251,6 +1105,6 @@ del _path_resolution
 del _stats, _stats_le, _stats_le_enabled
 del _codex, _codex_iface, _codex_deps
 del _prose, _yaml_conf
-del _eval, _required_eval_keys, _missing_eval, _stopwords, _normalized_stopwords
+del _eval, _stopwords, _normalized_stopwords
 del _coverage, _cov_freshness, _raw_allowed_missing, _normalized_missing
 del _corpus_root_raw
