@@ -24,6 +24,7 @@ __all__ = [
     "has_role_conflict",
     "append_skill_entry",
     "append_role_entry",
+    "manifest_needs_scaffold",
     "update_manifest_for_skill",
     "update_manifest_for_role",
     "scaffold_empty_manifest",
