@@ -301,10 +301,11 @@ def manifest_needs_scaffold(manifest_path: str) -> bool:
     exists but holds only whitespace — both states a fresh append has to
     seed with an empty manifest skeleton first, so both are reported as a
     newly *created* manifest. The check is read-only: it stats the path
-    and, for an existing file, reads its bytes without parsing or
-    mutating it. That lets callers ask "would a real run create this
-    file?" without side effects — scaffold's ``--dry-run`` preview relies
-    on it to mirror the real run's created-vs-updated split.
+    and, for an existing file, reads its contents as text (text mode,
+    UTF-8) without parsing the YAML or mutating the file. That lets
+    callers ask "would a real run create this file?" without side
+    effects — scaffold's ``--dry-run`` preview relies on it to mirror the
+    real run's created-vs-updated split.
     """
     if not os.path.isfile(manifest_path):
         return True
