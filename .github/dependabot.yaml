@@ -21,15 +21,16 @@
 # (this list lives in all four).
 #
 # Static labels per ecosystem entry (applied to grouped and standalone PRs
-# alike): `dependencies` + the ecosystem + `release: patch`. A dependency bump
-# is at most a project patch (dependencies are not shipped in the skill bundle),
-# so `release: patch` is the intended release label for every Dependabot PR —
-# semver-major bumps are NOT escalated to `release: major`. PRs Dependabot opens
-# from this config inherit the static label directly; a PR that does not (e.g. a
-# security-update group) is backfilled to `release: patch` by
-# `.github/workflows/dependabot-release-label.yaml`. The auto-merge hold for
-# semver-major and trust-boundary-action bumps is driven by the Dependabot
-# update-type metadata, not by this label.
+# alike): `dependencies` + the ecosystem + `release: skip`. Dependencies are not
+# shipped in the skill bundle (GitHub Actions are CI infra; requirements-dev.txt
+# is dev-only), so a dependency bump ships nothing user-facing — `release: skip`
+# is the intended release label for every Dependabot PR (it does not influence the
+# computed release version), and semver-major bumps are NOT escalated to
+# `release: major`. PRs Dependabot opens from this config inherit the static label
+# directly; a PR that does not (e.g. a security-update group) is backfilled to
+# `release: skip` by `.github/workflows/dependabot-release-label.yaml`. The
+# auto-merge hold for semver-major and trust-boundary-action bumps is driven by
+# the Dependabot update-type metadata, not by this label.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -53,7 +54,7 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
-      - "release: patch"
+      - "release: skip"
 
   - package-ecosystem: pip
     directory: "/"
@@ -71,4 +72,4 @@ updates:
     labels:
       - "dependencies"
       - "python"
-      - "release: patch"
+      - "release: skip"
