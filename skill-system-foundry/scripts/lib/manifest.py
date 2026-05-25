@@ -337,6 +337,7 @@ def update_manifest_for_skill(
     name: str,
     *,
     router: bool = False,
+    preview: bool = False,
 ) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a skill entry.
 
@@ -353,12 +354,29 @@ def update_manifest_for_skill(
     manifest fails to parse, *updated* is False even though bytes were
     written to disk, and *warning* describes the corruption so callers
     that ignore *findings* still see the failure.
+
+    When *preview* is True the function performs no writes — it neither
+    scaffolds a missing manifest nor appends the entry — but runs the
+    same read-only validation a real run does so the returned tuple
+    reflects what a real run *would* do: an absent/empty manifest yields
+    ``created_manifest=True`` with ``updated=True``; an existing manifest
+    that fails to parse or already contains *name* yields
+    ``updated=False`` with the matching *warning*; an existing, parseable,
+    conflict-free manifest yields ``updated=True``. Emit-corruption
+    cannot be previewed (it is a property of the write), so the preview
+    assumes a clean append in the conflict-free case. Used by scaffold's
+    ``--dry-run`` to report an accurate manifest plan without touching
+    disk.
     """
-    created_manifest = False
+    created_manifest = manifest_needs_scaffold(manifest_path)
     # Treat non-existent or empty/whitespace-only files as missing.
-    if manifest_needs_scaffold(manifest_path):
+    if created_manifest and preview:
+        # A real run would seed a fresh manifest and append the first
+        # entry; an empty skeleton can hold no conflict and cannot fail
+        # to parse, so the append always succeeds.
+        return True, None, True, []
+    if created_manifest:
         scaffold_empty_manifest(manifest_path)
-        created_manifest = True
 
     findings: list[str] = []
     try:
@@ -373,6 +391,11 @@ def update_manifest_for_skill(
             f"{manifest_path} — skipping manifest update"
         )
         return False, warning, created_manifest, findings
+
+    if preview:
+        # Existing manifest parses and has no conflicting entry, so a real
+        # run would append successfully. Report the update without writing.
+        return True, None, created_manifest, findings
 
     emit_findings = append_skill_entry(manifest_path, name, router=router)
     findings.extend(emit_findings)
@@ -389,6 +412,8 @@ def update_manifest_for_role(
     manifest_path: str,
     group: str,
     name: str,
+    *,
+    preview: bool = False,
 ) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a role entry.
 
@@ -405,12 +430,29 @@ def update_manifest_for_role(
     manifest fails to parse, *updated* is False even though bytes were
     written to disk, and *warning* describes the corruption so callers
     that ignore *findings* still see the failure.
+
+    When *preview* is True the function performs no writes — it neither
+    scaffolds a missing manifest nor appends the entry — but runs the
+    same read-only validation a real run does so the returned tuple
+    reflects what a real run *would* do: an absent/empty manifest yields
+    ``created_manifest=True`` with ``updated=True``; an existing manifest
+    that fails to parse or already contains the *group*/*name* role
+    yields ``updated=False`` with the matching *warning*; an existing,
+    parseable, conflict-free manifest yields ``updated=True``.
+    Emit-corruption cannot be previewed (it is a property of the write),
+    so the preview assumes a clean append in the conflict-free case. Used
+    by scaffold's ``--dry-run`` to report an accurate manifest plan
+    without touching disk.
     """
-    created_manifest = False
+    created_manifest = manifest_needs_scaffold(manifest_path)
     # Treat non-existent or empty/whitespace-only files as missing.
-    if manifest_needs_scaffold(manifest_path):
+    if created_manifest and preview:
+        # A real run would seed a fresh manifest and append the first
+        # entry; an empty skeleton can hold no conflict and cannot fail
+        # to parse, so the append always succeeds.
+        return True, None, True, []
+    if created_manifest:
         scaffold_empty_manifest(manifest_path)
-        created_manifest = True
 
     findings: list[str] = []
     try:
@@ -425,6 +467,11 @@ def update_manifest_for_role(
             f"{manifest_path} — skipping manifest update"
         )
         return False, warning, created_manifest, findings
+
+    if preview:
+        # Existing manifest parses and has no conflicting entry, so a real
+        # run would append successfully. Report the update without writing.
+        return True, None, created_manifest, findings
 
     emit_findings = append_role_entry(manifest_path, group, name)
     findings.extend(emit_findings)

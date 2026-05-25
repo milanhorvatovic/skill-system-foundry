@@ -1060,6 +1060,93 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             self.assertIn("roles:", text)
 
 
+class UpdateManifestPreviewTests(unittest.TestCase):
+    """preview=True reports the planned action without writing anything."""
+
+    def test_skill_preview_absent_manifest_plans_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            updated, warning, created, findings = update_manifest_for_skill(
+                path, "my-skill", preview=True,
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)
+            self.assertEqual(findings, [])
+            # No write: the manifest is not created on disk.
+            self.assertFalse(os.path.exists(path))
+
+    def test_skill_preview_existing_manifest_plans_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "brand-new-skill", preview=True,
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertFalse(created)
+            # No write: the existing manifest is left byte-for-byte intact.
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+    def test_skill_preview_conflict_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "existing-skill", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("already exists", warning)
+            self.assertFalse(created)
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+    def test_skill_preview_malformed_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - item1\n  - item2\n")
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "x", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("skipping manifest update", warning)
+            self.assertFalse(created)
+
+    def test_role_preview_absent_manifest_plans_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            updated, warning, created, findings = update_manifest_for_role(
+                path, "grp", "my-role", preview=True,
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)
+            self.assertEqual(findings, [])
+            self.assertFalse(os.path.exists(path))
+
+    def test_role_preview_conflict_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created, _findings = update_manifest_for_role(
+                path, "dev-group", "existing-role", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("already exists", warning)
+            self.assertFalse(created)
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+
 class ReadManifestFindingsTests(unittest.TestCase):
     """``read_manifest`` threads divergence findings to the caller."""
 

@@ -50,7 +50,6 @@ from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
     update_manifest_for_skill,
     update_manifest_for_role,
-    manifest_needs_scaffold,
     has_emit_corruption,
 )
 from lib.constants import (
@@ -265,33 +264,42 @@ def create_dir_with_gitkeep(path: str, *, dry_run: bool = False) -> str:
     return gitkeep
 
 
-def _plan_manifest_update(
-    manifest_path: str, created_paths: list[str], *, quiet: bool
-) -> bool:
-    """Record and report the manifest action a real ``--update-manifest``
-    run would take, without reading or mutating the file.
+def _report_planned_manifest(
+    manifest_path: str,
+    preview: tuple[bool, str | None, bool, list[str]],
+    created_paths: list[str],
+    *,
+    quiet: bool,
+) -> tuple[bool, str | None, list[str]]:
+    """Apply a read-only manifest *preview* to the dry-run plan.
 
-    Mirrors the real run's created-vs-updated split: an absent (or
-    empty) manifest would be scaffolded, so it joins *created_paths* and
-    is reported as a planned create; an existing manifest would be
-    appended to in place, so it is reported as a planned update and is
-    *not* added to *created_paths* (the real run excludes it from
-    ``created`` too). Conflict detection is intentionally skipped — a dry
-    run never parses the manifest — so the return mirrors the happy-path
-    append.
+    *preview* is the ``(updated, warning, created_manifest, findings)``
+    tuple from ``update_manifest_for_skill`` / ``update_manifest_for_role``
+    run in ``preview=True`` mode — those helpers read and validate the
+    manifest without writing, so this function can report exactly what a
+    real run would do. A manifest that would be newly created joins
+    *created_paths* and is shown as a planned create; one that would be
+    updated in place is shown as a planned update and kept out of
+    *created_paths* (the real run excludes an existing manifest from its
+    ``created`` set); a name conflict or parse failure is surfaced as a
+    warning and claims no update.
 
     Returns:
-        True, matching the ``manifest_updated`` a real run reports when
-        the entry is appended (whether the manifest was created first or
-        updated in place).
+        ``(updated, warning, findings)`` for the caller's JSON payload.
     """
-    if manifest_needs_scaffold(manifest_path):
+    updated, warning, created_manifest, findings = preview
+    if created_manifest:
         created_paths.append(manifest_path)
-        if not quiet:
+    if not quiet:
+        if created_manifest:
             _print_created(manifest_path, dry_run=True)
-    elif not quiet:
-        print(planned_update_line(manifest_path))
-    return True
+        elif updated:
+            print(planned_update_line(manifest_path))
+        if warning:
+            print(f"  {LEVEL_WARN}: {warning}")
+        for f in _dedupe_preserving_order(list(findings)):
+            print(f"  {f}")
+    return updated, warning, findings
 
 
 def scaffold_skill(
@@ -447,14 +455,20 @@ def scaffold_skill(
     manifest_emit_corrupted = False
 
     if update_manifest and dry_run:
-        # Preview only: the manifest is never parsed or mutated. A
-        # read-only existence check decides whether a real run would
-        # create the file (absent/empty → planned create, listed in
-        # created_paths) or append to it in place (present → planned
-        # update, reported separately and kept out of created_paths so
-        # the plan mirrors the real run's created set).
-        manifest_updated = _plan_manifest_update(
-            manifest_path, created_paths, quiet=json_output,
+        # Preview only: read and validate the manifest without writing.
+        # The read-only preview reports whether a real run would create
+        # the file, update it in place, or skip it (name conflict or
+        # parse failure), so the dry-run plan mirrors real-run semantics
+        # without touching disk.
+        manifest_updated, manifest_warning, manifest_findings = (
+            _report_planned_manifest(
+                manifest_path,
+                update_manifest_for_skill(
+                    manifest_path, name, router=router, preview=True,
+                ),
+                created_paths,
+                quiet=json_output,
+            )
         )
     elif update_manifest:
         (
@@ -842,14 +856,20 @@ def scaffold_role(
     manifest_emit_corrupted = False
 
     if update_manifest and dry_run:
-        # Preview only: the manifest is never parsed or mutated. A
-        # read-only existence check decides whether a real run would
-        # create the file (absent/empty → planned create, listed in
-        # created_paths) or append to it in place (present → planned
-        # update, reported separately and kept out of created_paths so
-        # the plan mirrors the real run's created set).
-        manifest_updated = _plan_manifest_update(
-            manifest_path, created_paths, quiet=json_output,
+        # Preview only: read and validate the manifest without writing.
+        # The read-only preview reports whether a real run would create
+        # the file, update it in place, or skip it (name conflict or
+        # parse failure), so the dry-run plan mirrors real-run semantics
+        # without touching disk.
+        manifest_updated, manifest_warning, manifest_findings = (
+            _report_planned_manifest(
+                manifest_path,
+                update_manifest_for_role(
+                    manifest_path, group, name, preview=True,
+                ),
+                created_paths,
+                quiet=json_output,
+            )
         )
     elif update_manifest:
         (

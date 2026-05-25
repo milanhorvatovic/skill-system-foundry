@@ -2911,7 +2911,7 @@ class DryRunExistingManifestTests(unittest.TestCase):
         self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
 
     def test_existing_manifest_left_unmutated(self) -> None:
-        """The read-only existence check never rewrites the manifest."""
+        """The read-only preview never rewrites the manifest."""
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest_path = self._write_manifest(tmpdir)
             scaffold_skill(
@@ -2920,6 +2920,86 @@ class DryRunExistingManifestTests(unittest.TestCase):
             )
             with open(manifest_path, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), self._NONEMPTY_MANIFEST)
+
+    # The read-only preview also catches the cases a real run would skip:
+    # a name already in the manifest, and a manifest that does not parse.
+
+    _CONFLICT_MANIFEST = (
+        "# Manifest\n\nskills:\n  demo:\n"
+        "    canonical: skills/demo/SKILL.md\n    type: standalone\n\nroles:\n"
+    )
+    _ROLE_CONFLICT_MANIFEST = (
+        "# Manifest\n\nskills:\n\nroles:\n  grp:\n"
+        "    - name: rl\n      path: roles/grp/rl.md\n"
+    )
+    _MALFORMED_MANIFEST = "skills:\n  - item1\n  - item2\n"
+
+    def test_skill_conflict_reports_skip_not_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._CONFLICT_MANIFEST)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+            # The preview must not have rewritten the manifest.
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), self._CONFLICT_MANIFEST)
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("already exists", result["manifest_warning"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+        # A skipped manifest update is a warning, not a failure.
+        self.assertTrue(result["success"])
+
+    def test_skill_conflict_human_output_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._CONFLICT_MANIFEST)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", root=tmpdir, update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn("already exists", output)
+        self.assertNotIn(f"Would update: {to_posix(manifest_path)}", output)
+        self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
+
+    def test_skill_malformed_manifest_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._MALFORMED_MANIFEST)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("skipping manifest update", result["manifest_warning"])
+        self.assertTrue(result["success"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+
+    def test_role_conflict_reports_skip_not_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._ROLE_CONFLICT_MANIFEST)
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("already exists", result["manifest_warning"])
+        self.assertTrue(result["success"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
 
 
 class DryRunJsonShapeTests(unittest.TestCase):
