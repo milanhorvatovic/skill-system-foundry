@@ -82,6 +82,8 @@ class LoadVerbMappingTests(unittest.TestCase):
             "Suggest": "Added",
             "Fail": "Added",
             "Emit": "Added",
+            "Arm": "Added",
+            "Automate": "Added",
             "Sync": "Changed",
             "Apply": "Changed",
             "Switch": "Changed",
@@ -89,7 +91,9 @@ class LoadVerbMappingTests(unittest.TestCase):
             "Move": "Changed",
             "Make": "Changed",
             "Recognize": "Changed",
+            "Require": "Changed",
             "Address": "Fixed",
+            "Correct": "Fixed",
         }
         for verb, section in expected.items():
             # assertIn first so a removed/renamed verb fails with an
