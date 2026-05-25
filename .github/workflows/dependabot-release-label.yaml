@@ -5,12 +5,16 @@ name: Dependabot Release Label
 # Policy: a dependency bump is at most a project PATCH. Dependencies are not
 # shipped in the skill bundle (github-actions is CI infra; requirements-dev.txt
 # is dev-only), so a dependency's own semver-major is NOT the project's major.
-# `.github/dependabot.yaml` statically labels every PR it opens `release: patch`,
-# and that is the final label for every Dependabot PR — this workflow does NOT
-# escalate any bump to `release: major`. (It used to, which drove the computed
-# release version to a spurious major from CI-only action upgrades.) A bump that
-# genuinely warrants a larger project bump is a maintainer call: apply
-# `release: minor` / `release: major` by hand and this workflow preserves it.
+# `release: patch` is the intended release label for every Dependabot PR —
+# applied via the static label list in `.github/dependabot.yaml` for the PRs
+# Dependabot opens from that config, or by this workflow's backfill (below) for a
+# PR that inherits no static label. This workflow does NOT escalate any bump to
+# `release: major`. (It used to, which drove the computed release version to a
+# spurious major from CI-only action upgrades.) A bump that genuinely warrants a
+# larger project bump is a maintainer call: REPLACE the `release: patch` label
+# with `release: minor` / `release: major` by hand — `verify-pr-release-label`
+# requires exactly one `release:` label, so swap it, don't add a second — and
+# this workflow preserves it.
 #
 # The only thing this workflow does is BACKFILL `release: patch` when a PR
 # carries no `release:` label at all — e.g. a built-in security-update group that
@@ -65,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Backfill release: patch when no release label is present
+      - name: "Backfill release: patch when no release label is present"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}

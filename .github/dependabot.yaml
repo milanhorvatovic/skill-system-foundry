@@ -23,12 +23,13 @@
 # Static labels per ecosystem entry (applied to grouped and standalone PRs
 # alike): `dependencies` + the ecosystem + `release: patch`. A dependency bump
 # is at most a project patch (dependencies are not shipped in the skill bundle),
-# so this static `release: patch` is the final release label for every Dependabot
-# PR — semver-major bumps are NOT escalated to `release: major`. The auto-merge
-# hold for semver-major and trust-boundary-action bumps is driven by the
-# Dependabot update-type metadata, not by this label. dependabot-release-label.yaml
-# only backfills `release: patch` when a PR (e.g. a security-update group) does
-# not inherit this static list.
+# so `release: patch` is the intended release label for every Dependabot PR —
+# semver-major bumps are NOT escalated to `release: major`. PRs Dependabot opens
+# from this config inherit the static label directly; a PR that does not (e.g. a
+# security-update group) is backfilled to `release: patch` by
+# `.github/workflows/dependabot-release-label.yaml`. The auto-merge hold for
+# semver-major and trust-boundary-action bumps is driven by the Dependabot
+# update-type metadata, not by this label.
 version: 2
 updates:
   - package-ecosystem: github-actions
