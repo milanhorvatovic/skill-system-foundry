@@ -3027,6 +3027,53 @@ class DryRunHumanOutputTests(unittest.TestCase):
             self.assertIn("Would create:", output)
             self.assertNotIn("  Created:", output)
 
+    def test_router_dry_run_lists_gitkeep_in_human_output(self) -> None:
+        """Human dry-run output enumerates the .gitkeep, matching JSON planned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", router=True,
+                    optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir, dry_run=True,
+                )
+            output = buf.getvalue()
+        # Both the directory and its .gitkeep sentinel appear in the preview.
+        self.assertIn(f"{DIR_CAPABILITIES}/{FILE_GITKEEP}", output)
+        self.assertIn(f"{DIR_REFERENCES}/{FILE_GITKEEP}", output)
+
+    def test_capability_dry_run_lists_gitkeep_in_human_output(self) -> None:
+        """The capability path also previews the .gitkeep, not just the dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability(
+                    "dom", "cap", optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"{DIR_REFERENCES}/{FILE_GITKEEP}", output)
+
+    def test_real_run_human_output_omits_gitkeep(self) -> None:
+        """Contrast case: a real run narrates only the directory.
+
+        The .gitkeep is a git tracking sentinel, so real-run human output
+        stays unchanged — only dry-run gives the complete file-by-file
+        preview.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", router=True,
+                    optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir,
+                )
+            output = buf.getvalue()
+        self.assertIn(DIR_CAPABILITIES, output)
+        self.assertNotIn(FILE_GITKEEP, output)
+
 
 class DryRunDocstringTests(unittest.TestCase):
     """The usage docstring advertises --dry-run."""

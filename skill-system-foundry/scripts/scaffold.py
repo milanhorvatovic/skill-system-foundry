@@ -188,6 +188,21 @@ def _print_created(path: str, *, dry_run: bool) -> None:
         print(f"  Created: {to_posix(path)}")
 
 
+def _print_dir_created(dir_path: str, gitkeep_path: str, *, dry_run: bool) -> None:
+    """Print the human-mode line(s) for a directory and its ``.gitkeep``.
+
+    A real run narrates only the directory — the ``.gitkeep`` is a git
+    tracking sentinel, an implementation detail of how an otherwise empty
+    directory is persisted. A dry run is a complete preview of every
+    filesystem entry the command would create, so it also lists the
+    ``.gitkeep`` that already appears in the JSON ``planned`` set, keeping
+    human and JSON dry-run output enumerating the same paths.
+    """
+    _print_created(dir_path, dry_run=dry_run)
+    if dry_run:
+        print(planned_line(gitkeep_path))
+
+
 def read_template(template_name: str) -> str:
     """Read a template file from assets/."""
     template_path = os.path.join(ASSETS_DIR, template_name)
@@ -369,14 +384,14 @@ def scaffold_skill(
         created_paths.append(caps_dir)
         created_paths.append(gitkeep)
         if not json_output:
-            _print_created(caps_dir, dry_run=dry_run)
+            _print_dir_created(caps_dir, gitkeep, dry_run=dry_run)
         for d in optional_dirs:
             opt_dir = os.path.join(skill_path, d)
             gitkeep = create_dir_with_gitkeep(opt_dir, dry_run=dry_run)
             created_paths.append(opt_dir)
             created_paths.append(gitkeep)
             if not json_output:
-                _print_created(opt_dir, dry_run=dry_run)
+                _print_dir_created(opt_dir, gitkeep, dry_run=dry_run)
         if not json_output:
             print(f"  Note: Add shared/ when 2+ capabilities exist (see directory-structure.md)")
     else:
@@ -408,7 +423,7 @@ def scaffold_skill(
             created_paths.append(opt_dir)
             created_paths.append(gitkeep)
             if not json_output:
-                _print_created(opt_dir, dry_run=dry_run)
+                _print_dir_created(opt_dir, gitkeep, dry_run=dry_run)
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
@@ -629,7 +644,7 @@ def scaffold_capability(
         created_paths.append(opt_dir)
         created_paths.append(gitkeep)
         if not json_output:
-            _print_created(opt_dir, dry_run=dry_run)
+            _print_dir_created(opt_dir, gitkeep, dry_run=dry_run)
 
     manifest_path = os.path.join(root, FILE_MANIFEST) if root else FILE_MANIFEST
 
