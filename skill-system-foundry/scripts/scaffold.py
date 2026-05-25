@@ -793,6 +793,11 @@ def scaffold_capability(
     cap_md_path = os.path.join(cap_path, FILE_CAPABILITY_MD)
     if dry_run:
         print("  Dry run: no files were written.")
+        # The manifest guidance applies in dry-run too: a real run would
+        # not touch manifest.yaml for a capability, and the JSON output
+        # reports it as manifest_warning, so keep the human line in sync.
+        if update_manifest:
+            print(f"  {LEVEL_INFO}: {cap_manifest_msg}")
     else:
         print(f"  Next: edit {to_posix(cap_md_path)}")
         print(

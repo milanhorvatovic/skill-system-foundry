@@ -3253,6 +3253,20 @@ class DryRunHumanOutputTests(unittest.TestCase):
             self.assertIn("Dry run: no files were written.", output)
             self.assertNotIn("routing table", output)
 
+    def test_capability_dry_run_shows_manifest_guidance(self) -> None:
+        """--update-manifest guidance stays visible in capability dry-run."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability(
+                    "dom", "cap", root=tmpdir,
+                    update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn("Dry run: no files were written.", output)
+        self.assertIn("not added to manifest.yaml directly", output)
+
     def test_role_summary_says_would_be_scaffolded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             buf = io.StringIO()
