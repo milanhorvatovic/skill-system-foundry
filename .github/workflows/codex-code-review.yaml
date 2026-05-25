@@ -67,7 +67,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare review
-        uses: milanhorvatovic/codex-ai-code-review-action/prepare@32cedc30758526efb279b82567144f0585be8321 # @v2 as 2.0.0
+        uses: milanhorvatovic/codex-ai-code-review-action/prepare@af72a5bd7330432cee97137b04d04edebde80149 # @v2 as 2.0.0
         id: prepare
         with:
           allow-users: ${{ vars.CODEX_REVIEW_USERS }}
@@ -101,7 +101,7 @@ jobs:
           persist-credentials: false
 
       - name: Review chunk ${{ matrix.chunk }}
-        uses: milanhorvatovic/codex-ai-code-review-action/review@32cedc30758526efb279b82567144f0585be8321 # @v2 as 2.0.0
+        uses: milanhorvatovic/codex-ai-code-review-action/review@af72a5bd7330432cee97137b04d04edebde80149 # @v2 as 2.0.0
         with:
           chunk: ${{ matrix.chunk }}
           model: ${{ vars.CODEX_REVIEW_MODEL }}
@@ -123,7 +123,7 @@ jobs:
           merge-multiple: true
 
       - name: Publish PR review
-        uses: milanhorvatovic/codex-ai-code-review-action/publish@32cedc30758526efb279b82567144f0585be8321 # @v2 as 2.0.0
+        uses: milanhorvatovic/codex-ai-code-review-action/publish@af72a5bd7330432cee97137b04d04edebde80149 # @v2 as 2.0.0
         with:
           github-token: ${{ github.token }}
           expected-chunks: ${{ needs.prepare.outputs.chunk-count }}
