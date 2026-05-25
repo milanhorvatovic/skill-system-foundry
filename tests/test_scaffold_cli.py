@@ -2816,6 +2816,112 @@ class DryRunPlanMatchesRealRunTests(unittest.TestCase):
         )
 
 
+class DryRunExistingManifestTests(unittest.TestCase):
+    """--dry-run reports an existing manifest as an update, not a create.
+
+    A real ``--update-manifest`` run appends to an existing manifest and
+    reports it as ``Updated:`` — it never lists it in the JSON
+    ``created`` set. The dry-run preview must mirror that: an existing
+    manifest is a planned *update*, kept out of ``planned`` and narrated
+    with the update verb, while an absent manifest is a planned create.
+    """
+
+    _NONEMPTY_MANIFEST = "# Manifest\n\nskills:\n\nroles:\n"
+
+    def _write_manifest(self, tmpdir: str) -> str:
+        manifest_path = os.path.join(tmpdir, "manifest.yaml")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(self._NONEMPTY_MANIFEST)
+        return manifest_path
+
+    def test_skill_existing_manifest_absent_from_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_manifest(tmpdir)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"]),
+            msg=f"existing manifest listed as planned create: {result['planned']}",
+        )
+        # A real run would still append the entry, so manifest_updated holds.
+        self.assertTrue(result["manifest_updated"])
+
+    def test_skill_absent_manifest_in_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertTrue(
+            any(p.endswith("manifest.yaml") for p in result["planned"]),
+            msg=f"absent manifest missing from planned create: {result['planned']}",
+        )
+        self.assertTrue(result["manifest_updated"])
+
+    def test_skill_existing_manifest_human_says_would_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = self._write_manifest(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", root=tmpdir, update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"Would update: {to_posix(manifest_path)}", output)
+        self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
+
+    def test_skill_absent_manifest_human_says_would_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", root=tmpdir, update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"Would create: {to_posix(manifest_path)}", output)
+        self.assertNotIn("Would update:", output)
+
+    def test_role_existing_manifest_absent_from_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_manifest(tmpdir)
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"]),
+            msg=f"existing manifest listed as planned create: {result['planned']}",
+        )
+        self.assertTrue(result["manifest_updated"])
+
+    def test_role_existing_manifest_human_says_would_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = self._write_manifest(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role(
+                    "grp", "rl", root=tmpdir,
+                    update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"Would update: {to_posix(manifest_path)}", output)
+        self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
+
+    def test_existing_manifest_left_unmutated(self) -> None:
+        """The read-only existence check never rewrites the manifest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = self._write_manifest(tmpdir)
+            scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), self._NONEMPTY_MANIFEST)
+
+
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
 

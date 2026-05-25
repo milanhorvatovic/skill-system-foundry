@@ -45,11 +45,12 @@ if _scripts_dir not in sys.path:
 
 from lib.frontmatter import load_frontmatter
 from lib.reporting import to_json_output, to_posix
-from lib.dry_run import planned_line
+from lib.dry_run import planned_line, planned_update_line
 from lib.validation import validate_name as _validate_name_detailed
 from lib.manifest import (
     update_manifest_for_skill,
     update_manifest_for_role,
+    manifest_needs_scaffold,
     has_emit_corruption,
 )
 from lib.constants import (
@@ -249,6 +250,35 @@ def create_dir_with_gitkeep(path: str, *, dry_run: bool = False) -> str:
     return gitkeep
 
 
+def _plan_manifest_update(
+    manifest_path: str, created_paths: list[str], *, quiet: bool
+) -> bool:
+    """Record and report the manifest action a real ``--update-manifest``
+    run would take, without reading or mutating the file.
+
+    Mirrors the real run's created-vs-updated split: an absent (or
+    empty) manifest would be scaffolded, so it joins *created_paths* and
+    is reported as a planned create; an existing manifest would be
+    appended to in place, so it is reported as a planned update and is
+    *not* added to *created_paths* (the real run excludes it from
+    ``created`` too). Conflict detection is intentionally skipped — a dry
+    run never parses the manifest — so the return mirrors the happy-path
+    append.
+
+    Returns:
+        True, matching the ``manifest_updated`` a real run reports when
+        the entry is appended (whether the manifest was created first or
+        updated in place).
+    """
+    if manifest_needs_scaffold(manifest_path):
+        created_paths.append(manifest_path)
+        if not quiet:
+            _print_created(manifest_path, dry_run=True)
+    elif not quiet:
+        print(planned_update_line(manifest_path))
+    return True
+
+
 def scaffold_skill(
     name: str,
     router: bool = False,
@@ -402,12 +432,15 @@ def scaffold_skill(
     manifest_emit_corrupted = False
 
     if update_manifest and dry_run:
-        # Preview only: the manifest is never read or mutated. Report it
-        # as a planned path so the dry-run plan mirrors the real run's
-        # created set without touching disk.
-        created_paths.append(manifest_path)
-        if not json_output:
-            _print_created(manifest_path, dry_run=True)
+        # Preview only: the manifest is never parsed or mutated. A
+        # read-only existence check decides whether a real run would
+        # create the file (absent/empty → planned create, listed in
+        # created_paths) or append to it in place (present → planned
+        # update, reported separately and kept out of created_paths so
+        # the plan mirrors the real run's created set).
+        manifest_updated = _plan_manifest_update(
+            manifest_path, created_paths, quiet=json_output,
+        )
     elif update_manifest:
         (
             manifest_updated,
@@ -794,11 +827,15 @@ def scaffold_role(
     manifest_emit_corrupted = False
 
     if update_manifest and dry_run:
-        # Preview only: the manifest is never read or mutated. Report it
-        # as a planned path so the dry-run plan mirrors the real run.
-        created_paths.append(manifest_path)
-        if not json_output:
-            _print_created(manifest_path, dry_run=True)
+        # Preview only: the manifest is never parsed or mutated. A
+        # read-only existence check decides whether a real run would
+        # create the file (absent/empty → planned create, listed in
+        # created_paths) or append to it in place (present → planned
+        # update, reported separately and kept out of created_paths so
+        # the plan mirrors the real run's created set).
+        manifest_updated = _plan_manifest_update(
+            manifest_path, created_paths, quiet=json_output,
+        )
     elif update_manifest:
         (
             manifest_updated,
