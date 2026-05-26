@@ -6071,6 +6071,46 @@ class FixNameNormalizationTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["name_fix"]["errors"], [])
 
+    # --- Codex F-15: description over-length must NOT block --------
+    # --- the safe name rewrite under --apply -----------------------
+
+    def test_apply_writes_name_when_only_description_is_manual(self) -> None:
+        # ``name: My_Skill`` in dir ``my-skill`` is safely normalizable
+        # (no dir-mismatch on the fixed value).  The description is
+        # over the length limit, so name_manual carries the
+        # description finding for human reporting — but that finding
+        # is independent of whether the name: line can be safely
+        # rewritten.  ``--fix --apply`` must still land the name fix;
+        # the run still exits 1 because the description FAIL gates
+        # fix_success via the validator's own findings.
+        long_desc = "x" * (MAX_DESCRIPTION_CHARS + 50)
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="My_Skill", description=long_desc)
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_md, encoding="utf-8") as f:
+                before = f.read()
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+            with open(skill_md, encoding="utf-8") as f:
+                after = f.read()
+        payload = json.loads(out)
+        # Exit 1 because the description over-length still gates
+        # fix_success (the manual finding is in name_manual).
+        self.assertEqual(code, 1, msg=out)
+        # But the safe name write landed — the file changed and the
+        # JSON reports the apply.
+        self.assertTrue(payload["name_fix"]["modified"], msg=out)
+        self.assertIn("name: my-skill\n", after)
+        self.assertNotEqual(after, before)
+        # Description manual finding is still surfaced for the user.
+        self.assertTrue(any(
+            "'description'" in f
+            for f in payload["name_fix"]["manual_fix_needed"]
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
