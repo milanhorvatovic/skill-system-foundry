@@ -5659,6 +5659,113 @@ class FixNameNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["name_fix"]["new_name"], "demo-skill")
         self.assertIn("name: demo-skill\n", after)
 
+    # --- Codex F-1 / Copilot C-1: unresolved name FAILs flow through -
+
+    def test_empty_name_fail_flows_through_to_non_path_fails(self) -> None:
+        # An empty ``name:`` is not something the safe fixer resolves —
+        # the regular validator's "field is empty" FAIL must NOT be
+        # swallowed by the name-fix ownership filter.  Without the
+        # ownership-set fix this FAIL was silently suppressed and
+        # ``--fix`` exited 0 on an invalid skill.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            # Write a SKILL.md with an empty ``name:`` value.
+            from helpers import write_text as _wt
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: \ndescription: short stub\n---\n\n# Body\n",
+            )
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        # The empty-name FAIL must surface — either as part of the
+        # validator's "[spec] 'name' field is empty" or directly under
+        # non_path_fails.  It must NOT be hidden by name_fix.
+        self.assertTrue(any(
+            "'name' field is empty" in f
+            for f in payload["non_path_fails"]
+        ), msg=f"non_path_fails={payload['non_path_fails']}")
+
+    def test_overlong_name_fail_flows_through_to_non_path_fails(self) -> None:
+        # An over-length ``name`` is also outside the safe fixer's
+        # coverage — its FAIL must not be swallowed.
+        long_name = "a" * 200
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, long_name)
+            os.makedirs(skill_dir)
+            from helpers import write_text as _wt
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                f"---\nname: {long_name}\ndescription: short stub\n---\n\n# Body\n",
+            )
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        self.assertTrue(any(
+            "exceeds" in f and "characters" in f and "'name'" in f
+            for f in payload["non_path_fails"]
+        ))
+
+    # --- Copilot C-2: --apply gated when name_manual non-empty -------
+
+    def test_apply_does_not_write_when_name_manual_present(self) -> None:
+        # ``Demo_Skill`` would normalize to ``demo-skill`` but the
+        # directory is ``other-dir`` — dir-mismatch is a manual finding
+        # the fixer never auto-applies.  ``--apply`` must therefore
+        # *not* write SKILL.md, even though ``new_name`` is computed.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "other-dir")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="Demo_Skill")
+            path = os.path.join(skill_dir, "SKILL.md")
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            mtime_before = os.stat(path).st_mtime_ns
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+            mtime_after = os.stat(path).st_mtime_ns
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        # File unchanged — mtime untouched.
+        self.assertEqual(after, before)
+        self.assertEqual(mtime_after, mtime_before)
+        # JSON reflects the gated apply.
+        self.assertFalse(payload["name_fix"]["modified"])
+        self.assertFalse(payload["applied"])
+        self.assertTrue(any(
+            "does not match directory" in f
+            for f in payload["name_fix"]["manual_fix_needed"]
+        ))
+
+    # --- Codex F-3: top-level applied true for name-only writes ------
+
+    def test_name_only_apply_marks_top_level_applied_true(self) -> None:
+        # ``--fix --apply --json`` that only rewrites the SKILL.md name
+        # must report ``applied: true`` at the top level so automation
+        # consumers do not get contradictory output (``modified: 1``,
+        # ``name_fix.modified: true``, but ``applied: false``).
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "myskill")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="MySkill")
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 0, msg=out)
+        self.assertTrue(payload["applied"], msg=out)
+        self.assertTrue(payload["name_fix"]["modified"])
+        self.assertEqual(payload["modified"], 1)
+        self.assertEqual(payload["fixes"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

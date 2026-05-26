@@ -452,5 +452,238 @@ class WriteNameFixTests(unittest.TestCase):
             self.assertTrue(any("cannot write" in f for f in errors))
 
 
+# ===================================================================
+# Ownership semantics — the planner must own exactly the validator
+# FAIL strings its fix resolves, never the unrelated ones (Codex F-1
+# / Copilot C-1).
+# ===================================================================
+
+
+class OwnedFailsTests(unittest.TestCase):
+    """``compute_name_fix_plan`` returns the exact ``validate_name``
+    FAIL strings it takes ownership of so the ``validate_skill.py``
+    driver can suppress *only* those — never an unrelated name FAIL.
+    """
+
+    def test_owns_uppercase_underscore_and_format(self) -> None:
+        # ``Demo_Skill`` FAILs on uppercase, underscore, and (because
+        # both push the value off ``RE_NAME_FORMAT``) invalid format.
+        # The fix produces ``demo-skill`` which passes — all three
+        # FAILs are resolved and therefore owned.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "demo-skill")
+            os.makedirs(sdir)
+            path = _write_skill(sdir, "name: Demo_Skill\ndescription: A demo.")
+            _new_name, _applied, _manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        owned_text = "\n".join(owned)
+        self.assertIn("uppercase", owned_text)
+        self.assertIn("underscores", owned_text)
+        self.assertIn("invalid format", owned_text)
+
+    def test_does_not_own_empty_name_fail(self) -> None:
+        # ``name:`` empty → safe fixer cannot fix it.  The validator's
+        # "field is empty" FAIL must flow through the caller's generic
+        # bucket; the planner owns nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "demo-skill")
+            os.makedirs(sdir)
+            path = _write_skill(sdir, "name: \ndescription: A demo.")
+            new_name, _applied, _manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(owned, [])
+
+    def test_does_not_own_consecutive_hyphen_fail(self) -> None:
+        # ``my--skill`` is invalid (consecutive hyphens, invalid
+        # format) and no safe transform produces a clean result —
+        # the safe transforms are all no-ops on a lowercase
+        # hyphen-only value, so the fix would be a no-op and the
+        # planner takes no ownership.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my--skill")
+            os.makedirs(sdir)
+            path = _write_skill(sdir, "name: my--skill\ndescription: A demo.")
+            new_name, _applied, _manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(owned, [])
+
+    def test_does_not_own_overlong_name_fail(self) -> None:
+        long_name = "a" * 200
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, long_name)
+            os.makedirs(sdir)
+            path = _write_skill(
+                sdir, f"name: {long_name}\ndescription: A demo.",
+            )
+            new_name, _applied, _manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(owned, [])
+
+    def test_owns_dir_mismatch_when_manual_surfaces_it(self) -> None:
+        # The dir-mismatch FAIL is owned only when the planner emits a
+        # manual finding for it (i.e. the planner is taking
+        # responsibility for surfacing the issue).
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "expected-dir")
+            os.makedirs(sdir)
+            path = _write_skill(
+                sdir, "name: Actual_Name\ndescription: A demo.",
+            )
+            _new_name, _applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertTrue(any("does not match directory" in f for f in manual))
+        self.assertTrue(
+            any("does not match directory name" in f for f in owned)
+        )
+
+    def test_owns_inline_overlong_description_fail(self) -> None:
+        long_desc = "x" * (MAX_DESCRIPTION_CHARS + 5)
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = _write_skill(
+                sdir, f"name: my-skill\ndescription: {long_desc}",
+            )
+            _new_name, _applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertTrue(any("description" in f for f in manual))
+        self.assertTrue(
+            any("'description' exceeds" in f for f in owned)
+        )
+
+    def test_consecutive_hyphen_residual_refuses_fix(self) -> None:
+        # ``my__skill`` would normalize to ``my--skill`` (consecutive
+        # hyphens) — the candidate still violates the spec, so the
+        # planner refuses to propose the fix.  Original FAILs flow
+        # through the caller.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my--skill")
+            os.makedirs(sdir)
+            path = _write_skill(sdir, "name: my__skill\ndescription: A demo.")
+            new_name, applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertTrue(any(
+            "cannot be safely normalized" in f for f in manual
+        ))
+        self.assertEqual(owned, [])
+
+    def test_compute_name_fix_returns_owned(self) -> None:
+        # Direct check on the lower-level entry point: the same
+        # ownership contract holds without reading from disk.
+        new_name, _applied, _manual, owned = compute_name_fix(
+            "My_Skill", "my-skill",
+        )
+        self.assertEqual(new_name, "my-skill")
+        owned_text = "\n".join(owned)
+        self.assertIn("uppercase", owned_text)
+        self.assertIn("underscores", owned_text)
+
+
+# ===================================================================
+# YAML-aware value extraction — quoted scalars and inline comments
+# (Codex F-2 / Copilot C-4).
+# ===================================================================
+
+
+class ParsedNameValueTests(unittest.TestCase):
+    """The fixer uses the parsed YAML scalar so quoted values and
+    inline comments are recognised without their syntax characters
+    being treated as part of the value.
+    """
+
+    def test_quoted_value_is_extracted_via_parser(self) -> None:
+        # ``name: "MySkill"`` — the validator sees ``MySkill`` (parser
+        # unquotes), so the planner must too.  A naive raw extractor
+        # would compute against ``"MySkill"`` (literal quotes) and
+        # report a false directory mismatch against ``myskill``.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "myskill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: \"MySkill\"\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, _applied, manual, _errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        # Manual finding fires because the line carries a quoted scalar
+        # the minimal rewriter cannot preserve — but the *value*
+        # extracted (for any other reasoning) is the parsed
+        # ``MySkill``, not the literal ``"MySkill"``.  No false
+        # dir-mismatch against ``myskill`` should appear.
+        self.assertIsNone(new_name)
+        self.assertTrue(any("quoted scalar" in f for f in manual))
+        self.assertFalse(any(
+            "does not match directory" in f for f in manual
+        ))
+
+    def test_inline_comment_blocks_rewrite(self) -> None:
+        # ``name: MySkill  # legacy`` — value parses to ``MySkill`` but
+        # the raw line carries an inline comment the minimal rewriter
+        # would strip.  Refuse to propose a fix.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "myskill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: MySkill  # legacy\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, _errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertTrue(any("inline '#' comment" in f for f in manual))
+
+    def test_hash_inside_plain_scalar_does_not_block_rewrite(self) -> None:
+        # ``name: foo#bar`` — YAML parses this as the literal value
+        # ``foo#bar`` (no space before ``#``), so the inline-comment
+        # detector must NOT flag it.  The rewrite proceeds normally.
+        # ``foo#bar`` itself FAILs RE_NAME_FORMAT, so the residual gate
+        # refuses the fix — but that is the *content* failing, not the
+        # rewrite block path.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "foobar")
+            os.makedirs(sdir)
+            path = _write_skill(
+                sdir, "name: foo#bar\ndescription: A demo.",
+            )
+            _new_name, _applied, manual, _errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        # No 'inline comment' manual finding — the ``#`` is inside the
+        # plain scalar, not a comment marker.
+        self.assertFalse(any("inline '#' comment" in f for f in manual))
+
+    def test_rewrite_line_returns_none_on_quoted(self) -> None:
+        # The line-level rewriter refuses to touch a quoted value
+        # directly, defending the byte-for-byte contract even if the
+        # planner ever delegated without its own gate.
+        content = (
+            "---\nname: \"MySkill\"\ndescription: A demo.\n---\n\nbody\n"
+        )
+        self.assertIsNone(rewrite_name_line(content, "myskill"))
+
+    def test_rewrite_line_returns_none_on_inline_comment(self) -> None:
+        content = (
+            "---\nname: MySkill  # legacy\ndescription: A demo.\n---\n\nbody\n"
+        )
+        self.assertIsNone(rewrite_name_line(content, "myskill"))
+
+
 if __name__ == "__main__":
     unittest.main()
