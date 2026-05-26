@@ -1143,5 +1143,66 @@ class MixedFormDuplicateTests(unittest.TestCase):
         self.assertIsNone(rewrite_name_line(content, "any-value"))
 
 
+# ===================================================================
+# Description manual on refusal paths — Codex follow-up F-17.
+# Refusing a quoted / commented / block-scalar name rewrite must not
+# suppress reporting of an independent over-length description; both
+# are manual-fix conditions and both belong under name_fix.manual_fix_needed.
+# ===================================================================
+
+
+class DescriptionOnRefusalTests(unittest.TestCase):
+    def test_quoted_name_refusal_still_reports_overlong_description(self) -> None:
+        # ``name: "My_Skill"`` triggers the quoted-scalar refusal; the
+        # description is also over-length.  Both findings must surface
+        # under ``manual`` and the description FAIL must be owned so
+        # the validator's copy is suppressed from ``non_path_fails``.
+        long_desc = "x" * (MAX_DESCRIPTION_CHARS + 5)
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                f"---\nname: \"My_Skill\"\ndescription: {long_desc}\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        # Both manual findings present.
+        self.assertTrue(any("quoted scalar" in f for f in manual))
+        self.assertTrue(any(
+            "'description' exceeds" in f or "description" in f and "manual fix needed" in f
+            for f in manual
+        ), msg=f"manual={manual!r}")
+        # Description FAIL owned (so non_path_fails does not double-report).
+        self.assertTrue(any(
+            "'description' exceeds" in f for f in owned
+        ), msg=f"owned={owned!r}")
+        # Name FAILs not owned — they flow through to non_path_fails.
+        self.assertFalse(any("'name'" in f for f in owned))
+
+    def test_block_scalar_name_refusal_still_reports_overlong_description(self) -> None:
+        # Same contract for the block-scalar refusal path.
+        long_desc = "x" * (MAX_DESCRIPTION_CHARS + 5)
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                f"---\nname: >\n  My_Skill\ndescription: {long_desc}\n---\n\n# Body\n",
+            )
+            _new_name, _applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertTrue(any("block-scalar header" in f for f in manual))
+        self.assertTrue(any(
+            "'description' exceeds" in f for f in owned
+        ))
+
+
 if __name__ == "__main__":
     unittest.main()
