@@ -2597,5 +2597,933 @@ class CollectFrontmatterFindingsTests(unittest.TestCase):
         self.assertTrue(any("': '" in f for f in findings))
 
 
+# ===================================================================
+# --dry-run flag
+# ===================================================================
+
+
+def _strip_root(paths: list[str], root: str) -> set[str]:
+    """Return *paths* made relative to the absolute *root* as a set.
+
+    Lets a dry-run plan be compared to a real run produced under a
+    different temporary root by removing the root-specific prefix.
+    """
+    abs_root = os.path.abspath(root)
+    return {
+        to_posix(os.path.relpath(os.path.abspath(p), abs_root)) for p in paths
+    }
+
+
+class DryRunWritePrimitiveTests(unittest.TestCase):
+    """write_file / create_dir_with_gitkeep honor dry_run=True."""
+
+    def test_write_file_dry_run_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "sub", "file.txt")
+            write_file(path, "hello", quiet=True, dry_run=True)
+            self.assertFalse(os.path.exists(path))
+            self.assertFalse(os.path.exists(os.path.dirname(path)))
+
+    def test_write_file_dry_run_prints_would_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "file.txt")
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                write_file(path, "hello", dry_run=True)
+            output = buf.getvalue()
+            self.assertIn("Would create:", output)
+            self.assertIn(to_posix(path), output)
+            self.assertNotIn("Created:", output.replace("Would create:", ""))
+
+    def test_write_file_dry_run_quiet_suppresses_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "file.txt")
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                write_file(path, "hello", quiet=True, dry_run=True)
+            self.assertEqual(buf.getvalue(), "")
+
+    def test_create_dir_dry_run_writes_nothing_but_returns_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "newdir")
+            gitkeep = create_dir_with_gitkeep(target, dry_run=True)
+            self.assertFalse(os.path.isdir(target))
+            self.assertFalse(os.path.exists(gitkeep))
+            # Path returned is identical to what a real run would return.
+            self.assertEqual(gitkeep, os.path.join(target, FILE_GITKEEP))
+
+
+class DryRunWritesNothingTests(unittest.TestCase):
+    """A --dry-run scaffold creates no files or directories on disk."""
+
+    def test_skill_dry_run_creates_no_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "out")
+            proc = _run(
+                ["skill", "my-skill", "--root", target, "--dry-run"],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertFalse(os.path.exists(target))
+            self.assertIn("Would create:", proc.stdout)
+
+    def test_router_skill_dry_run_creates_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "out")
+            proc = _run(
+                [
+                    "skill", "my-router", "--router",
+                    "--with-references", "--root", target, "--dry-run",
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertFalse(os.path.exists(target))
+
+    def test_skill_dry_run_with_update_manifest_writes_no_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = _run(
+                [
+                    "skill", "my-skill", "--update-manifest",
+                    "--root", tmpdir, "--dry-run",
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertFalse(
+                os.path.exists(os.path.join(tmpdir, "manifest.yaml"))
+            )
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, "skills")))
+
+    def test_skill_dry_run_does_not_mutate_existing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            original = "# Manifest\n\nskills:\n\nroles:\n"
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(original)
+            proc = _run(
+                [
+                    "skill", "my-skill", "--update-manifest",
+                    "--root", tmpdir, "--dry-run",
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), original)
+
+    def test_role_dry_run_creates_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "out")
+            proc = _run(
+                ["role", "my-group", "my-role", "--root", target, "--dry-run"],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertFalse(os.path.exists(target))
+
+    def test_capability_dry_run_creates_nothing_under_real_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Real parent so the existence gate passes.
+            pre = _run(
+                ["skill", "my-domain", "--router", "--root", tmpdir],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(pre.returncode, 0, msg=pre.stdout + pre.stderr)
+            proc = _run(
+                [
+                    "capability", "my-domain", "my-cap",
+                    "--root", tmpdir, "--dry-run",
+                ],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            cap_dir = os.path.join(
+                tmpdir, "skills", "my-domain", "capabilities", "my-cap"
+            )
+            self.assertFalse(os.path.exists(cap_dir))
+
+
+class DryRunPlanMatchesRealRunTests(unittest.TestCase):
+    """The dry-run plan reports the same path set a real run creates."""
+
+    def test_skill_plan_equals_created(self) -> None:
+        with tempfile.TemporaryDirectory() as dry_root, \
+             tempfile.TemporaryDirectory() as real_root:
+            dry = scaffold_skill(
+                "demo", router=True,
+                optional_dirs=[DIR_REFERENCES],
+                root=dry_root, json_output=True, dry_run=True,
+            )
+            real = scaffold_skill(
+                "demo", router=True,
+                optional_dirs=[DIR_REFERENCES],
+                root=real_root, json_output=True, dry_run=False,
+            )
+        self.assertEqual(
+            _strip_root(dry["planned"], dry_root),
+            _strip_root(real["created"], real_root),
+        )
+
+    def test_skill_plan_with_manifest_equals_created(self) -> None:
+        with tempfile.TemporaryDirectory() as dry_root, \
+             tempfile.TemporaryDirectory() as real_root:
+            dry = scaffold_skill(
+                "demo", root=dry_root, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+            real = scaffold_skill(
+                "demo", root=real_root, json_output=True,
+                update_manifest=True, dry_run=False,
+            )
+        dry_set = _strip_root(dry["planned"], dry_root)
+        real_set = _strip_root(real["created"], real_root)
+        self.assertEqual(dry_set, real_set)
+        # manifest.yaml is part of both sets.
+        self.assertIn("manifest.yaml", dry_set)
+
+    def test_role_plan_equals_created(self) -> None:
+        with tempfile.TemporaryDirectory() as dry_root, \
+             tempfile.TemporaryDirectory() as real_root:
+            dry = scaffold_role(
+                "grp", "rl", root=dry_root, json_output=True, dry_run=True,
+            )
+            real = scaffold_role(
+                "grp", "rl", root=real_root, json_output=True, dry_run=False,
+            )
+        self.assertEqual(
+            _strip_root(dry["planned"], dry_root),
+            _strip_root(real["created"], real_root),
+        )
+
+    def test_capability_plan_equals_created(self) -> None:
+        with tempfile.TemporaryDirectory() as dry_root, \
+             tempfile.TemporaryDirectory() as real_root:
+            # Both need a real parent skill.
+            scaffold_skill("dom", router=True, root=dry_root, json_output=True)
+            scaffold_skill("dom", router=True, root=real_root, json_output=True)
+            dry = scaffold_capability(
+                "dom", "cap", optional_dirs=[DIR_REFERENCES],
+                root=dry_root, json_output=True, dry_run=True,
+            )
+            real = scaffold_capability(
+                "dom", "cap", optional_dirs=[DIR_REFERENCES],
+                root=real_root, json_output=True, dry_run=False,
+            )
+        self.assertEqual(
+            _strip_root(dry["planned"], dry_root),
+            _strip_root(real["created"], real_root),
+        )
+
+
+class DryRunExistingManifestTests(unittest.TestCase):
+    """--dry-run reports an existing manifest as an update, not a create.
+
+    A real ``--update-manifest`` run appends to an existing manifest and
+    reports it as ``Updated:`` — it never lists it in the JSON
+    ``created`` set. The dry-run preview must mirror that: an existing
+    manifest is a planned *update*, kept out of ``planned`` and narrated
+    with the update verb, while an absent manifest is a planned create.
+    """
+
+    _NONEMPTY_MANIFEST = "# Manifest\n\nskills:\n\nroles:\n"
+
+    def _write_manifest(self, tmpdir: str) -> str:
+        manifest_path = os.path.join(tmpdir, "manifest.yaml")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(self._NONEMPTY_MANIFEST)
+        return manifest_path
+
+    def test_skill_existing_manifest_absent_from_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_manifest(tmpdir)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"]),
+            msg=f"existing manifest listed as planned create: {result['planned']}",
+        )
+        # A real run would still append the entry, so manifest_updated holds.
+        self.assertTrue(result["manifest_updated"])
+
+    def test_skill_absent_manifest_in_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertTrue(
+            any(p.endswith("manifest.yaml") for p in result["planned"]),
+            msg=f"absent manifest missing from planned create: {result['planned']}",
+        )
+        self.assertTrue(result["manifest_updated"])
+
+    def test_skill_existing_manifest_human_says_would_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = self._write_manifest(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", root=tmpdir, update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"Would update: {to_posix(manifest_path)}", output)
+        self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
+
+    def test_skill_absent_manifest_human_says_would_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", root=tmpdir, update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"Would create: {to_posix(manifest_path)}", output)
+        self.assertNotIn("Would update:", output)
+
+    def test_role_existing_manifest_absent_from_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_manifest(tmpdir)
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"]),
+            msg=f"existing manifest listed as planned create: {result['planned']}",
+        )
+        self.assertTrue(result["manifest_updated"])
+
+    def test_role_existing_manifest_human_says_would_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = self._write_manifest(tmpdir)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role(
+                    "grp", "rl", root=tmpdir,
+                    update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"Would update: {to_posix(manifest_path)}", output)
+        self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
+
+    def test_existing_manifest_left_unmutated(self) -> None:
+        """The read-only preview never rewrites the manifest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = self._write_manifest(tmpdir)
+            scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), self._NONEMPTY_MANIFEST)
+
+    # The read-only preview also catches the cases a real run would skip:
+    # a name already in the manifest, and a manifest that does not parse.
+
+    _CONFLICT_MANIFEST = (
+        "# Manifest\n\nskills:\n  demo:\n"
+        "    canonical: skills/demo/SKILL.md\n    type: standalone\n\nroles:\n"
+    )
+    _ROLE_CONFLICT_MANIFEST = (
+        "# Manifest\n\nskills:\n\nroles:\n  grp:\n"
+        "    - name: rl\n      path: roles/grp/rl.md\n"
+    )
+    _MALFORMED_MANIFEST = "skills:\n  - item1\n  - item2\n"
+
+    def test_skill_conflict_reports_skip_not_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._CONFLICT_MANIFEST)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+            # The preview must not have rewritten the manifest.
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), self._CONFLICT_MANIFEST)
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("already exists", result["manifest_warning"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+        # A skipped manifest update is a warning, not a failure.
+        self.assertTrue(result["success"])
+
+    def test_skill_conflict_human_output_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._CONFLICT_MANIFEST)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", root=tmpdir, update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn("already exists", output)
+        self.assertNotIn(f"Would update: {to_posix(manifest_path)}", output)
+        self.assertNotIn(f"Would create: {to_posix(manifest_path)}", output)
+
+    def test_skill_malformed_manifest_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._MALFORMED_MANIFEST)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("skipping manifest update", result["manifest_warning"])
+        self.assertTrue(result["success"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+
+    def test_role_conflict_reports_skip_not_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                f.write(self._ROLE_CONFLICT_MANIFEST)
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("already exists", result["manifest_warning"])
+        self.assertTrue(result["success"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+
+
+class DryRunImplicitDirsTests(unittest.TestCase):
+    """Dry-run lists the directories a real run creates implicitly.
+
+    ``write_file`` / ``create_dir_with_gitkeep`` create parent
+    directories via ``os.makedirs``; the plan must enumerate them so the
+    preview is complete and ``planned`` stays equal to a real run's
+    ``created``.
+    """
+
+    def test_skill_plan_includes_skill_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("skills", rels)
+        self.assertIn("skills/demo", rels)
+
+    def test_router_skill_plan_includes_skill_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", router=True, root=tmpdir,
+                json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("skills/demo", rels)
+        self.assertIn("skills/demo/capabilities", rels)
+
+    def test_capability_plan_includes_cap_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "dom", "cap", root=tmpdir, json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("skills/dom/capabilities/cap", rels)
+
+    def test_role_plan_includes_group_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True, dry_run=True,
+            )
+        rels = _strip_root(result["planned"], tmpdir)
+        self.assertIn("roles/grp", rels)
+
+    def test_real_run_created_includes_skill_dir(self) -> None:
+        """Parity: a real run records the same implicit container dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill("demo", root=tmpdir, json_output=True)
+        rels = _strip_root(result["created"], tmpdir)
+        self.assertIn("skills/demo", rels)
+
+    def test_skill_dry_run_human_lists_skill_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("demo", root=tmpdir, dry_run=True)
+            output = buf.getvalue()
+        self.assertIn("skills/demo", output)
+
+
+class NonFileManifestScaffoldTests(unittest.TestCase):
+    """--update-manifest skips gracefully when manifest.yaml is not a file."""
+
+    def test_skill_dry_run_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, "manifest.yaml"))
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("not a regular file", result["manifest_warning"])
+        self.assertTrue(result["success"])
+        self.assertFalse(
+            any(p.endswith("manifest.yaml") for p in result["planned"])
+        )
+
+    def test_skill_real_run_does_not_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, "manifest.yaml"))
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, update_manifest=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("not a regular file", result["manifest_warning"])
+        # The skill itself is still scaffolded; only the manifest is skipped.
+        self.assertTrue(
+            any(p.endswith("SKILL.md") for p in result["created"])
+        )
+
+    def test_role_dry_run_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.mkdir(os.path.join(tmpdir, "manifest.yaml"))
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True,
+                update_manifest=True, dry_run=True,
+            )
+        self.assertFalse(result["manifest_updated"])
+        self.assertIn("not a regular file", result["manifest_warning"])
+        self.assertTrue(result["success"])
+
+
+class BlockingDirAncestorTests(unittest.TestCase):
+    """A non-directory path component is an error, not a planned create.
+
+    ``os.makedirs`` cannot create a directory tree through a path
+    component that exists as a regular file, so both a real run and the
+    dry-run preview report an error rather than a (real run) crash or a
+    (dry-run) bogus zero-exit plan.
+    """
+
+    @staticmethod
+    def _root_file(tmpdir: str) -> str:
+        rootfile = os.path.join(tmpdir, "out")
+        with open(rootfile, "w", encoding="utf-8") as f:
+            f.write("")
+        return rootfile
+
+    def test_skill_dry_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=self._root_file(tmpdir),
+                json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_skill_real_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=self._root_file(tmpdir), json_output=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_role_dry_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "grp", "rl", root=self._root_file(tmpdir),
+                json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_capability_dry_run_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Parent skill exists, but a regular file occupies the
+            # capabilities/ slot, blocking the capability subtree.
+            dom_dir = os.path.join(tmpdir, "skills", "dom")
+            os.makedirs(dom_dir)
+            with open(os.path.join(dom_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: dom\n---\n")
+            with open(os.path.join(dom_dir, "capabilities"), "w", encoding="utf-8") as f:
+                f.write("")
+            result = scaffold_capability(
+                "dom", "cap", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertIn("is not a directory", result["error"])
+
+    def test_cli_human_mode_errors_on_file_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rootfile = self._root_file(tmpdir)
+            proc = _run(
+                ["skill", "demo", "--root", rootfile, "--dry-run"],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+            self.assertIn("is not a directory", proc.stdout)
+
+
+class DryRunFrontmatterValidationTests(unittest.TestCase):
+    """Dry-run validates rendered frontmatter in memory, like the real run."""
+
+    # Opening delimiter with no closing '---' — a parse failure the real
+    # run would surface after writing.
+    _BAD_TEMPLATE = "---\nname: demo\n"
+
+    def test_dry_run_reports_malformed_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("scaffold.read_template", return_value=self._BAD_TEMPLATE):
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(
+            any("Invalid frontmatter" in w for w in result.get("warnings", [])),
+            msg=f"expected a frontmatter parse finding: {result.get('warnings')}",
+        )
+
+    def test_dry_run_matches_real_run_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as dry_root, \
+                tempfile.TemporaryDirectory() as real_root, \
+                patch("scaffold.read_template", return_value=self._BAD_TEMPLATE):
+            dry = scaffold_skill(
+                "demo", root=dry_root, json_output=True, dry_run=True,
+            )
+            real = scaffold_skill("demo", root=real_root, json_output=True)
+        self.assertFalse(dry["success"])
+        self.assertEqual(dry["success"], real["success"])
+
+    def test_dry_run_writes_nothing_even_when_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch("scaffold.read_template", return_value=self._BAD_TEMPLATE):
+            scaffold_skill("demo", root=tmpdir, json_output=True, dry_run=True)
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, DIR_SKILLS)))
+
+
+class RealRunDirNarrationTests(unittest.TestCase):
+    """A real run does not narrate directories before they exist."""
+
+    def test_no_premature_created_line_on_template_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch(
+                    "scaffold.read_template",
+                    side_effect=FileNotFoundError("missing template"),
+                ):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit):
+                    scaffold_skill("demo", root=tmpdir)
+            output = buf.getvalue()
+        # The run failed before the first write, so nothing was created and
+        # nothing should have been narrated as created.
+        self.assertNotIn("Created:", output)
+        self.assertFalse(os.path.exists(os.path.join(tmpdir, DIR_SKILLS)))
+
+    def test_dry_run_template_failure_advertises_no_dirs(self) -> None:
+        """A pre-write failure yields no planned dirs in either dry-run mode."""
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                patch(
+                    "scaffold.read_template",
+                    side_effect=FileNotFoundError("missing template"),
+                ):
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+            self.assertFalse(result["success"])
+            # JSON: no planned paths advertised for a command that can't run.
+            self.assertEqual(result.get("planned", []), [])
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit):
+                    scaffold_skill("demo", root=tmpdir, dry_run=True)
+            # Human matches JSON: no "Would create" lines before the failure.
+            self.assertNotIn("Would create", buf.getvalue())
+
+
+class ErrorSchemaTests(unittest.TestCase):
+    """Error JSON carries dry_run and the run-mode path-list key."""
+
+    @staticmethod
+    def _existing_skill_dir(tmpdir: str) -> None:
+        os.makedirs(os.path.join(tmpdir, DIR_SKILLS, "demo"))
+
+    def test_error_dry_run_true_uses_planned_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._existing_skill_dir(tmpdir)
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+        self.assertNotIn("created", result)
+
+    def test_error_dry_run_false_uses_created_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._existing_skill_dir(tmpdir)
+            result = scaffold_skill("demo", root=tmpdir, json_output=True)
+        self.assertFalse(result["success"])
+        self.assertFalse(result["dry_run"])
+        self.assertIn("created", result)
+        self.assertNotIn("planned", result)
+
+    def test_invalid_name_error_carries_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "INVALID", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+
+    def test_capability_and_role_errors_carry_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cap = scaffold_capability(
+                "INVALID", "x", root=tmpdir, json_output=True, dry_run=True,
+            )
+            role = scaffold_role(
+                "INVALID", "x", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertIn("dry_run", cap)
+        self.assertIn("dry_run", role)
+        self.assertTrue(cap["dry_run"])
+        self.assertTrue(role["dry_run"])
+
+
+class CliErrorSchemaTests(unittest.TestCase):
+    """CLI-level JSON errors share the stable schema (dry_run + path list).
+
+    These failure paths live in main() / _validate_flags and only fire
+    through argv parsing, so they are exercised via the CLI.
+    """
+
+    def test_unknown_flag_dry_run_uses_planned(self) -> None:
+        proc = _run(
+            ["skill", "demo", "--bogus", "--dry-run", "--json"], cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["success"])
+        self.assertTrue(data["dry_run"])
+        self.assertIn("planned", data)
+        self.assertNotIn("created", data)
+
+    def test_unknown_flag_real_uses_created(self) -> None:
+        proc = _run(["skill", "demo", "--bogus", "--json"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertFalse(data["dry_run"])
+        self.assertIn("created", data)
+        self.assertNotIn("planned", data)
+
+    def test_unknown_component_carries_path_list(self) -> None:
+        proc = _run(["bogus", "x", "--json"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertIn("dry_run", data)
+        self.assertIn("created", data)
+
+    def test_missing_root_arg_dry_run_uses_planned(self) -> None:
+        proc = _run(
+            ["skill", "demo", "--root", "--dry-run", "--json"], cwd=REPO_ROOT,
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertTrue(data["dry_run"])
+        self.assertIn("planned", data)
+
+    def test_unknown_flag_allowed_message_lists_dry_run(self) -> None:
+        """The 'Allowed:' diagnostic includes --dry-run as a valid flag."""
+        proc = _run(["skill", "demo", "--bogus"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertIn("--dry-run", proc.stdout)
+
+
+class DryRunJsonShapeTests(unittest.TestCase):
+    """JSON payload shape for --dry-run runs."""
+
+    def test_skill_json_has_dry_run_true_and_planned_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+        self.assertNotIn("created", result)
+        self.assertTrue(result["success"])
+
+    def test_real_run_json_has_dry_run_false_and_created_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_skill(
+                "demo", root=tmpdir, json_output=True, dry_run=False,
+            )
+        self.assertFalse(result["dry_run"])
+        self.assertIn("created", result)
+        self.assertNotIn("planned", result)
+
+    def test_capability_json_dry_run_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            result = scaffold_capability(
+                "dom", "cap", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+        self.assertNotIn("created", result)
+
+    def test_role_json_dry_run_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = scaffold_role(
+                "grp", "rl", root=tmpdir, json_output=True, dry_run=True,
+            )
+        self.assertTrue(result["dry_run"])
+        self.assertIn("planned", result)
+        self.assertNotIn("created", result)
+
+    def test_cli_json_dry_run_emits_valid_json_and_exit_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = os.path.join(tmpdir, "out")
+            proc = _run(
+                ["skill", "demo", "--root", target, "--dry-run", "--json"],
+                cwd=REPO_ROOT,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            data = json.loads(proc.stdout)
+            self.assertTrue(data["dry_run"])
+            self.assertIn("planned", data)
+            self.assertFalse(os.path.exists(target))
+
+
+class DryRunHumanOutputTests(unittest.TestCase):
+    """Human-mode summary lines for --dry-run runs."""
+
+    def test_skill_summary_says_would_be_scaffolded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill("demo", root=tmpdir, dry_run=True)
+            output = buf.getvalue()
+            self.assertIn("would be scaffolded", output)
+            self.assertIn("Dry run: no files were written.", output)
+            self.assertNotIn("Next:", output)
+
+    def test_capability_summary_says_would_be_scaffolded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability("dom", "cap", root=tmpdir, dry_run=True)
+            output = buf.getvalue()
+            self.assertIn("would be scaffolded", output)
+            self.assertIn("Dry run: no files were written.", output)
+            self.assertNotIn("routing table", output)
+
+    def test_capability_dry_run_shows_manifest_guidance(self) -> None:
+        """--update-manifest guidance stays visible in capability dry-run."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability(
+                    "dom", "cap", root=tmpdir,
+                    update_manifest=True, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn("Dry run: no files were written.", output)
+        self.assertIn("not added to manifest.yaml directly", output)
+
+    def test_role_summary_says_would_be_scaffolded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_role("grp", "rl", root=tmpdir, dry_run=True)
+            output = buf.getvalue()
+            self.assertIn("would be scaffolded", output)
+            self.assertIn("Dry run: no files were written.", output)
+            self.assertNotIn("Next:", output)
+
+    def test_router_dry_run_prints_would_create_for_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", router=True,
+                    optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir, dry_run=True,
+                )
+            output = buf.getvalue()
+            # capabilities/ and references/ directories both planned.
+            self.assertIn(DIR_CAPABILITIES, output)
+            self.assertIn(DIR_REFERENCES, output)
+            self.assertIn("Would create:", output)
+            self.assertNotIn("  Created:", output)
+
+    def test_router_dry_run_lists_gitkeep_in_human_output(self) -> None:
+        """Human dry-run output enumerates the .gitkeep, matching JSON planned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", router=True,
+                    optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir, dry_run=True,
+                )
+            output = buf.getvalue()
+        # Both the directory and its .gitkeep sentinel appear in the preview.
+        self.assertIn(f"{DIR_CAPABILITIES}/{FILE_GITKEEP}", output)
+        self.assertIn(f"{DIR_REFERENCES}/{FILE_GITKEEP}", output)
+
+    def test_capability_dry_run_lists_gitkeep_in_human_output(self) -> None:
+        """The capability path also previews the .gitkeep, not just the dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scaffold_skill("dom", router=True, root=tmpdir, json_output=True)
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_capability(
+                    "dom", "cap", optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir, dry_run=True,
+                )
+            output = buf.getvalue()
+        self.assertIn(f"{DIR_REFERENCES}/{FILE_GITKEEP}", output)
+
+    def test_real_run_human_output_omits_gitkeep(self) -> None:
+        """Contrast case: a real run narrates only the directory.
+
+        The .gitkeep is a git tracking sentinel, so real-run human output
+        stays unchanged — only dry-run gives the complete file-by-file
+        preview.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                scaffold_skill(
+                    "demo", router=True,
+                    optional_dirs=[DIR_REFERENCES],
+                    root=tmpdir,
+                )
+            output = buf.getvalue()
+        self.assertIn(DIR_CAPABILITIES, output)
+        self.assertNotIn(FILE_GITKEEP, output)
+
+
+class DryRunDocstringTests(unittest.TestCase):
+    """The usage docstring advertises --dry-run."""
+
+    def test_docstring_mentions_dry_run(self) -> None:
+        proc = _run([], cwd=REPO_ROOT)
+        self.assertIn("--dry-run", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

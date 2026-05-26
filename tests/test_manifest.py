@@ -23,6 +23,7 @@ from lib.manifest import (
     has_role_conflict,
     append_skill_entry,
     append_role_entry,
+    manifest_needs_scaffold,
     scaffold_empty_manifest,
     update_manifest_for_skill,
     update_manifest_for_role,
@@ -1058,6 +1059,184 @@ class UpdateManifestForRoleTests(unittest.TestCase):
             self.assertIn("# Skill System Manifest", text)
             self.assertIn("skills:", text)
             self.assertIn("roles:", text)
+
+
+class UpdateManifestPreviewTests(unittest.TestCase):
+    """preview=True reports the planned action without writing anything."""
+
+    def test_skill_preview_absent_manifest_plans_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            updated, warning, created, findings = update_manifest_for_skill(
+                path, "my-skill", preview=True,
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)
+            self.assertEqual(findings, [])
+            # No write: the manifest is not created on disk.
+            self.assertFalse(os.path.exists(path))
+
+    def test_skill_preview_existing_manifest_plans_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "brand-new-skill", preview=True,
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertFalse(created)
+            # No write: the existing manifest is left byte-for-byte intact.
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+    def test_skill_preview_conflict_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "existing-skill", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("already exists", warning)
+            self.assertFalse(created)
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+    def test_skill_preview_malformed_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("skills:\n  - item1\n  - item2\n")
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "x", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("skipping manifest update", warning)
+            self.assertFalse(created)
+
+    def test_role_preview_absent_manifest_plans_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            updated, warning, created, findings = update_manifest_for_role(
+                path, "grp", "my-role", preview=True,
+            )
+            self.assertTrue(updated)
+            self.assertIsNone(warning)
+            self.assertTrue(created)
+            self.assertEqual(findings, [])
+            self.assertFalse(os.path.exists(path))
+
+    def test_role_preview_conflict_reports_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            updated, warning, created, _findings = update_manifest_for_role(
+                path, "dev-group", "existing-role", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIsNotNone(warning)
+            self.assertIn("already exists", warning)
+            self.assertFalse(created)
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), SAMPLE_MANIFEST)
+
+
+class ManifestNeedsScaffoldTests(unittest.TestCase):
+    """manifest_needs_scaffold matches its docstring for every path state."""
+
+    def test_absent_path_needs_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            self.assertTrue(manifest_needs_scaffold(path))
+
+    def test_empty_file_needs_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+            self.assertTrue(manifest_needs_scaffold(path))
+
+    def test_whitespace_only_file_needs_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("   \n\n")
+            self.assertTrue(manifest_needs_scaffold(path))
+
+    def test_nonempty_file_does_not_need_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(SAMPLE_MANIFEST)
+            self.assertFalse(manifest_needs_scaffold(path))
+
+    def test_directory_does_not_need_scaffold(self) -> None:
+        """A non-regular-file path returns False: a real run can't seed it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "manifest.yaml")
+            os.mkdir(path)
+            self.assertFalse(manifest_needs_scaffold(path))
+
+
+class NonFileManifestPathTests(unittest.TestCase):
+    """A non-file at manifest_path is a graceful skip, not a mid-write crash."""
+
+    @staticmethod
+    def _dir_at_manifest(tmpdir: str) -> str:
+        path = os.path.join(tmpdir, "manifest.yaml")
+        os.mkdir(path)
+        return path
+
+    def test_skill_real_run_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, findings = update_manifest_for_skill(
+                path, "x",
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+            self.assertEqual(findings, [])
+            self.assertTrue(os.path.isdir(path))  # left untouched
+
+    def test_skill_preview_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, _findings = update_manifest_for_skill(
+                path, "x", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+
+    def test_role_real_run_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, findings = update_manifest_for_role(
+                path, "grp", "rl",
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
+            self.assertEqual(findings, [])
+            self.assertTrue(os.path.isdir(path))
+
+    def test_role_preview_skips_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._dir_at_manifest(tmpdir)
+            updated, warning, created, _findings = update_manifest_for_role(
+                path, "grp", "rl", preview=True,
+            )
+            self.assertFalse(updated)
+            self.assertIn("not a regular file", warning)
+            self.assertFalse(created)
 
 
 class ReadManifestFindingsTests(unittest.TestCase):

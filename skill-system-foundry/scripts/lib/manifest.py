@@ -8,6 +8,7 @@ empty manifest.
 import os
 
 from .yaml_parser import parse_yaml_subset
+from .reporting import to_posix
 from .constants import (
     DIR_SKILLS,
     DIR_ROLES,
@@ -23,6 +24,7 @@ __all__ = [
     "has_role_conflict",
     "append_skill_entry",
     "append_role_entry",
+    "manifest_needs_scaffold",
     "update_manifest_for_skill",
     "update_manifest_for_role",
     "scaffold_empty_manifest",
@@ -294,6 +296,52 @@ def append_role_entry(
     return _collect_emit_findings(manifest_path)
 
 
+def manifest_needs_scaffold(manifest_path: str) -> bool:
+    """Return True when *manifest_path* must be seeded before an append.
+
+    A manifest needs scaffolding when it does not exist or when it
+    exists but holds only whitespace — both states a fresh append has to
+    seed with an empty manifest skeleton first, so both are reported as a
+    newly *created* manifest. A path that exists but is not a regular
+    file (most often a directory) returns False: a real run cannot seed
+    ``manifest.yaml`` there, so it does not "need scaffold" — that case
+    is a skip, surfaced separately via :func:`_non_file_manifest_warning`.
+    The check is read-only: it stats the path and, for an existing file,
+    reads its contents as text (text mode, UTF-8) without parsing the
+    YAML or mutating the file. That lets callers ask "would a real run
+    create this file?" without side effects — scaffold's ``--dry-run``
+    preview relies on it to mirror the real run's created-vs-updated split.
+    """
+    if not os.path.exists(manifest_path):
+        return True
+    if not os.path.isfile(manifest_path):
+        return False
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        return not fh.read().strip()
+
+
+def _non_file_manifest_warning(manifest_path: str) -> str | None:
+    """Return a skip warning when *manifest_path* exists but is not a file.
+
+    A real ``update_manifest_*`` run would try to write ``manifest.yaml``
+    at this path and fail when something other than a regular file (most
+    often a directory) already occupies it. ``manifest_needs_scaffold``
+    returns False for that case — a non-file does not "need scaffold"
+    because a real run cannot seed it — so this guard runs first in the
+    update path to surface the skip explicitly; without it the run would
+    crash mid-write and the ``--dry-run`` preview would claim a bogus
+    create/update. Detecting it up front lets both the real run and the
+    read-only preview report a graceful skip. Returns None for the
+    normal cases (path absent, or a regular file).
+    """
+    if os.path.exists(manifest_path) and not os.path.isfile(manifest_path):
+        return (
+            f"Manifest path {to_posix(manifest_path)} is not a regular file "
+            f"— skipping manifest update"
+        )
+    return None
+
+
 def _collect_emit_findings(manifest_path: str) -> list[str]:
     """Re-validate the post-write manifest for divergences and shape.
 
@@ -319,6 +367,7 @@ def update_manifest_for_skill(
     name: str,
     *,
     router: bool = False,
+    preview: bool = False,
 ) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a skill entry.
 
@@ -335,37 +384,62 @@ def update_manifest_for_skill(
     manifest fails to parse, *updated* is False even though bytes were
     written to disk, and *warning* describes the corruption so callers
     that ignore *findings* still see the failure.
+
+    When *preview* is True the function performs no writes — it neither
+    scaffolds a missing manifest nor appends the entry — but runs the
+    same read-only validation a real run does so the returned tuple
+    reflects what a real run *would* do: an absent/empty manifest yields
+    ``created_manifest=True`` with ``updated=True``; an existing manifest
+    that fails to parse or already contains *name* yields
+    ``updated=False`` with the matching *warning*; an existing, parseable,
+    conflict-free manifest yields ``updated=True``. Emit-corruption
+    cannot be previewed (it is a property of the write), so the preview
+    assumes a clean append in the conflict-free case. Used by scaffold's
+    ``--dry-run`` to report an accurate manifest plan without touching
+    disk.
     """
-    created_manifest = False
+    non_file_warning = _non_file_manifest_warning(manifest_path)
+    if non_file_warning is not None:
+        return False, non_file_warning, False, []
+    created_manifest = manifest_needs_scaffold(manifest_path)
     # Treat non-existent or empty/whitespace-only files as missing.
-    needs_scaffold = not os.path.isfile(manifest_path)
-    if not needs_scaffold:
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            needs_scaffold = not fh.read().strip()
-    if needs_scaffold:
+    if created_manifest and preview:
+        # A real run would seed a fresh manifest and append the first
+        # entry; an empty skeleton can hold no conflict and cannot fail
+        # to parse, so the append always succeeds.
+        return True, None, True, []
+    if created_manifest:
         scaffold_empty_manifest(manifest_path)
-        created_manifest = True
 
     findings: list[str] = []
     try:
         manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
-        warning = f"{exc} — skipping manifest update"
+        # Normalize any embedded path inside the exception message so the
+        # warning carries posix separators across platforms (the parser
+        # raises with the raw path it was handed).
+        msg = str(exc).replace(manifest_path, to_posix(manifest_path))
+        warning = f"{msg} — skipping manifest update"
         return False, warning, created_manifest, findings
 
     if has_skill_conflict(manifest, name):
         warning = (
             f"Skill '{name}' already exists in "
-            f"{manifest_path} — skipping manifest update"
+            f"{to_posix(manifest_path)} — skipping manifest update"
         )
         return False, warning, created_manifest, findings
+
+    if preview:
+        # Existing manifest parses and has no conflicting entry, so a real
+        # run would append successfully. Report the update without writing.
+        return True, None, created_manifest, findings
 
     emit_findings = append_skill_entry(manifest_path, name, router=router)
     findings.extend(emit_findings)
     if has_emit_corruption(emit_findings):
         warning = (
-            f"Manifest update wrote an invalid manifest at {manifest_path} "
-            f"— inspect findings and repair the file"
+            f"Manifest update wrote an invalid manifest at "
+            f"{to_posix(manifest_path)} — inspect findings and repair the file"
         )
         return False, warning, created_manifest, findings
     return True, None, created_manifest, findings
@@ -375,6 +449,8 @@ def update_manifest_for_role(
     manifest_path: str,
     group: str,
     name: str,
+    *,
+    preview: bool = False,
 ) -> tuple[bool, str | None, bool, list[str]]:
     """Ensure *manifest_path* exists and append a role entry.
 
@@ -391,37 +467,62 @@ def update_manifest_for_role(
     manifest fails to parse, *updated* is False even though bytes were
     written to disk, and *warning* describes the corruption so callers
     that ignore *findings* still see the failure.
+
+    When *preview* is True the function performs no writes — it neither
+    scaffolds a missing manifest nor appends the entry — but runs the
+    same read-only validation a real run does so the returned tuple
+    reflects what a real run *would* do: an absent/empty manifest yields
+    ``created_manifest=True`` with ``updated=True``; an existing manifest
+    that fails to parse or already contains the *group*/*name* role
+    yields ``updated=False`` with the matching *warning*; an existing,
+    parseable, conflict-free manifest yields ``updated=True``.
+    Emit-corruption cannot be previewed (it is a property of the write),
+    so the preview assumes a clean append in the conflict-free case. Used
+    by scaffold's ``--dry-run`` to report an accurate manifest plan
+    without touching disk.
     """
-    created_manifest = False
+    non_file_warning = _non_file_manifest_warning(manifest_path)
+    if non_file_warning is not None:
+        return False, non_file_warning, False, []
+    created_manifest = manifest_needs_scaffold(manifest_path)
     # Treat non-existent or empty/whitespace-only files as missing.
-    needs_scaffold = not os.path.isfile(manifest_path)
-    if not needs_scaffold:
-        with open(manifest_path, "r", encoding="utf-8") as fh:
-            needs_scaffold = not fh.read().strip()
-    if needs_scaffold:
+    if created_manifest and preview:
+        # A real run would seed a fresh manifest and append the first
+        # entry; an empty skeleton can hold no conflict and cannot fail
+        # to parse, so the append always succeeds.
+        return True, None, True, []
+    if created_manifest:
         scaffold_empty_manifest(manifest_path)
-        created_manifest = True
 
     findings: list[str] = []
     try:
         manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
-        warning = f"{exc} — skipping manifest update"
+        # Normalize any embedded path inside the exception message so the
+        # warning carries posix separators across platforms (the parser
+        # raises with the raw path it was handed).
+        msg = str(exc).replace(manifest_path, to_posix(manifest_path))
+        warning = f"{msg} — skipping manifest update"
         return False, warning, created_manifest, findings
 
     if has_role_conflict(manifest, group, name):
         warning = (
             f"Role '{name}' in group '{group}' already exists in "
-            f"{manifest_path} — skipping manifest update"
+            f"{to_posix(manifest_path)} — skipping manifest update"
         )
         return False, warning, created_manifest, findings
+
+    if preview:
+        # Existing manifest parses and has no conflicting entry, so a real
+        # run would append successfully. Report the update without writing.
+        return True, None, created_manifest, findings
 
     emit_findings = append_role_entry(manifest_path, group, name)
     findings.extend(emit_findings)
     if has_emit_corruption(emit_findings):
         warning = (
-            f"Manifest update wrote an invalid manifest at {manifest_path} "
-            f"— inspect findings and repair the file"
+            f"Manifest update wrote an invalid manifest at "
+            f"{to_posix(manifest_path)} — inspect findings and repair the file"
         )
         return False, warning, created_manifest, findings
     return True, None, created_manifest, findings

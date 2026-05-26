@@ -42,23 +42,16 @@ def split_frontmatter(content: str) -> tuple[str | None, str | None]:
     return "".join(lines[1:]), None
 
 
-def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
-    """Extract YAML frontmatter from a SKILL.md file.
+def parse_frontmatter(content: str) -> tuple[dict | None, str, list[str]]:
+    """Extract YAML frontmatter from in-memory *content*.
 
-    Returns ``(frontmatter_dict, body_string, scalar_findings)``.
-    *scalar_findings* contains plain-scalar divergence findings
-    (FAIL and WARN level) collected during parsing (empty list when
-    none).  If no frontmatter is found, returns
-    ``(None, full_content, [])``.  Parse errors are returned as a dict
-    with a ``_parse_error`` key.
-
-    Input line endings are normalized to LF before any further
-    processing, so both the frontmatter and the returned ``body`` use
-    LF-only terminators (see module docstring).
+    Same return contract as :func:`load_frontmatter`
+    (``(frontmatter_dict, body_string, scalar_findings)``) but operating
+    on a string rather than a file path, so callers can validate rendered
+    content without writing it to disk — scaffold's ``--dry-run`` uses
+    this to report the same frontmatter findings a real run would surface
+    after writing. Input line endings are normalized to LF first.
     """
-    with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read()
-
     content = content.replace("\r\n", "\n").replace("\r", "\n")
 
     frontmatter_raw, body_raw = split_frontmatter(content)
@@ -81,6 +74,26 @@ def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
         return {"_parse_error": str(e)}, body, []
 
     return frontmatter, body, findings
+
+
+def load_frontmatter(filepath: str) -> tuple[dict | None, str, list[str]]:
+    """Extract YAML frontmatter from a SKILL.md file.
+
+    Returns ``(frontmatter_dict, body_string, scalar_findings)``.
+    *scalar_findings* contains plain-scalar divergence findings
+    (FAIL and WARN level) collected during parsing (empty list when
+    none).  If no frontmatter is found, returns
+    ``(None, full_content, [])``.  Parse errors are returned as a dict
+    with a ``_parse_error`` key.
+
+    Reads the file and delegates to :func:`parse_frontmatter`; input line
+    endings are normalized to LF before any further processing, so both
+    the frontmatter and the returned ``body`` use LF-only terminators
+    (see module docstring).
+    """
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+    return parse_frontmatter(content)
 
 
 def strip_frontmatter_for_scan(content: str) -> str:
