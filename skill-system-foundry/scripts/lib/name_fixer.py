@@ -502,7 +502,7 @@ def compute_name_fix_plan(
         manual.extend(desc_manual)
         # Own the exact FAIL string ``validate_skill`` emits so the
         # caller does not double-report it.  Mirrors the wording in
-        # ``validate_skill.validate_frontmatter`` — the two strings
+        # ``validate_skill.validate_description`` — the two strings
         # must stay in sync.  ``description`` is the *parsed* scalar
         # (quotes and inline comments already stripped) so its length
         # matches the value the validator measures.

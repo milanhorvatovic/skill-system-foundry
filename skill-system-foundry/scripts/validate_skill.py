@@ -1584,13 +1584,16 @@ def main() -> None:
 
         # Apply the safe ``name`` normalization under ``--apply`` too —
         # the single-line in-place rewrite computed above.  Gated behind
-        # ``apply_error is None and not name_manual and not name_errors``
-        # so a planned safe fix is *not* written when the path-rewriter
-        # already raised (``apply_error`` set), when the planner also
-        # surfaced an ambiguous problem (directory mismatch, over-length
-        # description, the computed candidate still violates the spec,
-        # the raw line carries quote/comment syntax that would be
-        # stripped), or when a structural / I/O failure was recorded.
+        # ``apply_error is None and not name_rewrite_blockers and not
+        # name_errors`` so a planned safe fix is *not* written when the
+        # path-rewriter already raised (``apply_error`` set), when the
+        # planner surfaced a name-rewrite-blocking ambiguous problem
+        # (directory mismatch, the computed candidate still violates
+        # the spec, the raw line carries quote / inline-# / block-
+        # scalar syntax that would be corrupted), or when a structural /
+        # I/O failure was recorded.  Over-length ``description`` is in
+        # ``name_manual`` for human reporting but does not block the
+        # name write — see the ``name_rewrite_blockers`` filter below.
         # The ``apply_error`` clause prevents a second fix category from
         # widening the partial-apply state after the first phase has
         # already failed — a ``--fix --apply`` run that already errors
@@ -1602,12 +1605,33 @@ def main() -> None:
         # path-rewrite apply error.  Counts the SKILL.md as one modified
         # file when the write lands so the human/JSON ``modified`` total
         # reflects both categories.
+        # The apply gate only blocks on findings that make the
+        # ``name:`` line rewrite itself unsafe — directory mismatch
+        # (resolution requires human judgement), the safe-fix
+        # candidate still violates the spec (residual FAILs), and
+        # quoted / inline-# / block-scalar shapes the minimal line
+        # rewriter cannot preserve.  An over-length ``description``
+        # finding is exit-gating only (``fix_success`` still includes
+        # ``name_manual`` so the run reports failure), but it does not
+        # affect whether the safe name rewrite can land — this matches
+        # the path rewriter, which still applies safe rewrites while
+        # reporting remaining non-path failures.  The marker is the
+        # ``'description'`` token: every description-only manual
+        # finding in this module is emitted by
+        # ``compute_description_manual_finding`` and carries that
+        # exact substring, while every name-rewrite-blocking finding
+        # is emitted by ``compute_name_fix`` /
+        # ``compute_name_fix_plan`` and carries ``'name'`` or
+        # ``'name:'`` instead.
+        name_rewrite_blockers = [
+            f for f in name_manual if "'description'" not in f
+        ]
         name_modified = False
         if (
             args.apply
             and apply_error is None
             and name_new is not None
-            and not name_manual
+            and not name_rewrite_blockers
             and not name_errors
         ):
             name_modified, write_errors = write_name_fix(
