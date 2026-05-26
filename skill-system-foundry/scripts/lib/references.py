@@ -284,6 +284,25 @@ def is_drive_qualified(path: str) -> bool:
     return is_ascii_letter and path[1] == ":"
 
 
+def is_posix_absolute(path: str) -> bool:
+    """Return True when *path* begins with a leading slash or backslash.
+
+    A reference that starts with ``/`` or ``\\`` (``/tmp/foo.md``,
+    ``\\foo.md``) is treated as absolute on every platform.
+    ``os.path.isabs`` cannot be relied on for this: under Python 3.13+
+    on Windows ``ntpath.isabs('/foo')`` returns ``False`` because a
+    single leading slash without a drive letter is no longer
+    Windows-absolute (PEP/CPython behavior change).  The foundry's
+    validation surface must reject these refs identically on every
+    runner — Ubuntu, Windows, and every supported Python version — so
+    the absolute-path check explicitly OR's this helper with
+    ``os.path.isabs`` and ``is_drive_qualified``.
+    """
+    if not path:
+        return False
+    return path[0] in ("/", "\\")
+
+
 def is_dangling_symlink(path: str) -> bool:
     """Return True when *path* is a symlink whose target does not exist.
 
@@ -882,7 +901,11 @@ def resolve_reference_with_reason(
     # platform-independent detection of the ``C:...`` form;
     # ``os.path.splitdrive`` would only catch it on Windows because
     # ``os.path`` is host-dependent.
-    if os.path.isabs(ref_path) or is_drive_qualified(ref_path):
+    if (
+        os.path.isabs(ref_path)
+        or is_drive_qualified(ref_path)
+        or is_posix_absolute(ref_path)
+    ):
         return None, "absolute_path"
 
     source_dir = os.path.dirname(os.path.abspath(source_file))

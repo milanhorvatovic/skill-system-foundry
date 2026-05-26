@@ -37,6 +37,7 @@ from .references import (
     RE_FENCED_BLOCK,
     is_drive_qualified,
     is_glob_path,
+    is_posix_absolute,
     is_within_directory,
     should_skip_reference,
     strip_fragment,
@@ -332,7 +333,11 @@ def walk_reachable(
             # check ``os.path.join`` would treat the path as drive-
             # rooted on Windows and let the reference escape the
             # skill walk.
-            if os.path.isabs(ref) or is_drive_qualified(ref):
+            if (
+                os.path.isabs(ref)
+                or is_drive_qualified(ref)
+                or is_posix_absolute(ref)
+            ):
                 warnings.append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
                     f"reference '{ref}' in '{rel}' is absolute or "

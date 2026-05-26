@@ -26,6 +26,7 @@ from lib.references import (
     infer_system_root,
     is_dangling_symlink,
     is_drive_qualified,
+    is_posix_absolute,
     is_within_directory,
     resolve_case_exact,
     strip_fragment,
@@ -286,7 +287,11 @@ def _check_references(
         # ``os.path.isabs`` misses on every platform — using
         # ``os.path.splitdrive`` would only catch it on Windows
         # because ``os.path`` is host-dependent.
-        if os.path.isabs(normalized_ref) or is_drive_qualified(normalized_ref):
+        if (
+            os.path.isabs(normalized_ref)
+            or is_drive_qualified(normalized_ref)
+            or is_posix_absolute(normalized_ref)
+        ):
             errors.append(
                 f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] '{ref}' "
                 f"referenced in {source_label} (scope: {scope_tag}) "

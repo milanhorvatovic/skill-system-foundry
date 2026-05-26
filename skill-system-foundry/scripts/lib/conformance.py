@@ -23,7 +23,12 @@ from .constants import (
 )
 from .frontmatter import strip_frontmatter_for_scan
 from .reachability import extract_body_references
-from .references import is_drive_qualified, is_within_directory, strip_fragment
+from .references import (
+    is_drive_qualified,
+    is_posix_absolute,
+    is_within_directory,
+    strip_fragment,
+)
 from .router_table import extract_capability_paths
 
 
@@ -212,7 +217,11 @@ def _build_graph(
             # would also treat the path as drive-rooted on Windows,
             # so this branch must run before resolution to avoid
             # distorting the resolved/broken tally.
-            if os.path.isabs(normalized) or is_drive_qualified(normalized):
+            if (
+                os.path.isabs(normalized)
+                or is_drive_qualified(normalized)
+                or is_posix_absolute(normalized)
+            ):
                 total_links += 1
                 broken += 1
                 broken_rows.append((rel, ref))

@@ -38,7 +38,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.12"]
+        # 3.12 is the required floor — only the (ubuntu, 3.12) and
+        # (windows, 3.12) contexts are listed as required status checks
+        # in the main ruleset. 3.13 and 3.14 are advisory (non-required)
+        # forward-compat signals exercising the project's "3.12+" claim.
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
@@ -69,13 +73,16 @@ jobs:
           PYTHONUTF8: "1"
 
       - name: Generate coverage JSON
+        # Only the 3.12 floor feeds the per-file coverage check below.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: python -m coverage json
 
       - name: Check per-file coverage
-        # Coverage thresholds are enforced against the Ubuntu run only;
+        # Coverage thresholds are enforced against the Ubuntu 3.12 floor only;
         # Windows numbers are advisory because branch coverage can vary
-        # with platform-conditional code paths.
-        if: matrix.os == 'ubuntu-latest'
+        # with platform-conditional code paths, and 3.13/3.14 are advisory
+        # forward-compat signals.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           python .github/scripts/check-per-file-coverage.py \
             --file-threshold skill-system-foundry/scripts/lib/prose_yaml.py=90 \
@@ -88,31 +95,39 @@ jobs:
             --file-threshold skill-system-foundry/scripts/evaluate_descriptions.py=90
 
       - name: Generate coverage HTML report
-        if: always() && steps.run-tests.outcome != 'skipped'
+        # Gated to the 3.12 floor so the per-OS artifact name below
+        # stays unique across the matrix — upload-artifact@v4 rejects
+        # duplicate names within a run.
+        if: always() && steps.run-tests.outcome != 'skipped' && matrix.python-version == '3.12'
         run: python -m coverage html
 
       - name: Upload coverage report
-        if: always() && steps.run-tests.outcome != 'skipped'
+        if: always() && steps.run-tests.outcome != 'skipped' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # @v4 as 7.0.1
         with:
           name: coverage-report-${{ matrix.os }}
           path: htmlcov/
 
       - name: Write coverage total
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           TOTAL_RAW=$(python -m coverage report --format=total --fail-under=0)
           TOTAL_STRIPPED=${TOTAL_RAW%\%}
           printf '%.0f\n' "$TOTAL_STRIPPED" > coverage-total.txt
 
       - name: Upload coverage total
-        if: matrix.os == 'ubuntu-latest'
+        # Gated to the 3.12 floor so the fixed artifact name stays
+        # unique across the matrix; coverage-badge.yaml downloads this
+        # exact name from the triggering run.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # @v4 as 7.0.1
         with:
           name: coverage-total
           path: coverage-total.txt
 
       - name: Check coverage threshold
+        # Applies .coveragerc fail_under on every matrix cell as a
+        # cross-version regression gate; no artifact, so no collision.
         run: python -m coverage report
 
   validate-examples:

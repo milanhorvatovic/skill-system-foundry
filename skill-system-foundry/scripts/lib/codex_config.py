@@ -13,6 +13,7 @@ part of the Agent Skills specification.
 
 import os
 
+from .references import is_posix_absolute
 from .yaml_parser import parse_yaml_subset
 from .constants import (
     FILE_CODEX_CONFIG,
@@ -470,9 +471,15 @@ def _is_valid_relative_path(path: str) -> bool:
         return False
     # Normalize backslashes first so that Windows-style absolute and
     # UNC paths (e.g., \\server\share\icon.svg → //server/share/icon.svg)
-    # are detected consistently on all platforms.
+    # are detected consistently on all platforms.  ``is_posix_absolute``
+    # catches the single-leading-slash form that ``os.path.isabs`` no
+    # longer reports as absolute on Windows under Python 3.13+.
     normalized = path.replace("\\", "/")
-    if os.path.isabs(normalized) or normalized.startswith("//"):
+    if (
+        os.path.isabs(normalized)
+        or normalized.startswith("//")
+        or is_posix_absolute(normalized)
+    ):
         return False
     # Reject Windows drive-letter absolute paths (e.g., C:/icons/icon.svg)
     # which os.path.isabs() does not catch on POSIX.
