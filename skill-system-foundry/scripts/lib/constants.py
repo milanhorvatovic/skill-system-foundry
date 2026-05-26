@@ -424,9 +424,16 @@ DESCRIPTION_TRIGGER_EXAMPLE_PHRASES = tuple(_example_phrases_buffer)
 # tuples and the stopword list as a frozenset.  Fail-fast on a missing
 # or malformed section mirrors the trigger_phrases / evaluation loaders
 # above so a stale checkout errors loudly at import.
-# Presence and mapping-shape are guaranteed by validate_config_structure
-# (called above); the per-key presence, list-shape, and per-entry
-# semantic checks below (via the helpers) are unique to this loader.
+# Presence and shape of every key under structural_rules — mapping,
+# lists, and the int/float scalars — are guaranteed by
+# validate_config_structure (called above).  The helpers below add the
+# semantic layer that is unique to this loader: per-entry checks
+# (non-string / empty / duplicate phrases) and integer range bounds
+# (trigger_minimum_count >= 1, filler_lookahead_tokens >= 1,
+# length_tier_warn_below < length_tier_warn_above, vocabulary_minimum
+# >= 1).  The helpers also re-check presence and list-shape inline so
+# their error messages remain specific if the loader is ever invoked
+# without the structural validator running first.
 _structural = _skill_desc["structural_rules"]
 
 
