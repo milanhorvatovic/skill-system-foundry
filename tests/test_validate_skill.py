@@ -5896,6 +5896,99 @@ class FixNameNormalizationTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["name_fix"]["manual_fix_needed"], [])
 
+    # --- Codex F-7: name write gated on apply_error is None ---------
+
+    def test_apply_error_blocks_name_write(self) -> None:
+        # If ``apply_fixes`` raises during the path-rewrite phase, the
+        # name write must not proceed — otherwise a failing
+        # ``--fix --apply`` run can still mutate SKILL.md, widening the
+        # partial-apply state.  Patch ``apply_fixes`` to raise after
+        # arranging a SKILL.md that proposes a safe name fix.
+        from unittest import mock
+        from helpers import write_text as _wt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "myskill")
+            os.makedirs(skill_dir)
+            # Name needs normalization (uppercase) so the planner
+            # proposes a write.  A path-rewriter row is also present
+            # so apply_fixes runs and the patched raise lands.
+            write_skill_md(skill_dir, name="MySkill")
+            cap_dir = os.path.join(skill_dir, "capabilities", "demo")
+            _wt(
+                os.path.join(skill_dir, "references", "guide.md"),
+                "# Guide\n",
+            )
+            _wt(
+                os.path.join(cap_dir, "capability.md"),
+                "# Demo\n\nSee [g](references/guide.md).\n",
+            )
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_md, encoding="utf-8") as f:
+                before = f.read()
+            mtime_before = os.stat(skill_md).st_mtime_ns
+            with mock.patch(
+                "lib.path_rewriter.apply_fixes",
+                side_effect=OSError("simulated apply failure"),
+            ):
+                code, out, _ = _run_main(
+                    [
+                        "validate_skill.py", skill_dir,
+                        "--fix", "--apply", "--json",
+                    ],
+                )
+            with open(skill_md, encoding="utf-8") as f:
+                after = f.read()
+            mtime_after = os.stat(skill_md).st_mtime_ns
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        self.assertIn("error", payload, msg=out)
+        # Name write must not have landed under the apply_error gate.
+        self.assertFalse(payload["name_fix"]["modified"])
+        # And the SKILL.md is byte-identical / mtime-unchanged.
+        self.assertEqual(after, before)
+        self.assertEqual(mtime_after, mtime_before)
+
+    # --- Copilot C-9: load_frontmatter I/O failure surfaces FAIL ----
+
+    def test_validate_skill_io_error_does_not_raise(self) -> None:
+        # An unreadable SKILL.md must surface as a structured FAIL
+        # finding, not propagate as an OSError traceback.  Mock the
+        # ``load_frontmatter`` symbol the validator imports so the
+        # filesystem layer is exercised at the right boundary.
+        from unittest import mock
+        from helpers import write_text as _wt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: my-skill\ndescription: d\n---\n\n# Body\n",
+            )
+            # Patch the name where ``validate_skill`` looked it up —
+            # ``from lib.frontmatter import load_frontmatter`` rebinds
+            # the symbol in ``validate_skill``'s namespace, so patching
+            # ``lib.frontmatter.load_frontmatter`` would miss the
+            # already-bound reference.
+            import validate_skill as _vs
+            with mock.patch.object(
+                _vs, "load_frontmatter",
+                side_effect=OSError("simulated read failure"),
+            ):
+                code, out, _ = _run_main(
+                    ["validate_skill.py", skill_dir, "--json"],
+                )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        self.assertFalse(payload["success"])
+        # The FAIL describes the I/O failure rather than a traceback.
+        fails = payload["errors"]["failures"]
+        self.assertTrue(any(
+            "cannot read SKILL.md" in t and "simulated read failure" in t
+            for t in fails
+        ), msg=f"failures={fails!r}")
+
 
 if __name__ == "__main__":
     unittest.main()

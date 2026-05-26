@@ -898,5 +898,71 @@ class WriteCRLFNormalizationTests(unittest.TestCase):
         self.assertNotIn(b"\r\n", raw)
 
 
+# ===================================================================
+# Missing closing ``---`` delimiter — Codex follow-up F-8.  The planner
+# and line rewriter must treat ``split_frontmatter`` returning
+# ``(frontmatter, None)`` as a structural failure and refuse rather
+# than rewrite a SKILL.md the parser cannot bound.
+# ===================================================================
+
+
+class MissingClosingDelimiterTests(unittest.TestCase):
+    def test_plan_refuses_missing_closing_delimiter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            # Opening delimiter only — no closing ``---`` line.
+            write_text(path, "---\nname: My_Skill\ndescription: d\n# body\n")
+            new_name, applied, manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertEqual(manual, [])
+        self.assertEqual(owned, [])
+        self.assertTrue(any(
+            "no closing '---' delimiter" in f for f in errors
+        ), msg=f"errors={errors!r}")
+
+    def test_rewrite_line_returns_none_on_missing_closing_delimiter(self) -> None:
+        # The line rewriter itself enforces the same guard so a direct
+        # ``write_name_fix`` call on a malformed SKILL.md is a no-op.
+        content = "---\nname: My_Skill\ndescription: d\n# body without closer\n"
+        self.assertIsNone(rewrite_name_line(content, "my-skill"))
+
+
+# ===================================================================
+# Inline-# alignment with yaml_parser — Copilot follow-up C-8.
+# ``yaml_parser._strip_inline_comment`` only flags ``#`` when preceded
+# by a *space*; the detector must match so the rewriter is not
+# stricter than the parser.
+# ===================================================================
+
+
+class InlineCommentAlignmentTests(unittest.TestCase):
+    def test_tab_before_hash_is_not_a_comment_marker(self) -> None:
+        # ``name: invalid\t#bar`` — yaml_parser treats the value as
+        # ``invalid\t#bar`` (no comment stripped because the rule is
+        # space-only).  The detector must agree, leaving the
+        # comment-syntax refusal silent.  The candidate is invalid
+        # regardless, so the planner refuses via the residual gate
+        # (with a different manual message), but the rewriter's
+        # quote/comment guard does not fire.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "invalid-bar")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: invalid\t#bar\ndescription: d\n---\n\n# Body\n",
+            )
+            _new_name, _applied, manual, _errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        # The comment-syntax manual finding must NOT fire on tab-#.
+        self.assertFalse(any("inline '#' comment" in f for f in manual))
+
+
 if __name__ == "__main__":
     unittest.main()
