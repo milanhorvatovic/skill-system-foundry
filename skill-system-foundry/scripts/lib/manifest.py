@@ -415,13 +415,17 @@ def update_manifest_for_skill(
     try:
         manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
-        warning = f"{exc} — skipping manifest update"
+        # Normalize any embedded path inside the exception message so the
+        # warning carries posix separators across platforms (the parser
+        # raises with the raw path it was handed).
+        msg = str(exc).replace(manifest_path, to_posix(manifest_path))
+        warning = f"{msg} — skipping manifest update"
         return False, warning, created_manifest, findings
 
     if has_skill_conflict(manifest, name):
         warning = (
             f"Skill '{name}' already exists in "
-            f"{manifest_path} — skipping manifest update"
+            f"{to_posix(manifest_path)} — skipping manifest update"
         )
         return False, warning, created_manifest, findings
 
@@ -434,8 +438,8 @@ def update_manifest_for_skill(
     findings.extend(emit_findings)
     if has_emit_corruption(emit_findings):
         warning = (
-            f"Manifest update wrote an invalid manifest at {manifest_path} "
-            f"— inspect findings and repair the file"
+            f"Manifest update wrote an invalid manifest at "
+            f"{to_posix(manifest_path)} — inspect findings and repair the file"
         )
         return False, warning, created_manifest, findings
     return True, None, created_manifest, findings
@@ -494,13 +498,17 @@ def update_manifest_for_role(
     try:
         manifest = read_manifest(manifest_path, findings)
     except ManifestParseError as exc:
-        warning = f"{exc} — skipping manifest update"
+        # Normalize any embedded path inside the exception message so the
+        # warning carries posix separators across platforms (the parser
+        # raises with the raw path it was handed).
+        msg = str(exc).replace(manifest_path, to_posix(manifest_path))
+        warning = f"{msg} — skipping manifest update"
         return False, warning, created_manifest, findings
 
     if has_role_conflict(manifest, group, name):
         warning = (
             f"Role '{name}' in group '{group}' already exists in "
-            f"{manifest_path} — skipping manifest update"
+            f"{to_posix(manifest_path)} — skipping manifest update"
         )
         return False, warning, created_manifest, findings
 
@@ -513,8 +521,8 @@ def update_manifest_for_role(
     findings.extend(emit_findings)
     if has_emit_corruption(emit_findings):
         warning = (
-            f"Manifest update wrote an invalid manifest at {manifest_path} "
-            f"— inspect findings and repair the file"
+            f"Manifest update wrote an invalid manifest at "
+            f"{to_posix(manifest_path)} — inspect findings and repair the file"
         )
         return False, warning, created_manifest, findings
     return True, None, created_manifest, findings
