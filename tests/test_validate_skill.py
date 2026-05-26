@@ -6116,6 +6116,45 @@ class FixNameNormalizationTests(unittest.TestCase):
             for f in payload["name_fix"]["manual_fix_needed"]
         ))
 
+    # --- Codex F-16: description-blocker filter anchored to prefix --
+
+    def test_dir_mismatch_for_name_description_still_blocks(self) -> None:
+        # A SKILL.md whose normalized ``name`` is the literal value
+        # ``description`` in a non-matching directory must NOT be
+        # auto-applied: the dir-mismatch manual finding embeds the
+        # value in quotes (``'name' ('description') does not match …``)
+        # so a bare-substring scan for ``'description'`` would
+        # mis-classify it as exit-gating-only and let the write land.
+        # The prefix-anchored blocker filter keeps dir-mismatch as a
+        # name-rewrite blocker even when the value happens to be
+        # ``description``.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "other-dir")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="Description")
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_md, encoding="utf-8") as f:
+                before = f.read()
+            mtime_before = os.stat(skill_md).st_mtime_ns
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+            with open(skill_md, encoding="utf-8") as f:
+                after = f.read()
+            mtime_after = os.stat(skill_md).st_mtime_ns
+        payload = json.loads(out)
+        # Exit 1 because of the dir-mismatch manual finding.
+        self.assertEqual(code, 1, msg=out)
+        # File untouched — mtime unchanged.
+        self.assertEqual(after, before)
+        self.assertEqual(mtime_after, mtime_before)
+        # JSON reflects the gated apply.
+        self.assertFalse(payload["name_fix"]["modified"], msg=out)
+        self.assertTrue(any(
+            "does not match directory" in f
+            for f in payload["name_fix"]["manual_fix_needed"]
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
