@@ -1048,11 +1048,14 @@ _WITH_FLAG_MAP = {
 
 # All flags recognised per component type.  --root and --json are
 # stripped before component dispatch and are not included here.
-# --update-manifest is included so it appears in "Allowed:" error messages.
+# --update-manifest and --dry-run are also stripped, but are included so
+# they appear in the "Allowed:" error message when a user mistypes a
+# flag — leaving valid flags out of the diagnostic misleads consumers
+# troubleshooting arguments.
 _KNOWN_FLAGS = {
-    "skill": {"--router", "--with-references", "--with-scripts", "--with-assets", "--update-manifest"},
-    "capability": {"--with-references", "--update-manifest"},
-    "role": {"--update-manifest"},
+    "skill": {"--router", "--with-references", "--with-scripts", "--with-assets", "--update-manifest", "--dry-run"},
+    "capability": {"--with-references", "--update-manifest", "--dry-run"},
+    "role": {"--update-manifest", "--dry-run"},
 }
 
 

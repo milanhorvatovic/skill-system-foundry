@@ -3343,6 +3343,12 @@ class CliErrorSchemaTests(unittest.TestCase):
         self.assertTrue(data["dry_run"])
         self.assertIn("planned", data)
 
+    def test_unknown_flag_allowed_message_lists_dry_run(self) -> None:
+        """The 'Allowed:' diagnostic includes --dry-run as a valid flag."""
+        proc = _run(["skill", "demo", "--bogus"], cwd=REPO_ROOT)
+        self.assertEqual(proc.returncode, 1, msg=proc.stdout + proc.stderr)
+        self.assertIn("--dry-run", proc.stdout)
+
 
 class DryRunJsonShapeTests(unittest.TestCase):
     """JSON payload shape for --dry-run runs."""
