@@ -5985,10 +5985,15 @@ class FixNameNormalizationTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(code, 1, msg=out)
         self.assertFalse(payload["success"])
-        # The FAIL describes the I/O failure rather than a traceback.
+        # The FAIL describes the I/O failure rather than a traceback,
+        # and includes the failing path so CI logs can identify the
+        # skill (Copilot follow-up C-15).
         fails = payload["errors"]["failures"]
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
         self.assertTrue(any(
-            "cannot read SKILL.md" in t and "simulated read failure" in t
+            "cannot read SKILL.md" in t
+            and "simulated read failure" in t
+            and skill_md_path.replace(os.sep, "/") in t
             for t in fails
         ), msg=f"failures={fails!r}")
 

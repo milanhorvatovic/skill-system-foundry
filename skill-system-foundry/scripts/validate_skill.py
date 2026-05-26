@@ -839,9 +839,13 @@ def validate_skill(
     try:
         frontmatter, body, scalar_findings = load_frontmatter(skill_md)
     except (OSError, UnicodeError) as exc:
+        # Include the full path so CI logs and nested-tree audits can
+        # identify which skill's entry file failed to load — a bare
+        # ``cannot read SKILL.md`` is ambiguous across a deployed
+        # ``skills/`` tree.
         errors.append(
-            f"{LEVEL_FAIL}: [foundry] cannot read {entry_filename} "
-            f"({exc.__class__.__name__}: {exc})"
+            f"{LEVEL_FAIL}: [foundry] cannot read {entry_filename} at "
+            f"{to_posix(skill_md)} ({exc.__class__.__name__}: {exc})"
         )
         return errors, passes
 
@@ -1269,11 +1273,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "reference rewrites into canonical file-relative form (per "
             "references/path-resolution.md) AND safe SKILL.md 'name' "
             "frontmatter normalization (lowercase; underscores and "
-            "spaces to hyphens).  Dry-run by default — no files are "
-            "modified.  Ambiguous problems (name does not match "
-            "directory; description over the length limit) are reported "
-            "as 'manual fix needed' and never auto-applied.  Use --fix "
-            "--apply to write the changes."
+            "in-value whitespace — spaces and tabs — to hyphens).  "
+            "Dry-run by default — no files are modified.  Ambiguous "
+            "problems (name does not match directory; description over "
+            "the length limit) are reported as 'manual fix needed' and "
+            "never auto-applied.  Use --fix --apply to write the changes."
         ),
     )
     parser.add_argument(
