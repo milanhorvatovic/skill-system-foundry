@@ -964,5 +964,62 @@ class InlineCommentAlignmentTests(unittest.TestCase):
         self.assertFalse(any("inline '#' comment" in f for f in manual))
 
 
+# ===================================================================
+# Unusual-but-valid YAML formatting (whitespace before ``:``) must not
+# fail the run when no rewrite is needed — Copilot follow-up C-10.
+# Rewrite-mechanics guards only fire when ``new_name is not None``.
+# ===================================================================
+
+
+class UnusualButValidYAMLTests(unittest.TestCase):
+    def test_space_before_colon_valid_name_is_silent(self) -> None:
+        # ``name : my-skill`` (with space before colon) — valid YAML
+        # mapping that ``parse_yaml_subset`` accepts, but the line
+        # regex requires ``name:`` with no leading whitespace.  When
+        # the parsed value is already valid (no rewrite needed) the
+        # planner must stay silent rather than emit a "not on its own
+        # line" error that would fail ``--fix``.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname : my-skill\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertEqual(manual, [])
+        self.assertEqual(errors, [])
+        self.assertEqual(owned, [])
+
+    def test_space_before_colon_invalid_name_refuses_with_error(self) -> None:
+        # ``name : MySkill`` — parser sees ``MySkill``, validate_name
+        # FAILs.  compute_name_fix would propose ``myskill``, but the
+        # line regex cannot target ``name : MySkill`` for rewrite, so
+        # the planner refuses and surrenders ownership; the regular
+        # validator's FAILs flow through.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "myskill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname : MySkill\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, _manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertTrue(any(
+            "not on its own line" in e for e in errors
+        ), msg=f"errors={errors!r}")
+        self.assertEqual(owned, [])
+
+
 if __name__ == "__main__":
     unittest.main()

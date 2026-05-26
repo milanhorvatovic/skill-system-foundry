@@ -5990,5 +5990,84 @@ class FixNameNormalizationTests(unittest.TestCase):
         ), msg=f"failures={fails!r}")
 
 
+    # --- Codex F-10: SKILL.md not double-counted in modified --------
+
+    def test_modified_count_no_double_count_when_skill_md_in_both(self) -> None:
+        # When the path-rewriter rows include SKILL.md *and* the name
+        # fix also writes SKILL.md, ``modified`` must report the file
+        # once.  Constructing a real-world case where ``compute_recommended_replacement``
+        # rewrites SKILL.md itself is awkward (skill-root form ==
+        # file-relative form for the root file), so we directly probe
+        # the modified-count gate by forcing the rewriter to return a
+        # SKILL.md row and the path-apply to "modify" 1 file.
+        from unittest import mock
+        from helpers import write_text as _wt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "myskill")
+            os.makedirs(skill_dir)
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            # Name normalization needed (MySkill → myskill).
+            write_skill_md(skill_dir, name="MySkill")
+            row = {
+                "file": skill_md,
+                "file_rel": "SKILL.md",
+                "original": "ref.md",
+                "replacement": "./ref.md",
+                "line": 1,
+            }
+            # ``validate_skill`` imports these inside the ``--fix``
+            # branch, so the bound name lives in the ``lib.path_rewriter``
+            # module — patch there.
+            from lib import path_rewriter as _pr
+            with (
+                mock.patch.object(
+                    _pr, "find_fixable_references",
+                    return_value=[row],
+                ),
+                mock.patch.object(
+                    _pr, "find_ambiguous_legacy_refs",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    _pr, "apply_fixes",
+                    return_value=1,
+                ),
+            ):
+                code, out, _ = _run_main(
+                    [
+                        "validate_skill.py", skill_dir,
+                        "--fix", "--apply", "--json",
+                    ],
+                )
+        payload = json.loads(out)
+        # Both fix categories ran: rewriter "modified" SKILL.md (mock)
+        # and the name fix also rewrote SKILL.md.
+        self.assertTrue(payload["name_fix"]["modified"], msg=out)
+        # ``modified`` reports SKILL.md exactly once.
+        self.assertEqual(payload["modified"], 1, msg=out)
+
+    # --- Copilot C-10: unusual-but-valid YAML does not fail --fix ---
+
+    def test_space_before_colon_valid_name_exits_zero(self) -> None:
+        # ``name : my-skill`` — valid YAML, valid name, no rewrite
+        # needed → --fix must exit 0.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            from helpers import write_text as _wt
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname : my-skill\ndescription: A short demo.\n---\n\n# Body\n",
+            )
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 0, msg=out)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["name_fix"]["errors"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
