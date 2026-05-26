@@ -92,11 +92,25 @@ from .yaml_parser import parse_yaml_subset
 # terminator (group ``trailing``).  Anchored at line start so a ``name:``
 # appearing inside a folded ``description`` block (which would be
 # indented) is never matched.  ``re.MULTILINE`` lets ``^``/``$`` bind to
-# physical line boundaries within the frontmatter text.
+# physical line boundaries within the frontmatter text.  The colon must
+# be flush against ``name`` (no leading whitespace) because the
+# rewriter does an exact line replacement — see ``_RE_NAME_KEY_ANY``
+# below for the relaxed regex used by the duplicate-key guard.
 _RE_NAME_LINE = re.compile(
     r"^(?P<prefix>name:[ \t]*)(?P<value>.*?)(?P<trailing>[ \t]*)$",
     re.MULTILINE,
 )
+
+# Matches *any* top-level ``name`` mapping key the parser would
+# accept, including ``name :`` with whitespace before the colon.  Used
+# only by the duplicate-key guard so a mixed-form pair (``name: First``
+# + ``name : Last``) cannot bypass detection — ``parse_yaml_subset``
+# would silently pick the last entry while the line rewriter would
+# touch the first, producing a false successful fix.  This regex is
+# not used for the rewrite span because the rewrite must preserve the
+# exact ``name:`` line shape, which the strict ``_RE_NAME_LINE`` above
+# captures.
+_RE_NAME_KEY_ANY = re.compile(r"^name[ \t]*:", re.MULTILINE)
 
 
 # Marker substring used to recognise the ``validate_name`` dir-mismatch
@@ -291,15 +305,18 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
     fm_end = fm_start + len(frontmatter_raw)
     fm_text = content[fm_start:fm_end]
 
+    # Defense-in-depth duplicate-key guard.  The planner already
+    # refuses duplicate-key frontmatter (and uses ``_RE_NAME_KEY_ANY``
+    # to catch mixed-form pairs like ``name: First`` + ``name : Last``
+    # that the strict regex would miss), but ``rewrite_name_line`` is
+    # also called directly from tests and any future caller, so it
+    # repeats the same relaxed check here.  Touching the first strict
+    # match while ``parse_yaml_subset`` reads a later relaxed match
+    # would silently rewrite the wrong line.
+    if len(_RE_NAME_KEY_ANY.findall(fm_text)) > 1:
+        return None
     raw_matches = list(_RE_NAME_LINE.finditer(fm_text))
     if not raw_matches:
-        return None
-    if len(raw_matches) > 1:
-        # Defense-in-depth: the planner already refuses duplicate-key
-        # frontmatter, but the line rewriter is also called directly
-        # from tests and any future caller.  Touching the first match
-        # while ``parse_yaml_subset`` reads the last would silently
-        # rewrite the wrong line.
         return None
     raw_value = raw_matches[0].group("value")
     if _raw_value_blocks_rewrite(raw_value):
@@ -409,20 +426,25 @@ def compute_name_fix_plan(
         )
         return None, applied, manual, errors, owned
 
-    # Duplicate ``name:`` keys are unambiguously broken frontmatter
+    # Duplicate ``name`` keys are unambiguously broken frontmatter
     # regardless of whether the planner would propose a rewrite — the
     # parser silently picks one and the rewriter would touch the
     # other.  The error fires up front, before any other reasoning.
-    raw_value_matches = list(_RE_NAME_LINE.finditer(frontmatter_raw))
-    if len(raw_value_matches) > 1:
+    # The duplicate guard uses the relaxed ``_RE_NAME_KEY_ANY`` regex
+    # so a mixed-form pair (``name: First`` + ``name : Last``) cannot
+    # bypass detection — the strict ``_RE_NAME_LINE`` below is still
+    # used to locate the *rewriteable* line for the apply path.
+    name_key_count = len(_RE_NAME_KEY_ANY.findall(frontmatter_raw))
+    if name_key_count > 1:
         errors.append(
             f"{LEVEL_FAIL}: [foundry] multiple 'name:' keys in "
-            f"frontmatter ({len(raw_value_matches)} found) — "
+            f"frontmatter ({name_key_count} found) — "
             "parse_yaml_subset would use the last and the line "
             "rewriter would touch the first; remove the duplicates by "
             "hand"
         )
         return None, applied, manual, errors, owned
+    raw_value_matches = list(_RE_NAME_LINE.finditer(frontmatter_raw))
     raw_value_match = raw_value_matches[0] if raw_value_matches else None
 
     current_name = parsed_fm["name"]
@@ -460,9 +482,11 @@ def compute_name_fix_plan(
         if _raw_value_blocks_rewrite(raw_value):
             manual.append(
                 f"{LEVEL_FAIL}: [spec] manual fix needed — the 'name:' "
-                "line carries a quoted scalar or an inline '#' "
-                "comment; the minimal line rewriter would silently "
-                "strip that syntax — normalize the value by hand"
+                "line carries a quoted scalar, an inline '#' comment, "
+                "or a block-scalar header (|, >, |-, >-, |+, >+); the "
+                "minimal line rewriter would silently strip that "
+                "syntax or leave the indented scalar body behind — "
+                "normalize the value by hand"
             )
             return None, [], manual, errors, []
 
@@ -552,16 +576,28 @@ def _raw_value_blocks_rewrite(raw_value: str) -> bool:
     The minimal line rewriter cannot preserve a quoted scalar wrapper or
     an inline ``# comment`` — applying it would silently strip both.
     Detect either form on the captured value span so the planner can
-    refuse to rewrite rather than lose the source bytes.  ``#`` is only
-    flagged when preceded by a space, matching the exact rule
-    ``yaml_parser._strip_inline_comment`` applies (``text[i - 1] == " "``);
-    a ``#`` preceded by a tab or embedded in a plain scalar
-    (``name: foo#bar`` → YAML value ``foo#bar``) is left for the parser
-    to decide, since the parser treats it as part of the scalar and the
-    rewriter must not be stricter than the parser's view of "what is a
-    comment".
+    refuse to rewrite rather than lose the source bytes.
+
+    Block-scalar headers (``|``, ``>``, plus the chomping-modifier
+    variants ``|-`` / ``>-`` / ``|+`` / ``>+``) appear on the ``name:``
+    line alone, with the scalar text indented on the following lines.
+    ``parse_yaml_subset`` assembles those into an ordinary string, so
+    the planner would otherwise propose a rewrite — and the line-only
+    rewriter would touch *only* the header line, leaving the indented
+    body content as stray YAML the parser then re-reads as separate
+    keys.  Block-scalar headers are therefore non-rewriteable.
+
+    ``#`` is only flagged when preceded by a space, matching the exact
+    rule ``yaml_parser._strip_inline_comment`` applies
+    (``text[i - 1] == " "``); a ``#`` preceded by a tab or embedded in
+    a plain scalar (``name: foo#bar`` → YAML value ``foo#bar``) is left
+    for the parser to decide, since the parser treats it as part of
+    the scalar and the rewriter must not be stricter than the parser's
+    view of "what is a comment".
     """
     trimmed = raw_value.strip()
+    if trimmed in ("|", ">", "|-", ">-", "|+", ">+"):
+        return True
     if (
         len(trimmed) >= 2
         and trimmed[0] in ('"', "'")
