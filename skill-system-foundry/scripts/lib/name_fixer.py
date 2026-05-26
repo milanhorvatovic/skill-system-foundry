@@ -6,25 +6,30 @@ corrected value is unambiguous: lowercase the letters, and replace
 ``_``, space, and tab with ``-``.  This module computes that
 correction and applies it as a *minimal, targeted textual replacement*
 of the single ``name:`` value line in the on-disk ``SKILL.md`` — the
-rest of the file (the remaining frontmatter and the entire body) is
-preserved verbatim, with one caveat for CRLF checkouts (below).
+rest of the file (the remaining frontmatter and the entire body) keeps
+its content unchanged.  Line endings round-trip through the helpers
+differently depending on the call path; see the note below.
 
 The foundry's stdlib-only YAML subset parser does **not** round-trip
 (comments, quoting style, key order, and block-scalar layout are lost on
 re-serialisation), so this module never re-serialises the frontmatter.
 It rewrites exactly one line.
 
-**Line-ending normalization.** ``write_name_fix`` reads SKILL.md in
-text mode (universal-newline translation collapses ``\\r\\n`` to
-``\\n`` on input) and writes back with ``newline="\\n"`` per the
-repo-wide LF-on-write convention (see ``CLAUDE.md``).  A CRLF-on-disk
-SKILL.md is therefore normalized to LF when any safe fix lands; the
-"preserve the rest of the file" guarantee holds at the *content* level
-(every body byte and every untouched frontmatter byte is preserved
-verbatim) but not at the *line-ending* level on a CRLF checkout.  The
-``--apply`` path is otherwise a no-op when the computed value already
-matches the on-disk bytes, so an LF-only checkout is touched only when
-the safe fix actually changes the ``name:`` value.
+**Line endings.** :func:`rewrite_name_line` operates directly on the
+input string; the regex captures the rewritten line's ``\\r?`` so a
+CRLF source line round-trips its terminator and an LF source line
+stays LF — direct callers see the full file's line endings preserved.
+:func:`write_name_fix` reads SKILL.md in text mode (universal-newline
+translation collapses ``\\r\\n`` to ``\\n`` on input) and writes back
+with ``newline="\\n"`` per the repo-wide LF-on-write convention (see
+``CLAUDE.md``); a CRLF-on-disk SKILL.md is therefore normalized to LF
+when any safe fix lands.  The content-preservation guarantee — every
+body line's text and every untouched frontmatter line's text — holds
+on both paths; only the line-ending shape of the surrounding file
+differs between them.  The ``--apply`` path is otherwise a no-op when
+the computed value already matches the on-disk bytes, so an LF-only
+checkout is touched only when the safe fix actually changes the
+``name:`` value.
 
 Three classes of problem are intentionally **not** auto-fixed because
 the correct resolution requires human judgement or because the safe
@@ -85,19 +90,34 @@ from .validation import validate_name
 from .yaml_parser import parse_yaml_subset
 
 
-# Matches a frontmatter ``name:`` line and captures the three spans the
+# Matches a frontmatter ``name:`` line and captures the four spans the
 # rewriter must preserve around the value: the ``name:`` key plus the
 # whitespace after the colon (group ``prefix``), the value itself
-# (group ``value``), and any trailing whitespace before the line
-# terminator (group ``trailing``).  Anchored at line start so a ``name:``
-# appearing inside a folded ``description`` block (which would be
-# indented) is never matched.  ``re.MULTILINE`` lets ``^``/``$`` bind to
-# physical line boundaries within the frontmatter text.  The colon must
-# be flush against ``name`` (no leading whitespace) because the
-# rewriter does an exact line replacement — see ``_RE_NAME_KEY_ANY``
-# below for the relaxed regex used by the duplicate-key guard.
+# (group ``value``), any trailing whitespace before the line terminator
+# (group ``trailing``), and an optional carriage return so a CRLF line
+# round-trips its terminator (group ``eol``).  Anchored at line start so
+# a ``name:`` appearing inside a folded ``description`` block (which
+# would be indented) is never matched.  ``re.MULTILINE`` lets ``^`` /
+# ``$`` bind to physical line boundaries within the frontmatter text;
+# ``$`` matches just before ``\n``, so the ``value`` group is
+# constrained to ``[^\r\n]*?`` to keep a stray ``\r`` out of it.
+# Without the explicit ``eol`` capture the ``\r`` from a CRLF
+# terminator would otherwise be left dangling outside the substitution
+# (the lazy ``.*?`` previously consumed it) and the rewritten line
+# would lose its carriage return while the rest of the file kept CRLF
+# — a contract violation for direct ``rewrite_name_line`` callers
+# (the CLI path goes through ``write_name_fix``'s text-mode read,
+# which strips ``\r`` before this regex sees the content; but the
+# helper's documented "preserves the surrounding line shape" contract
+# applies to direct callers too).  The colon must be flush against
+# ``name`` (no leading whitespace) because the rewriter does an exact
+# line replacement — see ``_RE_NAME_KEY_ANY`` below for the relaxed
+# regex used by the duplicate-key guard.
 _RE_NAME_LINE = re.compile(
-    r"^(?P<prefix>name:[ \t]*)(?P<value>.*?)(?P<trailing>[ \t]*)$",
+    r"^(?P<prefix>name:[ \t]*)"
+    r"(?P<value>[^\r\n]*?)"
+    r"(?P<trailing>[ \t]*)"
+    r"(?P<eol>\r?)$",
     re.MULTILINE,
 )
 
@@ -272,10 +292,14 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
     """Return *content* with only the frontmatter ``name:`` value replaced.
 
     The replacement is line-targeted: the ``name:`` key, the spacing
-    after the colon, and any trailing whitespace are preserved exactly;
-    only the value token changes.  Everything outside that one line —
-    the rest of the frontmatter and the entire body — is returned
-    byte-for-byte.
+    after the colon, any trailing whitespace, and the line terminator
+    (``\\r?\\n``) are all preserved exactly; only the value token
+    changes.  Everything outside that one line — the rest of the
+    frontmatter and the entire body — is returned byte-for-byte,
+    including the file's existing line-ending shape (LF or CRLF).
+    The end-to-end ``write_name_fix`` path normalizes to LF separately
+    via ``newline="\\n"`` on write — see the module docstring's *Line
+    endings* note.
 
     Returns the rewritten text, or ``None`` when the ``name:`` line
     cannot be located inside the frontmatter block (no frontmatter, no
@@ -332,7 +356,14 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
         if replaced:
             return match.group(0)
         replaced = True
-        return f"{match.group('prefix')}{new_name}{match.group('trailing')}"
+        # ``eol`` is the optional ``\r`` captured by ``_RE_NAME_LINE``
+        # so a CRLF source line keeps its carriage return; for LF
+        # input it is the empty string and the substitution is a
+        # no-op on line endings.
+        return (
+            f"{match.group('prefix')}{new_name}"
+            f"{match.group('trailing')}{match.group('eol')}"
+        )
 
     new_fm = _RE_NAME_LINE.sub(_sub, fm_text, count=1)
     if not replaced:
@@ -538,10 +569,12 @@ def write_name_fix(
     The *apply* half of the unified flow — called only under
     ``--fix --apply`` with a *new_name* already computed by
     :func:`compute_name_fix_plan`.  Rewrites the single ``name:`` line
-    in place (every body byte and every untouched frontmatter byte is
-    preserved verbatim, written with ``newline="\\n"`` per the
-    repo-wide LF-on-write convention — see the module docstring's
-    note on CRLF-on-disk checkouts) and returns ``(modified, errors)``:
+    in place; every body line's content and every untouched
+    frontmatter line's content is preserved.  The file is written with
+    ``newline="\\n"`` per the repo-wide LF-on-write convention, so a
+    CRLF-on-disk SKILL.md comes back LF-only — see the module
+    docstring's *Line endings* note for the contract on each helper.
+    Returns ``(modified, errors)``:
 
     * ``modified`` — ``True`` only when the file was actually rewritten.
     * ``errors`` — ``FAIL`` findings for an unreadable file, a
