@@ -1021,5 +1021,122 @@ class UnusualButValidYAMLTests(unittest.TestCase):
         self.assertEqual(owned, [])
 
 
+# ===================================================================
+# Block scalar name values — Codex follow-up F-12.  The rewriter only
+# touches the ``name:`` header line; a block-scalar value (``>`` /
+# ``|`` and chomping variants) carries its content on subsequent
+# indented lines and would be corrupted by a header-only rewrite.
+# ===================================================================
+
+
+class BlockScalarNameTests(unittest.TestCase):
+    def test_folded_name_value_refuses_apply(self) -> None:
+        # ``name: >`` with an indented folded body — parse_yaml_subset
+        # assembles "MySkill", planner would propose "myskill", but
+        # rewriting only the header line would leave the indented body
+        # behind as stray YAML.  The block-scalar guard refuses.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "myskill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: >\n  MySkill\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertTrue(any(
+            "block-scalar header" in f for f in manual
+        ), msg=f"manual={manual!r}")
+        self.assertEqual(owned, [])
+
+    def test_literal_name_value_refuses_apply(self) -> None:
+        # ``name: |-`` literal-style block scalar — same refusal.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "myskill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: |-\n  My_Skill\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, _applied, manual, _errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertTrue(any(
+            "block-scalar header" in f for f in manual
+        ))
+
+    def test_rewrite_line_returns_none_on_block_scalar_header(self) -> None:
+        # The line rewriter itself refuses to touch a block-scalar
+        # header line — defense-in-depth for any future caller.
+        content = (
+            "---\nname: >\n  MySkill\ndescription: d\n---\n\nbody\n"
+        )
+        self.assertIsNone(rewrite_name_line(content, "myskill"))
+
+
+# ===================================================================
+# Mixed-form duplicate name keys — Codex follow-up F-13.
+# parse_yaml_subset accepts both ``name:`` and ``name :`` (whitespace
+# before the colon), so the duplicate guard must count both forms or
+# a mixed-form pair would let the planner read the *last* parsed key
+# while the rewriter touches the *first* strict-form key.
+# ===================================================================
+
+
+class MixedFormDuplicateTests(unittest.TestCase):
+    def test_strict_plus_spaced_colon_is_duplicate(self) -> None:
+        # ``name: First`` then ``name : Last`` — the strict regex only
+        # matches the first line, so the previous guard would miss the
+        # duplicate.  The relaxed-form guard catches both.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: First_Name\nname : Last_Name\ndescription: d\n---\n\n# Body\n",
+            )
+            new_name, _applied, _manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertTrue(any(
+            "multiple 'name:' keys" in f for f in errors
+        ), msg=f"errors={errors!r}")
+        self.assertEqual(owned, [])
+
+    def test_spaced_plus_strict_colon_is_duplicate(self) -> None:
+        # And the reverse ordering — the parser would use ``Strict_Name``
+        # but the strict regex would target ``Spaced_Name`` if the
+        # duplicate check only saw the strict form.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname : Spaced_Name\nname: Strict_Name\ndescription: d\n---\n\n# Body\n",
+            )
+            new_name, _applied, _manual, errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertTrue(any(
+            "multiple 'name:' keys" in f for f in errors
+        ))
+
+    def test_rewrite_line_returns_none_on_mixed_form_duplicate(self) -> None:
+        content = (
+            "---\nname: First_Name\nname : Last_Name\ndescription: d\n---\n\nbody\n"
+        )
+        self.assertIsNone(rewrite_name_line(content, "any-value"))
+
+
 if __name__ == "__main__":
     unittest.main()
