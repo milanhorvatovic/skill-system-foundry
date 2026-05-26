@@ -1421,13 +1421,37 @@ def main() -> None:
         name_owned_fails: list[str] = []
         skill_md_for_name = os.path.join(rewrite_root, FILE_SKILL_MD)
         if os.path.isfile(skill_md_for_name):
-            (
-                name_new,
-                name_applied,
-                name_manual,
-                name_errors,
-                name_owned_fails,
-            ) = compute_name_fix_plan(skill_md_for_name)
+            # Skip the name-fix plan when the frontmatter is
+            # structurally invalid: no frontmatter delimiters, a YAML
+            # parse error, or no ``name`` key.  The regular validator
+            # already FAILs on each of those (see ``validate_skill``
+            # below) and the planner would only restate the same root
+            # cause under ``name_fix.errors`` — duplicating output and
+            # adding a second exit gate that carries no actionable fix
+            # information.  ``load_frontmatter`` is the same loader the
+            # validator uses, so the gates stay in lockstep.
+            should_plan = False
+            try:
+                fm_probe, _body_probe, _scan = load_frontmatter(
+                    skill_md_for_name,
+                )
+                should_plan = (
+                    isinstance(fm_probe, dict)
+                    and "_parse_error" not in fm_probe
+                    and "name" in fm_probe
+                )
+            except (OSError, UnicodeError):
+                # An I/O error here is also covered by the validator
+                # below; let it surface there alone.
+                should_plan = False
+            if should_plan:
+                (
+                    name_new,
+                    name_applied,
+                    name_manual,
+                    name_errors,
+                    name_owned_fails,
+                ) = compute_name_fix_plan(skill_md_for_name)
         # Validate the same tree the rewriter operates on.  In
         # capability mode the rewriter walks the enclosing skill root,
         # so the validator must too — otherwise unfixable findings or
@@ -1681,7 +1705,14 @@ def main() -> None:
                         f"'{r['original']}' → '{r['replacement']}'"
                     )
             if name_new is not None:
-                action = "Applied" if args.apply else "Would apply"
+                # Label by the actual write, not the user's intent —
+                # under ``--apply`` the name write is gated behind
+                # ``not name_manual and not name_errors`` (above), so a
+                # computed ``new_name`` can be deliberately *not*
+                # applied.  Printing "Applied" in that case would
+                # contradict the human-output narrative; the manual /
+                # error blocks below explain why the write was skipped.
+                action = "Applied" if name_modified else "Would apply"
                 print(f"\n{action} name normalization:")
                 for finding in name_applied:
                     print_error_line(finding)

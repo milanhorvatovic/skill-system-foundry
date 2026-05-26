@@ -6,12 +6,25 @@ unambiguous: lowercase the letters, and replace ``_`` / `` `` with
 ``-``.  This module computes that correction and applies it as a
 *minimal, targeted textual replacement* of the single ``name:`` value
 line in the on-disk ``SKILL.md`` — the rest of the file (the remaining
-frontmatter and the entire body) is preserved byte-for-byte.
+frontmatter and the entire body) is preserved verbatim, with one
+caveat for CRLF checkouts (below).
 
 The foundry's stdlib-only YAML subset parser does **not** round-trip
 (comments, quoting style, key order, and block-scalar layout are lost on
 re-serialisation), so this module never re-serialises the frontmatter.
 It rewrites exactly one line.
+
+**Line-ending normalization.** ``write_name_fix`` reads SKILL.md in
+text mode (universal-newline translation collapses ``\\r\\n`` to
+``\\n`` on input) and writes back with ``newline="\\n"`` per the
+repo-wide LF-on-write convention (see ``CLAUDE.md``).  A CRLF-on-disk
+SKILL.md is therefore normalized to LF when any safe fix lands; the
+"preserve the rest of the file" guarantee holds at the *content* level
+(every body byte and every untouched frontmatter byte is preserved
+verbatim) but not at the *line-ending* level on a CRLF checkout.  The
+``--apply`` path is otherwise a no-op when the computed value already
+matches the on-disk bytes, so an LF-only checkout is touched only when
+the safe fix actually changes the ``name:`` value.
 
 Three classes of problem are intentionally **not** auto-fixed because
 the correct resolution requires human judgement or because the safe
@@ -405,19 +418,28 @@ def compute_name_fix_plan(
         )
         return None, applied, manual, errors, owned
 
+    new_name, applied, fix_manual, fix_owned = compute_name_fix(
+        current_name, dir_name,
+    )
+
+    # Quote / inline-comment syntax on the raw ``name:`` line only
+    # blocks the minimal-line rewriter — a perfectly valid quoted name
+    # (``name: "my-skill"``) does not need a rewrite at all, and
+    # ``--fix`` must not fail a conforming SKILL.md just because its
+    # author chose a quoted scalar.  Refuse only when ``compute_name_fix``
+    # is actually proposing a write (``new_name`` is not ``None``); in
+    # that case discard the would-be fix and surrender ownership so the
+    # regular validator's FAILs flow through unchanged.
     raw_value = raw_value_match.group("value")
-    if _raw_value_blocks_rewrite(raw_value):
+    if new_name is not None and _raw_value_blocks_rewrite(raw_value):
         manual.append(
             f"{LEVEL_FAIL}: [spec] manual fix needed — the 'name:' "
             "line carries a quoted scalar or an inline '#' comment; "
             "the minimal line rewriter would silently strip that "
             "syntax — normalize the value by hand"
         )
-        return None, applied, manual, errors, owned
+        return None, [], manual, errors, []
 
-    new_name, applied, fix_manual, fix_owned = compute_name_fix(
-        current_name, dir_name,
-    )
     manual.extend(fix_manual)
     owned.extend(fix_owned)
 
@@ -446,9 +468,11 @@ def write_name_fix(
 
     The *apply* half of the unified flow — called only under
     ``--fix --apply`` with a *new_name* already computed by
-    :func:`compute_name_fix_plan`.  Rewrites the single ``name:`` line in
-    place (preserving the rest of the file byte-for-byte, written with
-    ``newline="\\n"``) and returns ``(modified, errors)``:
+    :func:`compute_name_fix_plan`.  Rewrites the single ``name:`` line
+    in place (every body byte and every untouched frontmatter byte is
+    preserved verbatim, written with ``newline="\\n"`` per the
+    repo-wide LF-on-write convention — see the module docstring's
+    note on CRLF-on-disk checkouts) and returns ``(modified, errors)``:
 
     * ``modified`` — ``True`` only when the file was actually rewritten.
     * ``errors`` — ``FAIL`` findings for an unreadable file, a
