@@ -693,5 +693,104 @@ class ParsedNameValueTests(unittest.TestCase):
         )
         self.assertIsNone(rewrite_name_line(content, "myskill"))
 
+
+# ===================================================================
+# Duplicate ``name:`` keys — Codex + Copilot follow-up.
+# ``parse_yaml_subset`` resolves to the *last* mapping entry but a
+# line-targeted rewrite would touch the *first*, so the planner refuses
+# the fix outright rather than rewrite the wrong line and exit clean.
+# ===================================================================
+
+
+class DuplicateNameKeyTests(unittest.TestCase):
+    """Frontmatter with duplicate ``name:`` keys is refused by both the
+    planner and the line rewriter — the parser and the rewriter would
+    target different lines, which would leave the effective ``name``
+    unchanged while the planner owned the validator FAILs.
+    """
+
+    def test_plan_refuses_duplicate_name_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            # parse_yaml_subset reads the last ``name:`` value
+            # (``Last_Name``), but ``_RE_NAME_LINE.search`` would
+            # target the first physical line (``First_Name``) — the
+            # planner must refuse instead of rewriting the wrong line.
+            write_text(
+                path,
+                "---\nname: First_Name\nname: Last_Name\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            new_name, applied, _manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertTrue(any(
+            "multiple 'name:' keys" in f for f in errors
+        ), msg=f"errors={errors!r}")
+        # No ownership — the validator FAILs flow through unchanged so
+        # the caller's exit gate fires.
+        self.assertEqual(owned, [])
+
+    def test_rewrite_line_returns_none_on_duplicate_keys(self) -> None:
+        # Defense-in-depth: the line rewriter itself refuses to touch a
+        # frontmatter block carrying duplicate ``name:`` lines.
+        content = (
+            "---\nname: First_Name\nname: Last_Name\ndescription: d\n---\n\nbody\n"
+        )
+        self.assertIsNone(rewrite_name_line(content, "any-value"))
+
+
+# ===================================================================
+# Folded / literal block scalar descriptions — Copilot follow-up.
+# The planner uses the parsed scalar so the over-length manual finding
+# fires regardless of scalar style, keeping the ``--fix`` help text's
+# "manual fix needed" claim honest.
+# ===================================================================
+
+
+class FoldedDescriptionTests(unittest.TestCase):
+    def test_literal_block_overlong_description_is_manual(self) -> None:
+        # ``description: |-`` literal-style block scalar over the limit
+        # must surface as manual the same as inline / folded forms.
+        long_body = "x" * (MAX_DESCRIPTION_CHARS + 5)
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = _write_skill(
+                sdir,
+                f"name: my-skill\ndescription: |-\n  {long_body}",
+            )
+            _new_name, _applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertTrue(any(
+            "manual fix needed" in f and "description" in f for f in manual
+        ))
+        self.assertTrue(any(
+            "'description' exceeds" in f for f in owned
+        ))
+
+    def test_folded_description_within_limit_no_manual(self) -> None:
+        # Folded but within the limit — no manual finding, planner is
+        # silent on description.
+        short_body = "x" * 50
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = _write_skill(
+                sdir,
+                f"name: my-skill\ndescription: >\n  {short_body}",
+            )
+            _new_name, _applied, manual, _errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertFalse(any("description" in f for f in manual))
+
+
 if __name__ == "__main__":
     unittest.main()

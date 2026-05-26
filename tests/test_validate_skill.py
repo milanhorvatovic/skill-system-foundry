@@ -5766,6 +5766,47 @@ class FixNameNormalizationTests(unittest.TestCase):
         self.assertEqual(payload["modified"], 1)
         self.assertEqual(payload["fixes"], [])
 
+    # --- Codex + Copilot follow-up: duplicate name: keys -------------
+
+    def test_duplicate_name_keys_refuses_apply(self) -> None:
+        # Frontmatter with two ``name:`` lines: ``parse_yaml_subset``
+        # reads the last, ``_RE_NAME_LINE`` matches the first.  ``--fix
+        # --apply`` must refuse rather than rewrite the wrong line and
+        # report success while the effective name is still invalid.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            from helpers import write_text as _wt
+            path = os.path.join(skill_dir, "SKILL.md")
+            _wt(
+                path,
+                "---\nname: First_Name\nname: Last_Name\ndescription: short stub\n---\n\n# Body\n",
+            )
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            mtime_before = os.stat(path).st_mtime_ns
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply", "--json"],
+            )
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+            mtime_after = os.stat(path).st_mtime_ns
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        # File untouched.
+        self.assertEqual(after, before)
+        self.assertEqual(mtime_after, mtime_before)
+        # No silent success — name_fix.errors surfaces the refusal.
+        self.assertTrue(any(
+            "multiple 'name:' keys" in f
+            for f in payload["name_fix"]["errors"]
+        ))
+        # And the validator's name FAILs still surface in
+        # non_path_fails (no ownership while refused).
+        self.assertTrue(any(
+            "'name'" in f for f in payload["non_path_fails"]
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
