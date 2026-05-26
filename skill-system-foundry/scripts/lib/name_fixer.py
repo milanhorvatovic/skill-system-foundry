@@ -260,10 +260,17 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
     fm_end = fm_start + len(frontmatter_raw)
     fm_text = content[fm_start:fm_end]
 
-    raw_match = _RE_NAME_LINE.search(fm_text)
-    if raw_match is None:
+    raw_matches = list(_RE_NAME_LINE.finditer(fm_text))
+    if not raw_matches:
         return None
-    raw_value = raw_match.group("value")
+    if len(raw_matches) > 1:
+        # Defense-in-depth: the planner already refuses duplicate-key
+        # frontmatter, but the line rewriter is also called directly
+        # from tests and any future caller.  Touching the first match
+        # while ``parse_yaml_subset`` reads the last would silently
+        # rewrite the wrong line.
+        return None
+    raw_value = raw_matches[0].group("value")
     if _raw_value_blocks_rewrite(raw_value):
         return None
 
@@ -361,8 +368,8 @@ def compute_name_fix_plan(
         )
         return None, applied, manual, errors, owned
 
-    raw_value_match = _RE_NAME_LINE.search(frontmatter_raw)
-    if raw_value_match is None:
+    raw_value_matches = list(_RE_NAME_LINE.finditer(frontmatter_raw))
+    if not raw_value_matches:
         # The parser saw a ``name`` key (flow-style mapping, alias, or
         # similar) but the line-oriented rewriter cannot target a single
         # physical line.  Refuse rather than guess.
@@ -372,6 +379,23 @@ def compute_name_fix_plan(
             "frontmatter by hand"
         )
         return None, applied, manual, errors, owned
+    if len(raw_value_matches) > 1:
+        # Duplicate ``name:`` keys: ``parse_yaml_subset`` resolves to
+        # the *last* mapping entry, but a line-targeted rewrite would
+        # only update the *first* — applying the fix would leave the
+        # effective value untouched while ownership-suppressing the
+        # validator FAILs, so ``--fix --apply`` could report success on
+        # a still-invalid skill.  The duplicate-key shape is itself a
+        # frontmatter authoring error the user needs to resolve by hand.
+        errors.append(
+            f"{LEVEL_FAIL}: [foundry] multiple 'name:' keys in "
+            f"frontmatter ({len(raw_value_matches)} found) — "
+            "parse_yaml_subset would use the last and the line "
+            "rewriter would touch the first; remove the duplicates by "
+            "hand"
+        )
+        return None, applied, manual, errors, owned
+    raw_value_match = raw_value_matches[0]
 
     current_name = parsed_fm["name"]
     if not isinstance(current_name, str):
@@ -397,7 +421,7 @@ def compute_name_fix_plan(
     manual.extend(fix_manual)
     owned.extend(fix_owned)
 
-    description = _extract_description_value(content, parsed_fm)
+    description = _extract_description_value(parsed_fm)
     desc_manual = compute_description_manual_finding(description)
     if desc_manual:
         manual.extend(desc_manual)
@@ -501,39 +525,22 @@ def _raw_value_blocks_rewrite(raw_value: str) -> bool:
     return False
 
 
-def _extract_description_value(content: str, parsed_fm: dict) -> str:
-    """Return the inline ``description:`` value, parsed.
+def _extract_description_value(parsed_fm: dict) -> str:
+    """Return the parsed ``description`` scalar, regardless of style.
 
-    Used to decide whether to emit the over-length manual finding.  The
-    raw frontmatter is inspected only to distinguish inline scalars
-    from folded / literal block scalars — folded blocks are deliberately
-    left to the regular validator so a misjudged block-scalar layout
-    cannot produce a spurious manual finding here.  When the line is
-    inline, the *parsed* scalar from ``parsed_fm`` is returned so
-    quoted forms (``description: "..."``) and inline ``# comments`` are
-    accounted for the same way the validator measures them — keeping
-    the planner's owned over-length-description FAIL string
+    Used to decide whether to emit the over-length manual finding.
+    Returns the parsed value from ``parsed_fm`` — ``parse_yaml_subset``
+    already handles every supported scalar style (plain, quoted, folded
+    ``>``, literal ``|``, with chomping indicators) so a folded
+    over-length description is detected the same way an inline one is,
+    keeping the ``--fix`` help text's "manual fix needed" claim honest
+    across scalar styles.  The validator measures length on the same
+    parsed value, so the planner's owned FAIL string stays
     byte-identical with the validator's.
 
-    Returns ``""`` when there is no frontmatter, no ``description:``
-    key, when the key is on a folded / literal block scalar header
-    line, or when the parsed value is not a string scalar.
+    Returns ``""`` when there is no ``description`` key or when the
+    parsed value is not a string scalar.
     """
-    frontmatter_raw, _body_raw = split_frontmatter(content)
-    if frontmatter_raw is None:
-        return ""
-    desc_re = re.compile(
-        r"^description:[ \t]*(?P<value>.*?)[ \t]*$", re.MULTILINE,
-    )
-    match = desc_re.search(frontmatter_raw)
-    if match is None:
-        return ""
-    raw_value = match.group("value").strip()
-    # A folded/literal block scalar marker (``>`` / ``|`` possibly with
-    # a chomping indicator) is not the description text itself — leave
-    # block scalars to the validator.
-    if raw_value in (">", "|", ">-", "|-", ">+", "|+"):
-        return ""
     value = parsed_fm.get("description", "")
     if not isinstance(value, str):
         return ""

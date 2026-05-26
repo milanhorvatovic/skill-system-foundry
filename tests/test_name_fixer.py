@@ -312,10 +312,12 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             _new_name, _applied, manual, _errors, _owned = compute_name_fix_plan(path)
             self.assertTrue(any("description" in f for f in manual))
 
-    def test_folded_description_block_no_false_over_length(self) -> None:
-        # A folded ``description: >`` block must not be flagged as
-        # over-length by the inline extractor — the marker line itself
-        # is short, and the fixer leaves folded blocks to the validator.
+    def test_folded_description_block_over_length_is_manual(self) -> None:
+        # A folded ``description: >`` block whose assembled text
+        # exceeds the limit must surface as a manual finding the same
+        # way an inline over-length description does — the planner
+        # reads the parsed scalar, so style-of-write does not change
+        # the contract.
         long_body = "x" * (MAX_DESCRIPTION_CHARS + 50)
         with tempfile.TemporaryDirectory() as tmp:
             sdir = os.path.join(tmp, "my-skill")
@@ -324,8 +326,15 @@ class ComputeNameFixPlanTests(unittest.TestCase):
                 sdir,
                 f"name: my-skill\ndescription: >\n  {long_body}",
             )
-            _new_name, _applied, manual, _errors, _owned = compute_name_fix_plan(path)
-            self.assertEqual(manual, [])
+            _new_name, _applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertTrue(any("description" in f for f in manual))
+        # The owned FAIL is the validator's exact wording so the
+        # generic ``non_path_fails`` bucket does not double-report it.
+        self.assertTrue(any(
+            "'description' exceeds" in f for f in owned
+        ))
 
     def test_missing_file_is_error_not_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -683,7 +692,6 @@ class ParsedNameValueTests(unittest.TestCase):
             "---\nname: MySkill  # legacy\ndescription: A demo.\n---\n\nbody\n"
         )
         self.assertIsNone(rewrite_name_line(content, "myskill"))
-
 
 if __name__ == "__main__":
     unittest.main()
