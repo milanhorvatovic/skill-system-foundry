@@ -379,6 +379,41 @@ class WrongShapeTests(unittest.TestCase):
         _set(config, "orphan_references.allowed_orphans", "")
         self.assertIsNone(validate_config_structure(config))
 
+    def test_blank_section_rejected(self) -> None:
+        # A required mapping authored with no children parses as "" —
+        # constants.py would crash dereferencing it, so the validator
+        # must raise naming the section.
+        config = valid_config()
+        config["stats"] = ""
+        with self.assertRaises(ConfigurationError) as ctx:
+            validate_config_structure(config)
+        msg = str(ctx.exception)
+        self.assertIn("stats", msg)
+        self.assertIn("expected a mapping", msg)
+
+    def test_blank_fence_languages_rejected(self) -> None:
+        # Blank fence_languages would let constants.py crash on .items()
+        # since the leaf has no required children to catch the blank
+        # form downstream.
+        config = valid_config()
+        _set(config, "skill.allowed_tools.fence_languages", "")
+        with self.assertRaises(ConfigurationError) as ctx:
+            validate_config_structure(config)
+        msg = str(ctx.exception)
+        self.assertIn("skill.allowed_tools.fence_languages", msg)
+        self.assertIn("expected a mapping", msg)
+
+    def test_blank_stats_line_endings_rejected(self) -> None:
+        # Blank stats.line_endings would let constants.py crash on .get()
+        # since `enabled` is optional and would not be caught downstream.
+        config = valid_config()
+        _set(config, "stats.line_endings", "")
+        with self.assertRaises(ConfigurationError) as ctx:
+            validate_config_structure(config)
+        msg = str(ctx.exception)
+        self.assertIn("stats.line_endings", msg)
+        self.assertIn("expected a mapping", msg)
+
 
 # ===================================================================
 # Malformed numerics — non-integer / non-float scalars

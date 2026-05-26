@@ -70,17 +70,18 @@ def _require_key(parent: dict, path: tuple[str, ...]) -> object:
 def _require_mapping(parent: dict, path: tuple[str, ...]) -> dict:
     """Return ``parent[path[-1]]`` ensuring it is a mapping.
 
-    The YAML subset parser returns a key authored with no children
-    (``stats:`` followed by no indented lines) as the empty string,
-    not an empty dict.  Treat that blank form as an empty mapping so the
-    subsequent required-child lookups raise naming the *missing child*
-    (``stats.line_endings``) rather than reporting the parent as a
-    scalar — which is the more actionable diagnostic and matches the
-    fail-fast behaviour the inline ``constants.py`` checks already had.
+    A key authored with no children (``stats:`` followed by no indented
+    lines) parses as the empty string ``""`` rather than an empty dict
+    in the stdlib YAML subset, so a blank value here is rejected with
+    the same diagnostic as a scalar.  Leaf mappings such as
+    ``skill.allowed_tools.fence_languages`` and ``stats.line_endings``
+    have no required children that would catch the blank form
+    downstream — ``constants.py`` would then crash on ``.items()`` /
+    ``.get()`` against ``""``.  Failing here keeps the diagnostic
+    actionable and the validator a faithful guard for the dereferences
+    that follow.
     """
     value = _require_key(parent, path)
-    if value == "":
-        return {}
     if not isinstance(value, dict):
         raise ConfigurationError(
             f"key '{_format_path(path)}' in {CONFIG_FILE_NAME}: expected a "

@@ -1340,11 +1340,17 @@ class MissingSectionFailFastTests(unittest.TestCase):
         self.assertIn("degraded_symlink", str(ctx.exception))
 
     def test_missing_stats_line_endings_raises(self) -> None:
+        # Removing the only child under ``stats:`` leaves the section
+        # blank ("") in the YAML subset; the structural validator
+        # rejects that at the parent level since constants.py would
+        # otherwise crash dereferencing it.
         with self.assertRaises(RuntimeError) as ctx:
             self._reimport_with_config(
                 self._full_config_minus_nested("stats", "line_endings")
             )
-        self.assertIn("line_endings", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("stats", message)
+        self.assertIn("expected a mapping", message)
 
     def test_invalid_stats_line_endings_enabled_raises(self) -> None:
         with self.assertRaises(RuntimeError) as ctx:
