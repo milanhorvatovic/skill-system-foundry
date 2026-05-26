@@ -1619,16 +1619,24 @@ def main() -> None:
         # ``name_manual`` so the run reports failure), but it does not
         # affect whether the safe name rewrite can land — this matches
         # the path rewriter, which still applies safe rewrites while
-        # reporting remaining non-path failures.  The marker is the
-        # ``'description'`` token: every description-only manual
-        # finding in this module is emitted by
-        # ``compute_description_manual_finding`` and carries that
-        # exact substring, while every name-rewrite-blocking finding
-        # is emitted by ``compute_name_fix`` /
-        # ``compute_name_fix_plan`` and carries ``'name'`` or
-        # ``'name:'`` instead.
+        # reporting remaining non-path failures.  Identification is
+        # anchored to the start of the message: every description-only
+        # manual finding is emitted by
+        # ``compute_description_manual_finding`` and begins exactly
+        # ``FAIL: [spec] manual fix needed — 'description' ``, while
+        # every name-rewrite-blocking finding begins with ``'name'``
+        # (or has a different prefix entirely).  A bare-substring scan
+        # for ``'description'`` would mis-classify a dir-mismatch
+        # whose normalized name happens to be ``description``, since
+        # the manual dir-mismatch message embeds the value in quotes
+        # (``manual fix needed — 'name' ('description') does not match
+        # …``); the prefix anchor is the only safe discriminator.
+        _DESC_MANUAL_PREFIX = (
+            f"{LEVEL_FAIL}: [spec] manual fix needed — 'description' "
+        )
         name_rewrite_blockers = [
-            f for f in name_manual if "'description'" not in f
+            f for f in name_manual
+            if not f.startswith(_DESC_MANUAL_PREFIX)
         ]
         name_modified = False
         if (
@@ -1764,12 +1772,19 @@ def main() -> None:
                     )
             if name_new is not None:
                 # Label by the actual write, not the user's intent —
-                # under ``--apply`` the name write is gated behind
-                # ``not name_manual and not name_errors`` (above), so a
-                # computed ``new_name`` can be deliberately *not*
-                # applied.  Printing "Applied" in that case would
-                # contradict the human-output narrative; the manual /
-                # error blocks below explain why the write was skipped.
+                # under ``--apply`` the name write is gated by
+                # ``apply_error is None``, ``new_name`` being set,
+                # ``not name_rewrite_blockers`` (manual findings that
+                # specifically prevent the line rewrite — see the
+                # filter above), and ``not name_errors`` (operational
+                # I/O / structural problems).  A computed ``new_name``
+                # can therefore be deliberately *not* applied — for
+                # example, a dir-mismatch manual finding gates the
+                # write while an over-length-description finding
+                # alone does not.  Printing "Applied" in the gated
+                # case would contradict the human-output narrative;
+                # the manual / error blocks below explain why the
+                # write was skipped.
                 action = "Applied" if name_modified else "Would apply"
                 print(f"\n{action} name normalization:")
                 for finding in name_applied:
