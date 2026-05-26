@@ -902,6 +902,38 @@ class WriteCRLFNormalizationTests(unittest.TestCase):
         # normalization per the repo-wide newline="\n" convention.
         self.assertNotIn(b"\r\n", raw)
 
+    def test_rewrite_name_line_preserves_crlf_for_direct_callers(self) -> None:
+        # ``rewrite_name_line`` operates on the supplied string —
+        # direct callers must see the rewritten line's CRLF terminator
+        # preserved (the regex captures ``\r?`` and the substitution
+        # re-emits it).  Without that, the rewritten line would drop
+        # its ``\r`` while every other line kept CRLF, producing mixed
+        # line endings in the returned content even though the helper
+        # documents the file's line-ending shape as preserved.  The
+        # end-to-end ``write_name_fix`` path still normalizes to LF
+        # via the text-mode I/O; this contract is for the line
+        # rewriter in isolation (Codex follow-up F-18).
+        content = (
+            "---\r\nname: My_Skill\r\ndescription: A demo.\r\n"
+            "---\r\n\r\n# Body\r\nProse stays.\r\n"
+        )
+        result = rewrite_name_line(content, "my-skill")
+        self.assertIsNotNone(result)
+        assert result is not None
+        # The rewritten line keeps its ``\r\n`` terminator.
+        self.assertIn("name: my-skill\r\n", result)
+        # No bare-LF line endings were introduced — every CRLF in the
+        # source survives in the output.
+        bare_lf = [
+            i for i, ch in enumerate(result)
+            if ch == "\n" and (i == 0 or result[i - 1] != "\r")
+        ]
+        self.assertEqual(bare_lf, [], msg=f"bare LF at indices {bare_lf}")
+        # And the rest of the file is byte-identical to the input.
+        self.assertEqual(
+            result, content.replace("My_Skill", "my-skill", 1),
+        )
+
 
 # ===================================================================
 # Missing closing ``---`` delimiter — Codex follow-up F-8.  The planner
