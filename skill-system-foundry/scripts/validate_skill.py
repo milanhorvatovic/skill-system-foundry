@@ -1614,7 +1614,17 @@ def main() -> None:
                 skill_md_for_name, name_new,
             )
             name_errors.extend(write_errors)
-            if name_modified:
+            # ``apply_fixes`` returns the number of *unique* files
+            # mutated by the path rewriter, so only credit a separate
+            # file when the name fix landed on a SKILL.md the path
+            # rewriter did not already touch.  Without this guard a
+            # SKILL.md carrying both a legacy reference and an
+            # invalid name would be counted twice in the human
+            # ``Modified N file(s)`` line and in the JSON
+            # ``modified`` field.
+            if name_modified and not any(
+                row["file"] == skill_md_for_name for row in rows
+            ):
                 modified += 1
 
         # Single source of truth for the fix-mode pass/fail predicate.

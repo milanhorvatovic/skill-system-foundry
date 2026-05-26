@@ -409,25 +409,12 @@ def compute_name_fix_plan(
         )
         return None, applied, manual, errors, owned
 
+    # Duplicate ``name:`` keys are unambiguously broken frontmatter
+    # regardless of whether the planner would propose a rewrite — the
+    # parser silently picks one and the rewriter would touch the
+    # other.  The error fires up front, before any other reasoning.
     raw_value_matches = list(_RE_NAME_LINE.finditer(frontmatter_raw))
-    if not raw_value_matches:
-        # The parser saw a ``name`` key (flow-style mapping, alias, or
-        # similar) but the line-oriented rewriter cannot target a single
-        # physical line.  Refuse rather than guess.
-        errors.append(
-            f"{LEVEL_FAIL}: [foundry] 'name:' is not on its own line — "
-            "the minimal line rewriter cannot target it; normalize the "
-            "frontmatter by hand"
-        )
-        return None, applied, manual, errors, owned
     if len(raw_value_matches) > 1:
-        # Duplicate ``name:`` keys: ``parse_yaml_subset`` resolves to
-        # the *last* mapping entry, but a line-targeted rewrite would
-        # only update the *first* — applying the fix would leave the
-        # effective value untouched while ownership-suppressing the
-        # validator FAILs, so ``--fix --apply`` could report success on
-        # a still-invalid skill.  The duplicate-key shape is itself a
-        # frontmatter authoring error the user needs to resolve by hand.
         errors.append(
             f"{LEVEL_FAIL}: [foundry] multiple 'name:' keys in "
             f"frontmatter ({len(raw_value_matches)} found) — "
@@ -436,7 +423,7 @@ def compute_name_fix_plan(
             "hand"
         )
         return None, applied, manual, errors, owned
-    raw_value_match = raw_value_matches[0]
+    raw_value_match = raw_value_matches[0] if raw_value_matches else None
 
     current_name = parsed_fm["name"]
     if not isinstance(current_name, str):
@@ -450,23 +437,34 @@ def compute_name_fix_plan(
         current_name, dir_name,
     )
 
-    # Quote / inline-comment syntax on the raw ``name:`` line only
-    # blocks the minimal-line rewriter — a perfectly valid quoted name
-    # (``name: "my-skill"``) does not need a rewrite at all, and
-    # ``--fix`` must not fail a conforming SKILL.md just because its
-    # author chose a quoted scalar.  Refuse only when ``compute_name_fix``
-    # is actually proposing a write (``new_name`` is not ``None``); in
-    # that case discard the would-be fix and surrender ownership so the
-    # regular validator's FAILs flow through unchanged.
-    raw_value = raw_value_match.group("value")
-    if new_name is not None and _raw_value_blocks_rewrite(raw_value):
-        manual.append(
-            f"{LEVEL_FAIL}: [spec] manual fix needed — the 'name:' "
-            "line carries a quoted scalar or an inline '#' comment; "
-            "the minimal line rewriter would silently strip that "
-            "syntax — normalize the value by hand"
-        )
-        return None, [], manual, errors, []
+    # Rewrite-mechanics guards (no locatable ``name:`` line, quoted
+    # scalar, inline ``#`` comment) only matter when the planner is
+    # actually proposing a write.  A SKILL.md whose ``name`` is
+    # already valid YAML and already passes ``validate_name`` —
+    # e.g. ``name : my-skill`` with whitespace before the colon, or
+    # ``name: "my-skill"`` as a quoted scalar — must not fail ``--fix``
+    # just because its formatting is unusual.  When the planner has
+    # nothing to apply (``new_name is None``), skip the guards so the
+    # plan returns clean; otherwise emit the relevant refusal, discard
+    # the would-be fix, and surrender ownership so the regular
+    # validator's FAILs flow through.
+    if new_name is not None:
+        if raw_value_match is None:
+            errors.append(
+                f"{LEVEL_FAIL}: [foundry] 'name:' is not on its own "
+                "line — the minimal line rewriter cannot target it; "
+                "normalize the frontmatter by hand"
+            )
+            return None, [], manual, errors, []
+        raw_value = raw_value_match.group("value")
+        if _raw_value_blocks_rewrite(raw_value):
+            manual.append(
+                f"{LEVEL_FAIL}: [spec] manual fix needed — the 'name:' "
+                "line carries a quoted scalar or an inline '#' "
+                "comment; the minimal line rewriter would silently "
+                "strip that syntax — normalize the value by hand"
+            )
+            return None, [], manual, errors, []
 
     manual.extend(fix_manual)
     owned.extend(fix_owned)
