@@ -2,11 +2,11 @@
 engine folded into ``validate_skill.py --fix`` / ``--fix --apply``.
 
 Safe fixes: lowercase the ``name``, replace underscores with hyphens,
-replace spaces with hyphens.  Ambiguous problems (directory mismatch,
-over-length description) are reported as "manual fix needed" and never
-auto-applied.  The rewrite is a minimal, line-targeted textual
-replacement of the single frontmatter ``name:`` line — the rest of the
-file is preserved byte-for-byte.
+replace in-value whitespace (spaces and tabs) with hyphens.  Ambiguous
+problems (directory mismatch, over-length description) are reported as
+"manual fix needed" and never auto-applied.  The rewrite is a minimal,
+line-targeted textual replacement of the single frontmatter ``name:``
+line — the rest of the file is preserved byte-for-byte.
 
 The module splits the work into a preview half (``compute_name_fix_plan``
 — reads and computes, never writes) and an apply half (``write_name_fix``
@@ -93,7 +93,7 @@ class ComputeNameFixTests(unittest.TestCase):
     def test_space_reported_and_applied(self) -> None:
         new_name, applied, _manual, _owned = compute_name_fix("my skill", "my-skill")
         self.assertEqual(new_name, "my-skill")
-        self.assertTrue(any("spaces" in f for f in applied))
+        self.assertTrue(any("whitespace" in f for f in applied))
 
     def test_combined_reports_each_fix(self) -> None:
         new_name, applied, _manual, _owned = compute_name_fix(
@@ -450,7 +450,12 @@ class WriteNameFixTests(unittest.TestCase):
             path = _write_skill(sdir, "name: My_Skill\ndescription: A demo.")
             real_open = open
 
-            def _open(file, mode="r", *args, **kwargs):
+            def _open(
+                file: str,
+                mode: str = "r",
+                *args: object,
+                **kwargs: object,
+            ) -> object:
                 if file == path and "w" in mode:
                     raise OSError("disk full")
                 return real_open(file, mode, *args, **kwargs)

@@ -1,13 +1,13 @@
 """Safe, deterministic auto-fixes for the SKILL.md ``name`` frontmatter.
 
 When ``validate_name`` FAILs because the ``name`` field carries
-uppercase characters, underscores, or spaces, the corrected value is
-unambiguous: lowercase the letters, and replace ``_`` / `` `` with
-``-``.  This module computes that correction and applies it as a
-*minimal, targeted textual replacement* of the single ``name:`` value
-line in the on-disk ``SKILL.md`` — the rest of the file (the remaining
-frontmatter and the entire body) is preserved verbatim, with one
-caveat for CRLF checkouts (below).
+uppercase characters, underscores, or in-value whitespace, the
+corrected value is unambiguous: lowercase the letters, and replace
+``_``, space, and tab with ``-``.  This module computes that
+correction and applies it as a *minimal, targeted textual replacement*
+of the single ``name:`` value line in the on-disk ``SKILL.md`` — the
+rest of the file (the remaining frontmatter and the entire body) is
+preserved verbatim, with one caveat for CRLF checkouts (below).
 
 The foundry's stdlib-only YAML subset parser does **not** round-trip
 (comments, quoting style, key order, and block-scalar layout are lost on
@@ -204,8 +204,11 @@ def compute_name_fix(
                 "with hyphens"
             )
         if " " in current_name or "\t" in current_name:
+            # Tabs and spaces are both replaced by hyphens; the
+            # message uses "whitespace" so the wording does not
+            # imply only space characters triggered the rewrite.
             transforms.append(
-                f"{LEVEL_INFO}: [foundry] 'name' spaces replaced "
+                f"{LEVEL_INFO}: [foundry] 'name' whitespace replaced "
                 "with hyphens"
             )
 

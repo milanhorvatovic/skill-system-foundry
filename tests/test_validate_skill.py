@@ -5413,7 +5413,10 @@ class FixNameNormalizationTests(unittest.TestCase):
             after = self._read_skill_md(skill_dir)
         self.assertEqual(code, 0)
         self.assertIn("underscores", out)
-        self.assertIn("spaces", out)
+        # The whitespace transform fires for both spaces and tabs, so
+        # the INFO finding speaks in those terms rather than narrowing
+        # to "spaces" — see ``compute_name_fix``.
+        self.assertIn("whitespace", out)
         self.assertEqual(after, before)
 
     # --- apply (--fix --apply): writes name fixes -------------------
