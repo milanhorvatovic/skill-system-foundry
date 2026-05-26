@@ -16,7 +16,7 @@ first problem it raises :class:`ConfigurationError` with a message that
 names the offending dotted key path, e.g.::
 
     ConfigurationError: missing required key
-    'skill.description.evaluation.thresholds' in configuration.yaml
+    'skill.description.evaluation.default_min_precision' in configuration.yaml
 
 The scope is deliberately narrow: this is not a general JSON-schema
 engine.  It validates the structural shape ``constants.py`` relies on so
