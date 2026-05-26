@@ -829,20 +829,23 @@ def validate_skill(
         errors.append(f"{LEVEL_FAIL}: [spec] No {entry_filename} found in {skill_path}")
         return errors, passes
 
-    # Parse frontmatter.  An unreadable / undecodable SKILL.md is
-    # surfaced as a structured FAIL rather than allowed to propagate as
-    # an unhandled OSError / UnicodeError — ``validate_skill`` is
-    # contracted to "never raise" so its callers (including the
-    # ``--fix`` driver's pre-planner probe) can rely on a clean
-    # ``(errors, passes)`` return for any input the filesystem can
-    # surface.
+    # Parse frontmatter.  An unreadable / undecodable entry markdown
+    # file (``SKILL.md`` for a registered skill, ``capability.md`` for
+    # a capability) is surfaced as a structured FAIL rather than
+    # allowed to propagate as an unhandled ``OSError`` / ``UnicodeError``
+    # — ``validate_skill`` is contracted to "never raise" so its
+    # callers (including the ``--fix`` driver's pre-planner probe)
+    # can rely on a clean ``(errors, passes)`` return for any input
+    # the filesystem can surface.
     try:
         frontmatter, body, scalar_findings = load_frontmatter(skill_md)
     except (OSError, UnicodeError) as exc:
         # Include the full path so CI logs and nested-tree audits can
         # identify which skill's entry file failed to load — a bare
-        # ``cannot read SKILL.md`` is ambiguous across a deployed
-        # ``skills/`` tree.
+        # ``cannot read <entry_filename>`` is ambiguous across a
+        # deployed ``skills/`` tree, and the filename alone does not
+        # distinguish a ``SKILL.md`` (skill root) from a
+        # ``capability.md`` (capability mode).
         errors.append(
             f"{LEVEL_FAIL}: [foundry] cannot read {entry_filename} at "
             f"{to_posix(skill_md)} ({exc.__class__.__name__}: {exc})"
