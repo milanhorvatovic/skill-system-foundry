@@ -829,8 +829,21 @@ def validate_skill(
         errors.append(f"{LEVEL_FAIL}: [spec] No {entry_filename} found in {skill_path}")
         return errors, passes
 
-    # Parse frontmatter
-    frontmatter, body, scalar_findings = load_frontmatter(skill_md)
+    # Parse frontmatter.  An unreadable / undecodable SKILL.md is
+    # surfaced as a structured FAIL rather than allowed to propagate as
+    # an unhandled OSError / UnicodeError — ``validate_skill`` is
+    # contracted to "never raise" so its callers (including the
+    # ``--fix`` driver's pre-planner probe) can rely on a clean
+    # ``(errors, passes)`` return for any input the filesystem can
+    # surface.
+    try:
+        frontmatter, body, scalar_findings = load_frontmatter(skill_md)
+    except (OSError, UnicodeError) as exc:
+        errors.append(
+            f"{LEVEL_FAIL}: [foundry] cannot read {entry_filename} "
+            f"({exc.__class__.__name__}: {exc})"
+        )
+        return errors, passes
 
     if frontmatter is None and not is_capability:
         errors.append(f"{LEVEL_FAIL}: [spec] No YAML frontmatter found (must start with ---)")
@@ -1441,8 +1454,11 @@ def main() -> None:
                     and "name" in fm_probe
                 )
             except (OSError, UnicodeError):
-                # An I/O error here is also covered by the validator
-                # below; let it surface there alone.
+                # An I/O / decoding failure on SKILL.md is surfaced as
+                # a FAIL by ``validate_skill`` below (which wraps
+                # ``load_frontmatter`` in the same ``try`` shape).
+                # Skip the planner so the same root cause is not
+                # restated in two slots of the JSON payload.
                 should_plan = False
             if should_plan:
                 (
@@ -1568,24 +1584,28 @@ def main() -> None:
 
         # Apply the safe ``name`` normalization under ``--apply`` too —
         # the single-line in-place rewrite computed above.  Gated behind
-        # ``not name_manual and not name_errors`` so a planned safe fix
-        # is *not* written when the planner also surfaced an ambiguous
-        # problem (directory mismatch, over-length description, the
-        # computed candidate still violates the spec, the raw line
-        # carries quote/comment syntax that would be stripped) or a
-        # structural / I/O failure.  This matches the documented contract
-        # that ambiguous problems are "never auto-applied" — without the
-        # gate a name rewrite would land on a SKILL.md that the run is
-        # *also* failing for a manual reason, mutating the file under a
-        # red light.  ``write_name_fix`` never raises (I/O / structural
-        # problems come back as findings), so its errors join
-        # ``name_errors`` and gate ``fix_success`` exactly like a
+        # ``apply_error is None and not name_manual and not name_errors``
+        # so a planned safe fix is *not* written when the path-rewriter
+        # already raised (``apply_error`` set), when the planner also
+        # surfaced an ambiguous problem (directory mismatch, over-length
+        # description, the computed candidate still violates the spec,
+        # the raw line carries quote/comment syntax that would be
+        # stripped), or when a structural / I/O failure was recorded.
+        # The ``apply_error`` clause prevents a second fix category from
+        # widening the partial-apply state after the first phase has
+        # already failed — a ``--fix --apply`` run that already errors
+        # must not also mutate ``SKILL.md`` from a later phase.  This
+        # matches the documented contract that ambiguous problems are
+        # "never auto-applied".  ``write_name_fix`` never raises (I/O /
+        # structural problems come back as findings), so its errors
+        # join ``name_errors`` and gate ``fix_success`` exactly like a
         # path-rewrite apply error.  Counts the SKILL.md as one modified
         # file when the write lands so the human/JSON ``modified`` total
         # reflects both categories.
         name_modified = False
         if (
             args.apply
+            and apply_error is None
             and name_new is not None
             and not name_manual
             and not name_errors

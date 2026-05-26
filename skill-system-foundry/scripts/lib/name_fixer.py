@@ -57,8 +57,19 @@ the generic ``non_path_fails`` bucket — every other name-related FAIL
 flows through unchanged so a partial-fix run cannot mask unresolved
 spec violations.
 
-All functions return findings as ``(errors, passes)``-style tuples per
-the repo convention; none raise for a validation outcome.
+Public function shapes:
+
+* :func:`compute_safe_name` — ``str → str`` (pure transform).
+* :func:`compute_name_fix` — ``(new_name, applied, manual, owned_fails)``.
+* :func:`compute_description_manual_finding` — ``str → list[str]``.
+* :func:`compute_name_fix_plan` — ``(new_name, applied, manual, errors,
+  owned_fails)``.
+* :func:`rewrite_name_line` — ``(content, new_name) → str | None``.
+* :func:`write_name_fix` — ``(modified, errors)``.
+
+None of them raise for a validation, structural, or I/O outcome —
+errors are reported through the relevant tuple slot per the repo's
+"validation never raises" convention.
 """
 
 import os
@@ -251,13 +262,20 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
 
     Returns the rewritten text, or ``None`` when the ``name:`` line
     cannot be located inside the frontmatter block (no frontmatter, no
-    closing delimiter, no ``name:`` key) **or** when the raw value
-    carries a quoted scalar or an inline ``#`` comment that the
-    minimal line rewriter would silently strip.  ``None`` signals the
-    caller to leave the file untouched rather than guess.
+    closing ``---`` delimiter, more than one ``name:`` line, no
+    ``name:`` key) **or** when the raw value carries a quoted scalar
+    or an inline ``#`` comment that the minimal line rewriter would
+    silently strip.  ``None`` signals the caller to leave the file
+    untouched rather than guess.
     """
-    frontmatter_raw, _body_raw = split_frontmatter(content)
+    frontmatter_raw, body_raw = split_frontmatter(content)
     if frontmatter_raw is None:
+        return None
+    if body_raw is None:
+        # ``split_frontmatter`` returns ``(frontmatter, None)`` when an
+        # opening ``---`` is found but no closing ``---`` exists.  The
+        # file is structurally malformed; refuse to rewrite rather than
+        # touch a SKILL.md the parser cannot even bound.
         return None
 
     # Resolve the span of the frontmatter text inside *content* so the
@@ -357,11 +375,21 @@ def compute_name_fix_plan(
         )
         return None, applied, manual, errors, owned
 
-    frontmatter_raw, _body_raw = split_frontmatter(content)
+    frontmatter_raw, body_raw = split_frontmatter(content)
     if frontmatter_raw is None:
         errors.append(
             f"{LEVEL_FAIL}: [spec] no YAML frontmatter found — "
             "cannot locate the 'name' field to fix"
+        )
+        return None, applied, manual, errors, owned
+    if body_raw is None:
+        # Opening ``---`` without a closing delimiter: the frontmatter
+        # bounds are undefined, so any rewrite could land on the wrong
+        # side of the file.  Surface the structural failure and refuse
+        # rather than touch a SKILL.md the parser cannot even bound.
+        errors.append(
+            f"{LEVEL_FAIL}: [spec] frontmatter has no closing '---' "
+            "delimiter — cannot safely locate the 'name:' line"
         )
         return None, applied, manual, errors, owned
 
@@ -527,10 +555,13 @@ def _raw_value_blocks_rewrite(raw_value: str) -> bool:
     an inline ``# comment`` — applying it would silently strip both.
     Detect either form on the captured value span so the planner can
     refuse to rewrite rather than lose the source bytes.  ``#`` is only
-    flagged when preceded by whitespace, matching the YAML subset
-    parser's inline-comment recogniser; that keeps a ``#`` embedded in a
-    plain scalar (``name: foo#bar`` → YAML value ``foo#bar``) from being
-    misclassified.
+    flagged when preceded by a space, matching the exact rule
+    ``yaml_parser._strip_inline_comment`` applies (``text[i - 1] == " "``);
+    a ``#`` preceded by a tab or embedded in a plain scalar
+    (``name: foo#bar`` → YAML value ``foo#bar``) is left for the parser
+    to decide, since the parser treats it as part of the scalar and the
+    rewriter must not be stricter than the parser's view of "what is a
+    comment".
     """
     trimmed = raw_value.strip()
     if (
@@ -544,7 +575,7 @@ def _raw_value_blocks_rewrite(raw_value: str) -> bool:
         # scope for the minimal rewriter.
         return True
     for index in range(1, len(raw_value)):
-        if raw_value[index] == "#" and raw_value[index - 1] in (" ", "\t"):
+        if raw_value[index] == "#" and raw_value[index - 1] == " ":
             return True
     return False
 
