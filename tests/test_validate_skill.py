@@ -5807,6 +5807,95 @@ class FixNameNormalizationTests(unittest.TestCase):
             "'name'" in f for f in payload["non_path_fails"]
         ))
 
+    # --- Codex F-6: human label tracks the actual write -------------
+
+    def test_apply_with_manual_does_not_label_as_applied(self) -> None:
+        # Dir-mismatch surfaces a manual finding → name write is
+        # gated → human output must say "Would apply", not "Applied".
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "other-dir")
+            os.makedirs(skill_dir)
+            write_skill_md(skill_dir, name="Demo_Skill")
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--apply"],
+            )
+        self.assertEqual(code, 1, msg=out)
+        self.assertIn("Would apply name normalization", out)
+        self.assertNotIn("Applied name normalization", out)
+
+    # --- Copilot C-5: planner skipped on structural failures --------
+
+    def test_no_frontmatter_no_duplicate_name_fix_errors(self) -> None:
+        # A SKILL.md with no frontmatter at all FAILs the regular
+        # validator with its own "No YAML frontmatter found" — the
+        # planner must not restate the same root cause under
+        # name_fix.errors.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            from helpers import write_text as _wt
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                "# Body only, no frontmatter\n",
+            )
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        # Validator surfaces the structural FAIL.
+        self.assertTrue(any(
+            "No YAML frontmatter found" in f
+            for f in payload["non_path_fails"]
+        ))
+        # And the planner does not double-report it.
+        self.assertEqual(payload["name_fix"]["errors"], [])
+
+    def test_missing_name_no_duplicate_name_fix_errors(self) -> None:
+        # Frontmatter present but no ``name`` key — validator FAILs on
+        # "Missing required 'name' field"; planner stays silent.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            from helpers import write_text as _wt
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 1, msg=out)
+        self.assertTrue(any(
+            "Missing required 'name' field" in f
+            for f in payload["non_path_fails"]
+        ))
+        self.assertEqual(payload["name_fix"]["errors"], [])
+
+    # --- Codex F-5: quoted-but-valid name does not fail --fix -------
+
+    def test_quoted_valid_name_does_not_fail_fix(self) -> None:
+        # ``name: "my-skill"`` in dir ``my-skill`` — the parsed value
+        # is valid, no rewrite is proposed, so --fix must exit 0
+        # rather than emit a manual finding just because the value is
+        # quoted.
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = os.path.join(tmp, "my-skill")
+            os.makedirs(skill_dir)
+            from helpers import write_text as _wt
+            _wt(
+                os.path.join(skill_dir, "SKILL.md"),
+                "---\nname: \"my-skill\"\ndescription: A short demo.\n---\n\n# Body\n",
+            )
+            code, out, _ = _run_main(
+                ["validate_skill.py", skill_dir, "--fix", "--json"],
+            )
+        payload = json.loads(out)
+        self.assertEqual(code, 0, msg=out)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["name_fix"]["manual_fix_needed"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

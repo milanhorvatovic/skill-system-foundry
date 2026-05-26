@@ -792,5 +792,111 @@ class FoldedDescriptionTests(unittest.TestCase):
         self.assertFalse(any("description" in f for f in manual))
 
 
+# ===================================================================
+# Quoted / inline-comment name lines that are *already valid* must
+# not fail the fix run — the refusal is only meaningful when the
+# planner would actually try to rewrite (Codex follow-up F-5).
+# ===================================================================
+
+
+class QuotedValidNameTests(unittest.TestCase):
+    def test_quoted_already_valid_name_is_silent(self) -> None:
+        # ``name: "my-skill"`` in dir ``my-skill`` — the parsed value
+        # is valid, no rewrite is needed, so the quote-syntax guard
+        # must not fire.  ``manual`` stays empty and the planner
+        # silently reports nothing to do.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: \"my-skill\"\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertEqual(manual, [])
+        self.assertEqual(errors, [])
+        self.assertEqual(owned, [])
+
+    def test_inline_comment_already_valid_name_is_silent(self) -> None:
+        # ``name: my-skill  # note`` — same scenario via inline comment.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: my-skill  # note\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, errors, _owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertEqual(manual, [])
+        self.assertEqual(errors, [])
+
+    def test_quoted_invalid_name_still_refuses(self) -> None:
+        # ``name: "My_Skill"`` — quoted but the parsed value FAILs
+        # validate_name; the planner refuses to propose a write,
+        # surrenders ownership, and the validator FAILs flow through.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "my-skill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            write_text(
+                path,
+                "---\nname: \"My_Skill\"\ndescription: A demo.\n---\n\n# Body\n",
+            )
+            new_name, applied, manual, _errors, owned = (
+                compute_name_fix_plan(path)
+            )
+        self.assertIsNone(new_name)
+        self.assertEqual(applied, [])
+        self.assertTrue(any("quoted scalar" in f for f in manual))
+        self.assertEqual(owned, [])
+
+
+# ===================================================================
+# CRLF normalization — write_name_fix writes with newline="\n", so a
+# CRLF-on-disk SKILL.md is normalized to LF when any safe fix lands.
+# The contract is documented in the module docstring; this test pins
+# the behavior so it cannot silently drift (Copilot follow-up C-6).
+# ===================================================================
+
+
+class WriteCRLFNormalizationTests(unittest.TestCase):
+    def test_crlf_file_is_normalized_to_lf_on_write(self) -> None:
+        # Write SKILL.md with CRLF terminators, run the apply, and
+        # expect the on-disk file to come back with LF terminators
+        # everywhere (no surviving \r\n pairs).
+        with tempfile.TemporaryDirectory() as tmp:
+            sdir = os.path.join(tmp, "myskill")
+            os.makedirs(sdir)
+            path = os.path.join(sdir, "SKILL.md")
+            # Bypass write_text (which writes LF) by writing in binary
+            # mode with CRLF terminators on every line.
+            content_lf = (
+                "---\nname: MySkill\ndescription: A demo.\n---\n\n"
+                "# Body\nProse stays.\n"
+            )
+            with open(path, "wb") as f:
+                f.write(content_lf.replace("\n", "\r\n").encode("utf-8"))
+            modified, errors = write_name_fix(path, "myskill")
+            with open(path, "rb") as f:
+                raw = f.read()
+        self.assertTrue(modified)
+        self.assertEqual(errors, [])
+        # The name was rewritten.
+        self.assertIn(b"name: myskill\n", raw)
+        # And every CRLF terminator is gone — documented LF
+        # normalization per the repo-wide newline="\n" convention.
+        self.assertNotIn(b"\r\n", raw)
+
+
 if __name__ == "__main__":
     unittest.main()
