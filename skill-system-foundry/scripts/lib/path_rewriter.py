@@ -35,6 +35,7 @@ from .frontmatter import split_frontmatter, strip_frontmatter_for_scan
 from .references import (
     is_drive_qualified,
     is_glob_path,
+    is_posix_absolute,
     is_within_directory,
     should_skip_reference,
 )
@@ -152,6 +153,7 @@ def compute_recommended_replacement(
         not ref_norm
         or os.path.isabs(ref_norm)
         or is_drive_qualified(ref_norm)
+        or is_posix_absolute(ref_norm)
     ):
         return None
 
@@ -268,6 +270,7 @@ def detect_ambiguous_legacy_target(
         not ref_norm
         or os.path.isabs(ref_norm)
         or is_drive_qualified(ref_norm)
+        or is_posix_absolute(ref_norm)
     ):
         return None
     ref_path_only, _suffix = _split_path_and_suffix(ref_norm)

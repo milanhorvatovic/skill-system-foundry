@@ -24,6 +24,7 @@ from lib.references import (
     infer_system_root,
     is_dangling_symlink,
     is_drive_qualified,
+    is_posix_absolute,
     is_glob_path,
     is_within_directory,
     looks_like_ambiguous_one_line_shim,
@@ -184,6 +185,40 @@ class IsDriveQualifiedTests(unittest.TestCase):
         ):
             with self.subTest(ref=ref):
                 self.assertFalse(is_drive_qualified(ref), msg=ref)
+
+
+class IsPosixAbsoluteTests(unittest.TestCase):
+    """``is_posix_absolute`` recognizes leading-slash references on every
+    platform.  Python 3.13 changed ``ntpath.isabs`` so that
+    ``ntpath.isabs('/foo')`` returns ``False`` on Windows — the
+    foundry's absolute-path checks need a platform-independent
+    fallback so ``/tmp/foo.md`` and ``\\foo.md`` keep flagging on
+    every runner / interpreter.
+    """
+
+    def test_positive_cases(self) -> None:
+        for ref in (
+            "/tmp/foo.md",
+            "/foo.md",
+            "\\foo.md",
+            "\\\\server\\share\\foo.md",
+        ):
+            with self.subTest(ref=ref):
+                self.assertTrue(is_posix_absolute(ref), msg=ref)
+
+    def test_negative_cases(self) -> None:
+        for ref in (
+            "",
+            "foo.md",
+            "references/foo.md",
+            "./foo.md",
+            "../foo.md",
+            "C:foo.md",
+            "C:/foo.md",
+            "#fragment",
+        ):
+            with self.subTest(ref=ref):
+                self.assertFalse(is_posix_absolute(ref), msg=ref)
 
 
 class ShouldSkipReferenceTests(unittest.TestCase):

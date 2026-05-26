@@ -45,7 +45,7 @@ from .constants import (
 )
 from .frontmatter import load_frontmatter, strip_frontmatter_for_scan
 from .reachability import extract_body_references
-from .references import is_drive_qualified, is_within_directory
+from .references import is_drive_qualified, is_posix_absolute, is_within_directory
 from .reporting import format_exception, to_posix
 
 
@@ -641,7 +641,11 @@ def compute_stats(skill_path: str) -> dict:
             # check ``os.path.join`` would treat the path as drive-
             # rooted on Windows and the byte-budget metric would
             # include a file outside the skill tree.
-            if os.path.isabs(ref) or is_drive_qualified(ref):
+            if (
+                os.path.isabs(ref)
+                or is_drive_qualified(ref)
+                or is_posix_absolute(ref)
+            ):
                 result["errors"].append(
                     f"{LEVEL_WARN}: [{PATH_RESOLUTION_RULE_NAME}] "
                     f"absolute or drive-qualified reference '{ref}' in "
