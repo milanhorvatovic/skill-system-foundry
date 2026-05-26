@@ -183,13 +183,15 @@ def _collect_frontmatter_findings(
 
 
 def _print_created(path: str, *, dry_run: bool) -> None:
-    """Print the human-mode created/planned line for a directory *path*.
+    """Print the human-mode created/planned line for a filesystem *path*.
 
-    Mirrors ``write_file``'s own line for the file case: a real run
-    prints ``Created: <path>`` while a dry run prints
-    ``Would create: <path>``.  Centralises the verb switch so the three
-    scaffold functions stay free of dry-run branching at each
-    directory-creation site.
+    Handles both directory and file paths — used at every site that
+    records a planned or created entry outside ``write_file`` itself
+    (container directories, the manifest in ``_report_planned_manifest``,
+    etc.). Mirrors ``write_file``'s own line: a real run prints
+    ``Created: <path>`` while a dry run prints ``Would create: <path>``.
+    Centralises the verb switch so callers stay free of dry-run
+    branching at each recording site.
     """
     if dry_run:
         print(planned_line(path))
