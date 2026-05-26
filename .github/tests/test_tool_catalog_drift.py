@@ -1358,6 +1358,34 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 3)
             self.assertIn("catalog_provenance", stderr.getvalue())
 
+    def test_pipe_less_upstream_exits_three(self) -> None:
+        """Pin: a pipe-less upstream page makes the scheduled run hard-fail
+        (exit 3) loudly, not succeed-with-wrong-payload silently.
+
+        Complements ``test_parse_error_exits_three`` (catalog-parsing
+        ParseError) by covering the upstream-extraction ParseError path —
+        both routes exit 3 but originate at different boundaries; both must
+        remain pinned. If a future refactor wraps extract_tools in a
+        try/except that swallows the raise, the unit tests in
+        ExtractToolsTests pass but this fires.
+        """
+        pipe_less_markdown = (
+            "Tool | Description |\n"
+            "--- | ---\n"
+            "`Bash` | shell |\n"
+        )
+        with _CatalogTempFile(_HAPPY_CATALOG) as path, \
+             _patched_fetch(pipe_less_markdown):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+                code = mod.main([
+                    "--dry-run",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 3)
+            self.assertIn("header row", stderr.getvalue())
+
     def test_summary_out_help_describes_json_interaction(self) -> None:
         # The --summary-out help text must describe its interaction
         # with --json — under --json, stdout receives the JSON payload
