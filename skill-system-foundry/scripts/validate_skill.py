@@ -829,8 +829,28 @@ def validate_skill(
         errors.append(f"{LEVEL_FAIL}: [spec] No {entry_filename} found in {skill_path}")
         return errors, passes
 
-    # Parse frontmatter
-    frontmatter, body, scalar_findings = load_frontmatter(skill_md)
+    # Parse frontmatter.  An unreadable / undecodable entry markdown
+    # file (``SKILL.md`` for a registered skill, ``capability.md`` for
+    # a capability) is surfaced as a structured FAIL rather than
+    # allowed to propagate as an unhandled ``OSError`` / ``UnicodeError``
+    # — ``validate_skill`` is contracted to "never raise" so its
+    # callers (including the ``--fix`` driver's pre-planner probe)
+    # can rely on a clean ``(errors, passes)`` return for any input
+    # the filesystem can surface.
+    try:
+        frontmatter, body, scalar_findings = load_frontmatter(skill_md)
+    except (OSError, UnicodeError) as exc:
+        # Include the full path so CI logs and nested-tree audits can
+        # identify which skill's entry file failed to load — a bare
+        # ``cannot read <entry_filename>`` is ambiguous across a
+        # deployed ``skills/`` tree, and the filename alone does not
+        # distinguish a ``SKILL.md`` (skill root) from a
+        # ``capability.md`` (capability mode).
+        errors.append(
+            f"{LEVEL_FAIL}: [foundry] cannot read {entry_filename} at "
+            f"{to_posix(skill_md)} ({exc.__class__.__name__}: {exc})"
+        )
+        return errors, passes
 
     if frontmatter is None and not is_capability:
         errors.append(f"{LEVEL_FAIL}: [spec] No YAML frontmatter found (must start with ---)")
@@ -1252,11 +1272,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="fix",
         help=(
-            "Preview mechanical rewrites that bring legacy "
-            "skill-root-form references into canonical file-relative "
-            "form (per references/path-resolution.md).  Dry-run by "
-            "default — no files are modified.  Use --fix --apply to "
-            "write the changes."
+            "Preview all mechanical fixes: legacy skill-root-form "
+            "reference rewrites into canonical file-relative form (per "
+            "references/path-resolution.md) AND safe SKILL.md 'name' "
+            "frontmatter normalization (lowercase; underscores and "
+            "in-value whitespace — spaces and tabs — to hyphens).  "
+            "Dry-run by default — no files are modified.  Ambiguous "
+            "problems (name does not match directory; description over "
+            "the length limit) are reported as 'manual fix needed' and "
+            "never auto-applied.  Use --fix --apply to write the changes."
         ),
     )
     parser.add_argument(
@@ -1264,8 +1288,8 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="apply",
         help=(
-            "Apply the rewrites previewed by --fix.  No-op without "
-            "--fix.  Modifies source files in place."
+            "Apply the fixes previewed by --fix.  No-op without --fix.  "
+            "Modifies source files in place."
         ),
     )
     return parser
@@ -1355,6 +1379,7 @@ def main() -> None:
             find_ambiguous_legacy_refs,
             find_fixable_references,
         )
+        from lib.name_fixer import compute_name_fix_plan, write_name_fix
 
         # In capability mode the supplied path is a capability directory
         # — walking only that subtree would miss legacy refs in the
@@ -1397,6 +1422,59 @@ def main() -> None:
         # a separate finding bucket and gate exit code so CI cannot
         # silently accept the retargeting.
         ambiguous_rows = find_ambiguous_legacy_refs(rewrite_root)
+        # Safe SKILL.md ``name`` normalization, folded into the same
+        # preview/apply flow as the path-resolution rewriter above.
+        # ``compute_name_fix_plan`` computes the would-be change without
+        # touching disk — the preview the bare ``--fix`` reports; the
+        # actual single-line write happens later, only under ``--apply``,
+        # via ``write_name_fix``.  Name fixing is a SKILL.md concern, so
+        # it runs against the resolved skill root (``rewrite_root``),
+        # which is the enclosing skill root in ``--capability`` mode too.
+        # Only probe when SKILL.md actually exists — a non-skill target
+        # already surfaces its "No SKILL.md found" FAIL through
+        # ``non_path_fails`` below, and computing the plan on a missing
+        # file would double-report a "cannot read SKILL.md" finding.
+        name_new: str | None = None
+        name_applied: list[str] = []
+        name_manual: list[str] = []
+        name_errors: list[str] = []
+        name_owned_fails: list[str] = []
+        skill_md_for_name = os.path.join(rewrite_root, FILE_SKILL_MD)
+        if os.path.isfile(skill_md_for_name):
+            # Skip the name-fix plan when the frontmatter is
+            # structurally invalid: no frontmatter delimiters, a YAML
+            # parse error, or no ``name`` key.  The regular validator
+            # already FAILs on each of those (see ``validate_skill``
+            # below) and the planner would only restate the same root
+            # cause under ``name_fix.errors`` — duplicating output and
+            # adding a second exit gate that carries no actionable fix
+            # information.  ``load_frontmatter`` is the same loader the
+            # validator uses, so the gates stay in lockstep.
+            should_plan = False
+            try:
+                fm_probe, _body_probe, _scan = load_frontmatter(
+                    skill_md_for_name,
+                )
+                should_plan = (
+                    isinstance(fm_probe, dict)
+                    and "_parse_error" not in fm_probe
+                    and "name" in fm_probe
+                )
+            except (OSError, UnicodeError):
+                # An I/O / decoding failure on SKILL.md is surfaced as
+                # a FAIL by ``validate_skill`` below (which wraps
+                # ``load_frontmatter`` in the same ``try`` shape).
+                # Skip the planner so the same root cause is not
+                # restated in two slots of the JSON payload.
+                should_plan = False
+            if should_plan:
+                (
+                    name_new,
+                    name_applied,
+                    name_manual,
+                    name_errors,
+                    name_owned_fails,
+                ) = compute_name_fix_plan(skill_md_for_name)
         # Validate the same tree the rewriter operates on.  In
         # capability mode the rewriter walks the enclosing skill root,
         # so the validator must too — otherwise unfixable findings or
@@ -1469,6 +1547,23 @@ def main() -> None:
             and (err.startswith(LEVEL_FAIL) or err.startswith(LEVEL_WARN))
             and not _is_covered_by_rewriter(err)
         ]
+        # Name-fix-owned FAILs are suppressed from the generic
+        # ``non_path_fails`` bucket — mirroring how
+        # ``_is_covered_by_rewriter`` keeps rewriter-handled
+        # path-resolution findings out of ``unfixable_findings``.  The
+        # ownership set is computed by ``compute_name_fix_plan`` (in
+        # ``name_owned_fails``) and contains the *exact* validator FAIL
+        # strings the planner takes responsibility for: every FAIL the
+        # safe fix would resolve (uppercase, underscore, space, invalid
+        # format), the dir-mismatch FAIL when the planner surfaces it
+        # as a manual finding, and the over-length-description FAIL
+        # when the inline extractor sees it.  Any other name FAIL —
+        # empty name, length exceeded, consecutive hyphens that the
+        # safe fix would not clear, the un-tagged Windows-reserved-name
+        # FAIL — is *not* owned and therefore flows through unchanged
+        # so a partial-fix run cannot mask an unresolved spec violation.
+        owned_fail_set = set(name_owned_fails)
+
         # Compute the broader-validity gate up front so JSON consumers
         # see the same gate the human output reflects.  Without it
         # ``--fix`` could exit 0 on a non-skill directory with no
@@ -1478,6 +1573,7 @@ def main() -> None:
             err for err in validation_errors
             if err.startswith(LEVEL_FAIL)
             and f"[{PATH_RESOLUTION_RULE_NAME}]" not in err
+            and err not in owned_fail_set
         ]
         # Apply rewrites *before* emitting any output so the result —
         # success or failure — can be represented in both human and
@@ -1493,15 +1589,96 @@ def main() -> None:
             except (OSError, UnicodeError) as exc:
                 apply_error = f"{exc.__class__.__name__}: {exc}"
 
+        # Apply the safe ``name`` normalization under ``--apply`` too —
+        # the single-line in-place rewrite computed above.  Gated behind
+        # ``apply_error is None and not name_rewrite_blockers and not
+        # name_errors`` so a planned safe fix is *not* written when the
+        # path-rewriter already raised (``apply_error`` set), when the
+        # planner surfaced a name-rewrite-blocking ambiguous problem
+        # (directory mismatch, the computed candidate still violates
+        # the spec, the raw line carries quote / inline-# / block-
+        # scalar syntax that would be corrupted), or when a structural /
+        # I/O failure was recorded.  Over-length ``description`` is in
+        # ``name_manual`` for human reporting but does not block the
+        # name write — see the ``name_rewrite_blockers`` filter below.
+        # The ``apply_error`` clause prevents a second fix category from
+        # widening the partial-apply state after the first phase has
+        # already failed — a ``--fix --apply`` run that already errors
+        # must not also mutate ``SKILL.md`` from a later phase.  This
+        # matches the documented contract that ambiguous problems are
+        # "never auto-applied".  ``write_name_fix`` never raises (I/O /
+        # structural problems come back as findings), so its errors
+        # join ``name_errors`` and gate ``fix_success`` exactly like a
+        # path-rewrite apply error.  Counts the SKILL.md as one modified
+        # file when the write lands so the human/JSON ``modified`` total
+        # reflects both categories.
+        # The apply gate only blocks on findings that make the
+        # ``name:`` line rewrite itself unsafe — directory mismatch
+        # (resolution requires human judgement), the safe-fix
+        # candidate still violates the spec (residual FAILs), and
+        # quoted / inline-# / block-scalar shapes the minimal line
+        # rewriter cannot preserve.  An over-length ``description``
+        # finding is exit-gating only (``fix_success`` still includes
+        # ``name_manual`` so the run reports failure), but it does not
+        # affect whether the safe name rewrite can land — this matches
+        # the path rewriter, which still applies safe rewrites while
+        # reporting remaining non-path failures.  Identification is
+        # anchored to the start of the message: every description-only
+        # manual finding is emitted by
+        # ``compute_description_manual_finding`` and begins exactly
+        # ``FAIL: [spec] manual fix needed — 'description' ``, while
+        # every name-rewrite-blocking finding begins with ``'name'``
+        # (or has a different prefix entirely).  A bare-substring scan
+        # for ``'description'`` would mis-classify a dir-mismatch
+        # whose normalized name happens to be ``description``, since
+        # the manual dir-mismatch message embeds the value in quotes
+        # (``manual fix needed — 'name' ('description') does not match
+        # …``); the prefix anchor is the only safe discriminator.
+        _DESC_MANUAL_PREFIX = (
+            f"{LEVEL_FAIL}: [spec] manual fix needed — 'description' "
+        )
+        name_rewrite_blockers = [
+            f for f in name_manual
+            if not f.startswith(_DESC_MANUAL_PREFIX)
+        ]
+        name_modified = False
+        if (
+            args.apply
+            and apply_error is None
+            and name_new is not None
+            and not name_rewrite_blockers
+            and not name_errors
+        ):
+            name_modified, write_errors = write_name_fix(
+                skill_md_for_name, name_new,
+            )
+            name_errors.extend(write_errors)
+            # ``apply_fixes`` returns the number of *unique* files
+            # mutated by the path rewriter, so only credit a separate
+            # file when the name fix landed on a SKILL.md the path
+            # rewriter did not already touch.  Without this guard a
+            # SKILL.md carrying both a legacy reference and an
+            # invalid name would be counted twice in the human
+            # ``Modified N file(s)`` line and in the JSON
+            # ``modified`` field.
+            if name_modified and not any(
+                row["file"] == skill_md_for_name for row in rows
+            ):
+                modified += 1
+
         # Single source of truth for the fix-mode pass/fail predicate.
         # The exit-code branch and the JSON ``success`` field both
         # consume this so machine consumers can read the outcome from
         # the captured payload without inspecting the process status.
+        # Name-normalization manual items and operational name errors
+        # gate the run the same way the path-resolution findings do.
         fix_success = not (
             path_resolution_findings
             or non_path_fails
             or ambiguous_rows
             or apply_error is not None
+            or name_manual
+            or name_errors
         )
 
         if json_output:
@@ -1509,19 +1686,26 @@ def main() -> None:
                 "tool": "validate_skill",
                 "mode": "fix",
                 "success": fix_success,
-                # ``applied`` reflects an actual successful write —
-                # true only when ``--apply`` ran, the rewriter found
-                # something to apply (``rows`` non-empty), and the
-                # write completed without raising.  An I/O error or
-                # an empty ``rows`` list keeps it false so consumers
-                # do not interpret ``applied: true`` as "files were
-                # touched" when the run was actually a no-op or a
-                # partial / failed rewrite.  ``apply_requested``
+                # ``applied`` reflects an actual successful write in
+                # *either* fix category — true only when ``--apply``
+                # ran, at least one write landed (a path-resolution
+                # rewrite via ``rows`` or the SKILL.md ``name:`` line
+                # via ``name_modified``), and the path-rewrite step
+                # completed without raising.  Without the
+                # ``name_modified`` clause a ``--fix --apply --json``
+                # run that only normalized SKILL.md would report
+                # ``applied: false`` while ``name_fix.modified: true``
+                # and ``modified: 1`` — contradictory machine output
+                # for an automation consumer.  ``apply_requested``
                 # carries the user's intent (whether ``--apply`` was
                 # passed) for consumers that need to disambiguate
                 # "no fixes needed" from "did not request apply".
                 "apply_requested": bool(args.apply),
-                "applied": bool(args.apply) and bool(rows) and apply_error is None,
+                "applied": (
+                    bool(args.apply)
+                    and (bool(rows) or name_modified)
+                    and apply_error is None
+                ),
                 "modified": modified,
                 "fixes": [
                     {
@@ -1543,6 +1727,24 @@ def main() -> None:
                     }
                     for a in ambiguous_rows
                 ],
+                # Safe SKILL.md ``name`` normalization, reported as a
+                # peer category to the path-resolution rewrites.
+                # ``new_name`` is the would-be value (null when the name
+                # is already valid); ``applied`` lists the INFO findings
+                # for each transformation; ``manual_fix_needed`` carries
+                # the FAIL items the fixer never auto-applies (directory
+                # mismatch, over-length description); ``modified`` is true
+                # only when the SKILL.md was actually rewritten under
+                # ``--apply``; ``errors`` carries operational name-fix
+                # failures (unreadable file, unlocatable ``name:`` line,
+                # write error).
+                "name_fix": {
+                    "new_name": name_new,
+                    "applied": name_applied,
+                    "manual_fix_needed": name_manual,
+                    "modified": name_modified,
+                    "errors": name_errors,
+                },
                 "non_path_fails": non_path_fails,
                 "path_resolution": {
                     "rule_name": PATH_RESOLUTION_RULE_NAME,
@@ -1558,8 +1760,11 @@ def main() -> None:
                 and not path_resolution_findings
                 and not non_path_fails
                 and not ambiguous_rows
+                and name_new is None
+                and not name_manual
+                and not name_errors
             ):
-                print("No mechanical rewrites needed — skill conforms.")
+                print("No mechanical fixes needed — skill conforms.")
             elif rows:
                 action = "Applied" if args.apply else "Would apply"
                 print(f"{action} {len(rows)} rewrites:")
@@ -1568,6 +1773,38 @@ def main() -> None:
                         f"  {r['file_rel']}:{r['line']} "
                         f"'{r['original']}' → '{r['replacement']}'"
                     )
+            if name_new is not None:
+                # Label by the actual write, not the user's intent —
+                # under ``--apply`` the name write is gated by
+                # ``apply_error is None``, ``new_name`` being set,
+                # ``not name_rewrite_blockers`` (manual findings that
+                # specifically prevent the line rewrite — see the
+                # filter above), and ``not name_errors`` (operational
+                # I/O / structural problems).  A computed ``new_name``
+                # can therefore be deliberately *not* applied — for
+                # example, a dir-mismatch manual finding gates the
+                # write while an over-length-description finding
+                # alone does not.  Printing "Applied" in the gated
+                # case would contradict the human-output narrative;
+                # the manual / error blocks below explain why the
+                # write was skipped.
+                action = "Applied" if name_modified else "Would apply"
+                print(f"\n{action} name normalization:")
+                for finding in name_applied:
+                    print_error_line(finding)
+            if name_manual:
+                print(
+                    f"\n{len(name_manual)} name finding(s) needing manual "
+                    f"fix — not auto-applied:"
+                )
+                for finding in name_manual:
+                    print_error_line(finding)
+            if name_errors:
+                print(
+                    f"\n{len(name_errors)} name-fix error(s):"
+                )
+                for finding in name_errors:
+                    print_error_line(finding)
             if path_resolution_findings:
                 print(
                     f"\n{len(path_resolution_findings)} path-resolution "
@@ -1599,7 +1836,7 @@ def main() -> None:
                 )
                 for finding in non_path_fails:
                     print_error_line(finding)
-            if args.apply and rows:
+            if args.apply and (rows or name_modified):
                 if apply_error is None:
                     print(f"Modified {modified} file(s).")
                 else:
