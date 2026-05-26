@@ -13,16 +13,22 @@ The foundry's stdlib-only YAML subset parser does **not** round-trip
 re-serialisation), so this module never re-serialises the frontmatter.
 It rewrites exactly one line.
 
-Two classes of problem are intentionally **not** auto-fixed because the
-correct resolution requires human judgement:
+Three classes of problem are intentionally **not** auto-fixed because
+the correct resolution requires human judgement or because the safe
+rewrite cannot preserve the source bytes:
 
 * ``name`` does not match the directory name — the author must decide
   whether to rename the directory or change the field.
 * the description exceeds the maximum length — truncating would lose
   meaning.
+* the safe-fixer's computed candidate still violates the spec (e.g.,
+  consecutive hyphens or an invalid leading/trailing hyphen after the
+  transform), or the raw ``name:`` line carries quoted scalars or
+  inline ``#`` comments that a minimal single-line rewrite would
+  silently strip.
 
-Both are reported as "manual fix needed" findings so a clean ``--fix``
-run is never mistaken for "the skill conforms".
+All three are reported as "manual fix needed" findings so a clean
+``--fix`` run is never mistaken for "the skill conforms".
 
 Name normalization is folded into the same ``validate_skill.py
 --fix``/``--fix --apply`` preview/apply flow that drives the
@@ -30,6 +36,13 @@ path-resolution rewriter (``lib/path_rewriter.py``): ``compute_name_fix_plan``
 computes the would-be change without touching disk (the preview the bare
 ``--fix`` reports), and ``write_name_fix`` performs the single-line
 rewrite under ``--fix --apply``.
+
+The plan also reports the exact ``validate_name`` / over-length-description
+FAIL strings the fixer takes ownership of (``owned_fails``).  The
+``validate_skill.py --fix`` driver suppresses *only* those strings from
+the generic ``non_path_fails`` bucket — every other name-related FAIL
+flows through unchanged so a partial-fix run cannot mask unresolved
+spec violations.
 
 All functions return findings as ``(errors, passes)``-style tuples per
 the repo convention; none raise for a validation outcome.
@@ -42,9 +55,10 @@ from .constants import (
     LEVEL_FAIL,
     LEVEL_INFO,
     MAX_DESCRIPTION_CHARS,
-    RE_NAME_FORMAT,
 )
 from .frontmatter import split_frontmatter
+from .validation import validate_name
+from .yaml_parser import parse_yaml_subset
 
 
 # Matches a frontmatter ``name:`` line and captures the three spans the
@@ -59,6 +73,12 @@ _RE_NAME_LINE = re.compile(
     r"^(?P<prefix>name:[ \t]*)(?P<value>.*?)(?P<trailing>[ \t]*)$",
     re.MULTILINE,
 )
+
+
+# Marker substring used to recognise the ``validate_name`` dir-mismatch
+# FAIL.  Defined once so the ownership and refusal logic cannot drift
+# from the exact wording in ``validation.validate_name``.
+_DIR_MISMATCH_MARKER = "does not match directory name"
 
 
 def compute_safe_name(name: str) -> str:
@@ -79,56 +99,94 @@ def compute_safe_name(name: str) -> str:
 
 def compute_name_fix(
     current_name: str, dir_name: str,
-) -> tuple[str | None, list[str], list[str]]:
+) -> tuple[str | None, list[str], list[str], list[str]]:
     """Compute the safe ``name`` fix and the findings for one skill.
 
-    Returns ``(new_name, applied, manual)`` where:
+    Returns ``(new_name, applied, manual, owned_fails)`` where:
 
     * ``new_name`` is the corrected ``name`` value when at least one
-      safe fix changes it, else ``None`` (nothing to write).
+      safe fix changes it AND the computed candidate would pass
+      ``validate_name`` (modulo a dir-mismatch, which is reported as a
+      manual finding rather than a spec FAIL).  Otherwise ``None``.
     * ``applied`` is a list of ``INFO``-level finding strings describing
       each safe transformation that fired.
     * ``manual`` is a list of ``FAIL``-level finding strings for the
       ambiguous problems this fixer deliberately does not touch
-      (directory mismatch).  Description-length is reported by
+      (directory mismatch, or a computed candidate that still violates
+      the spec).  Description-length is reported by
       :func:`compute_description_manual_finding` because it needs the
       description value, not the name.
+    * ``owned_fails`` is the list of exact ``validate_name`` FAIL
+      strings the planner takes ownership of — the FAILs the fix
+      *would* resolve when applied, plus any dir-mismatch FAIL that
+      this plan surfaces as a manual finding instead.  The caller
+      suppresses exactly these from its generic FAIL bucket so a name
+      FAIL that the safe fixer does *not* resolve (empty name, length,
+      Windows reserved name, etc.) is never silently swallowed.
 
     Directory mismatch is evaluated against the *fixed* name so a skill
     whose only divergence was casing/underscores does not report a
     spurious mismatch after the fix lands.  An empty or whitespace-only
-    ``current_name`` yields no fix and no manual finding — that is a
-    spec FAIL the regular validator already reports, and inventing a
-    name here would be exactly the kind of judgement call this fixer
-    avoids.
+    ``current_name`` yields no fix, no manual finding, and no owned
+    FAILs — that is a spec FAIL the regular validator already reports
+    on its own.
     """
     applied: list[str] = []
     manual: list[str] = []
+    owned: list[str] = []
 
     if not current_name or not current_name.strip():
-        return None, applied, manual
+        return None, applied, manual, owned
+
+    current_validation, _ = validate_name(current_name, dir_name)
+    current_fails = [e for e in current_validation if e.startswith(LEVEL_FAIL)]
 
     fixed = compute_safe_name(current_name)
 
+    fixed_validation, _ = validate_name(fixed, dir_name)
+    fixed_fails = [e for e in fixed_validation if e.startswith(LEVEL_FAIL)]
+
+    # Residual FAILs *after* applying the safe fix.  Exclude the
+    # dir-mismatch FAIL because it is surfaced as a manual finding by
+    # this planner, not as a regular spec FAIL — keeping it in the
+    # residual would refuse safe fixes for any skill whose name happens
+    # to differ from its directory.
+    residual = [e for e in fixed_fails if _DIR_MISMATCH_MARKER not in e]
+
+    transforms: list[str] = []
     if fixed != current_name:
         if current_name.lower() != current_name:
-            applied.append(
+            transforms.append(
                 f"{LEVEL_INFO}: [foundry] 'name' lowercased "
                 f"from '{current_name}' to '{current_name.lower()}'"
             )
         if "_" in current_name:
-            applied.append(
+            transforms.append(
                 f"{LEVEL_INFO}: [foundry] 'name' underscores replaced "
                 "with hyphens"
             )
         if " " in current_name or "\t" in current_name:
-            applied.append(
+            transforms.append(
                 f"{LEVEL_INFO}: [foundry] 'name' spaces replaced "
                 "with hyphens"
             )
 
-    effective_name = fixed if applied else current_name
+    if residual:
+        # The safe-fix candidate would still violate the spec (e.g.,
+        # ``my__skill`` → ``my--skill`` produces consecutive hyphens).
+        # Refuse to propose a fix: every original ``validate_name`` FAIL
+        # flows through the caller's generic bucket unchanged.  Emit a
+        # manual finding so the user sees *why* the fixer stood down
+        # without having to reverse-engineer it from the FAIL list.
+        manual.append(
+            f"{LEVEL_FAIL}: [spec] manual fix needed — 'name' "
+            f"('{current_name}') cannot be safely normalized "
+            f"(candidate '{fixed}' still violates the spec); rename "
+            "the field by hand"
+        )
+        return None, [], manual, []
 
+    effective_name = fixed if transforms else current_name
     if effective_name != dir_name:
         manual.append(
             f"{LEVEL_FAIL}: [spec] manual fix needed — 'name' "
@@ -137,8 +195,19 @@ def compute_name_fix(
             "by hand"
         )
 
-    new_name = fixed if applied else None
-    return new_name, applied, manual
+    new_name = fixed if transforms else None
+    applied = transforms
+
+    fixed_fails_set = set(fixed_fails)
+    owned = [e for e in current_fails if e not in fixed_fails_set]
+    # The dir-mismatch FAIL is owned by this plan when it surfaces a
+    # manual finding for it, even if the FAIL also survives the fix
+    # (which happens when the fixed name still differs from dir_name).
+    if any(_DIR_MISMATCH_MARKER in e for e in manual):
+        for fail in current_fails:
+            if _DIR_MISMATCH_MARKER in fail and fail not in owned:
+                owned.append(fail)
+    return new_name, applied, manual, owned
 
 
 def compute_description_manual_finding(description: str) -> list[str]:
@@ -169,7 +238,9 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
 
     Returns the rewritten text, or ``None`` when the ``name:`` line
     cannot be located inside the frontmatter block (no frontmatter, no
-    closing delimiter, or no ``name:`` key).  ``None`` signals the
+    closing delimiter, no ``name:`` key) **or** when the raw value
+    carries a quoted scalar or an inline ``#`` comment that the
+    minimal line rewriter would silently strip.  ``None`` signals the
     caller to leave the file untouched rather than guess.
     """
     frontmatter_raw, _body_raw = split_frontmatter(content)
@@ -189,6 +260,13 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
     fm_end = fm_start + len(frontmatter_raw)
     fm_text = content[fm_start:fm_end]
 
+    raw_match = _RE_NAME_LINE.search(fm_text)
+    if raw_match is None:
+        return None
+    raw_value = raw_match.group("value")
+    if _raw_value_blocks_rewrite(raw_value):
+        return None
+
     replaced = False
 
     def _sub(match: re.Match) -> str:
@@ -206,7 +284,7 @@ def rewrite_name_line(content: str, new_name: str) -> str | None:
 
 def compute_name_fix_plan(
     skill_md_path: str,
-) -> tuple[str | None, list[str], list[str], list[str]]:
+) -> tuple[str | None, list[str], list[str], list[str], list[str]]:
     """Compute the safe ``name`` fix for *skill_md_path* without writing.
 
     Reads the SKILL.md, computes the safe name fix against the enclosing
@@ -216,24 +294,35 @@ def compute_name_fix_plan(
     this to report the would-be change, then calls :func:`write_name_fix`
     only when ``--apply`` is also passed.
 
-    Returns ``(new_name, applied, manual, errors)``:
+    Returns ``(new_name, applied, manual, errors, owned_fails)``:
 
     * ``new_name`` — the corrected ``name`` value when at least one safe
-      fix changes it, else ``None`` (nothing to apply).
+      fix changes it AND the result would pass ``validate_name`` cleanly
+      (a surviving dir-mismatch is surfaced as a manual finding, not as
+      a refusal).  ``None`` otherwise.
     * ``applied`` — ``INFO`` findings for each safe transformation that
       the fix would perform.
-    * ``manual`` — ``FAIL`` "manual fix needed" findings (directory
-      mismatch, over-length description).
+    * ``manual`` — ``FAIL`` "manual fix needed" findings: directory
+      mismatch, over-length description, the safe candidate still
+      violates the spec, or the raw ``name:`` line carries a quote /
+      inline ``#`` comment that a minimal line rewrite cannot preserve.
     * ``errors`` — ``FAIL`` findings for structural / I/O failures (file
-      missing / unreadable, no parseable frontmatter, no ``name:`` key).
-      These keep the function from raising for an I/O or structural
-      problem, matching the repo's "validation never raises" convention.
+      missing / unreadable, no parseable frontmatter, no ``name:`` key,
+      ``name:`` value is not a string scalar).  These keep the function
+      from raising for an I/O or structural problem, matching the
+      repo's "validation never raises" convention.
+    * ``owned_fails`` — the exact ``validate_name`` /
+      validate-description FAIL strings this plan takes ownership of;
+      the caller suppresses *only* these from its generic FAIL bucket
+      so a name FAIL the fixer does not resolve (empty name, length,
+      Windows reserved name, etc.) is never silently swallowed.
 
     The skill directory name is taken from the parent of *skill_md_path*.
     """
     applied: list[str] = []
     manual: list[str] = []
     errors: list[str] = []
+    owned: list[str] = []
 
     skill_dir = os.path.dirname(os.path.abspath(skill_md_path))
     dir_name = os.path.basename(skill_dir)
@@ -246,7 +335,7 @@ def compute_name_fix_plan(
             f"{LEVEL_FAIL}: [foundry] cannot read SKILL.md "
             f"({exc.__class__.__name__}: {exc})"
         )
-        return None, applied, manual, errors
+        return None, applied, manual, errors, owned
 
     frontmatter_raw, _body_raw = split_frontmatter(content)
     if frontmatter_raw is None:
@@ -254,21 +343,76 @@ def compute_name_fix_plan(
             f"{LEVEL_FAIL}: [spec] no YAML frontmatter found — "
             "cannot locate the 'name' field to fix"
         )
-        return None, applied, manual, errors
+        return None, applied, manual, errors, owned
 
-    current_name = _extract_name_value(content)
-    if current_name is None:
+    try:
+        parsed_fm = parse_yaml_subset(frontmatter_raw.strip())
+    except (ValueError, KeyError) as exc:
+        errors.append(
+            f"{LEVEL_FAIL}: [foundry] cannot parse SKILL.md frontmatter "
+            f"({exc.__class__.__name__}: {exc})"
+        )
+        return None, applied, manual, errors, owned
+
+    if "name" not in parsed_fm:
         errors.append(
             f"{LEVEL_FAIL}: [spec] no 'name' field in frontmatter — "
             "nothing to fix"
         )
-        return None, applied, manual, errors
+        return None, applied, manual, errors, owned
 
-    new_name, applied, manual = compute_name_fix(current_name, dir_name)
-    manual.extend(
-        compute_description_manual_finding(_extract_description_value(content))
+    raw_value_match = _RE_NAME_LINE.search(frontmatter_raw)
+    if raw_value_match is None:
+        # The parser saw a ``name`` key (flow-style mapping, alias, or
+        # similar) but the line-oriented rewriter cannot target a single
+        # physical line.  Refuse rather than guess.
+        errors.append(
+            f"{LEVEL_FAIL}: [foundry] 'name:' is not on its own line — "
+            "the minimal line rewriter cannot target it; normalize the "
+            "frontmatter by hand"
+        )
+        return None, applied, manual, errors, owned
+
+    current_name = parsed_fm["name"]
+    if not isinstance(current_name, str):
+        errors.append(
+            f"{LEVEL_FAIL}: [foundry] 'name' value is not a string "
+            f"scalar (got {type(current_name).__name__}) — cannot fix"
+        )
+        return None, applied, manual, errors, owned
+
+    raw_value = raw_value_match.group("value")
+    if _raw_value_blocks_rewrite(raw_value):
+        manual.append(
+            f"{LEVEL_FAIL}: [spec] manual fix needed — the 'name:' "
+            "line carries a quoted scalar or an inline '#' comment; "
+            "the minimal line rewriter would silently strip that "
+            "syntax — normalize the value by hand"
+        )
+        return None, applied, manual, errors, owned
+
+    new_name, applied, fix_manual, fix_owned = compute_name_fix(
+        current_name, dir_name,
     )
-    return new_name, applied, manual, errors
+    manual.extend(fix_manual)
+    owned.extend(fix_owned)
+
+    description = _extract_description_value(content, parsed_fm)
+    desc_manual = compute_description_manual_finding(description)
+    if desc_manual:
+        manual.extend(desc_manual)
+        # Own the exact FAIL string ``validate_skill`` emits so the
+        # caller does not double-report it.  Mirrors the wording in
+        # ``validate_skill.validate_frontmatter`` — the two strings
+        # must stay in sync.  ``description`` is the *parsed* scalar
+        # (quotes and inline comments already stripped) so its length
+        # matches the value the validator measures.
+        owned.append(
+            f"{LEVEL_FAIL}: [spec] 'description' exceeds "
+            f"{MAX_DESCRIPTION_CHARS} characters "
+            f"({len(description)} chars)"
+        )
+    return new_name, applied, manual, errors, owned
 
 
 def write_name_fix(
@@ -328,32 +472,52 @@ def write_name_fix(
     return True, errors
 
 
-def _extract_name_value(content: str) -> str | None:
-    """Return the raw ``name:`` value from the frontmatter, or ``None``.
+def _raw_value_blocks_rewrite(raw_value: str) -> bool:
+    """Return ``True`` when the raw ``name:`` line carries quote/comment syntax.
 
-    Reads only the frontmatter block so a ``name:`` literal in the body
-    is never picked up.  Returns the trimmed value (which may be an
-    empty string when the field is present but blank), or ``None`` when
-    no ``name:`` key exists in the frontmatter.
+    The minimal line rewriter cannot preserve a quoted scalar wrapper or
+    an inline ``# comment`` — applying it would silently strip both.
+    Detect either form on the captured value span so the planner can
+    refuse to rewrite rather than lose the source bytes.  ``#`` is only
+    flagged when preceded by whitespace, matching the YAML subset
+    parser's inline-comment recogniser; that keeps a ``#`` embedded in a
+    plain scalar (``name: foo#bar`` → YAML value ``foo#bar``) from being
+    misclassified.
     """
-    frontmatter_raw, _body_raw = split_frontmatter(content)
-    if frontmatter_raw is None:
-        return None
-    match = _RE_NAME_LINE.search(frontmatter_raw)
-    if match is None:
-        return None
-    return match.group("value").strip()
+    trimmed = raw_value.strip()
+    if (
+        len(trimmed) >= 2
+        and trimmed[0] in ('"', "'")
+        and trimmed[-1] == trimmed[0]
+    ):
+        return True
+    if trimmed[:1] in ('"', "'"):
+        # Opened a quote but did not close on the same line — out of
+        # scope for the minimal rewriter.
+        return True
+    for index in range(1, len(raw_value)):
+        if raw_value[index] == "#" and raw_value[index - 1] in (" ", "\t"):
+            return True
+    return False
 
 
-def _extract_description_value(content: str) -> str:
-    """Return a best-effort single-line ``description:`` value.
+def _extract_description_value(content: str, parsed_fm: dict) -> str:
+    """Return the inline ``description:`` value, parsed.
 
-    Used only to decide whether to emit the over-length manual finding,
-    so it does not need to reconstruct folded block scalars — it reads
-    the inline value on the ``description:`` line.  Returns an empty
-    string when no inline ``description:`` value is present (a folded
-    ``description: >`` block yields the empty marker line, which cannot
-    exceed the limit on its own and is left to the regular validator).
+    Used to decide whether to emit the over-length manual finding.  The
+    raw frontmatter is inspected only to distinguish inline scalars
+    from folded / literal block scalars — folded blocks are deliberately
+    left to the regular validator so a misjudged block-scalar layout
+    cannot produce a spurious manual finding here.  When the line is
+    inline, the *parsed* scalar from ``parsed_fm`` is returned so
+    quoted forms (``description: "..."``) and inline ``# comments`` are
+    accounted for the same way the validator measures them — keeping
+    the planner's owned over-length-description FAIL string
+    byte-identical with the validator's.
+
+    Returns ``""`` when there is no frontmatter, no ``description:``
+    key, when the key is on a folded / literal block scalar header
+    line, or when the parsed value is not a string scalar.
     """
     frontmatter_raw, _body_raw = split_frontmatter(content)
     if frontmatter_raw is None:
@@ -364,9 +528,13 @@ def _extract_description_value(content: str) -> str:
     match = desc_re.search(frontmatter_raw)
     if match is None:
         return ""
-    value = match.group("value").strip()
+    raw_value = match.group("value").strip()
     # A folded/literal block scalar marker (``>`` / ``|`` possibly with
-    # a chomping indicator) is not the description text itself.
-    if value in (">", "|", ">-", "|-", ">+", "|+"):
+    # a chomping indicator) is not the description text itself — leave
+    # block scalars to the validator.
+    if raw_value in (">", "|", ">-", "|-", ">+", "|+"):
+        return ""
+    value = parsed_fm.get("description", "")
+    if not isinstance(value, str):
         return ""
     return value

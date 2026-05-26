@@ -78,32 +78,32 @@ class ComputeNameFixTests(unittest.TestCase):
     """Findings and the corrected value for a single skill."""
 
     def test_lowercase_reported_and_applied(self) -> None:
-        new_name, applied, manual = compute_name_fix("MySkill", "myskill")
+        new_name, applied, manual, _owned = compute_name_fix("MySkill", "myskill")
         self.assertEqual(new_name, "myskill")
         self.assertTrue(any("lowercased" in f for f in applied))
         self.assertTrue(all(f.startswith(LEVEL_INFO) for f in applied))
         self.assertEqual(manual, [])
 
     def test_underscore_reported_and_applied(self) -> None:
-        new_name, applied, manual = compute_name_fix("my_skill", "my-skill")
+        new_name, applied, manual, _owned = compute_name_fix("my_skill", "my-skill")
         self.assertEqual(new_name, "my-skill")
         self.assertTrue(any("underscores" in f for f in applied))
         self.assertEqual(manual, [])
 
     def test_space_reported_and_applied(self) -> None:
-        new_name, applied, _manual = compute_name_fix("my skill", "my-skill")
+        new_name, applied, _manual, _owned = compute_name_fix("my skill", "my-skill")
         self.assertEqual(new_name, "my-skill")
         self.assertTrue(any("spaces" in f for f in applied))
 
     def test_combined_reports_each_fix(self) -> None:
-        new_name, applied, _manual = compute_name_fix(
+        new_name, applied, _manual, _owned = compute_name_fix(
             "My_Skill Name", "my-skill-name",
         )
         self.assertEqual(new_name, "my-skill-name")
         self.assertEqual(len(applied), 3)
 
     def test_noop_returns_none(self) -> None:
-        new_name, applied, manual = compute_name_fix("my-skill", "my-skill")
+        new_name, applied, manual, _owned = compute_name_fix("my-skill", "my-skill")
         self.assertIsNone(new_name)
         self.assertEqual(applied, [])
         self.assertEqual(manual, [])
@@ -111,7 +111,7 @@ class ComputeNameFixTests(unittest.TestCase):
     def test_dir_mismatch_is_manual_after_fix(self) -> None:
         # Fixing casing produces 'my-skill' but the directory is
         # 'other-dir' — the mismatch is reported against the FIXED name.
-        new_name, applied, manual = compute_name_fix("My-Skill", "other-dir")
+        new_name, applied, manual, _owned = compute_name_fix("My-Skill", "other-dir")
         self.assertEqual(new_name, "my-skill")
         self.assertTrue(applied)
         self.assertEqual(len(manual), 1)
@@ -123,14 +123,14 @@ class ComputeNameFixTests(unittest.TestCase):
     def test_dir_mismatch_without_safe_fix_uses_current_name(self) -> None:
         # No safe fix applies, but the (already valid) name differs from
         # the directory — still a manual finding, against the live name.
-        new_name, applied, manual = compute_name_fix("my-skill", "other-dir")
+        new_name, applied, manual, _owned = compute_name_fix("my-skill", "other-dir")
         self.assertIsNone(new_name)
         self.assertEqual(applied, [])
         self.assertEqual(len(manual), 1)
         self.assertIn("my-skill", manual[0])
 
     def test_empty_name_no_fix_no_manual(self) -> None:
-        new_name, applied, manual = compute_name_fix("", "demo")
+        new_name, applied, manual, _owned = compute_name_fix("", "demo")
         self.assertIsNone(new_name)
         self.assertEqual(applied, [])
         self.assertEqual(manual, [])
@@ -256,7 +256,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             with open(path, "r", encoding="utf-8") as f:
                 before = f.read()
             stat_before = os.stat(path)
-            new_name, applied, manual, errors = compute_name_fix_plan(path)
+            new_name, applied, manual, errors, _owned = compute_name_fix_plan(path)
             self.assertEqual(new_name, "myskill")
             self.assertTrue(applied)
             self.assertEqual(manual, [])
@@ -273,7 +273,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             path = _write_skill(
                 sdir, "name: My_Skill Name\ndescription: A demo.",
             )
-            new_name, applied, manual, _errors = compute_name_fix_plan(path)
+            new_name, applied, manual, _errors, _owned = compute_name_fix_plan(path)
             self.assertEqual(new_name, "my-skill-name")
             self.assertEqual(len(applied), 3)
             self.assertEqual(manual, [])
@@ -283,7 +283,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             sdir = os.path.join(tmp, "my-skill")
             os.makedirs(sdir)
             path = _write_skill(sdir, "name: my-skill\ndescription: A demo.")
-            new_name, applied, manual, errors = compute_name_fix_plan(path)
+            new_name, applied, manual, errors, _owned = compute_name_fix_plan(path)
             self.assertIsNone(new_name)
             self.assertEqual(applied, [])
             self.assertEqual(manual, [])
@@ -294,7 +294,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             sdir = os.path.join(tmp, "expected-dir")
             os.makedirs(sdir)
             path = _write_skill(sdir, "name: actual-name\ndescription: A demo.")
-            new_name, applied, manual, errors = compute_name_fix_plan(path)
+            new_name, applied, manual, errors, _owned = compute_name_fix_plan(path)
             self.assertIsNone(new_name)
             self.assertEqual(applied, [])
             self.assertEqual(len(manual), 1)
@@ -309,7 +309,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             path = _write_skill(
                 sdir, f"name: my-skill\ndescription: {long_desc}",
             )
-            _new_name, _applied, manual, _errors = compute_name_fix_plan(path)
+            _new_name, _applied, manual, _errors, _owned = compute_name_fix_plan(path)
             self.assertTrue(any("description" in f for f in manual))
 
     def test_folded_description_block_no_false_over_length(self) -> None:
@@ -324,7 +324,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
                 sdir,
                 f"name: my-skill\ndescription: >\n  {long_body}",
             )
-            _new_name, _applied, manual, _errors = compute_name_fix_plan(path)
+            _new_name, _applied, manual, _errors, _owned = compute_name_fix_plan(path)
             self.assertEqual(manual, [])
 
     def test_missing_file_is_error_not_raise(self) -> None:
@@ -332,7 +332,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             sdir = os.path.join(tmp, "my-skill")
             os.makedirs(sdir)
             path = os.path.join(sdir, "SKILL.md")  # never created
-            new_name, _applied, _manual, errors = compute_name_fix_plan(path)
+            new_name, _applied, _manual, errors, _owned = compute_name_fix_plan(path)
             self.assertIsNone(new_name)
             self.assertEqual(len(errors), 1)
             self.assertTrue(errors[0].startswith(LEVEL_FAIL))
@@ -343,7 +343,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             os.makedirs(sdir)
             path = os.path.join(sdir, "SKILL.md")
             write_text(path, "# No frontmatter here\n")
-            new_name, _applied, _manual, errors = compute_name_fix_plan(path)
+            new_name, _applied, _manual, errors, _owned = compute_name_fix_plan(path)
             self.assertIsNone(new_name)
             self.assertTrue(any("frontmatter" in f for f in errors))
 
@@ -352,7 +352,7 @@ class ComputeNameFixPlanTests(unittest.TestCase):
             sdir = os.path.join(tmp, "my-skill")
             os.makedirs(sdir)
             path = _write_skill(sdir, "description: A demo with no name key.")
-            new_name, _applied, _manual, errors = compute_name_fix_plan(path)
+            new_name, _applied, _manual, errors, _owned = compute_name_fix_plan(path)
             self.assertIsNone(new_name)
             self.assertTrue(any("'name'" in f for f in errors))
 

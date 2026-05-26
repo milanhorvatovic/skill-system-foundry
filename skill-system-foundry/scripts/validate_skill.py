@@ -1418,11 +1418,16 @@ def main() -> None:
         name_applied: list[str] = []
         name_manual: list[str] = []
         name_errors: list[str] = []
+        name_owned_fails: list[str] = []
         skill_md_for_name = os.path.join(rewrite_root, FILE_SKILL_MD)
         if os.path.isfile(skill_md_for_name):
-            name_new, name_applied, name_manual, name_errors = (
-                compute_name_fix_plan(skill_md_for_name)
-            )
+            (
+                name_new,
+                name_applied,
+                name_manual,
+                name_errors,
+                name_owned_fails,
+            ) = compute_name_fix_plan(skill_md_for_name)
         # Validate the same tree the rewriter operates on.  In
         # capability mode the rewriter walks the enclosing skill root,
         # so the validator must too — otherwise unfixable findings or
@@ -1495,40 +1500,22 @@ def main() -> None:
             and (err.startswith(LEVEL_FAIL) or err.startswith(LEVEL_WARN))
             and not _is_covered_by_rewriter(err)
         ]
-        # Name-frontmatter ``[spec]`` FAILs are owned by the name-fix
-        # category, not the generic ``non_path_fails`` bucket — exactly
-        # as ``_is_covered_by_rewriter`` keeps rewriter-handled
+        # Name-fix-owned FAILs are suppressed from the generic
+        # ``non_path_fails`` bucket — mirroring how
+        # ``_is_covered_by_rewriter`` keeps rewriter-handled
         # path-resolution findings out of ``unfixable_findings``.  The
-        # safe fixer's lexical corrections (uppercase, underscores,
-        # spaces, invalid format) are reported through ``name_applied`` /
-        # ``name_new`` and cleared on ``--apply``; the dir-mismatch FAIL
-        # and the over-length-description FAIL are reported through
-        # ``name_manual`` (which gates ``fix_success`` on its own).
-        # Dropping these from ``non_path_fails`` prevents double-reporting
-        # and lets a fully-safe, dir-matching name fix preview clean.
-        #
-        # The ``'name'`` FAILs are always name-fix-owned.  The
-        # over-length-description FAIL is dropped only when the name-fix
-        # plan actually surfaced it (``_name_owns_description``) — the
-        # plan's inline extractor leaves a *folded* ``description: >``
-        # block to the regular validator, so a folded over-length
-        # description keeps its FAIL in ``non_path_fails`` as a genuine
-        # gate rather than being silently swallowed.  The un-tagged
-        # Windows-reserved-name FAIL (which the safe fixer does NOT
-        # resolve) lacks ``[spec]`` and stays in ``non_path_fails`` too.
-        _name_owns_description = any(
-            "description" in finding for finding in name_manual
-        )
-
-        def _is_name_spec_fail(err: str) -> bool:
-            if not err.startswith(LEVEL_FAIL):
-                return False
-            if "[spec] 'name'" in err:
-                return True
-            return (
-                _name_owns_description
-                and "[spec] 'description' exceeds" in err
-            )
+        # ownership set is computed by ``compute_name_fix_plan`` (in
+        # ``name_owned_fails``) and contains the *exact* validator FAIL
+        # strings the planner takes responsibility for: every FAIL the
+        # safe fix would resolve (uppercase, underscore, space, invalid
+        # format), the dir-mismatch FAIL when the planner surfaces it
+        # as a manual finding, and the over-length-description FAIL
+        # when the inline extractor sees it.  Any other name FAIL —
+        # empty name, length exceeded, consecutive hyphens that the
+        # safe fix would not clear, the un-tagged Windows-reserved-name
+        # FAIL — is *not* owned and therefore flows through unchanged
+        # so a partial-fix run cannot mask an unresolved spec violation.
+        owned_fail_set = set(name_owned_fails)
 
         # Compute the broader-validity gate up front so JSON consumers
         # see the same gate the human output reflects.  Without it
@@ -1539,7 +1526,7 @@ def main() -> None:
             err for err in validation_errors
             if err.startswith(LEVEL_FAIL)
             and f"[{PATH_RESOLUTION_RULE_NAME}]" not in err
-            and not _is_name_spec_fail(err)
+            and err not in owned_fail_set
         ]
         # Apply rewrites *before* emitting any output so the result —
         # success or failure — can be represented in both human and
@@ -1556,14 +1543,29 @@ def main() -> None:
                 apply_error = f"{exc.__class__.__name__}: {exc}"
 
         # Apply the safe ``name`` normalization under ``--apply`` too —
-        # the single-line in-place rewrite computed above.  ``write_name_fix``
-        # never raises (I/O / structural problems come back as findings),
-        # so its errors join ``name_errors`` and gate ``fix_success``
-        # exactly like a path-rewrite apply error.  Counts the SKILL.md as
-        # one modified file when the write lands so the human/JSON
-        # ``modified`` total reflects both categories.
+        # the single-line in-place rewrite computed above.  Gated behind
+        # ``not name_manual and not name_errors`` so a planned safe fix
+        # is *not* written when the planner also surfaced an ambiguous
+        # problem (directory mismatch, over-length description, the
+        # computed candidate still violates the spec, the raw line
+        # carries quote/comment syntax that would be stripped) or a
+        # structural / I/O failure.  This matches the documented contract
+        # that ambiguous problems are "never auto-applied" — without the
+        # gate a name rewrite would land on a SKILL.md that the run is
+        # *also* failing for a manual reason, mutating the file under a
+        # red light.  ``write_name_fix`` never raises (I/O / structural
+        # problems come back as findings), so its errors join
+        # ``name_errors`` and gate ``fix_success`` exactly like a
+        # path-rewrite apply error.  Counts the SKILL.md as one modified
+        # file when the write lands so the human/JSON ``modified`` total
+        # reflects both categories.
         name_modified = False
-        if args.apply and name_new is not None:
+        if (
+            args.apply
+            and name_new is not None
+            and not name_manual
+            and not name_errors
+        ):
             name_modified, write_errors = write_name_fix(
                 skill_md_for_name, name_new,
             )
@@ -1591,19 +1593,26 @@ def main() -> None:
                 "tool": "validate_skill",
                 "mode": "fix",
                 "success": fix_success,
-                # ``applied`` reflects an actual successful write —
-                # true only when ``--apply`` ran, the rewriter found
-                # something to apply (``rows`` non-empty), and the
-                # write completed without raising.  An I/O error or
-                # an empty ``rows`` list keeps it false so consumers
-                # do not interpret ``applied: true`` as "files were
-                # touched" when the run was actually a no-op or a
-                # partial / failed rewrite.  ``apply_requested``
+                # ``applied`` reflects an actual successful write in
+                # *either* fix category — true only when ``--apply``
+                # ran, at least one write landed (a path-resolution
+                # rewrite via ``rows`` or the SKILL.md ``name:`` line
+                # via ``name_modified``), and the path-rewrite step
+                # completed without raising.  Without the
+                # ``name_modified`` clause a ``--fix --apply --json``
+                # run that only normalized SKILL.md would report
+                # ``applied: false`` while ``name_fix.modified: true``
+                # and ``modified: 1`` — contradictory machine output
+                # for an automation consumer.  ``apply_requested``
                 # carries the user's intent (whether ``--apply`` was
                 # passed) for consumers that need to disambiguate
                 # "no fixes needed" from "did not request apply".
                 "apply_requested": bool(args.apply),
-                "applied": bool(args.apply) and bool(rows) and apply_error is None,
+                "applied": (
+                    bool(args.apply)
+                    and (bool(rows) or name_modified)
+                    and apply_error is None
+                ),
                 "modified": modified,
                 "fixes": [
                     {
