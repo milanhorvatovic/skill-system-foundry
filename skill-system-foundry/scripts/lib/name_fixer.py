@@ -462,17 +462,46 @@ def compute_name_fix_plan(
         current_name, dir_name,
     )
 
+    # Over-length-description is independent of every name-rewrite
+    # condition the planner can encounter, so compute it once up
+    # front.  The refusal branches below all need to surface this
+    # finding (and own the matching validator FAIL) the same way the
+    # non-refusal path does — otherwise a SKILL.md that has *both* a
+    # quoted/commented/block-scalar name *and* an over-length
+    # description would lose the description finding under
+    # ``name_fix.manual_fix_needed`` because the refusal returned
+    # before the description check ran.  ``description`` is the
+    # *parsed* scalar (quotes and inline comments already stripped)
+    # so its length matches what ``validate_skill.validate_description``
+    # measures.
+    description = _extract_description_value(parsed_fm)
+    desc_manual = compute_description_manual_finding(description)
+    desc_owned: list[str] = []
+    if desc_manual:
+        # Mirrors the wording in ``validate_skill.validate_description``
+        # — the two strings must stay in sync.  Owning the validator's
+        # exact FAIL string keeps it from being double-reported under
+        # ``non_path_fails`` once the planner has surfaced the manual
+        # finding.
+        desc_owned.append(
+            f"{LEVEL_FAIL}: [spec] 'description' exceeds "
+            f"{MAX_DESCRIPTION_CHARS} characters "
+            f"({len(description)} chars)"
+        )
+
     # Rewrite-mechanics guards (no locatable ``name:`` line, quoted
-    # scalar, inline ``#`` comment) only matter when the planner is
-    # actually proposing a write.  A SKILL.md whose ``name`` is
-    # already valid YAML and already passes ``validate_name`` —
-    # e.g. ``name : my-skill`` with whitespace before the colon, or
-    # ``name: "my-skill"`` as a quoted scalar — must not fail ``--fix``
-    # just because its formatting is unusual.  When the planner has
-    # nothing to apply (``new_name is None``), skip the guards so the
-    # plan returns clean; otherwise emit the relevant refusal, discard
-    # the would-be fix, and surrender ownership so the regular
-    # validator's FAILs flow through.
+    # scalar, inline ``#`` comment, block-scalar header) only matter
+    # when the planner is actually proposing a write.  A SKILL.md
+    # whose ``name`` is already valid YAML and already passes
+    # ``validate_name`` — e.g. ``name : my-skill`` with whitespace
+    # before the colon, or ``name: "my-skill"`` as a quoted scalar —
+    # must not fail ``--fix`` just because its formatting is unusual.
+    # When the planner has nothing to apply (``new_name is None``),
+    # skip the guards so the plan returns clean; otherwise emit the
+    # relevant refusal, discard the would-be fix, surrender name
+    # ownership so the regular validator's FAILs flow through, and
+    # *still* carry the description finding and its ownership through
+    # — those are an independent manual condition.
     if new_name is not None:
         if raw_value_match is None:
             errors.append(
@@ -480,7 +509,7 @@ def compute_name_fix_plan(
                 "line — the minimal line rewriter cannot target it; "
                 "normalize the frontmatter by hand"
             )
-            return None, [], manual, errors, []
+            return None, [], desc_manual, errors, list(desc_owned)
         raw_value = raw_value_match.group("value")
         if _raw_value_blocks_rewrite(raw_value):
             manual.append(
@@ -491,26 +520,13 @@ def compute_name_fix_plan(
                 "syntax or leave the indented scalar body behind — "
                 "normalize the value by hand"
             )
-            return None, [], manual, errors, []
+            manual.extend(desc_manual)
+            return None, [], manual, errors, list(desc_owned)
 
     manual.extend(fix_manual)
     owned.extend(fix_owned)
-
-    description = _extract_description_value(parsed_fm)
-    desc_manual = compute_description_manual_finding(description)
-    if desc_manual:
-        manual.extend(desc_manual)
-        # Own the exact FAIL string ``validate_skill`` emits so the
-        # caller does not double-report it.  Mirrors the wording in
-        # ``validate_skill.validate_description`` — the two strings
-        # must stay in sync.  ``description`` is the *parsed* scalar
-        # (quotes and inline comments already stripped) so its length
-        # matches the value the validator measures.
-        owned.append(
-            f"{LEVEL_FAIL}: [spec] 'description' exceeds "
-            f"{MAX_DESCRIPTION_CHARS} characters "
-            f"({len(description)} chars)"
-        )
+    manual.extend(desc_manual)
+    owned.extend(desc_owned)
     return new_name, applied, manual, errors, owned
 
 
