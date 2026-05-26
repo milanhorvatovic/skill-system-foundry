@@ -453,6 +453,100 @@ class ExtractToolsTests(unittest.TestCase):
         tools = mod.extract_tools(markdown)
         self.assertEqual(tools, {"Bash"})
 
+    # Finding 7 pipe-led contract pins.
+    #
+    # The four ``test_single_row_pipe_led_*`` and ``test_pipe_less_*`` tests in
+    # this class pin the helper's "pipe-led table required" contract by exercising
+    # each extraction stage against a pipe-less variant. Other shape-drift axes
+    # (e.g., HTML body cells, column reordering, header column-count change)
+    # remain implicitly covered only by the zero-PascalCase guard at the end of
+    # extract_tools. Widening pins to cover those axes is out of scope for
+    # Finding 7.
+    #
+    # These tests use full-phrase error substrings (vs. the short substrings
+    # used elsewhere in this class) so each pipe-less stage's ParseError is
+    # unambiguously attributed in CI logs — the short forms ("header row",
+    # "separator", "zero") collide with the existing
+    # ``test_no_header_row_raises``, ``test_header_without_separator_raises``,
+    # and ``test_zero_pascalcase_matches_raises`` respectively.
+
+    def test_single_row_pipe_led_table_extracts(self) -> None:
+        """Pin: extract_tools accepts a 1-row pipe-led table.
+
+        Complements ``test_real_fixture_yields_canonical_set`` (50+ rows) by
+        pinning that the parser accepts a 1-row table — a minimum-viable-shape
+        contract the real fixture's row count cannot witness. Do not
+        consolidate with the real-fixture test; their failure modes are
+        distinct (regex regression vs. fixture refresh).
+        """
+        markdown = (
+            "| Tool | Description |\n"
+            "| :--- | :---------- |\n"
+            "| `ToolA` | first |\n"
+        )
+        self.assertEqual(mod.extract_tools(markdown), {"ToolA"})
+
+    def test_pipe_less_header_rejected(self) -> None:
+        """Pin: a pipe-less GFM table is rejected at the header check.
+
+        If upstream ``tools-reference.md`` flips to pipe-less rendering (HTML
+        conversion, theme migration, table rebuild), this test starts failing.
+        That is the intended signal — widen ``RE_TABLE_HEADER`` and the
+        contract comment block at ``RE_TABLE_ROW_FIRST_CELL`` deliberately
+        when it fires. Silent absorption would risk hiding other simultaneous
+        shape changes.
+        """
+        markdown = (
+            "Tool | Description |\n"
+            "--- | ---\n"
+            "`ToolA` | first |\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        message = str(ctx.exception)
+        self.assertIn("header row", message)
+        self.assertIn("`| Tool | Description |", message)
+
+    def test_pipe_less_separator_rejected(self) -> None:
+        """Pin: pipe-led header + pipe-less separator is rejected at the separator check.
+
+        Partial-flip case: upstream keeps the header pipe-led but rewrites
+        the separator without leading pipes. The body row below is pipe-led
+        for realistic-narrative purposes only — the function raises at the
+        separator check before reaching it. Widen ``RE_TABLE_SEPARATOR``
+        deliberately if this fires.
+        """
+        markdown = (
+            "| Tool | Description |\n"
+            "--- | ---\n"
+            "| `ToolA` | first |\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("not followed by a separator", str(ctx.exception))
+
+    def test_pipe_less_body_rows_rejected(self) -> None:
+        """Pin: pipe-led header + separator with pipe-less body rows is rejected.
+
+        Body-only flip case (likely real-world drift shape — a CDN keeping
+        the header pipe-led but rewriting body rows). The body-row loop
+        breaks on the first non-``|`` line, leaving the extracted set empty,
+        which trips the zero-PascalCase guard. The ``startswith("|")``
+        guard is the load-bearing check for this path (the regex never
+        runs); widen it deliberately if this fires — also widen
+        ``RE_TABLE_ROW_FIRST_CELL`` if the regex is what now governs
+        body-row acceptance.
+        """
+        markdown = (
+            "| Tool | Description |\n"
+            "| :--- | :---------- |\n"
+            "`ToolA` | first |\n"
+            "`ToolB` | second |\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("zero PascalCase tool names", str(ctx.exception))
+
 
 # ---------------------------------------------------------------------------
 # Parse catalog
