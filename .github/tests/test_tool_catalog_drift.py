@@ -476,23 +476,26 @@ class ExtractToolsTests(unittest.TestCase):
 
     # Finding 7 pipe-led contract pins.
     #
-    # The four ``test_single_row_pipe_led_*`` and ``test_pipe_less_*`` tests in
-    # this class pin the helper's "pipe-led table required" contract by
-    # exercising each extraction stage against either a fully pipe-less table
-    # or a partial-flip table that keeps earlier rows pipe-led so a later
-    # stage's guard becomes load-bearing. Specifically:
-    # ``test_pipe_less_header_rejected`` feeds a fully pipe-less table (no
-    # leading or trailing ``|`` anywhere, matching the canonical GFM form
-    # called out in ``tool-catalog-drift.py``'s ``RE_TABLE_ROW_FIRST_CELL``
-    # contract comment) and trips ``RE_TABLE_HEADER`` at line 0;
-    # ``test_pipe_less_separator_rejected`` is a partial flip — pipe-led
-    # header + pipe-less separator — that trips ``RE_TABLE_SEPARATOR``;
-    # ``test_pipe_less_body_rows_rejected`` is a partial flip — pipe-led
-    # header and separator + pipe-less body rows — that breaks the body-row
-    # loop's ``startswith("|")`` guard and falls through to the
-    # zero-PascalCase guard; and ``test_pipe_less_upstream_exits_three`` is
-    # the fully pipe-less form again, but routed through ``main`` to pin the
-    # exit-3 contract. Other shape-drift axes are caught by their own guards
+    # Three ``test_pipe_less_*`` unit tests in this class plus
+    # ``test_single_row_pipe_led_table_extracts`` (also in this class) and
+    # one ``main``-boundary integration pin in ``MainTests``
+    # (``test_pipe_less_upstream_exits_three``) together pin the helper's
+    # "pipe-led table required" contract by exercising each extraction stage
+    # against either a fully pipe-less table or a partial-flip table that
+    # keeps earlier rows pipe-led so a later stage's guard becomes
+    # load-bearing. Specifically: ``test_pipe_less_header_rejected`` feeds a
+    # fully pipe-less table (no leading or trailing ``|`` anywhere, matching
+    # the canonical GFM form called out in ``tool-catalog-drift.py``'s
+    # ``RE_TABLE_ROW_FIRST_CELL`` contract comment) and trips
+    # ``RE_TABLE_HEADER`` at line 0; ``test_pipe_less_separator_rejected`` is
+    # a partial flip — pipe-led header + pipe-less separator — that trips
+    # ``RE_TABLE_SEPARATOR``; ``test_pipe_less_body_rows_rejected`` is a
+    # partial flip — pipe-led header and separator + pipe-less body rows —
+    # that breaks the body-row loop's ``startswith("|")`` guard and falls
+    # through to the zero-PascalCase guard; and
+    # ``test_pipe_less_upstream_exits_three`` in ``MainTests`` is the fully
+    # pipe-less form again, but routed through ``main`` to pin the exit-3
+    # contract. Other shape-drift axes are caught by their own guards
     # in extract_tools: a header that no longer matches ``Tool | Description |``
     # (column rename, reorder, or count change) trips ``RE_TABLE_HEADER`` —
     # the same missing-header error path is covered by
