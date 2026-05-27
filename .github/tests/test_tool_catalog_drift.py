@@ -496,19 +496,22 @@ class ExtractToolsTests(unittest.TestCase):
         self.assertEqual(mod.extract_tools(markdown), {"ToolA"})
 
     def test_pipe_less_header_rejected(self) -> None:
-        """Pin: a pipe-less GFM table is rejected at the header check.
+        """Pin: a fully pipe-less GFM table (no leading or trailing ``|``)
+        is rejected at the header check.
 
-        If upstream ``tools-reference.md`` flips to pipe-less rendering (HTML
-        conversion, theme migration, table rebuild), this test starts failing.
-        That is the intended signal — widen ``RE_TABLE_HEADER`` and the
-        contract comment block at ``RE_TABLE_ROW_FIRST_CELL`` deliberately
-        when it fires. Silent absorption would risk hiding other simultaneous
-        shape changes.
+        Matches the canonical pipe-less form called out in
+        ``tool-catalog-drift.py``'s ``RE_TABLE_ROW_FIRST_CELL`` contract
+        comment. If upstream ``tools-reference.md`` flips to pipe-less
+        rendering (HTML conversion, theme migration, table rebuild), this
+        test starts failing. That is the intended signal — widen
+        ``RE_TABLE_HEADER`` and the contract comment block at
+        ``RE_TABLE_ROW_FIRST_CELL`` deliberately when it fires. Silent
+        absorption would risk hiding other simultaneous shape changes.
         """
         markdown = (
-            "Tool | Description |\n"
+            "Tool | Description\n"
             "--- | ---\n"
-            "`ToolA` | first |\n"
+            "`ToolA` | first\n"
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.extract_tools(markdown)
@@ -535,22 +538,23 @@ class ExtractToolsTests(unittest.TestCase):
         self.assertIn("not followed by a separator", str(ctx.exception))
 
     def test_pipe_less_body_rows_rejected(self) -> None:
-        """Pin: pipe-led header + separator with pipe-less body rows is rejected.
+        """Pin: pipe-led header + separator with fully pipe-less body rows
+        (no leading or trailing ``|``) is rejected.
 
         Body-only flip case (likely real-world drift shape — a CDN keeping
-        the header pipe-led but rewriting body rows). The body-row loop
-        breaks on the first non-``|`` line, leaving the extracted set empty,
-        which trips the zero-PascalCase guard. The ``startswith("|")``
-        guard is the load-bearing check for this path (the regex never
-        runs); widen it deliberately if this fires — also widen
-        ``RE_TABLE_ROW_FIRST_CELL`` if the regex is what now governs
-        body-row acceptance.
+        the header pipe-led but rewriting body rows to the canonical
+        pipe-less GFM form). The body-row loop breaks on the first non-``|``
+        line, leaving the extracted set empty, which trips the
+        zero-PascalCase guard. The ``startswith("|")`` guard is the
+        load-bearing check for this path (the regex never runs); widen it
+        deliberately if this fires — also widen ``RE_TABLE_ROW_FIRST_CELL``
+        if the regex is what now governs body-row acceptance.
         """
         markdown = (
             "| Tool | Description |\n"
             "| :--- | :---------- |\n"
-            "`ToolA` | first |\n"
-            "`ToolB` | second |\n"
+            "`ToolA` | first\n"
+            "`ToolB` | second\n"
         )
         with self.assertRaises(mod.ParseError) as ctx:
             mod.extract_tools(markdown)
@@ -1379,9 +1383,9 @@ class MainTests(unittest.TestCase):
         ExtractToolsTests pass but this fires.
         """
         pipe_less_markdown = (
-            "Tool | Description |\n"
+            "Tool | Description\n"
             "--- | ---\n"
-            "`Bash` | shell |\n"
+            "`Bash` | shell\n"
         )
         with _CatalogTempFile(_HAPPY_CATALOG) as path, \
              _patched_fetch(pipe_less_markdown):
