@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a new feature or enhancement to the meta-skill or the validation tooling
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the suggestion. Open an issue to align on the approach before writing code; see CONTRIBUTING.md for what stays in scope for this repository.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this solve? Who is affected, and how does it surface today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: How would this work? Be specific about user-visible behavior — flags, output, file layout, validation rules.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why this one wins.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which areas does this touch — scripts, configuration.yaml, references, capabilities, workflows? Anything explicitly out of scope?
+    validations:
+      required: true
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and did not find a duplicate
+          required: true

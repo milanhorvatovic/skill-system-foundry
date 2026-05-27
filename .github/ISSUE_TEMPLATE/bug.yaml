@@ -1,0 +1,60 @@
+name: Bug report
+description: A defect in the validation scripts, the meta-skill, or the documentation
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Fill in the fields below so triage and a fix can move quickly. For security disclosures, use the private **Report a vulnerability** button on the Security tab instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the unexpected behavior in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands or actions someone else can run to see the same behavior.
+      placeholder: |
+        1. cd skill-system-foundry
+        2. python scripts/validate_skill.py .
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the full output of validate_skill.py, audit_skill_system.py, or bundle.py if relevant. A --json payload is best.
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: e.g. 3.12.5
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 14.5, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and did not find a duplicate
+          required: true
