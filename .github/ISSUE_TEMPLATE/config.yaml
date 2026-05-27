@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/milanhorvatovic/skill-system-foundry/security/policy
+    about: For security disclosures, use the private Report a vulnerability button on the Security tab. See SECURITY.md for the full policy and response timeline.
+  - name: Question or general discussion
+    url: https://github.com/milanhorvatovic/skill-system-foundry/discussions
+    about: Open-ended questions, design discussions, and usage help belong in GitHub Discussions, not in Issues.
