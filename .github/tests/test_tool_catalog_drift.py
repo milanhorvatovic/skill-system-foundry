@@ -378,6 +378,27 @@ class ExtractToolsTests(unittest.TestCase):
             mod.extract_tools(markdown)
         self.assertIn("header row", str(ctx.exception))
 
+    def test_present_nonmatching_header_raises(self) -> None:
+        """Pin: a table whose header is present but does not match
+        ``Tool | Description |`` is rejected at ``RE_TABLE_HEADER``.
+
+        Covers the realistic header-drift axis (column rename, reorder, or
+        count change) where the document still has a table — distinct from
+        ``test_no_header_row_raises`` which feeds content with no table at
+        all. Both tests trip the same ``RE_TABLE_HEADER`` guard and produce
+        the same ParseError; this one pins the present-but-nonmatching shape
+        explicitly so a future regex widening that mistakenly accepts a
+        renamed first column surfaces here.
+        """
+        markdown = (
+            "| Name | Permission | Description |\n"
+            "| :--- | :--------- | :---------- |\n"
+            "| `Bash` | Yes | shell |\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("header row", str(ctx.exception))
+
     def test_header_without_body_raises(self) -> None:
         markdown = (
             "# Tools\n\n"
@@ -457,20 +478,24 @@ class ExtractToolsTests(unittest.TestCase):
     #
     # The four ``test_single_row_pipe_led_*`` and ``test_pipe_less_*`` tests in
     # this class pin the helper's "pipe-led table required" contract by
-    # exercising each extraction stage against a pipe-less variant. Other
-    # shape-drift axes are caught by their own guards in extract_tools and are
-    # pinned by the negative tests above this group: a header that no longer
-    # matches ``Tool | Description |`` (column rename, reorder, or count
-    # change) trips ``RE_TABLE_HEADER`` and is pinned by
-    # ``test_no_header_row_raises``; a header followed by something other than
-    # a ``| :--- | :--- |`` row trips ``RE_TABLE_SEPARATOR`` and is pinned by
+    # exercising each extraction stage against a fully pipe-less variant (no
+    # leading or trailing ``|``, matching the canonical GFM form called out
+    # in ``tool-catalog-drift.py``'s ``RE_TABLE_ROW_FIRST_CELL`` contract
+    # comment). Other shape-drift axes are caught by their own guards in
+    # extract_tools: a header that no longer matches ``Tool | Description |``
+    # (column rename, reorder, or count change) trips ``RE_TABLE_HEADER`` —
+    # the same missing-header error path is covered by
+    # ``test_no_header_row_raises`` (no table at all) and
+    # ``test_present_nonmatching_header_raises`` (table with a different
+    # header); a header followed by something other than a ``| :--- | :--- |``
+    # row trips ``RE_TABLE_SEPARATOR`` and is covered by
     # ``test_header_without_separator_raises``; HTML body cells or any other
-    # non-backticked first-cell content trips the malformed-body-row branch
-    # and is pinned by ``test_unbackticked_row_raises``; and backticked
-    # identifiers that all fail the PascalCase shape trip the final
-    # zero-PascalCase guard and are pinned by
-    # ``test_zero_pascalcase_matches_raises``. Widening any of those pins to
-    # cover finer-grained sub-cases is out of scope for Finding 7.
+    # non-backticked first-cell content (with a leading ``|``) trips the
+    # malformed-body-row branch and is covered by
+    # ``test_unbackticked_row_raises``; and backticked identifiers that all
+    # fail the PascalCase shape trip the final zero-PascalCase guard and are
+    # covered by ``test_zero_pascalcase_matches_raises``. Widening any of
+    # those covers to finer-grained sub-cases is out of scope for Finding 7.
     #
     # These tests use full-phrase error substrings (vs. the short substrings
     # used elsewhere in this class) so each pipe-less stage's ParseError is
