@@ -456,12 +456,21 @@ class ExtractToolsTests(unittest.TestCase):
     # Finding 7 pipe-led contract pins.
     #
     # The four ``test_single_row_pipe_led_*`` and ``test_pipe_less_*`` tests in
-    # this class pin the helper's "pipe-led table required" contract by exercising
-    # each extraction stage against a pipe-less variant. Other shape-drift axes
-    # (e.g., HTML body cells, column reordering, header column-count change)
-    # remain implicitly covered only by the zero-PascalCase guard at the end of
-    # extract_tools. Widening pins to cover those axes is out of scope for
-    # Finding 7.
+    # this class pin the helper's "pipe-led table required" contract by
+    # exercising each extraction stage against a pipe-less variant. Other
+    # shape-drift axes are caught by their own guards in extract_tools and are
+    # pinned by the negative tests above this group: a header that no longer
+    # matches ``Tool | Description |`` (column rename, reorder, or count
+    # change) trips ``RE_TABLE_HEADER`` and is pinned by
+    # ``test_no_header_row_raises``; a header followed by something other than
+    # a ``| :--- | :--- |`` row trips ``RE_TABLE_SEPARATOR`` and is pinned by
+    # ``test_header_without_separator_raises``; HTML body cells or any other
+    # non-backticked first-cell content trips the malformed-body-row branch
+    # and is pinned by ``test_unbackticked_row_raises``; and backticked
+    # identifiers that all fail the PascalCase shape trip the final
+    # zero-PascalCase guard and are pinned by
+    # ``test_zero_pascalcase_matches_raises``. Widening any of those pins to
+    # cover finer-grained sub-cases is out of scope for Finding 7.
     #
     # These tests use full-phrase error substrings (vs. the short substrings
     # used elsewhere in this class) so each pipe-less stage's ParseError is
