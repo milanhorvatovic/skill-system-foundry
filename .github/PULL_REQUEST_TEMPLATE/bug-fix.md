@@ -19,8 +19,8 @@ The root cause and the fix. State the bug in one sentence, then the underlying r
 
 - [ ] Regression-test pin added (cite the test file + test name)
 - [ ] Reproduced the bug before the fix; verified the fix resolves it
-- [ ] `python scripts/validate_skill.py . --allow-nested-references --foundry-self` — green
-- [ ] `python scripts/audit_skill_system.py .` — no new findings beyond the expected baseline
+- [ ] `(cd skill-system-foundry && python scripts/validate_skill.py . --allow-nested-references --foundry-self)` — green
+- [ ] `(cd skill-system-foundry && python scripts/audit_skill_system.py .)` — no new findings beyond the expected baseline
 - [ ] CI green on ubuntu + windows
 
 ---

@@ -18,8 +18,8 @@ What the new behavior is, and why it warranted a feature rather than reusing wha
 ## Test plan
 
 - [ ] New code paths covered by tests (cite the test file + test name)
-- [ ] `python scripts/validate_skill.py . --allow-nested-references --foundry-self` — green
-- [ ] `python scripts/audit_skill_system.py .` — no new findings beyond the expected baseline
+- [ ] `(cd skill-system-foundry && python scripts/validate_skill.py . --allow-nested-references --foundry-self)` — green
+- [ ] `(cd skill-system-foundry && python scripts/audit_skill_system.py .)` — no new findings beyond the expected baseline
 - [ ] Coverage gate — green
 - [ ] CI green on ubuntu + windows
 

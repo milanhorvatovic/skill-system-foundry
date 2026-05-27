@@ -18,7 +18,7 @@ What documentation changed and why. State the user-visible improvement: a clarif
 ## Test plan
 
 - [ ] Rendered the changed file(s) and confirmed formatting
-- [ ] Internal cross-references resolve (run `python scripts/validate_skill.py . --allow-nested-references --foundry-self` if the change touches the meta-skill)
+- [ ] Internal cross-references resolve (run `(cd skill-system-foundry && python scripts/validate_skill.py . --allow-nested-references --foundry-self)` if the change touches the meta-skill)
 - [ ] Terminology consistent with the rest of the doc set — no new synonyms for existing concepts
 - [ ] CI green
 
