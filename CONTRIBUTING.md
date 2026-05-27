@@ -4,7 +4,7 @@ Thank you for your interest in contributing. This document explains how to get i
 
 ## Ways to Contribute
 
-**Report issues.** Found a bug in the validation scripts, an inaccuracy in the documentation, or a broken cross-reference? Open an issue in this repository's **Issues** tab using the **Bug report** template, or **Documentation fix** for doc issues. For security disclosures, use the private **Report a vulnerability** button on the **Security** tab — see [SECURITY.md](SECURITY.md) for the full policy.
+**Report issues.** Found a bug in the validation scripts, an inaccuracy in the documentation, or a broken cross-reference? Open an issue in this repository's **Issues** tab using the **Bug report** template, or the **Documentation fix** template for doc issues. For security disclosures, use the private **Report a vulnerability** button on the **Security** tab — see [SECURITY.md](SECURITY.md) for the full policy.
 
 **Suggest improvements.** Have an idea for a new anti-pattern, a missing workflow, or better template defaults? Open an issue using the **Feature request** template to discuss it before writing code.
 
@@ -123,7 +123,7 @@ Fix <issue> in <component>
    - Which area of the project is affected (documentation, scripts, templates, etc.)
    - How you validated the changes
 
-   **PR-body templates.** Four templates live under `.github/`: a minimal default (`.github/PULL_REQUEST_TEMPLATE.md`) that carries only the release-label gate, and three structured variants (`feature.md`, `bug-fix.md`, `docs.md`) under `.github/PULL_REQUEST_TEMPLATE/` that add a Summary and a Test plan. To open with a variant from the web UI, append `?template=NAME.md` to the compare URL — for example: `https://github.com/milanhorvatovic/skill-system-foundry/compare/main...<your-branch>?template=feature.md`. From the CLI, `gh pr create` always uses the default body; to open with a variant, pass `--body-file .github/PULL_REQUEST_TEMPLATE/feature.md` (or `bug-fix.md` / `docs.md`). If you already opened the PR with the default body, copy the variant body from the file and paste it into the description.
+   **PR-body templates.** Four templates live under `.github/`: a minimal default (`.github/PULL_REQUEST_TEMPLATE.md`) that carries only the release-label gate, and three structured variants (`feature.md`, `bug-fix.md`, `docs.md`) under `.github/PULL_REQUEST_TEMPLATE/` that add a Summary and a Test plan. To open with a variant from the web UI, append `?template=NAME.md` to the compare URL — for example: `https://github.com/milanhorvatovic/skill-system-foundry/compare/main...<your-branch>?template=feature.md`. From the CLI, pass `--template .github/PULL_REQUEST_TEMPLATE/feature.md` (or `bug-fix.md` / `docs.md`) to `gh pr create` to open the editor pre-filled with that variant; `--body-file <path>` is the alternative when you want the file contents to become the body verbatim without the editor step. If you already opened the PR with the default body, copy the variant body from the file and paste it into the description.
 
 6. **Label the release impact.** Apply exactly one `release:` label. The line between `patch` and `skip` is "does anything user-facing ship?":
    - `release: major` — a breaking change to the published meta-skill (a removed or renamed capability or script, or a backwards-incompatible change to a validation rule or script interface)
