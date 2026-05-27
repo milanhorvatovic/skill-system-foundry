@@ -378,6 +378,27 @@ class ExtractToolsTests(unittest.TestCase):
             mod.extract_tools(markdown)
         self.assertIn("header row", str(ctx.exception))
 
+    def test_present_nonmatching_header_raises(self) -> None:
+        """Pin: a table whose header is present but does not match
+        ``Tool | Description |`` is rejected at ``RE_TABLE_HEADER``.
+
+        Covers the realistic header-drift axis (column rename, reorder, or
+        count change) where the document still has a table — distinct from
+        ``test_no_header_row_raises`` which feeds content with no table at
+        all. Both tests trip the same ``RE_TABLE_HEADER`` guard and produce
+        the same ParseError; this one pins the present-but-nonmatching shape
+        explicitly so a future regex widening that mistakenly accepts a
+        renamed first column surfaces here.
+        """
+        markdown = (
+            "| Name | Permission | Description |\n"
+            "| :--- | :--------- | :---------- |\n"
+            "| `Bash` | Yes | shell |\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("header row", str(ctx.exception))
+
     def test_header_without_body_raises(self) -> None:
         markdown = (
             "# Tools\n\n"
@@ -452,6 +473,131 @@ class ExtractToolsTests(unittest.TestCase):
         # a second table that the extractor never enters.
         tools = mod.extract_tools(markdown)
         self.assertEqual(tools, {"Bash"})
+
+    # Finding 7 pipe-led contract pins.
+    #
+    # Three ``test_pipe_less_*`` unit tests in this class plus
+    # ``test_single_row_pipe_led_table_extracts`` (also in this class) and
+    # one ``main``-boundary integration pin in ``MainTests``
+    # (``test_pipe_less_upstream_exits_three``) together pin the helper's
+    # "pipe-led table required" contract by exercising each extraction stage
+    # against either a fully pipe-less table or a partial-flip table that
+    # keeps earlier rows pipe-led so a later stage's guard becomes
+    # load-bearing. Specifically: ``test_pipe_less_header_rejected`` feeds a
+    # fully pipe-less table (no leading or trailing ``|`` anywhere, matching
+    # the canonical GFM form called out in ``tool-catalog-drift.py``'s
+    # ``RE_TABLE_ROW_FIRST_CELL`` contract comment) and trips
+    # ``RE_TABLE_HEADER`` at line 0; ``test_pipe_less_separator_rejected`` is
+    # a partial flip — pipe-led header + pipe-less separator — that trips
+    # ``RE_TABLE_SEPARATOR``; ``test_pipe_less_body_rows_rejected`` is a
+    # partial flip — pipe-led header and separator + pipe-less body rows —
+    # that breaks the body-row loop's ``startswith("|")`` guard and falls
+    # through to the zero-PascalCase guard; and
+    # ``test_pipe_less_upstream_exits_three`` in ``MainTests`` is the fully
+    # pipe-less form again, but routed through ``main`` to pin the exit-3
+    # contract. Other shape-drift axes are caught by their own guards
+    # in extract_tools: a header that no longer matches ``Tool | Description |``
+    # (column rename, reorder, or count change) trips ``RE_TABLE_HEADER`` —
+    # the same missing-header error path is covered by
+    # ``test_no_header_row_raises`` (no table at all) and
+    # ``test_present_nonmatching_header_raises`` (table with a different
+    # header); a header followed by something other than a ``| :--- | :--- |``
+    # row trips ``RE_TABLE_SEPARATOR`` and is covered by
+    # ``test_header_without_separator_raises``; HTML body cells or any other
+    # non-backticked first-cell content (with a leading ``|``) trips the
+    # malformed-body-row branch and is covered by
+    # ``test_unbackticked_row_raises``; and backticked identifiers that all
+    # fail the PascalCase shape trip the final zero-PascalCase guard and are
+    # covered by ``test_zero_pascalcase_matches_raises``. Widening any of
+    # those covers to finer-grained sub-cases is out of scope for Finding 7.
+    #
+    # These tests use full-phrase error substrings (vs. the short substrings
+    # used elsewhere in this class) so each pipe-less stage's ParseError is
+    # unambiguously attributed in CI logs — the short forms ("header row",
+    # "separator", "zero") collide with the existing
+    # ``test_no_header_row_raises``, ``test_header_without_separator_raises``,
+    # and ``test_zero_pascalcase_matches_raises`` respectively.
+
+    def test_single_row_pipe_led_table_extracts(self) -> None:
+        """Pin: extract_tools accepts a 1-row pipe-led table.
+
+        Complements ``test_real_fixture_yields_canonical_set`` (50+ rows) by
+        pinning that the parser accepts a 1-row table — a minimum-viable-shape
+        contract the real fixture's row count cannot witness. Do not
+        consolidate with the real-fixture test; their failure modes are
+        distinct (regex regression vs. fixture refresh).
+        """
+        markdown = (
+            "| Tool | Description |\n"
+            "| :--- | :---------- |\n"
+            "| `ToolA` | first |\n"
+        )
+        self.assertEqual(mod.extract_tools(markdown), {"ToolA"})
+
+    def test_pipe_less_header_rejected(self) -> None:
+        """Pin: a fully pipe-less GFM table (no leading or trailing ``|``)
+        is rejected at the header check.
+
+        Matches the canonical pipe-less form called out in
+        ``tool-catalog-drift.py``'s ``RE_TABLE_ROW_FIRST_CELL`` contract
+        comment. If upstream ``tools-reference.md`` flips to pipe-less
+        rendering (HTML conversion, theme migration, table rebuild), this
+        test starts failing. That is the intended signal — widen
+        ``RE_TABLE_HEADER`` and the contract comment block at
+        ``RE_TABLE_ROW_FIRST_CELL`` deliberately when it fires. Silent
+        absorption would risk hiding other simultaneous shape changes.
+        """
+        markdown = (
+            "Tool | Description\n"
+            "--- | ---\n"
+            "`ToolA` | first\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        message = str(ctx.exception)
+        self.assertIn("header row", message)
+        self.assertIn("`| Tool | Description |", message)
+
+    def test_pipe_less_separator_rejected(self) -> None:
+        """Pin: pipe-led header + pipe-less separator is rejected at the separator check.
+
+        Partial-flip case: upstream keeps the header pipe-led but rewrites
+        the separator without leading pipes. The body row below is pipe-led
+        for realistic-narrative purposes only — the function raises at the
+        separator check before reaching it. Widen ``RE_TABLE_SEPARATOR``
+        deliberately if this fires.
+        """
+        markdown = (
+            "| Tool | Description |\n"
+            "--- | ---\n"
+            "| `ToolA` | first |\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("not followed by a separator", str(ctx.exception))
+
+    def test_pipe_less_body_rows_rejected(self) -> None:
+        """Pin: pipe-led header + separator with fully pipe-less body rows
+        (no leading or trailing ``|``) is rejected.
+
+        Body-only flip case (likely real-world drift shape — a CDN keeping
+        the header pipe-led but rewriting body rows to the canonical
+        pipe-less GFM form). The body-row loop breaks on the first non-``|``
+        line, leaving the extracted set empty, which trips the
+        zero-PascalCase guard. The ``startswith("|")`` guard is the
+        load-bearing check for this path (the regex never runs); widen it
+        deliberately if this fires — also widen ``RE_TABLE_ROW_FIRST_CELL``
+        if the regex is what now governs body-row acceptance.
+        """
+        markdown = (
+            "| Tool | Description |\n"
+            "| :--- | :---------- |\n"
+            "`ToolA` | first\n"
+            "`ToolB` | second\n"
+        )
+        with self.assertRaises(mod.ParseError) as ctx:
+            mod.extract_tools(markdown)
+        self.assertIn("zero PascalCase tool names", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -1263,6 +1409,34 @@ class MainTests(unittest.TestCase):
                 ])
             self.assertEqual(code, 3)
             self.assertIn("catalog_provenance", stderr.getvalue())
+
+    def test_pipe_less_upstream_exits_three(self) -> None:
+        """Pin: a pipe-less upstream page makes the scheduled run hard-fail
+        (exit 3) loudly, not succeed-with-wrong-payload silently.
+
+        Complements ``test_parse_error_exits_three`` (catalog-parsing
+        ParseError) by covering the upstream-extraction ParseError path —
+        both routes exit 3 but originate at different boundaries; both must
+        remain pinned. If a future refactor wraps extract_tools in a
+        try/except that swallows the raise, the unit tests in
+        ExtractToolsTests pass but this fires.
+        """
+        pipe_less_markdown = (
+            "Tool | Description\n"
+            "--- | ---\n"
+            "`Bash` | shell\n"
+        )
+        with _CatalogTempFile(_HAPPY_CATALOG) as path, \
+             _patched_fetch(pipe_less_markdown):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+                code = mod.main([
+                    "--dry-run",
+                    "--catalog-path", path,
+                    "--today", "2026-05-01",
+                ])
+            self.assertEqual(code, 3)
+            self.assertIn("header row", stderr.getvalue())
 
     def test_summary_out_help_describes_json_interaction(self) -> None:
         # The --summary-out help text must describe its interaction
