@@ -808,6 +808,25 @@ class ExtractCapabilityPathsTests(unittest.TestCase):
             ],
         )
 
+    def test_paths_from_every_router_table_in_document_order(self) -> None:
+        """Capabilities listed in a later table reach the load graph too."""
+        body = (
+            "# Skill\n\n"
+            + CANONICAL_TABLE
+            + "\n### Later phase\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| gamma | When gamma is needed | capabilities/gamma/capability.md |\n"
+        )
+        self.assertEqual(
+            extract_capability_paths(body),
+            [
+                "capabilities/alpha/capability.md",
+                "capabilities/beta/capability.md",
+                "capabilities/gamma/capability.md",
+            ],
+        )
+
     def test_decorated_path_cell_recovered_via_audit_helper(self) -> None:
         """Backtick-wrapped path cells fall through to the recovery
         cascade and still produce the canonical path."""
