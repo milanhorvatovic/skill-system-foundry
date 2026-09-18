@@ -34,7 +34,6 @@ from .constants import (
     FILE_CAPABILITY_MD,
     FILE_SKILL_MD,
     LEVEL_FAIL,
-    LEVEL_WARN,
     ROUTER_HEADERS,
     ROUTER_HEADER_STRIP_CHARS,
 )
@@ -52,8 +51,8 @@ def _strip_fenced_regions(body: str) -> str:
     """Replace fenced code blocks with blank lines.
 
     Keeps line numbers stable so error messages from upstream tooling
-    still line up, while ensuring fenced documentation examples cannot
-    shadow the canonical router table (first-table-wins).
+    still line up, while ensuring fenced documentation examples are
+    never read as router tables.
 
     Recognizes both backtick (```` ``` ````) and tilde (``~~~``)
     CommonMark fences with arbitrary run length.  A fence is closed by
@@ -185,17 +184,24 @@ def _is_router_header(cells: list[str]) -> bool:
 def parse_router_table(
     body: str,
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]] | None:
-    """Return rows of the first router-shaped table in *body*.
+    """Return the rows of every router-shaped table in *body*.
 
     Returns ``(rows, findings)`` where ``rows`` is a list of
-    ``(capability, trigger, path)`` tuples with each cell stripped, and
-    ``findings`` is a list of ``(level, message)`` tuples — ``LEVEL_FAIL``
-    for structural row malformations inside the matched table, and
-    ``LEVEL_WARN`` when a second canonical-headed table is found later
-    in the body.  Returns ``None`` if no Markdown table whose header is
-    exactly ``Capability | Trigger | Path`` (after stripping ``*``,
-    underscores, backticks, and whitespace — see
-    ``ROUTER_HEADER_STRIP_CHARS``) appears in *body*.
+    ``(capability, trigger, path)`` tuples with each cell stripped, in
+    document order across all tables, and ``findings`` is a list of
+    ``(level, message)`` tuples — ``LEVEL_FAIL`` for structural row
+    malformations inside a matched table.  Returns ``None`` if no
+    Markdown table whose header is exactly ``Capability | Trigger |
+    Path`` (after stripping ``*``, underscores, backticks, and
+    whitespace — see ``ROUTER_HEADER_STRIP_CHARS``) appears in *body*.
+
+    A router may split its capabilities across several tables — one per
+    lifecycle phase, say — and the tables together are the router.  Rows
+    from all of them are returned as one list, so a capability listed
+    in any table counts as declared and one listed in two tables is
+    caught by the caller's duplicate-row check.  Reading only the first
+    table would report every capability of a later table as an orphan
+    directory.
 
     Mid-table rows whose column count differs from the header are
     recorded as FAIL findings and skipped, but scanning continues so
@@ -203,91 +209,55 @@ def parse_router_table(
     single malformed row from masking valid ones (and producing
     misleading orphan errors downstream).
 
-    Only the first router-shaped table is parsed (first-table-wins),
-    but the rest of the body is scanned for additional canonical
-    headers paired with valid separator rows.  Each additional table
-    emits a ``LEVEL_WARN`` finding pointing to its line number — the
-    audit was designed to catch drift, and a silently ignored second
-    table is exactly the failure mode that defeats it.  The parser
-    deliberately does not parse rows from the second table; the warning
-    is enough to direct the author to consolidate.
-
     Fenced code blocks are stripped before scanning so a documentation
-    example in a ```` ```markdown ```` block cannot shadow the canonical
-    router (first-table-wins).  Indented (4-space) code blocks are not
-    stripped — see ``_strip_fenced_regions``.
+    example in a ```` ```markdown ```` block is never read as part of
+    the router.  Indented (4-space) code blocks are not stripped — see
+    ``_strip_fenced_regions``.
 
     A header line that matches the tuple but is not followed by a
-    Markdown separator row (``|---|---|---|``) does not terminate the
-    scan — the parser advances past the pseudo-header and keeps looking
-    for a real table.
+    Markdown separator row (``|---|---|---|``) is not a table — the
+    parser advances past the pseudo-header and keeps looking for a
+    real one.
     """
-    cleaned = _strip_fenced_regions(body)
-    lines = cleaned.splitlines()
+    lines = _strip_fenced_regions(body).splitlines()
+    rows: list[tuple[str, str, str]] = []
+    findings: list[tuple[str, str]] = []
+    found_table = False
     i = 0
     while i < len(lines):
-        cells = _split_row(lines[i])
-        if cells is not None and _is_router_header(cells):
-            if i + 1 >= len(lines):
-                return None
-            sep_cells = _split_row(lines[i + 1])
-            if sep_cells is None or not _is_separator_row(sep_cells):
-                i += 1
-                continue
-            rows: list[tuple[str, str, str]] = []
-            findings: list[tuple[str, str]] = []
-            j = i + 2
-            while j < len(lines):
-                row_cells = _split_row(lines[j])
-                if row_cells is None:
-                    break
-                if len(row_cells) != len(ROUTER_HEADERS):
-                    findings.append((
-                        LEVEL_FAIL,
-                        f"router table row at line {j + 1} has "
-                        f"{len(row_cells)} columns (expected "
-                        f"{len(ROUTER_HEADERS)})",
-                    ))
-                    j += 1
-                    continue
-                rows.append(
-                    (row_cells[0], row_cells[1], row_cells[2])
-                )
-                j += 1
-            findings.extend(_scan_extra_router_tables(lines, j))
-            return rows, findings
-        i += 1
-    return None
+        if not _is_router_table_start(lines, i):
+            i += 1
+            continue
+        found_table = True
+        i += 2
+        while i < len(lines):
+            row_cells = _split_row(lines[i])
+            if row_cells is None:
+                break
+            if len(row_cells) != len(ROUTER_HEADERS):
+                findings.append((
+                    LEVEL_FAIL,
+                    f"router table row at line {i + 1} has "
+                    f"{len(row_cells)} columns (expected "
+                    f"{len(ROUTER_HEADERS)})",
+                ))
+            else:
+                rows.append((row_cells[0], row_cells[1], row_cells[2]))
+            i += 1
+    if not found_table:
+        return None
+    return rows, findings
 
 
-def _scan_extra_router_tables(
-    lines: list[str], start: int,
-) -> list[tuple[str, str]]:
-    """Emit a WARN per additional canonical-headed table after *start*.
-
-    Detects a second (third, ...) router-shaped header followed by a
-    valid separator.  Does not parse rows — the warning's purpose is to
-    direct the author back to the canonical first table; row contents
-    are not authoritative once duplicated.
-    """
-    findings: list[tuple[str, str]] = []
-    k = start
-    while k < len(lines):
-        cells = _split_row(lines[k])
-        if cells is not None and _is_router_header(cells):
-            if k + 1 < len(lines):
-                sep_cells = _split_row(lines[k + 1])
-                if sep_cells is not None and _is_separator_row(sep_cells):
-                    findings.append((
-                        LEVEL_WARN,
-                        f"additional router-shaped table found at line "
-                        f"{k + 1}; only the first is audited — "
-                        f"consolidate or remove the extra table",
-                    ))
-                    k += 2
-                    continue
-        k += 1
-    return findings
+def _is_router_table_start(lines: list[str], index: int) -> bool:
+    """True when *index* holds a router header followed by a separator row."""
+    cells = _split_row(lines[index])
+    if cells is None or not _is_router_header(cells):
+        return False
+    if index + 1 >= len(lines):
+        return False
+    sep_cells = _split_row(lines[index + 1])
+    return sep_cells is not None and _is_separator_row(sep_cells)
 
 
 def expected_path(capability_name: str) -> str:
@@ -358,7 +328,7 @@ def _recover_segment(path_cell: str) -> str | None:
 
 def extract_capability_paths(body: str) -> list[str]:
     """Return canonical ``capabilities/<name>/capability.md`` paths from
-    a router table inside *body*.
+    the router tables inside *body*.
 
     Strict shape parsing is tried first; rows whose path cell carries
     common author decoration (backticks, ``[text](url)`` wrappers,
@@ -368,7 +338,7 @@ def extract_capability_paths(body: str) -> list[str]:
 
     Returns an empty list when *body* contains no router-shaped table
     or when no row has a recoverable canonical path.  Order follows
-    the first-seen position in the table; duplicates are not removed
+    the first-seen position across the tables; duplicates are not removed
     — the caller is expected to dedupe alongside other reference
     sources.
 
@@ -417,16 +387,11 @@ def audit_router_table(skill_path: str) -> list[tuple[str, str]]:
       router-shaped table.
     * (FAIL) ``SKILL.md`` has a router table but ``capabilities/`` is
       missing.
-    * (FAIL) A row inside the router table is structurally malformed
+    * (FAIL) A row inside a router table is structurally malformed
       (wrong number of columns).  Subsequent valid rows are still
-      parsed.
-    * (WARN) A second (or later) canonical-headed router table appears
-      in ``SKILL.md``.  Only the first is audited; the warning directs
-      the author to consolidate.  Emitted before the per-row audit
-      checks (empty Trigger, malformed Path, duplicate row, missing
-      target, orphan directory) — parse-row malformation FAILs from
-      the first table still appear ahead of the WARN because they are
-      emitted by ``parse_router_table`` itself.
+      parsed.  Every canonical-headed table in ``SKILL.md`` is part of
+      the router, so the row checks below run over the rows of all of
+      them together.
     * (FAIL) A router row's Trigger cell is empty.  Trigger content is
       otherwise opaque, but emptiness is a structural failure (a
       half-edited row).

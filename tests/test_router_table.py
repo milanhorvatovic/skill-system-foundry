@@ -16,7 +16,7 @@ SCRIPTS_DIR = os.path.abspath(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
-from lib.constants import LEVEL_FAIL, LEVEL_WARN
+from lib.constants import LEVEL_FAIL
 from lib.router_table import (
     audit_router_table,
     expected_path,
@@ -53,11 +53,8 @@ def _parse_rows(body: str) -> list[tuple[str, str, str]]:
     """Unwrap ``parse_router_table`` for tests that expect a clean parse.
 
     Asserts that the parser found a router table and reported no FAIL
-    findings, then returns the row list.  WARN findings (e.g., the
-    "additional router-shaped table" warning) are tolerated here; tests
-    that need to assert on warnings call ``parse_router_table``
-    directly.  Tests for the ``None`` case also call the parser
-    directly.
+    findings, then returns the row list.  Tests that assert on findings,
+    or on the ``None`` case, call ``parse_router_table`` directly.
     """
     result = parse_router_table(body)
     if result is None:
@@ -98,40 +95,53 @@ class ParseRouterTableTests(unittest.TestCase):
         )
         self.assertIsNone(parse_router_table(body))
 
-    def test_first_router_table_wins(self) -> None:
+    def test_rows_of_every_router_table_are_returned_in_document_order(self) -> None:
         body = (
-            "# Skill\n\n"
+            "# Skill\n\n### Starting\n\n"
             + CANONICAL_TABLE
-            + "\n## Other\n\n"
+            + "\n### Finishing\n\n"
             "| Capability | Trigger | Path |\n"
             "|---|---|---|\n"
-            "| ignored | x | capabilities/ignored/capability.md |\n"
+            "| gamma | When gamma is needed | capabilities/gamma/capability.md |\n"
+            "\n### Releasing\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| delta | When delta is needed | capabilities/delta/capability.md |\n"
         )
         result = parse_router_table(body)
         assert result is not None
         rows, findings = result
-        names = [r[0] for r in rows]
-        self.assertEqual(names, ["alpha", "beta"])
-        warns = [f for f in findings if f[0] == LEVEL_WARN]
-        self.assertEqual(len(warns), 1)
-        self.assertIn("additional router-shaped table", warns[0][1])
+        self.assertEqual([r[0] for r in rows], ["alpha", "beta", "gamma", "delta"])
+        self.assertEqual(findings, [])
 
-    def test_third_router_table_emits_second_warning(self) -> None:
-        """Three canonical-headed tables → two WARN findings (one per extra)."""
-        extra = (
+    def test_malformed_row_in_a_later_table_reports_its_own_line(self) -> None:
+        body = (
+            CANONICAL_TABLE
+            + "\n"
             "| Capability | Trigger | Path |\n"
             "|---|---|---|\n"
-            "| z | x | capabilities/z/capability.md |\n"
+            "| gamma | capabilities/gamma/capability.md |\n"
+            "| delta | t | capabilities/delta/capability.md |\n"
         )
-        body = "# Skill\n\n" + CANONICAL_TABLE + "\n" + extra + "\n" + extra
         result = parse_router_table(body)
         assert result is not None
-        _, findings = result
-        warns = [f for f in findings if f[0] == LEVEL_WARN]
-        self.assertEqual(len(warns), 2)
+        rows, findings = result
+        self.assertEqual([r[0] for r in rows], ["alpha", "beta", "delta"])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0][0], LEVEL_FAIL)
+        self.assertIn("line 8", findings[0][1])
 
-    def test_second_table_without_separator_does_not_warn(self) -> None:
-        """A pseudo-header without a real separator is not a second table."""
+    def test_non_router_table_between_router_tables_is_skipped(self) -> None:
+        body = (
+            CANONICAL_TABLE
+            + "\n| Tier | Meaning |\n|---|---|\n| T1 | full |\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| gamma | t | capabilities/gamma/capability.md |\n"
+        )
+        self.assertEqual([r[0] for r in _parse_rows(body)], ["alpha", "beta", "gamma"])
+
+    def test_header_without_separator_is_not_a_table(self) -> None:
         body = (
             "# Skill\n\n"
             + CANONICAL_TABLE
@@ -141,12 +151,11 @@ class ParseRouterTableTests(unittest.TestCase):
         )
         result = parse_router_table(body)
         assert result is not None
-        _, findings = result
-        warns = [f for f in findings if f[0] == LEVEL_WARN]
-        self.assertEqual(warns, [])
+        rows, findings = result
+        self.assertEqual([r[0] for r in rows], ["alpha", "beta"])
+        self.assertEqual(findings, [])
 
-    def test_fenced_second_table_does_not_warn(self) -> None:
-        """A second table inside a code fence is stripped — no WARN."""
+    def test_fenced_router_table_is_not_part_of_the_router(self) -> None:
         body = (
             "# Skill\n\n"
             + CANONICAL_TABLE
@@ -156,11 +165,7 @@ class ParseRouterTableTests(unittest.TestCase):
             "| example | x | capabilities/example/capability.md |\n"
             "```\n"
         )
-        result = parse_router_table(body)
-        assert result is not None
-        _, findings = result
-        warns = [f for f in findings if f[0] == LEVEL_WARN]
-        self.assertEqual(warns, [])
+        self.assertEqual([r[0] for r in _parse_rows(body)], ["alpha", "beta"])
 
     def test_header_with_bold_and_backticks(self) -> None:
         body = (
@@ -685,26 +690,45 @@ class AuditRouterTableFailureTests(unittest.TestCase):
         self.assertIn("empty Trigger", msg)
         self.assertIn("'alpha'", msg)
 
-    def test_second_router_table_emits_warn(self) -> None:
-        """A second canonical-headed table in SKILL.md surfaces a WARN.
-
-        The first table is still audited normally; the WARN directs
-        the author to consolidate.  The skill is otherwise clean, so
-        only the WARN should appear.
-        """
-        body = CANONICAL_TABLE + "\n## Stale\n\n" + (
+    def test_capabilities_split_across_tables_are_all_declared(self) -> None:
+        """A router grouped into several tables has no orphan directories."""
+        body = CANONICAL_TABLE + "\n### Later phase\n\n" + (
             "| Capability | Trigger | Path |\n"
             "|---|---|---|\n"
-            "| ignored | x | capabilities/ignored/capability.md |\n"
+            "| gamma | When gamma is needed | capabilities/gamma/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, body, capability_dirs=["alpha", "beta", "gamma"])
+            findings = audit_router_table(tmp)
+        self.assertEqual(findings, [])
+
+    def test_row_in_a_later_table_without_a_target_fails(self) -> None:
+        """Rows of later tables get the same checks as rows of the first."""
+        body = CANONICAL_TABLE + "\n" + (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| gamma | When gamma is needed | capabilities/gamma/capability.md |\n"
         )
         with tempfile.TemporaryDirectory() as tmp:
             _build_skill(tmp, body, capability_dirs=["alpha", "beta"])
             findings = audit_router_table(tmp)
-        warns = [f for f in findings if f[0] == LEVEL_WARN]
-        fails = [f for f in findings if f[0] == LEVEL_FAIL]
-        self.assertEqual(len(warns), 1)
-        self.assertIn("additional router-shaped table", warns[0][1])
-        self.assertEqual(fails, [])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0][0], LEVEL_FAIL)
+        self.assertIn("gamma", findings[0][1])
+
+    def test_capability_listed_in_two_tables_is_a_duplicate(self) -> None:
+        body = CANONICAL_TABLE + "\n" + (
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| alpha | Another trigger | capabilities/alpha/capability.md |\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            _build_skill(tmp, body, capability_dirs=["alpha", "beta"])
+            findings = audit_router_table(tmp)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0][0], LEVEL_FAIL)
+        self.assertIn("uplicate", findings[0][1])
+        self.assertIn("alpha", findings[0][1])
 
 
 # ===================================================================
@@ -781,6 +805,25 @@ class ExtractCapabilityPathsTests(unittest.TestCase):
             [
                 "capabilities/alpha/capability.md",
                 "capabilities/beta/capability.md",
+            ],
+        )
+
+    def test_paths_from_every_router_table_in_document_order(self) -> None:
+        """Capabilities listed in a later table reach the load graph too."""
+        body = (
+            "# Skill\n\n"
+            + CANONICAL_TABLE
+            + "\n### Later phase\n\n"
+            "| Capability | Trigger | Path |\n"
+            "|---|---|---|\n"
+            "| gamma | When gamma is needed | capabilities/gamma/capability.md |\n"
+        )
+        self.assertEqual(
+            extract_capability_paths(body),
+            [
+                "capabilities/alpha/capability.md",
+                "capabilities/beta/capability.md",
+                "capabilities/gamma/capability.md",
             ],
         )
 

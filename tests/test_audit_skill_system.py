@@ -1107,8 +1107,8 @@ class AuditRouterTableTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(skill_md_fails), 1)
 
-    def test_second_router_table_surfaces_warn_through_audit(self) -> None:
-        """A duplicate router table in SKILL.md surfaces a WARN through audit_skill_system."""
+    def test_capability_in_second_router_table_is_not_an_orphan(self) -> None:
+        """A router split across two tables audits clean through audit_skill_system."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skill_dir = os.path.join(tmpdir, "skills", "demo-skill")
             body = (
@@ -1118,22 +1118,23 @@ class AuditRouterTableTests(unittest.TestCase):
                 "|---|---|---|\n"
                 "| my-cap | When my-cap is needed | "
                 "capabilities/my-cap/capability.md |\n"
-                "\n## Stale duplicate\n\n"
+                "\n### Later phase\n\n"
                 "| Capability | Trigger | Path |\n"
                 "|---|---|---|\n"
-                "| ignored | x | capabilities/ignored/capability.md |\n"
+                "| other-cap | When other-cap is needed | "
+                "capabilities/other-cap/capability.md |\n"
             )
             write_skill_md(skill_dir, body=body)
-            _write_capability_md(
-                os.path.join(skill_dir, "capabilities", "my-cap")
-            )
+            for name in ("my-cap", "other-cap"):
+                _write_capability_md(
+                    os.path.join(skill_dir, "capabilities", name)
+                )
             errors = audit_skill_system(tmpdir, verbose=False)
-        warns = [
+        router_findings = [
             e for e in errors
-            if e.startswith(LEVEL_WARN) and "additional router-shaped table" in e
+            if "router" in e and not e.startswith(LEVEL_INFO)
         ]
-        self.assertEqual(len(warns), 1)
-        self.assertIn("demo-skill", warns[0])
+        self.assertEqual(router_findings, [])
 
 
 class AuditManifestTests(unittest.TestCase):
